@@ -463,6 +463,14 @@ export inline constexpr std::int64_t kResidualNodeIdInventoryCount = 22;
 export inline constexpr std::int64_t kNodeIdMandateExemptOpsCount = 5;
 export inline constexpr std::int64_t kNodeIdMandateWired = 1;
 
+// Issue #3040: residual compile:/verify:/syntax: NodeId writers gate
+// via require_effect_for_node_id / require_effect_on_ref before Guard
+// (no 2-arg default ref_tenant=0). Soft/Off short-circuit at the
+// compile helper (zero extra stores). Coverage linter:
+// check_compile_node_id_entry_3040.py.
+export inline constexpr std::int64_t kNodeIdOnlyEntryPreventedWired = 1;
+export inline constexpr std::int64_t kNodeIdOnlyEntryIssue = 3040;
+
 // Issue #1861: Env is a single-writer structure (same quiescence class
 // as compiler_metrics_ / type_registry_ / compiler_service_ — #1835–
 // #1839). bind / bind_with_linear_state / bind_symid* mutate
@@ -6395,6 +6403,7 @@ public:
     // over 2-arg/3-arg require_effect when the op mutates a concrete
     // workspace NodeId. Foreign-tenant NodeIds should arrive as stamped
     // StableNodeRef via require_effect_on_ref (not re-stamped here).
+    // Issue #3040: 3-arg only — no 2-arg default ref_tenant=0 overload.
     [[nodiscard]] bool require_effect_for_node_id(std::uint16_t req_bits, std::string_view op,
                                                   ast::NodeId node_id) noexcept;
     // Issue #2706: test-only public surface for unit Soft paths that need

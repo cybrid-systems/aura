@@ -432,13 +432,25 @@ bool Evaluator::require_effect_on_ref(std::uint16_t req_bits, std::string_view o
 // require_effect remains only for documented non-workspace ops
 // (EXEMPT_2ARG_OPS). Coverage linter:
 // scripts/coverage/checks/check_side_effect_node_id_mandate_2942.py.
+//
+// Issue #3040: residual compile:/verify:/syntax: NodeId writers must
+// call this (or require_effect_on_ref for a stamped foreign tenant)
+// BEFORE Guard / topology write — no 2-arg default ref_tenant=0
+// overload (that re-opens the late-isolation window). Deny bumps
+// nodeid_only_entry_prevented_total (Soft/Off allow path does not store).
 bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_view op,
                                            ast::NodeId node_id) noexcept {
     // make_stamped_ref stamps capability_tenant_id_ + fiber so ref_tenant
     // matches principal — isolation auto-gate (#2490) then runs with a
     // non-zero ref_tenant (closes 3-arg default ref_tenant=0 window).
     const auto ref = make_stamped_ref(node_id);
-    return require_effect_on_ref(req_bits, op, ref);
+    const bool ok = require_effect_on_ref(req_bits, op, ref);
+    if (!ok) {
+        using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
+        g_tenant_isolation_metrics().nodeid_only_entry_prevented_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    return ok;
 }
 
 // Issue #2706: test-only public surface — forwards to private

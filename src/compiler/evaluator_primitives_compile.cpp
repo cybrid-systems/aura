@@ -90,6 +90,79 @@ template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&&
     return run_under_mutation_guard(ev, std::forward<F>(body), make_bool(false));
 }
 
+// Issue #3040: residual compile:/verify:/syntax: NodeId writers. Parse a
+// bare NodeId int or packed StableNodeRef (id . (gen . tenant)) so a
+// foreign-tenant stamp is not discarded before the capability fence.
+// Soft / Off (sandbox_mode==0 && effect_sandbox_mode==0): return true
+// with zero extra stores. Production/Restricted/Strict: stamp+on_ref
+// (bare NodeId) or require_effect_on_ref (stamped tenant) BEFORE any
+// topology write / Guard body — never 2/3-arg require_effect with
+// default ref_tenant=0.
+struct CompileNodeArg {
+    aura::ast::NodeId id = 0;
+    std::uint64_t tenant = 0;
+    bool valid = false;
+};
+
+CompileNodeArg parse_compile_node_arg(Evaluator& ev, const EvalValue& v) {
+    CompileNodeArg out{};
+    if (is_int(v)) {
+        const auto n = as_int(v);
+        if (n < 0)
+            return out;
+        out.id = static_cast<aura::ast::NodeId>(n);
+        out.valid = true;
+        return out;
+    }
+    if (!is_pair(v))
+        return out;
+    const auto outer = as_pair_idx(v);
+    auto& pairs = ev.pairs();
+    if (outer >= pairs.size() || !is_int(pairs[outer].car))
+        return out;
+    const auto n = as_int(pairs[outer].car);
+    if (n < 0)
+        return out;
+    out.id = static_cast<aura::ast::NodeId>(n);
+    out.valid = true;
+    const auto cdr = pairs[outer].cdr;
+    if (!is_pair(cdr))
+        return out;
+    const auto inner = as_pair_idx(cdr);
+    if (inner >= pairs.size())
+        return out;
+    const auto c2 = pairs[inner].cdr;
+    if (is_pair(c2)) {
+        const auto tidx = as_pair_idx(c2);
+        if (tidx < pairs.size() && is_int(pairs[tidx].car))
+            out.tenant = static_cast<std::uint64_t>(as_int(pairs[tidx].car));
+    } else if (is_int(c2) && (as_int(c2) <= 0 || as_int(c2) >= 65536)) {
+        out.tenant = static_cast<std::uint64_t>(as_int(c2));
+    }
+    return out;
+}
+
+bool gate_compile_node_effect(Evaluator& ev, std::string_view op, const CompileNodeArg& arg) {
+    // AC3: Soft / Off short-circuit — no stamp, no isolation store.
+    if (ev.sandbox_mode() == 0 && ev.effect_sandbox_mode() == 0)
+        return true;
+    // Unset principal + bare NodeId: existing compile-dirty / wildcard
+    // string gates stay the body fence (unit CompilerService defaults
+    // Restricted with tenant 0). Stamped foreign tenant or a set
+    // principal must go through on_ref / for_node_id before write.
+    if (arg.tenant == 0 && ev.capability_tenant_id() == 0)
+        return true;
+    using aura::compiler::security::kEffectMutate;
+    const auto bits = static_cast<std::uint16_t>(kEffectMutate);
+    if (arg.tenant != 0) {
+        aura::ast::FlatAST::StableNodeRef ref{};
+        ref.id = arg.id;
+        ref.tenant_id = arg.tenant;
+        return ev.require_effect_on_ref(bits, op, ref);
+    }
+    return ev.require_effect_for_node_id(bits, op, arg.id);
+}
+
 // Issue #1898: pin compiler_service_ for multi-step stats readers.
 // Seqlock-style pin at enter; revalidate after body. On rebind mid-flight
 // bump raw_pointer_uaf_prevented_total + compiler_service_pin_reject_total
@@ -2115,17 +2188,23 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
                                         "capability denied: kCapWildcard required",
                                         ev.primitive_error_counter_ptr());
         }
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
+            return make_bool(false);
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
             return make_bool(false);
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_bool(false);
-        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto node_id = narg.id;
         if (node_id >= ws->size())
             return make_bool(false);
         std::uint8_t reasons = aura::ast::FlatAST::kGeneralDirty;
         if (a.size() >= 2 && is_int(a[1]))
             reasons = static_cast<std::uint8_t>(as_int(a[1]));
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before Guard.
+        if (!gate_compile_node_effect(ev, "compile:mark-dirty-upward-fast", narg))
+            return make_bool(false);
         // Issue #1897: structural dirty walk under try_acquire Guard.
         return run_under_mutation_guard(ev, [&]() -> EvalValue {
             ws->mark_dirty_upward_fast(node_id, reasons);
@@ -3015,13 +3094,19 @@ void CompilePrims::register_compile_p30(PrimRegistrar add, Evaluator& ev) {
     // or the bitmask). On any failure (bad args, no
     // workspace) returns #f.
     add("verify:assertion-failed", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
+            return make_bool(false);
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
             return make_bool(false);
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_bool(false);
-        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto node_id = narg.id;
         if (node_id >= ws->size())
+            return make_bool(false);
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before dirty write.
+        if (!gate_compile_node_effect(ev, "verify:assertion-failed", narg))
             return make_bool(false);
         ws->apply_verify_dirty_bits(node_id, aura::ast::FlatAST::kAssertionDirty);
         return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
@@ -3033,13 +3118,19 @@ void CompilePrims::register_compile_p30(PrimRegistrar add, Evaluator& ev) {
     // signature + return-value convention as
     // verify:assertion-failed.
     add("verify:report-coverage", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
+            return make_bool(false);
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
             return make_bool(false);
         auto* ws = ev.workspace_flat();
         if (!ws)
             return make_bool(false);
-        auto node_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        auto node_id = narg.id;
         if (node_id >= ws->size())
+            return make_bool(false);
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before dirty write.
+        if (!gate_compile_node_effect(ev, "verify:report-coverage", narg))
             return make_bool(false);
         ws->apply_verify_dirty_bits(node_id, aura::ast::FlatAST::kCoverageDirty);
         return make_int(static_cast<std::int64_t>(ws->verify_dirty(node_id)));
@@ -3317,6 +3408,8 @@ void CompilePrims::register_compile_p34(PrimRegistrar add, Evaluator& ev) {
     // Issue #2881: this site is the canonical #2881 residual-coverage
     // example — first NodeId-only verify-feedback prim migrated to
     // require_effect_for_node_id, drives the coverage linter inventory.
+    // Issue #3040: remaining compile:/verify:/syntax: NodeId writers use
+    // gate_compile_node_effect (for_node_id / on_ref) the same way.
     add("mutate:from-verification-feedback", [&ev](const auto& a) -> EvalValue {
         using aura::compiler::security::kEffectMutate;
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_string(a[2]))
@@ -3570,15 +3663,21 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
                                         "capability denied: compile-deopt required",
                                         ev.primitive_error_counter_ptr());
         }
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
+            return make_bool(false);
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
             return make_bool(false);
         if (!ev.set_occurrence_dirty_fn_)
             return make_bool(false);
-        auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
+        auto node_id = static_cast<std::uint32_t>(narg.id);
         bool set = true;
         if (a.size() >= 2 && is_bool(a[1])) {
             set = as_bool(a[1]);
         }
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before Guard.
+        if (!gate_compile_node_effect(ev, "compile:mark-narrowing-dirty!", narg))
+            return make_bool(false);
         // Issue #1897: occurrence dirty bit flip under try_acquire Guard.
         return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
             return make_bool(ev.set_occurrence_dirty_fn_(node_id, set));
@@ -3998,10 +4097,14 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
     add("syntax:set-marker", [&ev](const auto& a) -> EvalValue {
         // Issue #1002: removed dead `bool ok` (error paths return merr
         // immediately; ok was never read).
-        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1])) {
+        if (a.size() < 2 || !is_int(a[1])) {
             return ev.make_merr("bad-arg", "usage: (syntax:set-marker node-id marker)");
         }
-        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid) {
+            return ev.make_merr("bad-arg", "usage: (syntax:set-marker node-id marker)");
+        }
+        auto id = narg.id;
         auto marker_val = static_cast<int>(as_int(a[1]));
         if (!ev.workspace_flat_) {
             return ev.make_merr("no-workspace", "no active workspace");
@@ -4013,6 +4116,10 @@ void CompilePrims::register_compile_p42(PrimRegistrar add, Evaluator& ev) {
             return ev.make_merr("bad-arg",
                                 "marker must be 0 (User), 1 (MacroIntroduced), or 2 (BoolLiteral)");
         }
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before column write.
+        if (!gate_compile_node_effect(ev, "syntax:set-marker", narg))
+            return ev.make_merr("tenant-isolation-denied",
+                                "cross-tenant syntax:set-marker denied (#3040)");
         // No MutationBoundaryGuard — metadata-only (no generation
         // bump). Issue #1783: exclusive metadata_mtx_ serializes
         // cross-fiber marker_column writes without invalidating
@@ -4039,16 +4146,22 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // mutate). Dense seen[] + kMaxVisit abort (parity #1679 /
     // #1682) prevents unbounded stack growth on cycles.
     add("syntax:propagate-marker", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1])) {
+        if (a.size() < 2 || !is_int(a[1])) {
             return make_int(0);
         }
-        auto root = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
+            return make_int(0);
+        auto root = narg.id;
         auto marker_val = static_cast<int>(as_int(a[1]));
         if (!ev.workspace_flat_)
             return make_int(0);
         if (root == aura::ast::NULL_NODE || root >= ev.workspace_flat_->size())
             return make_int(0);
         if (marker_val < 0 || marker_val > 2)
+            return make_int(0);
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before walk.
+        if (!gate_compile_node_effect(ev, "syntax:propagate-marker", narg))
             return make_int(0);
         auto& flat = *ev.workspace_flat_;
         // Iterative DFS with visited set — metadata-only.
@@ -4096,13 +4209,19 @@ void CompilePrims::register_compile_p43(PrimRegistrar add, Evaluator& ev) {
     // populate out-of-band; this primitive only stores the
     // index. 0 = no provenance recorded.
     add("syntax:set-provenance", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_int(a[0]) || !is_int(a[1]))
+        if (a.size() < 2 || !is_int(a[1]))
             return make_bool(false);
-        auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
+            return make_bool(false);
+        auto id = narg.id;
         auto prov = static_cast<std::uint32_t>(as_int(a[1]));
         if (!ev.workspace_flat_)
             return make_bool(false);
         if (id >= ev.workspace_flat_->size())
+            return make_bool(false);
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before column write.
+        if (!gate_compile_node_effect(ev, "syntax:set-provenance", narg))
             return make_bool(false);
         // Issue #1783: exclusive metadata_mtx_ for provenance column.
         auto wlock = ev.workspace_flat_->begin_metadata_mutation();
@@ -4576,7 +4695,10 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
     // mid-eval is unsupported. #1897: prefer try_acquire over
     // deprecated RAII ctor (typed ResourceQuotaExceeded).
     add("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
-        if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
+        if (a.size() < 2 || !is_string(a[0]))
+            return make_void();
+        const auto narg = parse_compile_node_arg(ev, a[1]);
+        if (!narg.valid)
             return make_void();
         if (!ev.compiler_service_)
             return make_int(0);
@@ -4586,7 +4708,10 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
             return make_void();
         auto* svc = static_cast<class CompilerService*>(ev.compiler_service_);
         const std::string idx_name = ev.string_heap_[name_idx];
-        const auto caller_node_id = static_cast<aura::ast::NodeId>(as_int(a[1]));
+        const auto caller_node_id = narg.id;
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before Guard.
+        if (!gate_compile_node_effect(ev, "compile:per-defuse-index-add", narg))
+            return make_void();
         using aura::compiler::per_defuse_index::DefUseIndex;
         using aura::compiler::per_defuse_index::Caller;
         return run_under_mutation_guard(
@@ -4862,10 +4987,16 @@ void CompilePrims::register_compile_p52(PrimRegistrar add, Evaluator& ev) {
     // walk left counters partially consistent with no panic
     // checkpoint restore. #1897: try_acquire + shared helper.
     add("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
             return ev.make_merr("bad-arg", "usage: (compile:subtree-bump subtree-root-id)");
-        const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        const auto narg = parse_compile_node_arg(ev, a[0]);
+        if (!narg.valid)
+            return ev.make_merr("bad-arg", "usage: (compile:subtree-bump subtree-root-id)");
+        const auto id = narg.id;
         if (!ev.workspace_flat_)
+            return make_int(0);
+        // Issue #3040: stamp + require_effect_on_ref / for_node_id before Guard.
+        if (!gate_compile_node_effect(ev, "compile:subtree-bump", narg))
             return make_int(0);
         return run_under_mutation_guard(
             ev,

@@ -91,6 +91,10 @@ struct TenantIsolationMetrics {
     // of the isolation-bypass flag without TenantAdmin / wildcard under
     // production. Appended at END (#2906).
     std::atomic<std::uint64_t> allow_cross_tenant_deny_total{0};
+    // Issue #3040: NodeId-only compile/mutate entry denied by
+    // require_effect_for_node_id before Guard / topology write.
+    // Soft/Off allow path does not store. Appended at END (#2906).
+    std::atomic<std::uint64_t> nodeid_only_entry_prevented_total{0};
 };
 
 inline TenantIsolationMetrics& g_tenant_isolation_metrics() noexcept {
@@ -457,8 +461,9 @@ inline void reset_tenant_isolation_for_test() noexcept {
     m.cross_tenant_capability_deny_total.store(0, std::memory_order_relaxed);
     m.isolation_audit_total.store(0, std::memory_order_relaxed);
     m.strict_sandbox_isolation_denials.store(0, std::memory_order_relaxed);
-    m.cross_tenant_grant_deny_total.store(0, std::memory_order_relaxed); // #2968
-    m.allow_cross_tenant_deny_total.store(0, std::memory_order_relaxed); // #3010
+    m.cross_tenant_grant_deny_total.store(0, std::memory_order_relaxed);     // #2968
+    m.allow_cross_tenant_deny_total.store(0, std::memory_order_relaxed);     // #3010
+    m.nodeid_only_entry_prevented_total.store(0, std::memory_order_relaxed); // #3040
 }
 
 struct TenantIsolationStatsSnapshot {
@@ -481,6 +486,8 @@ struct TenantIsolationStatsSnapshot {
     // Issue #3010: allow_cross flag-write deny (missing TenantAdmin).
     // Appended (do not insert mid-struct — positional snapshot init).
     std::uint64_t allow_cross_tenant_deny = 0;
+    // Issue #3040: NodeId-only compile/mutate entry prevented.
+    std::uint64_t nodeid_only_entry_prevented = 0;
 };
 
 [[nodiscard]] inline TenantIsolationStatsSnapshot snapshot_tenant_isolation_stats() noexcept {
@@ -502,6 +509,7 @@ struct TenantIsolationStatsSnapshot {
         p.current.allow_cross_tenant ? 1 : 0,
         p.strict_sandbox_linked ? 1 : 0,
         m.allow_cross_tenant_deny_total.load(std::memory_order_relaxed),
+        m.nodeid_only_entry_prevented_total.load(std::memory_order_relaxed),
     };
 }
 
