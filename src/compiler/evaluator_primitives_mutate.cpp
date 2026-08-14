@@ -265,6 +265,11 @@ struct aura_reload_recovery_snapshot {
     std::int64_t issue_2982;
     std::int64_t recovery_active;
     std::int64_t reload_recovery_wired;
+    std::int64_t residual_force_mask;
+    std::int64_t residual_force_stale_observe_total;
+    std::int64_t residual_force_observe_wired;
+    std::int64_t schema_3026;
+    std::int64_t issue_3026;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 // Issue #2953: recovery playbook C ABI (lockstep with hot_update_registry.hh).
@@ -286,8 +291,12 @@ struct ReloadRecoveryPlaybookResult {
     std::int64_t playbook_wired;
     std::int64_t schema_2953;
     std::int64_t issue_2953;
+    std::int64_t playbook_hint_min_dirty_reemit;
+    std::int64_t schema_3026;
+    std::int64_t issue_3026;
 };
 void aura_hot_update_reload_recovery_playbook_get(ReloadRecoveryPlaybookResult* out) noexcept;
+std::uint64_t aura_hot_update_residual_force_stale_observe_total(void);
 // Issue #2370: SpecJIT PerEval storm counters (spec_jit_controller.cpp).
 std::uint64_t aura_specjit_storm_clear_total_v_read(void);
 std::uint64_t aura_specjit_per_eval_storm_clear_total_v_read(void);
@@ -8200,6 +8209,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                           rs.force_jit_repromote_require_pending_idle);
                 // Issue #2895: last success coverage + partial re-promote.
                 insert_kv("last-reemit-success-region-mask", rs.last_reemit_success_region_mask);
+                insert_kv("residual-force-mask", rs.residual_force_mask);
+                insert_kv("residual-force-stale-observe-total",
+                          rs.residual_force_stale_observe_total);
+                insert_kv("residual-force-observe-wired", rs.residual_force_observe_wired);
+                insert_kv("schema-3026", rs.schema_3026);
+                insert_kv("issue-3026", rs.issue_3026);
                 insert_kv("force-jit-repromote-only-covered-bits",
                           rs.force_jit_repromote_only_covered_bits);
                 insert_kv("force-jit-repromote-partial-total",
@@ -8316,6 +8331,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 insert_kv("playbook-wired", pb.playbook_wired);
                 insert_kv("schema-2953", pb.schema_2953);
                 insert_kv("issue-2953", pb.issue_2953);
+                insert_kv("residual-force-mask", pb.residual_force_mask);
+                insert_kv("playbook-hint-min-dirty-reemit", pb.playbook_hint_min_dirty_reemit);
+                insert_kv("schema-3026", pb.schema_3026);
+                insert_kv("issue-3026", pb.issue_3026);
             }
             // ReloadRecoveryState 5-field core
             insert_kv("attempts-left", rs.attempts_left);
@@ -8349,6 +8368,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                       rs.force_jit_repromote_require_pending_idle);
             // Issue #2895: last success coverage + partial re-promote.
             insert_kv("last-reemit-success-region-mask", rs.last_reemit_success_region_mask);
+            // Issue #3026: residual force bits (force & ~last_success).
+            insert_kv("residual-force-mask", rs.residual_force_mask);
+            insert_kv("residual-force-stale-observe-total", rs.residual_force_stale_observe_total);
+            insert_kv("residual-force-observe-wired", rs.residual_force_observe_wired);
+            insert_kv("schema-3026", rs.schema_3026);
+            insert_kv("issue-3026", rs.issue_3026);
             insert_kv("force-jit-repromote-only-covered-bits",
                       rs.force_jit_repromote_only_covered_bits);
             insert_kv("force-jit-repromote-partial-total", rs.force_jit_repromote_partial_total);
@@ -8421,7 +8446,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ReloadRecoveryPlaybookResult pb{};
             aura_hot_update_reload_recovery_playbook_get(&pb);
             // Issue #3020: ~26 live keys; next_pow2(planned*2) ≥64.
-            constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 32;
+            constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 36;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kReloadRecoveryPlaybookPlannedKeys));
             if (!ht)
@@ -8457,6 +8482,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("pending-dirty-count", pb.pending_dirty_count);
             insert_kv("cross-ws-reject", pb.cross_ws_reject);
             insert_kv("recovery-active", pb.recovery_active);
+            // Issue #3026: observe-only agent hint — min-dirty residual
+            // bits then reemit (no auto-heal). Additive; #2953 action table
+            // unchanged.
+            insert_kv("playbook-hint-min-dirty-reemit", pb.playbook_hint_min_dirty_reemit);
+            insert_kv(
+                "residual-force-stale-observe-total",
+                static_cast<std::int64_t>(aura_hot_update_residual_force_stale_observe_total()));
+            insert_kv("residual-force-observe-wired", 1);
+            insert_kv("schema-3026", pb.schema_3026 != 0 ? pb.schema_3026 : 3026);
+            insert_kv("issue-3026", 3026);
             // Lineage preserved (agents can still poll recovery-state).
             insert_kv("schema-2367", 2367);
             insert_kv("schema-2302", 2302);

@@ -110,6 +110,13 @@ public:
     [[nodiscard]] std::uint64_t last_reemit_success_region_mask() const noexcept;
     // Issue #2977: residual remount prefer reads this mask (OR force_jit).
     [[nodiscard]] std::uint64_t force_jit_regions_mask() const noexcept;
+    // Issue #3026: residual = force & ~last_success (agent-actionable bits).
+    [[nodiscard]] std::uint64_t residual_force_mask() const noexcept;
+    [[nodiscard]] std::uint64_t residual_force_stale_observe_total() const noexcept;
+    // Production-only observe: age residual bits across BoundaryExits.
+    // Soft / idle residual==0 → one/two loads, no counter. Never reemits.
+    void observe_residual_force_stale() noexcept;
+    void reset_residual_force_observe_for_test() noexcept;
     void note_reemit_success_coverage(std::uint64_t covered_force_jit_bits) noexcept;
     // Issue #2895 / #2949: partial re-promote (clear only force_mask ∩
     // last_success). Effective policy via resolve (env + sticky +
@@ -726,6 +733,12 @@ private:
     //     use this mask instead of the full demoted mask (sticky until
     //     wholesale clear / reset — Agent / test injection).
     std::atomic<std::uint64_t> last_reemit_success_region_mask_{0};
+    // Issue #3026: observe-only residual-force stale watchdog (no auto-heal).
+    // Soft / Off never ages. Production ages residual across BoundaryExits
+    // and bumps residual_force_stale_observe_total_ every N exits (32).
+    std::atomic<std::uint64_t> residual_force_stale_observe_total_{0};
+    std::atomic<std::uint64_t> residual_force_observe_age_{0};
+    std::atomic<std::uint64_t> residual_force_observe_last_mask_{0};
     std::atomic<std::uint8_t> force_jit_repromote_only_covered_bits_{0};
     std::atomic<std::uint8_t> force_jit_repromote_only_covered_override_{0};
     std::atomic<std::uint64_t> force_jit_repromote_partial_total_{0};
@@ -1186,6 +1199,11 @@ extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 // Issue #2977: residual remount prefer (sid bit ∩ force_jit | last_success).
 extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void);
 extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
+// Issue #3026: residual force mask + stale-observe (no auto-reemit).
+extern "C" std::uint64_t aura_hot_update_residual_force_mask(void);
+extern "C" std::uint64_t aura_hot_update_residual_force_stale_observe_total(void);
+extern "C" void aura_hot_update_observe_residual_force_stale(void);
+extern "C" void aura_hot_update_reset_residual_force_observe_for_test(void);
 
 // Issue #2367: agent-facing ReloadRecovery snapshot (C ABI).
 // Module partitions cannot attach HotUpdateRegistry — use this
@@ -1287,6 +1305,13 @@ struct aura_reload_recovery_snapshot {
     // storm_level != None). Soft empty path → 0.
     std::int64_t recovery_active;
     std::int64_t reload_recovery_wired; // always 1 when linked
+    // Issue #3026: residual force (force & ~last_success) + stale observe.
+    // Appended — existing snapshot field offsets unchanged.
+    std::int64_t residual_force_mask;
+    std::int64_t residual_force_stale_observe_total;
+    std::int64_t residual_force_observe_wired; // 1 when #3026 linked
+    std::int64_t schema_3026;
+    std::int64_t issue_3026;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 
@@ -1300,6 +1325,7 @@ void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot*
 //   4. retry-reload     attempts_left>0 && last_reason in Version|Env|Linear|Defuse
 //   5. reemit           storm None && (pending_dirty || deferred || residual force)
 //                       residual = force_mask & ~last_reemit_success_region_mask
+//                       #3026 agent hint: min-dirty residual → reemit → coverage
 //   6. fall-back-jit    force_mask != 0 (exhausted / demotion-only, no reemit work)
 //   7. idle             recovery_active == 0 (and no higher branch)
 enum class ReloadRecoveryPlaybookAction : std::uint8_t {
@@ -1343,6 +1369,11 @@ struct ReloadRecoveryPlaybookResult {
     std::int64_t playbook_wired = 1;
     std::int64_t schema_2953 = 2953;
     std::int64_t issue_2953 = 2953;
+    // Issue #3026: observe-only agent hint (appended). 1 when residual != 0
+    // meaning min-dirty residual bits → reemit → coverage. Never auto-heals.
+    std::int64_t playbook_hint_min_dirty_reemit = 0;
+    std::int64_t schema_3026 = 3026;
+    std::int64_t issue_3026 = 3026;
 };
 // Pure: no atomics, no mutation. Soft empty input → Idle.
 // C++ linkage OK for unit tests (not called from module partitions).
