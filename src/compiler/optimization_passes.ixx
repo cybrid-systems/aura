@@ -61,6 +61,60 @@ inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_partial_runs{0};
 inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_cast_sites_scanned{0};
 // Issue #2556: full-module / no-cone DCE runs (regression counter for AC2).
 inline std::atomic<std::uint64_t> dead_coercion_full_scan_runs{0};
+// Issue #3007: Production post-mutate / hot-fn residual identity CastOp
+// sweep. Soft keeps #2556 cone-skip + density-policy CastOps.
+inline constexpr int kDeadCoercionHotResidualIssue = 3007;
+inline std::atomic<std::uint64_t> dead_coercion_hot_residual_sweep_total{0};
+inline std::atomic<std::uint64_t> dead_coercion_hot_residual_elided_total{0};
+inline std::atomic<std::uint64_t> dead_coercion_hot_residual_reject_total{0};
+inline std::atomic<std::uint32_t> dead_coercion_hot_residual_wired{1};
+
+// Count Rule-1 identity CastOps (source type_id == dest type_id).
+[[nodiscard]] inline std::size_t count_identity_castops(const aura::ir::IRFunction& f) noexcept {
+    std::size_t n = 0;
+    for (const auto& block : f.blocks) {
+        std::unordered_map<std::uint32_t, std::uint32_t> slot_tid;
+        slot_tid.reserve(block.instructions.size() * 2);
+        for (const auto& instr : block.instructions) {
+            if (auto* info = aura::ir::lookup_opcode(instr.opcode); info && info->has_result_slot)
+                slot_tid[instr.operands[0]] = instr.type_id;
+            if (instr.opcode != aura::ir::IROpcode::CastOp)
+                continue;
+            if (instr.type_id == 0)
+                continue;
+            auto it = slot_tid.find(instr.operands[1]);
+            if (it != slot_tid.end() && it->second != 0 && it->second == instr.type_id)
+                ++n;
+        }
+    }
+    return n;
+}
+
+// Production: full-fn DCE (ignore dirty cone) then reject if identity
+// CastOps remain. Soft: observe-only (return current count, no extra DCE).
+inline std::size_t sweep_production_hot_residual_castops(aura::ir::IRFunction& f,
+                                                         const aura::core::TypeRegistry* reg,
+                                                         std::uint64_t epoch = 0) noexcept {
+    const bool production = aura::compiler::typed_audit::production_defaults_active();
+    if (!production)
+        return count_identity_castops(f);
+    dead_coercion_hot_residual_sweep_total.fetch_add(1, std::memory_order_relaxed);
+    if (count_identity_castops(f) == 0)
+        return 0;
+    aura::compiler::DeadCoercionEliminationPass pass(reg);
+    if (epoch != 0)
+        pass.set_pipeline_epoch(epoch);
+    pass.run_function(f);
+    if (pass.eliminated_count() > 0) {
+        dead_coercion_hot_residual_elided_total.fetch_add(pass.eliminated_count(),
+                                                          std::memory_order_relaxed);
+        dead_coercion_ir_elided_total.fetch_add(pass.eliminated_count(), std::memory_order_relaxed);
+    }
+    const auto left = count_identity_castops(f);
+    if (left > 0)
+        dead_coercion_hot_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
+    return left;
+}
 
 // Issue #2611: re-export dce deopt-meta counter names for query/docs lineage.
 // Authority lives in dce_elided_deopt_meta.h (stamp at CastOp elision).
@@ -521,6 +575,10 @@ public:
                 const auto casts = count_cast_ops_in_function(f);
                 dead_coercion_dirty_cone_skips.fetch_add(casts > 0 ? casts : 1,
                                                          std::memory_order_relaxed);
+                // Issue #3007: Production still sweeps residual identity
+                // CastOps (no Quiet skip of hot-fn DCE). Soft returns here.
+                (void)sweep_production_hot_residual_castops(f, type_reg_,
+                                                            impl_.pipeline_epoch_hint());
                 return;
             }
             // Materialize dirty mask only when the cone is non-empty.
@@ -559,6 +617,9 @@ public:
         if (pass.narrow_evidence_hits() > 0)
             ::aura::compiler::typed_audit::note_dce_narrow_hits(
                 static_cast<std::uint64_t>(pass.narrow_evidence_hits()));
+        // Issue #3007: Production full-fn residual sweep (cone-external
+        // identity CastOps must not reach JIT). Soft keeps #2556 skip.
+        (void)sweep_production_hot_residual_castops(f, type_reg_, impl_.pipeline_epoch_hint());
     }
     void run(aura::ir::BasicBlock& b) {
         aura::compiler::DeadCoercionEliminationPass pass(type_reg_);

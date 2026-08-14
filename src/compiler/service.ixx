@@ -72,7 +72,8 @@ import aura.compiler.lowering;
 import aura.compiler.ir_soa;
 import aura.compiler.ir_executor;
 import aura.compiler.pass_manager;
-import aura.compiler.dirty_propagation; // Issue #2106: cascade_skip metrics sink
+import aura.compiler.optimization_passes; // Issue #3007: Production hot residual CastOp sweep
+import aura.compiler.dirty_propagation;   // Issue #2106: cascade_skip metrics sink
 import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.compiler.cache;
@@ -10083,6 +10084,11 @@ private:
         func = std::move(mod.functions[0]);
         func.id = saved_id;
         accumulate_coercion_pass_metrics(ts, dce);
+        // Issue #3007: after CoercionMap rebuild + incremental DCE, Production
+        // full-fn residual sweep so identity CastOps outside the dirty cone
+        // do not remain in JIT-bound IR. Soft observes only.
+        (void)aura::compiler::opt_registry::sweep_production_hot_residual_castops(
+            func, &type_registry_, pipeline_epoch);
     }
 
     // Fast eval for primitive literal args inside the workspace-aware

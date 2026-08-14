@@ -371,6 +371,11 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             if (!cm.empty()) {
                 // Issue #1425: identity elision at CoercionMap apply
                 // (AST-level dead-coercion win before IR lowering).
+                // Issue #3007: bidirectional check stays on so mutate
+                // sites rebuild CoercionMap; Production residual CastOp
+                // sweep runs at post-mutate IR DCE (run_coercion_elim).
+                if (aura::compiler::typed_audit::production_defaults_active())
+                    tc.set_bidirectional_mode(true);
                 aura::compiler::DeadCoercionAstStats dce_stats;
                 aura::compiler::apply_coercion_map(*workspace_flat_, cm, &dce_stats, &cm);
                 // Issue #1615: post-coercion linear revalidation on typed-mutation path.

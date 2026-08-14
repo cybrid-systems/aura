@@ -2965,6 +2965,18 @@ def cmd_lint():
             "Issue #3006 linear-fast-path dirty-revalidate linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_dirty_revalidate_3006.py"
         )
         return r
+    # Issue #3007: Production residual identity CastOp in hot / post-mutate IR.
+    # Extends test_dead_coercion_dirty_cone (#81967); no docs/design/.
+    dchr3007 = COVERAGE_CHECKS / "check_dead_coercion_hot_residual_3007.py"
+    if not dchr3007.exists():
+        fail(f"missing {dchr3007}")
+        return 1
+    r = run([sys.executable, str(dchr3007)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3007 dead-coercion hot residual linter failed — run python3 scripts/coverage/checks/check_dead_coercion_hot_residual_3007.py"
+        )
+        return r
     # Issue #2966: ast:snapshot fail reason (never silent -1).
     asfr2966 = COVERAGE_CHECKS / "check_ast_snapshot_fail_reason_2966.py"
     if not asfr2966.exists():
@@ -11691,6 +11703,24 @@ def cmd_dead_coercion_dirty_cone_coverage():
     return 0
 
 
+def cmd_dead_coercion_hot_residual_3007_coverage():
+    """Issue #3007: Production residual identity CastOp sweep on hot / post-mutate IR.
+
+    After CoercionMap rebuild, Production full-fn DCE; Soft keeps cone-skip.
+    """
+    print(f"{B}=== DCE hot residual CastOp coverage (#3007) ==={N}")
+    script = COVERAGE_CHECKS / "check_dead_coercion_hot_residual_3007.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("DCE hot residual CastOp (#3007) coverage contract rows failed")
+        return 1
+    ok("DCE hot residual CastOp (#3007) coverage clean")
+    return 0
+
+
 def cmd_lock_order_production_soft_coverage():
     """Issue #2557: production soft lock-order audit (metrics-only).
 
@@ -14650,6 +14680,7 @@ def main():
         "chaos-soak-residual-zero-2755-coverage": cmd_chaos_soak_residual_zero_2755_coverage,
         "transaction-guard-migration": cmd_transaction_guard_migration_coverage,
         "dead-coercion-dirty-cone": cmd_dead_coercion_dirty_cone_coverage,
+        "dead-coercion-hot-residual-3007": cmd_dead_coercion_hot_residual_3007_coverage,
         "dce-elided-deopt-meta": cmd_dce_elided_deopt_meta_coverage,
         "castop-typed-meta": cmd_castop_typed_meta_coverage,
         "issue-coverage": cmd_issue_coverage,
