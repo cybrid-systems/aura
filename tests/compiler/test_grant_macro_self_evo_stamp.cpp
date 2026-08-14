@@ -12,9 +12,11 @@
 
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
+#include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 
 #include <cstdint>
+#include <cstring>
 #include <fstream>
 #include <string>
 #include <string_view>
@@ -30,6 +32,7 @@ using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
 using aura::core::capability::check_macro_self_evo;
+using aura::core::capability::Effect;
 using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
@@ -37,6 +40,9 @@ using aura::core::capability::MacroSelfEvoPolicy;
 using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::capability::set_effect_fiber_id_override;
+using aura::core::security_event::g_security_event_ring;
+using aura::core::security_event::kSecurityEventRingSize;
+using aura::core::security_event::reset_security_event_ring_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -56,6 +62,13 @@ static void reset_all() {
     set_effect_fiber_id_override(0);
 }
 
+// Issue #3029: production set_mode(Strict) also stamps registry.sandbox_mode.
+// Existing stamp tests must hold TenantAdmin before grant_macro_self_evo.
+static void grant_tenant_admin() {
+    auto prov = make_grant_provenance(0, true, 0, 0);
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin, prov);
+}
+
 // AC1: grant_epoch non-zero matching Mutation epoch.
 static void ac1_grant_epoch_stamped() {
     std::println("\n--- #2386 AC1: grant_macro_self_evo stamps grant_epoch ---");
@@ -65,6 +78,7 @@ static void ac1_grant_epoch_stamped() {
     CHECK(me != 0, "mutation epoch non-zero");
 
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    grant_tenant_admin();
     MacroSelfEvoPolicy pol{};
     g_capability_registry().grant_macro_self_evo(7, pol);
 
@@ -84,6 +98,7 @@ static void ac2_grant_fiber_stamped() {
     bump_mutation_epoch(1);
     set_effect_fiber_id_override(42);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    grant_tenant_admin();
     auto prov = make_grant_provenance(0, true, 0, 42);
     g_capability_registry().grant_macro_self_evo(8, MacroSelfEvoPolicy{}, prov);
 
@@ -99,6 +114,7 @@ static void ac3_epoch_fence_denies() {
     reset_all();
     bump_mutation_epoch(2);
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    grant_tenant_admin();
     g_capability_registry().grant_macro_self_evo(9, MacroSelfEvoPolicy{});
     CapabilityGrant g{};
     CHECK(g_capability_registry().find_grant(9, "macro-self-evo", g), "granted");
@@ -123,6 +139,7 @@ static void ac4_hard_fiber_denies() {
     g_capability_registry().set_hard_fiber_isolation(true);
 
     set_effect_fiber_id_override(100);
+    grant_tenant_admin();
     auto prov = make_grant_provenance(0, true, 0, 100);
     g_capability_registry().grant_macro_self_evo(10, MacroSelfEvoPolicy{}, prov);
 
@@ -150,7 +167,7 @@ static void ac5_source_and_gate() {
     const auto gms = cap.find("void grant_macro_self_evo");
     CHECK(gms != std::string::npos, "AC5: grant_macro_self_evo definition");
     if (gms != std::string::npos) {
-        const auto snip = cap.substr(gms, 2000);
+        const auto snip = cap.substr(gms, 5000);
         CHECK(snip.find("grant_epoch") != std::string::npos,
               "AC5: grant_macro_self_evo stamps grant_epoch");
         CHECK(snip.find("grant_fiber_id") != std::string::npos,
@@ -172,6 +189,83 @@ static void ac5_source_and_gate() {
           "AC5: coverage linter present");
 }
 
+// ── Issue #3029: grant_macro_self_evo TenantAdmin fence ──
+
+static bool ring_has_reason(std::string_view needle) {
+    const auto& ring = g_security_event_ring();
+    const auto cur = ring.seq.load(std::memory_order_acquire);
+    if (cur == 0)
+        return false;
+    const auto end = (cur > 16) ? cur - 16 : std::uint64_t{1};
+    for (auto s = cur; s >= end && s > 0; --s) {
+        const auto& e = ring.ring[(s - 1) % kSecurityEventRingSize];
+        const auto rlen = std::strlen(e.reason);
+        if (rlen == needle.size() && std::string_view(e.reason, rlen) == needle)
+            return true;
+    }
+    return false;
+}
+
+static void ac3029_1_restricted_no_admin_denies() {
+    std::println("\n--- #3029 AC1: Restricted grant_macro_self_evo without TenantAdmin ---");
+    reset_all();
+    reset_security_event_ring_for_test();
+    g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+    const auto deny0 =
+        g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load();
+    g_capability_registry().grant_macro_self_evo(7, MacroSelfEvoPolicy{});
+    CapabilityGrant g{};
+    CHECK(!g_capability_registry().find_grant(7, "macro-self-evo", g),
+          "3029 AC1: no grant without TenantAdmin");
+    CHECK(g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load() > deny0,
+          "3029 AC1: deny counter bumped");
+    CHECK(ring_has_reason("macro-self-evo-grant-needs-tenant-admin"),
+          "3029 AC1: audited with stable deny reason");
+}
+
+static void ac3029_2_admin_allows() {
+    std::println("\n--- #3029 AC2: TenantAdmin allows grant_macro_self_evo ---");
+    reset_all();
+    g_capability_registry().sandbox_mode = EffectSandboxMode::Restricted;
+    auto prov = make_grant_provenance(0, true, 0, 0);
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin, prov);
+    g_capability_registry().grant_macro_self_evo(7, MacroSelfEvoPolicy{});
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(7, "macro-self-evo", g),
+          "3029 AC2: grant succeeds with TenantAdmin");
+}
+
+static void ac3029_3_soft_zero_cost() {
+    std::println("\n--- #3029 AC3: Soft/Off grant still zero-cost ---");
+    reset_all();
+    g_capability_registry().sandbox_mode = EffectSandboxMode::Off;
+    const auto deny0 =
+        g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load();
+    g_capability_registry().grant_macro_self_evo(11, MacroSelfEvoPolicy{});
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(11, "macro-self-evo", g),
+          "3029 AC3: Off path grants without TenantAdmin");
+    CHECK(g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load() == deny0,
+          "3029 AC3: deny counter unchanged");
+}
+
+static void ac3029_4_source_and_query() {
+    std::println("\n--- #3029 AC4: source-cite + posture keys ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("Issue #3029") != std::string::npos, "3029 AC4: registry cites #3029");
+    CHECK(cap.find("macro-self-evo-grant-needs-tenant-admin") != std::string::npos,
+          "3029 AC4: stable deny reason");
+    CHECK(sec.find("schema-3029") != std::string::npos, "3029 AC4: posture schema-3029");
+    CHECK(build.find("check_macro_self_evo_grant_fence_3029") != std::string::npos,
+          "3029 AC4: build.py wires linter");
+    CHECK(read_file("docs/design/3029-macro-self-evo-grant-fence.md").empty(),
+          "3029 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3029.cpp").empty(),
+          "3029 AC4: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_grant_macro_self_evo_stamp() {
@@ -181,6 +275,11 @@ int run_test_grant_macro_self_evo_stamp() {
     ac3_epoch_fence_denies();
     ac4_hard_fiber_denies();
     ac5_source_and_gate();
+    std::println("\n=== Issue #3029: grant_macro_self_evo TenantAdmin fence ===");
+    ac3029_1_restricted_no_admin_denies();
+    ac3029_2_admin_allows();
+    ac3029_3_soft_zero_cost();
+    ac3029_4_source_and_query();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

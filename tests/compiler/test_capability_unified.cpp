@@ -72,6 +72,7 @@ using aura::core::capability::Effect;
 using aura::core::capability::effect_for_cap_name;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::has_effect;
+using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
@@ -211,6 +212,8 @@ static void ac6_macro_self_evo_no_regression() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(0, true, 0, 0));
     // Use the proper grant_macro_self_evo entry point — it sets both
     // the MacroSelfEvo effect bit AND a policy with non-zero limits
     // (required by check_macro_self_evo). grant_capability("macro-self-evo")

@@ -50,7 +50,7 @@ def main() -> int:
     win_start = max(0, pos - 1200) if pos >= 0 else 0
     win = me[win_start : pos + 1600] if pos >= 0 else ""
     eim = me.find("aura::ast::NodeId expand_inner_macros")
-    eim_win = me[eim : eim + 1800] if eim >= 0 else ""
+    eim_win = me[eim : eim + 2400] if eim >= 0 else ""
 
     # AC1
     must("Issue #2809", "AC1", win)

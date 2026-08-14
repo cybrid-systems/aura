@@ -48,9 +48,11 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::core::capability::check_macro_self_evo;
+using aura::core::capability::Effect;
 using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::MacroSelfEvoPolicy;
+using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::capability::snapshot_capability_effect_stats;
 using aura::core::sandbox::SandboxMode;
@@ -170,6 +172,8 @@ static void ac4_grant_reduced_limits() {
     reset_all();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(0, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 2;
     pol.max_depth = 8;
@@ -196,6 +200,8 @@ static void ac5_zero_limits_deny() {
     reset_all();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(0, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 0;
     pol.max_depth = 0;
@@ -265,6 +271,8 @@ static void ac7_concurrent_strict_deny() {
     CHECK(denials.load() == kThreads * kIters, "all concurrent expands denied without grant");
     CHECK(g_macro_self_evo_denied_total.load() > denied0, "global denied grew under stress");
     // Grant + concurrent still allowed
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(0, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 4;
     pol.max_depth = 16;

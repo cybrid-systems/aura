@@ -43,7 +43,7 @@ def main() -> int:
 
     pre = me.find("auto rename_binding_pre")
     walk = me.find("auto rename_binding =", pre + 1 if pre >= 0 else 0)
-    win = me[walk : walk + 1200] if walk >= 0 else ""
+    win = me[walk : walk + 1800] if walk >= 0 else ""
 
     # AC1
     must("Issue #2804", "AC1", win)

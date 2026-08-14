@@ -675,187 +675,185 @@ int run_test_capability_single_use_consume() {
                 CHECK(name.find("2944-") == std::string::npos,
                       std::string("AC6: no docs/design/") + name);
             }
+        }
 
-            // ── #2967 AC1: production durable high-risk requires TenantAdmin ────────
-            {
-                std::println(
-                    "\n--- #2967 AC1: durable high-risk grant without TenantAdmin → deny ---");
-                reset_all();
-                set_mode(SandboxMode::Restricted);
-                aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // ── #2967 AC1: production durable high-risk requires TenantAdmin ────────
+        {
+            std::println("\n--- #2967 AC1: durable high-risk grant without TenantAdmin → deny ---");
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
 
-                CompilerService cs;
-                auto& ev = cs.evaluator();
-                ev.set_effect_sandbox_mode(1); // Restricted
-                ev.set_capability_tenant_id(20);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_effect_sandbox_mode(1); // Restricted
+            ev.set_capability_tenant_id(20);
 
-                const auto deny_before =
-                    g_capability_effect_metrics().capability_durable_grant_deny_total.load();
-                const auto allow_before =
-                    g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+            const auto deny_before =
+                g_capability_effect_metrics().capability_durable_grant_deny_total.load();
+            const auto allow_before =
+                g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
 
-                // No TenantAdmin on the caller → durable high-risk grant denied.
-                ev.grant_effect_durable(/*tenant=*/20, "mut-2967-noadmin", kEffectMutate,
-                                        /*mid=*/30,
-                                        /*reason=*/"2967-ac1");
+            // No TenantAdmin on the caller → durable high-risk grant denied.
+            ev.grant_effect_durable(/*tenant=*/20, "mut-2967-noadmin", kEffectMutate,
+                                    /*mid=*/30,
+                                    /*reason=*/"2967-ac1");
 
-                const auto deny_after =
-                    g_capability_effect_metrics().capability_durable_grant_deny_total.load();
-                const auto allow_after =
-                    g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
-                CHECK(
-                    deny_after == deny_before + 1,
-                    "AC1: capability_durable_grant_deny_total bumps when caller lacks TenantAdmin");
-                CHECK(allow_after == allow_before,
-                      "AC1: capability_durable_high_risk_grant_total NOT bumped on deny");
-                CHECK(ring_lookup_reason("durable-grant-needs-tenant-admin") != nullptr,
-                      "AC1: SE EffectDeny reason 'durable-grant-needs-tenant-admin' recorded");
-            }
+            const auto deny_after =
+                g_capability_effect_metrics().capability_durable_grant_deny_total.load();
+            const auto allow_after =
+                g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+            CHECK(deny_after == deny_before + 1,
+                  "AC1: capability_durable_grant_deny_total bumps when caller lacks TenantAdmin");
+            CHECK(allow_after == allow_before,
+                  "AC1: capability_durable_high_risk_grant_total NOT bumped on deny");
+            CHECK(ring_lookup_reason("durable-grant-needs-tenant-admin") != nullptr,
+                  "AC1: SE EffectDeny reason 'durable-grant-needs-tenant-admin' recorded");
+        }
 
-            // ── #2967 AC2: TenantAdmin + reason → allow; empty reason → deny ────────
-            {
-                std::println(
-                    "\n--- #2967 AC2: TenantAdmin + reason allows; empty reason denies ---");
-                reset_all();
-                set_mode(SandboxMode::Restricted);
-                aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // ── #2967 AC2: TenantAdmin + reason → allow; empty reason → deny ────────
+        {
+            std::println("\n--- #2967 AC2: TenantAdmin + reason allows; empty reason denies ---");
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
 
-                CompilerService cs;
-                auto& ev = cs.evaluator();
-                ev.set_effect_sandbox_mode(1); // Restricted
-                ev.set_capability_tenant_id(21);
-                // Caller holds the meta-privilege.
-                ev.grant_capability("tenant-admin");
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_effect_sandbox_mode(1); // Restricted
+            ev.set_capability_tenant_id(21);
+            // Caller holds the meta-privilege.
+            ev.grant_capability("tenant-admin");
 
-                const auto allow_before =
-                    g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
-                ev.grant_effect_durable(/*tenant=*/21, "mut-2967-admin", kEffectMutate, /*mid=*/31,
-                                        /*reason=*/"2967-ac2-rotate");
-                const auto allow_after =
-                    g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
-                CHECK(allow_after == allow_before + 1,
-                      "AC2: durable high-risk grant allowed with TenantAdmin + reason");
+            const auto allow_before =
+                g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+            ev.grant_effect_durable(/*tenant=*/21, "mut-2967-admin", kEffectMutate, /*mid=*/31,
+                                    /*reason=*/"2967-ac2-rotate");
+            const auto allow_after =
+                g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+            CHECK(allow_after == allow_before + 1,
+                  "AC2: durable high-risk grant allowed with TenantAdmin + reason");
 
-                // Empty reason under production → deny.
-                const auto deny_before =
-                    g_capability_effect_metrics().capability_durable_grant_deny_total.load();
-                ev.grant_effect_durable(/*tenant=*/21, "mut-2967-noreason", kEffectMutate,
-                                        /*mid=*/32);
-                const auto deny_after =
-                    g_capability_effect_metrics().capability_durable_grant_deny_total.load();
-                CHECK(deny_after == deny_before + 1,
-                      "AC2: empty reason under production → deny (deny counter bumps)");
-                CHECK(ring_lookup_reason("durable-grant-reason-required") != nullptr,
-                      "AC2: SE EffectDeny reason 'durable-grant-reason-required' recorded");
-            }
+            // Empty reason under production → deny.
+            const auto deny_before =
+                g_capability_effect_metrics().capability_durable_grant_deny_total.load();
+            ev.grant_effect_durable(/*tenant=*/21, "mut-2967-noreason", kEffectMutate,
+                                    /*mid=*/32);
+            const auto deny_after =
+                g_capability_effect_metrics().capability_durable_grant_deny_total.load();
+            CHECK(deny_after == deny_before + 1,
+                  "AC2: empty reason under production → deny (deny counter bumps)");
+            CHECK(ring_lookup_reason("durable-grant-reason-required") != nullptr,
+                  "AC2: SE EffectDeny reason 'durable-grant-reason-required' recorded");
+        }
 
-            // ── #2967 AC3: Soft / Off no hard gate (zero-cost path) ────────────────
-            {
-                std::println("\n--- #2967 AC3: Off path no gate ---");
-                reset_all();
-                set_mode(SandboxMode::Off);
-                aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        // ── #2967 AC3: Soft / Off no hard gate (zero-cost path) ────────────────
+        {
+            std::println("\n--- #2967 AC3: Off path no gate ---");
+            reset_all();
+            set_mode(SandboxMode::Off);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 
-                CompilerService cs;
-                auto& ev = cs.evaluator();
-                ev.set_effect_sandbox_mode(0); // Off
-                ev.set_capability_tenant_id(22);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_effect_sandbox_mode(0); // Off
+            ev.set_capability_tenant_id(22);
 
-                const auto deny_before =
-                    g_capability_effect_metrics().capability_durable_grant_deny_total.load();
-                const auto allow_before =
-                    g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
-                // No TenantAdmin, no reason — Off path must not hard-gate.
-                ev.grant_effect_durable(/*tenant=*/22, "mut-2967-off", kEffectMutate, /*mid=*/33);
-                const auto deny_after =
-                    g_capability_effect_metrics().capability_durable_grant_deny_total.load();
-                const auto allow_after =
-                    g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
-                CHECK(deny_after == deny_before, "AC3: Off path does not deny (no hard gate)");
-                CHECK(allow_after == allow_before + 1,
-                      "AC3: Off path durable high-risk grant proceeds (zero-cost)");
-            }
+            const auto deny_before =
+                g_capability_effect_metrics().capability_durable_grant_deny_total.load();
+            const auto allow_before =
+                g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+            // No TenantAdmin, no reason — Off path must not hard-gate.
+            ev.grant_effect_durable(/*tenant=*/22, "mut-2967-off", kEffectMutate, /*mid=*/33);
+            const auto deny_after =
+                g_capability_effect_metrics().capability_durable_grant_deny_total.load();
+            const auto allow_after =
+                g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+            CHECK(deny_after == deny_before, "AC3: Off path does not deny (no hard gate)");
+            CHECK(allow_after == allow_before + 1,
+                  "AC3: Off path durable high-risk grant proceeds (zero-cost)");
+        }
 
-            // ── #2967 AC4: snapshot + posture additive keys ─────────────────────────
-            {
-                std::println("\n--- #2967 AC4: snapshot + posture additive keys ---");
-                reset_all();
-                set_mode(SandboxMode::Restricted);
-                aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // ── #2967 AC4: snapshot + posture additive keys ─────────────────────────
+        {
+            std::println("\n--- #2967 AC4: snapshot + posture additive keys ---");
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
 
-                CompilerService cs;
-                auto& ev = cs.evaluator();
-                ev.set_effect_sandbox_mode(1); // Restricted
-                ev.set_capability_tenant_id(23);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_effect_sandbox_mode(1); // Restricted
+            ev.set_capability_tenant_id(23);
 
-                // Trigger one deny (no TenantAdmin) + one allow (TenantAdmin + reason).
-                ev.grant_effect_durable(/*tenant=*/23, "mut-2967-q-deny", kEffectMutate, /*mid=*/34,
-                                        /*reason=*/"2967-ac4");
-                ev.grant_capability("tenant-admin");
-                ev.grant_effect_durable(/*tenant=*/23, "mut-2967-q-allow", kEffectMutate,
-                                        /*mid=*/35,
-                                        /*reason=*/"2967-ac4-allow");
+            // Trigger one deny (no TenantAdmin) + one allow (TenantAdmin + reason).
+            ev.grant_effect_durable(/*tenant=*/23, "mut-2967-q-deny", kEffectMutate, /*mid=*/34,
+                                    /*reason=*/"2967-ac4");
+            ev.grant_capability("tenant-admin");
+            ev.grant_effect_durable(/*tenant=*/23, "mut-2967-q-allow", kEffectMutate,
+                                    /*mid=*/35,
+                                    /*reason=*/"2967-ac4-allow");
 
-                const auto snap = snapshot_capability_effect_stats();
-                CHECK(snap.capability_durable_grant_deny == 1,
-                      "AC4: snapshot exposes capability_durable_grant_deny");
-                CHECK(snap.capability_durable_high_risk_grant == 1,
-                      "AC4: snapshot durable-high-risk-grant reflects 1 allow");
+            const auto snap = snapshot_capability_effect_stats();
+            CHECK(snap.capability_durable_grant_deny == 1,
+                  "AC4: snapshot exposes capability_durable_grant_deny");
+            CHECK(snap.capability_durable_high_risk_grant == 1,
+                  "AC4: snapshot durable-high-risk-grant reflects 1 allow");
 
-                const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
-                CHECK(posture.find("schema-2967") != std::string::npos,
-                      "AC4: posture prim cites schema-2967");
-                CHECK(posture.find("capability-durable-grant-deny-total") != std::string::npos,
-                      "AC4: posture prim exposes capability-durable-grant-deny-total");
-                CHECK(posture.find("durable-grant-tenant-admin-wired") != std::string::npos,
-                      "AC4: posture prim exposes durable-grant-tenant-admin-wired");
-                CHECK(posture.find("durable-grant-reason-wired") != std::string::npos,
-                      "AC4: posture prim exposes durable-grant-reason-wired");
-            }
+            const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+            CHECK(posture.find("schema-2967") != std::string::npos,
+                  "AC4: posture prim cites schema-2967");
+            CHECK(posture.find("capability-durable-grant-deny-total") != std::string::npos,
+                  "AC4: posture prim exposes capability-durable-grant-deny-total");
+            CHECK(posture.find("durable-grant-tenant-admin-wired") != std::string::npos,
+                  "AC4: posture prim exposes durable-grant-tenant-admin-wired");
+            CHECK(posture.find("durable-grant-reason-wired") != std::string::npos,
+                  "AC4: posture prim exposes durable-grant-reason-wired");
+        }
 
-            // ── #2967 AC5: source-cite + no invent + no docs/design/ ────────────────
-            {
-                std::println("\n--- #2967 AC5: source-cite + no invent + no docs/design/ ---");
-                const auto cap_model = read_file("src/core/capability_model.hh");
-                const auto sec = read_file("src/compiler/evaluator_security.cpp");
-                const auto ixx = read_file("src/compiler/evaluator.ixx");
-                const auto build = read_file("build.py");
+        // ── #2967 AC5: source-cite + no invent + no docs/design/ ────────────────
+        {
+            std::println("\n--- #2967 AC5: source-cite + no invent + no docs/design/ ---");
+            const auto cap_model = read_file("src/core/capability_model.hh");
+            const auto sec = read_file("src/compiler/evaluator_security.cpp");
+            const auto ixx = read_file("src/compiler/evaluator.ixx");
+            const auto build = read_file("build.py");
 
-                CHECK(cap_model.find("Issue #2967") != std::string::npos,
-                      "AC5: capability_model.hh cites Issue #2967");
-                CHECK(sec.find("Issue #2967") != std::string::npos,
-                      "AC5: evaluator_security.cpp cites Issue #2967");
-                CHECK(ixx.find("#2967") != std::string::npos, "AC5: evaluator.ixx cites #2967");
-                CHECK(build.find("check_capability_durable_gate_2967") != std::string::npos,
-                      "AC5: build.py wires #2967 linter");
+            CHECK(cap_model.find("Issue #2967") != std::string::npos,
+                  "AC5: capability_model.hh cites Issue #2967");
+            CHECK(sec.find("Issue #2967") != std::string::npos,
+                  "AC5: evaluator_security.cpp cites Issue #2967");
+            CHECK(ixx.find("#2967") != std::string::npos, "AC5: evaluator.ixx cites #2967");
+            CHECK(build.find("check_capability_durable_gate_2967") != std::string::npos,
+                  "AC5: build.py wires #2967 linter");
 
-                // No new test_issue_2967.cpp (per #81967).
-                std::ifstream invent_2967("tests/core/test_issue_2967.cpp");
-                if (!invent_2967.good())
-                    invent_2967.open("../tests/core/test_issue_2967.cpp");
-                CHECK(!invent_2967.good(),
-                      "AC5: no tests/core/test_issue_2967.cpp (forbidden per #81967)");
+            // No new test_issue_2967.cpp (per #81967).
+            std::ifstream invent_2967("tests/core/test_issue_2967.cpp");
+            if (!invent_2967.good())
+                invent_2967.open("../tests/core/test_issue_2967.cpp");
+            CHECK(!invent_2967.good(),
+                  "AC5: no tests/core/test_issue_2967.cpp (forbidden per #81967)");
 
-                // No docs/design/2967-* (per #1655).
-                const std::filesystem::path docs_design_2967 = "docs/design";
-                std::error_code ec2967;
-                if (std::filesystem::is_directory(docs_design_2967, ec2967)) {
-                    for (const auto& entry :
-                         std::filesystem::directory_iterator(docs_design_2967, ec2967)) {
-                        const auto name = entry.path().filename().string();
-                        CHECK(name.find("2967-") == std::string::npos,
-                              std::string("AC5: no docs/design/") + name +
-                                  " (forbidden per #1655)");
-                    }
+            // No docs/design/2967-* (per #1655).
+            const std::filesystem::path docs_design_2967 = "docs/design";
+            std::error_code ec2967;
+            if (std::filesystem::is_directory(docs_design_2967, ec2967)) {
+                for (const auto& entry :
+                     std::filesystem::directory_iterator(docs_design_2967, ec2967)) {
+                    const auto name = entry.path().filename().string();
+                    CHECK(name.find("2967-") == std::string::npos,
+                          std::string("AC5: no docs/design/") + name + " (forbidden per #1655)");
                 }
             }
-
-            std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
-            return g_failed == 0 ? 0 : 1;
         }
+
+        std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
+        return g_failed == 0 ? 0 : 1;
+    }
+}
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
-        int main() {
-            return run_test_capability_single_use_consume();
-        }
+int main() {
+    return run_test_capability_single_use_consume();
+}
 #endif

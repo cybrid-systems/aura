@@ -255,6 +255,9 @@ struct CapabilityEffectMetrics {
     // struct END (never insert mid-struct: stale module BMIs writing at wrong
     // offsets corrupt neighboring heap — see #2906).
     std::atomic<std::uint64_t> capability_grant_foreign_tenant_deny_total{0};
+    // Issue #3029: grant_macro_self_evo denied under Restricted/Strict
+    // without TenantAdmin. Appended at struct END (never insert mid-struct).
+    std::atomic<std::uint64_t> capability_macro_self_evo_grant_deny_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -850,6 +853,42 @@ struct CapabilityRegistry {
             prov.fiber_id = effect_fiber_id_or(0);
 
         std::lock_guard<std::mutex> lock(mtx);
+        // Issue #3029: production Restricted/Strict requires TenantAdmin
+        // (or "tenant-admin" / "capability") on the caller (default_tenant)
+        // or the target tenant. Soft/Off (sandbox_mode==Off) is zero-cost.
+        {
+            const auto mode = sandbox_mode.load(std::memory_order_acquire);
+            if (mode != EffectSandboxMode::Off) {
+                auto has_admin = [&](TenantId t) -> bool {
+                    auto it = by_tenant.find(t);
+                    if (it == by_tenant.end())
+                        return false;
+                    for (const auto& g : it->second) {
+                        if (g.revoked)
+                            continue;
+                        if ((g.effects & Effect::TenantAdmin) != Effect::None)
+                            return true;
+                        if (g.name == "tenant-admin" || g.name == "capability")
+                            return true;
+                    }
+                    return false;
+                };
+                const auto caller = default_tenant.load(std::memory_order_acquire);
+                if (!has_admin(caller) && !has_admin(tenant)) {
+                    auto& met = g_capability_effect_metrics();
+                    met.capability_macro_self_evo_grant_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    using ::aura::core::security_event::SecurityEventKind;
+                    using ::aura::core::security_event_wal::emit_security_event_durable;
+                    emit_security_event_durable(
+                        SecurityEventKind::EffectDeny, tenant, prov.mutation_id, prov.epoch,
+                        static_cast<std::uint16_t>(Effect::MacroSelfEvo), "macro-self-evo",
+                        "macro-self-evo-grant-needs-tenant-admin", /*denied=*/true,
+                        static_cast<std::int64_t>(prov.fiber_id));
+                    return;
+                }
+            }
+        }
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
             g.effects = g.effects | Effect::MacroSelfEvo;
@@ -1133,6 +1172,8 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_durable_grant_deny_total.store(0, std::memory_order_relaxed);
     // Issue #2969: registry write-fence foreign-tenant deny counter.
     m.capability_grant_foreign_tenant_deny_total.store(0, std::memory_order_relaxed);
+    // Issue #3029: grant_macro_self_evo TenantAdmin fence deny counter.
+    m.capability_macro_self_evo_grant_deny_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1187,6 +1228,8 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t capability_durable_grant_deny = 0;
     // Issue #2969: registry write-fence foreign-tenant deny.
     std::uint64_t capability_grant_foreign_tenant_deny = 0;
+    // Issue #3029: grant_macro_self_evo TenantAdmin fence deny.
+    std::uint64_t capability_macro_self_evo_grant_deny = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1257,6 +1300,9 @@ struct CapabilityEffectStatsSnapshot {
         // Issue #2969: registry write-fence foreign-tenant deny.
         s.capability_grant_foreign_tenant_deny =
             m.capability_grant_foreign_tenant_deny_total.load(std::memory_order_acquire);
+        // Issue #3029: grant_macro_self_evo TenantAdmin fence.
+        s.capability_macro_self_evo_grant_deny =
+            m.capability_macro_self_evo_grant_deny_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&

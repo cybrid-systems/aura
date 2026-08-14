@@ -102,6 +102,7 @@ extern "C" std::uint64_t aura_macro_clone_concurrent_fiber_total_v_read() noexce
 extern "C" std::uint64_t aura_macro_clone_same_flat_reject_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_steal_abort_total_v_read() noexcept;
 extern "C" std::uint64_t aura_macro_clone_last_reject_reason_v_read() noexcept;
+extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read() noexcept;
 extern "C" void aura_macro_hygiene_snapshot_metrics(void* metrics_ptr) noexcept;
 
 namespace aura::compiler::primitives_detail {
@@ -1217,6 +1218,16 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("explicit-depth-authority-wired", 1);
                 insert_kv("schema-3028", 3028);
                 insert_kv("issue-3028", 3028);
+                // Issue #3029: Agent-stable ceiling/depth/pass reasons.
+                insert_kv("last-hygiene-limit-reason",
+                          static_cast<std::int64_t>(aura_macro_hygiene_last_limit_reason_v_read()));
+                insert_kv("hygiene-limit-reason-none", 0);
+                insert_kv("hygiene-limit-reason-gensym-ceiling", 1);
+                insert_kv("hygiene-limit-reason-depth-limit", 2);
+                insert_kv("hygiene-limit-reason-pass-limit", 3);
+                insert_kv("hygiene-limit-reason-wired", 1);
+                insert_kv("schema-3029", 3029);
+                insert_kv("issue-3029", 3029);
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias

@@ -45,7 +45,7 @@ def main() -> int:
     if gms < 0:
         fails.append("AC1: grant_macro_self_evo definition missing")
     else:
-        body = cap[gms : gms + 2200]
+        body = cap[gms : gms + 5000]
         for needle in ("grant_epoch", "grant_fiber_id", "bound_mutation_id", "EffectProvenance"):
             if needle not in body:
                 fails.append(f"AC1: grant_macro_self_evo body missing {needle!r}")

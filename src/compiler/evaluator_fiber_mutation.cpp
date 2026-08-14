@@ -1912,6 +1912,17 @@ extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save() {
         ev->bump_macro_expand_checkpoint_save();
 }
 
+// Issue #3029: pass-limit refuse-partial — restore last panic/hygiene
+// checkpoint so a half-expanded tree is not left observable.
+extern "C" int aura_evaluator_try_restore_macro_expand_checkpoint(void) {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return 0;
+    return ev->restore_panic_checkpoint() ? 1 : 0;
+}
+
 // Issue #2810: resolve active Evaluator* for module-aware macro_expansion
 // dual-write (yield hook → query TLS → scheduler process-wide). Returns
 // nullptr when no Evaluator is wired (true module-unaware / early boot).
