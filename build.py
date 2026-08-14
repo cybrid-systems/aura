@@ -696,6 +696,22 @@ def cmd_lint():
             "Issue #2999 hold-budget dtor consume linter failed — run python3 scripts/coverage/checks/check_hold_budget_dtor_consume_2999.py"
         )
         return r
+    # Issue #3035: force unlock + dual-topology restore on hold-budget cancel
+    # for a non-yield body (#2999 residual). Wires
+    # check_hold_budget_forced_unlock_3035.py so the outermost dtor cancel
+    # consume forces success=false (even without a success flag) →
+    # abort_restore_dual_topology + dual canary + lock release + depth clear
+    # + residual close (same path as panic/abort); additive schema-3035.
+    hbu_script = COVERAGE_CHECKS / "check_hold_budget_forced_unlock_3035.py"
+    if not hbu_script.exists():
+        fail(f"missing {hbu_script}")
+        return 1
+    r = run([sys.executable, str(hbu_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3035 hold-budget forced unlock linter failed — run python3 scripts/coverage/checks/check_hold_budget_forced_unlock_3035.py"
+        )
+        return r
     # Issue #2933: first-class QueryResult binding (QueryEpoch + matches +
     # optional pin; :as-query-result opt-in; result-fresh?/matches).
     qrb_script = COVERAGE_CHECKS / "check_query_result_binding_2933.py"

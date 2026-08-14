@@ -1260,6 +1260,195 @@ static void ac2999_6_no_docs_design() {
           "AC6: no docs/design/2999-* per #1655");
 }
 
+// ── Issue #3035 AC1: production cancel consume → forced unlock + dual restore.
+static void ac3035_1_forced_unlock_dual_restore() {
+    std::println("\n--- #3035 AC1: forced unlock + dual restore on cancel ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mhb.find("Issue #3035") != std::string::npos, "AC1: mhb cites #3035");
+    CHECK(emb.find("Issue #3035") != std::string::npos, "AC1: emb cites #3035");
+    CHECK(emb.find("cancel_forced_fail") != std::string::npos,
+          "AC1: dtor forces fail on cancel consume");
+    CHECK(emb.find("forced_unlock_total") != std::string::npos, "AC1: forced-unlock counter");
+    CHECK(emb.find("abort_restore_dual_topology") != std::string::npos,
+          "AC1: dual restore path (same as panic/abort)");
+
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC1: reject_enabled under production");
+    aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+    const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "AC1: outermost Guard");
+            aura::gc_hooks::arm_mutation_hold_defer();
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "AC1: fiber current");
+            f->request_hold_budget_cancel();
+            // No check_gc_safepoint / yield — dtor must consume and force
+            // unlock + dual restore (non-yield body window).
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC1: fiber body ran");
+    CHECK(ok_flag.load() == 0, "AC1: cancel forced success=false");
+    CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() > unlock0,
+          "AC1: forced-unlock-total advanced");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0,
+          "AC1: residual defer drained after forced unlock");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3035 AC2: Soft / sandbox=off → observe only; no force-unlock.
+static void ac3035_2_soft_metric_only() {
+    std::println("\n--- #3035 AC2: Soft observe-only (no force) ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC2: reject_enabled false under Soft");
+    aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+    const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+    const auto obs0 = aura::compiler::mutation_hold_budget_soft_observe_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{0};
+    std::atomic<int> still_pending{0};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            auto* f = aura::serve::g_current_fiber;
+            if (f)
+                f->request_hold_budget_cancel();
+            ran.store(1, std::memory_order_relaxed);
+        }
+        auto* f = aura::serve::g_current_fiber;
+        still_pending.store((f && f->peek_hold_budget_cancel()) ? 1 : 0, std::memory_order_relaxed);
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC2: Soft fiber ran");
+    CHECK(ok_flag.load() == 1, "AC2: Soft does not force-fail");
+    CHECK(still_pending.load() == 1, "AC2: Soft leaves cancel pending");
+    CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == unlock0,
+          "AC2: forced-unlock not advanced");
+    CHECK(aura::compiler::mutation_hold_budget_soft_observe_total_v_read() > obs0,
+          "AC2: soft observe bumped");
+    ::unsetenv("AURA_SANDBOX");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3035 AC3: happy path (no cancel) → zero force-unlock cost.
+static void ac3035_3_happy_path_zero_force() {
+    std::println("\n--- #3035 AC3: happy path zero extra stores ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+    const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{0};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC3: happy fiber ran");
+    CHECK(ok_flag.load() == 1, "AC3: success preserved");
+    CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == unlock0,
+          "AC3: no force-unlock on happy path");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3035 AC4: additive query keys (schema-3035 / forced-unlock-total).
+static void ac3035_4_query_keys() {
+    std::println("\n--- #3035 AC4: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-unlock-total"),
+          "AC4: forced-unlock-total key");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-unlock-wired"), "AC4: wired key");
+    CHECK(source_has_key(q, "schema-3035"), "AC4: schema-3035");
+    CHECK(source_has_key(q, "issue-3035"), "AC4: issue-3035");
+    CHECK(source_has_key(q, "schema-2999"), "AC4: schema-2999 preserved");
+    CHECK(source_has_key(q, "schema-2932"), "AC4: schema-2932 preserved");
+    CHECK(source_has_key(q, "schema-2726"), "AC4: schema-2726 preserved");
+}
+
+// ── Issue #3035 AC5: source-cite + coverage linter.
+static void ac3035_5_source_and_linter() {
+    std::println("\n--- #3035 AC5: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_hold_budget_forced_unlock_3035.py");
+    CHECK(mhb.find("Issue #3035") != std::string::npos, "AC5: mhb cites #3035");
+    CHECK(mhb.find("kMutationHoldBudgetForcedUnlockIssue = 3035") != std::string::npos,
+          "AC5: mhb issue stamp");
+    CHECK(emb.find("Issue #3035") != std::string::npos, "AC5: emb cites #3035");
+    CHECK(emb.find("forced_unlock_total") != std::string::npos, "AC5: emb bumps forced-unlock");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-unlock-total"), "AC5: query key");
+    CHECK(t.find("ac3035_1_forced_unlock_dual_restore") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3035_2_soft_metric_only") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac3035_3_happy_path_zero_force") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac3035_4_query_keys") != std::string::npos, "AC5: AC4 test");
+    CHECK(chaos.find("ac3035_residual_force_unlock_cite") != std::string::npos,
+          "AC5: chaos residual cite");
+    CHECK(build.find("check_hold_budget_forced_unlock_3035") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("3035") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/serve/test_issue_3035.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
+// ── Issue #3035 AC6: no docs/design/3035-*.
+static void ac3035_6_no_docs_design() {
+    std::println("\n--- #3035 AC6: no docs/design/3035-* per #1655 ---");
+    CHECK(read_file("docs/design/3035-hold-budget-forced-unlock.md").empty(),
+          "AC6: no docs/design/3035-* per #1655");
+}
+
 // ── Issue #2754 AC1: equal keys + cone-/mask-disjoint ImpactScope →
 // concurrent admit (bump cone-admit counter). Key-disjoint fast path
 // preserved (#2724). regions_disjoint 4-arg + regions_cone_disjoint
@@ -1988,6 +2177,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2999_4_in_body_window_documented();
     ac2999_5_source_and_linter();
     ac2999_6_no_docs_design();
+    std::println("\n=== Issue #3035: force unlock + dual-topology restore on hold-budget cancel "
+                 "(#2999 residual) ===");
+    ac3035_1_forced_unlock_dual_restore();
+    ac3035_2_soft_metric_only();
+    ac3035_3_happy_path_zero_force();
+    ac3035_4_query_keys();
+    ac3035_5_source_and_linter();
+    ac3035_6_no_docs_design();
     std::println(
         "\n=== Issue #2754: region concurrent cone/ImpactScope mask-AND (#2724 residual) ===");
     ac2754_1_cone_disjoint_concurrent_admit();
