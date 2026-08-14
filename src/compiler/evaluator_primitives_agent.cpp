@@ -5195,6 +5195,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                           static_cast<std::int64_t>(os.agent_send_safe_handoff_required_total.load(
                               std::memory_order_relaxed)));
             }
+            // Issue #3013: raw agent_send unstamped held_ref → HandoffRequired
+            // (same typed fail as agent_send_safe). Reuses existing
+            // agent_send_safe_handoff_required_total / handoff_fail counters.
+            {
+                insert_kv("schema-3013", 3013);
+                insert_kv("issue-3013", 3013);
+                insert_kv("agent-send-handoff-required-wired", 1);
+            }
             insert_kv("recv-empty", static_cast<std::int64_t>(
                                         os.recv_empty_total.load(std::memory_order_relaxed)));
             insert_kv("join-ok",
