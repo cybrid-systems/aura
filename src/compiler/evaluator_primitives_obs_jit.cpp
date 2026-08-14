@@ -11695,6 +11695,11 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-2901", 2901);
                 insert_kv("schema-2954", 2954);
                 insert_kv("issue-2954", 2954);
+                // Issue #3038: post-clear re-sample under per-Fiber window.
+                // residual_rearm_race_total remains SSOT (no new race counter).
+                insert_kv("schema-3038", 3038);
+                insert_kv("issue-3038", 3038);
+                insert_kv("steal-safety-residual-rearm-resample-wired", 1);
                 // Issue #2957: residual arm (f) last LifetimeConsistencyProof.
                 insert_kv("schema-2957", 2957);
                 insert_kv("issue-2957", 2957);

@@ -1728,6 +1728,140 @@ static void ac3001_3_envframe_hook_and_2931_keys() {
     clear_steal_safety_transaction_for_test();
 }
 
+// ── Issue #3038: re-sample after clear under per-Fiber decision window ──
+static void ac3038_1_inject_rearm_after_clear_no_ticket() {
+    std::println("\n--- #3038 AC1: inject re-arm after in-window clear → RejectHard ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_between_clear_and_hard_and_hook;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::g_steal_safety_transaction_ok_total;
+    using aura::serve::g_steal_safety_transaction_reject_hard_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    Fiber f([] {});
+    constexpr std::uint64_t kPoisonTicket = 0x3038C1EAULL;
+    static thread_local Fiber* s_inject = nullptr;
+    s_inject = &f;
+    g_steal_safety_between_clear_and_hard_and_hook = []() noexcept {
+        if (s_inject)
+            s_inject->set_resume_safety_ticket(kPoisonTicket);
+    };
+    const auto race0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    const auto rej0 = g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed);
+    const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    CHECK(d == StealSafetyDecision::RejectHard, "3038 AC1: RejectHard on post-clear re-arm");
+    CHECK(g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed) > rej0,
+          "3038 AC1: reject_hard_total bumps");
+    CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+          "3038 AC1: ok_total unchanged");
+    CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) > race0,
+          "3038 AC1: residual_rearm_race_total SSOT bumps");
+    CHECK(f.has_resume_safety_ticket(), "3038 AC1: poison ticket still present");
+    CHECK(f.resume_safety_ticket() == kPoisonTicket, "3038 AC1: no Ok stamp over poison");
+    CHECK(!f.steal_decision_busy(), "3038 AC1: decision flag released");
+    g_steal_safety_between_clear_and_hard_and_hook = nullptr;
+    s_inject = nullptr;
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac3038_2_quiet_path_no_extra() {
+    std::println("\n--- #3038 AC2: quiet path zero extra work beyond current ---");
+    using aura::serve::clear_steal_safety_transaction_for_test;
+    using aura::serve::g_steal_safety_residual_rearm_race_total;
+    using aura::serve::steal_safety_transaction;
+    using aura::serve::StealSafetyDecision;
+
+    clear_steal_safety_transaction_for_test();
+    Fiber f([] {});
+    const auto race0 = g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed);
+    const auto d = steal_safety_transaction(&f);
+    if (d == StealSafetyDecision::Ok) {
+        CHECK(g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) == race0,
+              "3038 AC2: rearm_race quiet on happy path");
+        CHECK(f.has_resume_safety_ticket(), "3038 AC2: ticket stamped on Ok");
+    } else {
+        CHECK(d == StealSafetyDecision::RejectHard, "3038 AC2: non-Ok is RejectHard");
+    }
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(cpp.find("g_steal_safety_between_clear_and_hard_and_hook != nullptr") !=
+              std::string::npos,
+          "3038 AC2: hook is nullptr-gated (quiet: no call)");
+    CHECK(cpp.find("bump_counters=*/false") != std::string::npos ||
+              cpp.find("bump_counters = false") != std::string::npos ||
+              cpp.find("/*bump_counters=*/false") != std::string::npos,
+          "3038 AC2: quiet re-sample no extra atomics");
+    clear_steal_safety_transaction_for_test();
+}
+
+static void ac3038_3_same_invariant_table() {
+    std::println("\n--- #3038 AC3: same StealInvariant table, no new arms ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    CHECK(hdr.find("StealInvariant::Count = 7") != std::string::npos ||
+              hdr.find("Count = 7") != std::string::npos,
+          "3038 AC3: Count still 7 (no new arm)");
+    CHECK(cpp.find("evaluate_residual_hard_and_bits") != std::string::npos,
+          "3038 AC3: shared residual evaluator");
+    CHECK(cpp.find("StealInvariant::BoundarySafe") != std::string::npos, "3038 AC3: BoundarySafe");
+    CHECK(cpp.find("StealInvariant::LayoutStampMatch") != std::string::npos,
+          "3038 AC3: LayoutStamp");
+    CHECK(cpp.find("StealInvariant::TicketFresh") != std::string::npos, "3038 AC3: TicketFresh");
+    CHECK(cpp.find("StealInvariant::GcDeferClear") != std::string::npos, "3038 AC3: GcDefer");
+    CHECK(cpp.find("StealInvariant::EnvFrameOk") != std::string::npos, "3038 AC3: EnvFrame");
+    CHECK(cpp.find("StealInvariant::LifetimeProofOk") != std::string::npos,
+          "3038 AC3: LifetimeProof");
+}
+
+static void ac3038_4_ssot_counter() {
+    std::println("\n--- #3038 AC4: residual_rearm_race_total remains SSOT ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(hdr.find("g_steal_safety_residual_rearm_race_total") != std::string::npos,
+          "3038 AC4: existing race counter");
+    CHECK(hdr.find("kStealSafetyResidualRearmRaceIssue = 2901") != std::string::npos,
+          "3038 AC4: #2901 issue stamp kept");
+    CHECK(hdr.find("kStealSafetyResidualRearmResampleIssue = 3038") != std::string::npos,
+          "3038 AC4: #3038 issue stamp");
+    CHECK(hdr.find("same counter is SSOT") != std::string::npos ||
+              hdr.find("SSOT for the post-clear") != std::string::npos,
+          "3038 AC4: SSOT documented");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("steal-safety-residual-rearm-race-total") != std::string::npos,
+          "3038 AC4: query still exposes SSOT");
+    CHECK(q.find("schema-2901") != std::string::npos, "3038 AC4: schema-2901 preserved");
+    CHECK(q.find("schema-3038") != std::string::npos, "3038 AC4: schema-3038 wired");
+}
+
+static void ac3038_5_source_chaos_linter() {
+    std::println("\n--- #3038 AC5: extend residual_rearm / steal_complete + chaos hook ---");
+    const auto cpp = read_file("src/serve/steal_safety.cpp");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto chaos = read_file("tests/serve/test_chaos_steal_mutation_gc.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_steal_residual_rearm_resample_3038.py");
+    const auto build = read_file("build.py");
+    CHECK(cpp.find("Issue #3038") != std::string::npos, "3038 AC5: cpp cites #3038");
+    CHECK(cpp.find("try_begin_steal_decision") != std::string::npos ||
+              cpp.find("StealDecisionGuard") != std::string::npos,
+          "3038 AC5: per-Fiber window");
+    CHECK(t.find("ac3038_1_inject_rearm_after_clear_no_ticket") != std::string::npos,
+          "3038 AC5: AC1");
+    CHECK(t.find("ac2901_1_inject_rearm_rejects_no_ticket") != std::string::npos,
+          "3038 AC5: #2901 residual_rearm test kept");
+    CHECK(chaos.find("ac3038_forced_hook_rearm") != std::string::npos,
+          "3038 AC5: chaos forced hook");
+    CHECK(chaos.find("g_steal_safety_between_clear_and_hard_and_hook") != std::string::npos,
+          "3038 AC5: chaos hook symbol");
+    CHECK(!lint.empty() && lint.find("3038") != std::string::npos, "3038 AC5: linter");
+    CHECK(build.find("check_steal_residual_rearm_resample_3038") != std::string::npos,
+          "3038 AC5: build.py");
+    CHECK(read_file("docs/design/3038-steal-residual-rearm-resample.md").empty(),
+          "3038 AC5: no docs/design/");
+    CHECK(read_file("tests/serve/test_issue_3038.cpp").empty(), "3038 AC5: no invent test");
+}
+
 static void ac3001_5_source_and_linter() {
     std::println("\n--- #3001 AC5/AC6: source-cite + linter + no docs ---");
     const auto cpp = read_file("src/serve/steal_safety.cpp");
@@ -1828,10 +1962,16 @@ int run_test_steal_complete_restamp_txn() {
     ac3001_2_soft_metric_only();
     ac3001_3_envframe_hook_and_2931_keys();
     ac3001_5_source_and_linter();
+    std::println("\n=== Issue #3038: re-sample after clear under per-Fiber window ===");
+    ac3038_1_inject_rearm_after_clear_no_ticket();
+    ac3038_2_quiet_path_no_extra();
+    ac3038_3_same_invariant_table();
+    ac3038_4_ssot_counter();
+    ac3038_5_source_chaos_linter();
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#2727 + #2901 + #2929 + #2954 + #2957 + #3001: OK ({} passed)",
+                 "#2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038: OK ({} passed)",
                  g_passed);
     return 0;
 }
