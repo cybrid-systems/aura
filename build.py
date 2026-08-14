@@ -2249,6 +2249,20 @@ def cmd_lint():
             "Issue #2970 join wait-reclaimed linter failed — run python3 scripts/coverage/checks/check_join_wait_reclaimed_2970.py"
         )
         return r
+    # Issue #3012: production Reclaimed + unset wait_reclaimed_ms →
+    # must-wait-reclaimed fail-closed (no auto-wait inject). ~AgentHandle
+    # finishes cleanup if host never waited. Extends
+    # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655).
+    mwr_script = COVERAGE_CHECKS / "check_join_must_wait_reclaimed_3012.py"
+    if not mwr_script.exists():
+        fail(f"missing {mwr_script}")
+        return 1
+    r = run([sys.executable, str(mwr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3012 must-wait-reclaimed linter failed — run python3 scripts/coverage/checks/check_join_must_wait_reclaimed_3012.py"
+        )
+        return r
     # Issue #2884: agent_send_safe — unify C++/language handoff_ref path for
     # StableNodeRef payloads (close #2663 / #2848 contract split). Closes
     # the largest orch-layer contract split for StableNodeRef cross-fiber

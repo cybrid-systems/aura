@@ -43,12 +43,14 @@
 #include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
+#include "compiler/typed_mutation_audit.h"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -1274,6 +1276,144 @@ int run_test_join_drain_reclaim() {
             const auto build = read_file("build.py");
             CHECK(build.find("check_join_wait_reclaimed_2970") != std::string::npos,
                   "2970 AC6: build.py wires #2970 linter");
+        }
+    }
+
+    // ── #3012: production Reclaimed + unset wait → must-wait-reclaimed;
+    // dtor finishes cleanup so reservation cannot leak ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::AgentHandle;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::kProductionWaitReclaimedMsDefault;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        std::println("\n--- #3012 AC1: production Reclaimed unset wait → must-wait ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            const auto wait_before =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "3012 AC1: join returns Reclaimed");
+            CHECK(h.must_wait_reclaimed, "3012 AC1: production surfaces must_wait_reclaimed");
+            CHECK(!h.wait_reclaimed_used, "3012 AC1: no auto-wait injected");
+            CHECK(h.reserved_memory_bytes == 4096,
+                  "3012 AC1: reservation still held after join (#2661)");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) ==
+                      wait_before,
+                  "3012 AC1: wait_reclaimed_total not bumped (no extra wait)");
+            CHECK(kProductionWaitReclaimedMsDefault == 50,
+                  "3012 AC1: documented mild deadline is 50ms");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+            CHECK(h.reserved_memory_bytes == 0, "3012 AC1: dtor-path cleanup releases reservation");
+            CHECK(!h.reclaimed_deferred_cleanup, "3012 AC1: deferred flag cleared on dtor path");
+        }
+
+        std::println("\n--- #3012 AC2: Soft unset wait stays zero-cost ---");
+        {
+            apply_dev_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "3012 AC2: Soft Reclaimed");
+            CHECK(!h.must_wait_reclaimed, "3012 AC2: Soft does not set must_wait_reclaimed");
+            CHECK(h.reserved_memory_bytes == 2048, "3012 AC2: Soft #2661 deferral unchanged");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3012 AC3: still-running dtor still releases reservation ---");
+        {
+            apply_dev_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            {
+                AgentHandle h;
+                h.ok = true;
+                h.fiber = fiber_owned.get();
+                h.reserved_memory_bytes = 1024;
+                JoinPolicy policy{};
+                policy.primary_ms = 1;
+                policy.drain_ms = 0;
+                (void)join_agent(h, policy);
+                CHECK(h.reclaimed_deferred_cleanup, "3012 AC3: deferred still set");
+                // Body not Done — dtor must still drop reservation (no leak).
+            }
+            CHECK(true, "3012 AC3: still-running dtor released reservation without crash");
+        }
+
+        std::println("\n--- #3012 AC4/AC5: Aura hash + metrics reuse ---");
+        {
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            CHECK(agent.find("must-wait-reclaimed") != std::string::npos,
+                  "3012 AC4: Aura hash key must-wait-reclaimed");
+            CHECK(agent.find("schema-3012") != std::string::npos, "3012 AC4: schema-3012");
+            CHECK(agent.find("must-wait-reclaimed-wired") != std::string::npos,
+                  "3012 AC4: must-wait-reclaimed-wired");
+            CHECK(spawn.find("must_wait_reclaimed") != std::string::npos,
+                  "3012 AC4: AgentHandle must_wait_reclaimed");
+            CHECK(spawn.find("finish_reclaimed_cleanup_on_dtor") != std::string::npos,
+                  "3012 AC4: dtor finish helper");
+            CHECK(spawn.find("kProductionWaitReclaimedMsDefault") != std::string::npos,
+                  "3012 AC4: documented mild deadline constant");
+            CHECK(spawn.find("wait_reclaimed_total") != std::string::npos,
+                  "3012 AC5: reuse wait_reclaimed_* SSOT");
+            CHECK(agent.find("production-wait-reclaimed-ms-default") != std::string::npos,
+                  "3012 AC5: orch-module-stats cites default ms");
+        }
+
+        std::println("\n--- #3012 AC6: extend suite + no invent + no docs/design/ ---");
+        {
+            const auto t = read_file("tests/orch/test_join_drain_reclaim.cpp");
+            CHECK(t.find("#3012 AC1") != std::string::npos, "3012 AC6: this suite cites #3012");
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            CHECK(spawn.find("Issue #3012") != std::string::npos,
+                  "3012 AC6: agent_spawn.h cites #3012");
+            CHECK(agent.find("#3012") != std::string::npos,
+                  "3012 AC6: evaluator_primitives_agent.cpp cites #3012");
+            CHECK(read_file("docs/design/3012-must-wait-reclaimed.md").empty(),
+                  "3012 AC6: no docs/design/3012-* per #1655");
+            std::ifstream invent("tests/orch/test_issue_3012.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_3012.cpp");
+            CHECK(!invent.good(), "3012 AC6: no test_issue_3012.cpp per #81967");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_join_must_wait_reclaimed_3012") != std::string::npos,
+                  "3012 AC6: build.py wires #3012 linter");
         }
     }
 

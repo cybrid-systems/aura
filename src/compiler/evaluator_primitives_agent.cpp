@@ -3374,6 +3374,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("schema-2970", make_int(2970));
                 kv.emplace_back("issue-2970", make_int(2970));
                 kv.emplace_back("join-wait-reclaimed-wired", make_int(1));
+                // Issue #3012: production Reclaimed + unset wait → hosts
+                // fail-closed on must-wait-reclaimed. Soft stays 0.
+                kv.emplace_back("must-wait-reclaimed", make_bool(hp->must_wait_reclaimed));
+                kv.emplace_back("schema-3012", make_int(3012));
+                kv.emplace_back("issue-3012", make_int(3012));
+                kv.emplace_back("must-wait-reclaimed-wired", make_int(1));
             }
             return build_orch_hash(kv);
         });
@@ -5478,6 +5484,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2924", 2924);
             insert_kv("issue-2924", 2924);
             insert_kv("wait-reclaimed-wired", 1);
+            // Issue #3012: production must-wait-reclaimed fail-closed +
+            // dtor cleanup. Reuses wait_reclaimed_* counters (no new
+            // process-global registry / no intermediate metric keys).
+            insert_kv("schema-3012", 3012);
+            insert_kv("issue-3012", 3012);
+            insert_kv("must-wait-reclaimed-wired", 1);
+            insert_kv("production-wait-reclaimed-ms-default",
+                      static_cast<std::int64_t>(aura::orch::kProductionWaitReclaimedMsDefault));
             // Issue #2397: reclaimed vs body-still-running (additive; #2227 keys preserved).
             // Prefer Fiber process-truth gauges when available so serve-only and
             // orch-linked binaries agree; orch mirrors track the same transitions.
