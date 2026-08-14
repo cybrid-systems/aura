@@ -3488,6 +3488,11 @@ public:
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
+    // Issue #3003: query:type / get-inferred-type authority. False after
+    // Production / Full solve_delta that is not SOLVED (no half-solution).
+    [[nodiscard]] bool type_export_authoritative() const noexcept {
+        return type_export_authoritative_;
+    }
     // Issue #2308: opaque handle to the live commit TypeChecker (null
     // when no commit CS is currently live). Query primitives cast it
     // to TypeChecker* and call constraint_system() to build a
@@ -14758,6 +14763,8 @@ private:
     void* commit_type_checker_opaque_ = nullptr;
     std::uint64_t commit_tc_registry_gen_ = 0;
     bool commit_cs_live_ = false;
+    // Issue #3003: type-export authority (default true = pre-#3003).
+    bool type_export_authoritative_ = true;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
     void* commit_occurrence_vars_opaque_ = nullptr;
     void destroy_commit_type_checker() noexcept;

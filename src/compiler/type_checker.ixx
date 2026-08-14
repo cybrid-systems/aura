@@ -369,6 +369,13 @@ export enum class SolveResult : std::uint8_t {
     TIMEOUT = 2,
 };
 
+// Issue #3003: Production / Full solve_delta must fail-closed on any
+// result that is not SOLVED (TIMEOUT / CONFLICT / unresolved). Residual
+// of #2277/#2180: some TIMEOUT returns skipped escalate, and infer_flat
+// still wrote types + cleared dirty (half-solution authority). Soft
+// remains observe-only.
+inline constexpr int kDeltaTimeoutFailClosedIssue = 3003;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
@@ -589,6 +596,9 @@ private:
     std::size_t last_reverify_limit_used_ = kReverifyCleanScanLimit;
     // Issue #2107: one-shot test hook (see force_next_delta_timeout_for_test).
     bool force_next_delta_timeout_ = false;
+    // Issue #3003: force-timeout this call stays raw TIMEOUT so #2107/#2963
+    // can inject then escalate themselves. Natural TIMEOUT still escalates.
+    bool forced_timeout_this_call_ = false;
     // Issue #2900: Agent SolverBudget (default = current behavior).
     SolverBudget solver_budget_{};
     // Issue #2146: test-only reverify limit pin (0 = adaptive).
@@ -652,6 +662,10 @@ public:
     // accumulates into CompilerMetrics::delta_solve_time_us.
     // Splitting lets the wrapper use a uniform RAII-style
     // pattern without duplicating the early-return paths.
+    // Issue #3003: wrapper is the SSOT escalate for TIMEOUT
+    // paths impl returns raw (force-timeout / dirty==0 truncated
+    // reverify). Leftover-worklist escalate inside impl is
+    // skipped when production_escalated_ already flipped.
     SolveResult solve_delta_impl(std::vector<Constraint>* unresolved_out);
     // Issue #258: metrics pointer for solve_delta() timing.
     // Set by CompilerService::typecheck_full() and
@@ -1758,6 +1772,9 @@ public:
     // infer_flat_partial multi-node re-inference.
     bool incremental_delta_record_ = false;
     bool incremental_delta_solve_ = false;
+    // Issue #3003: last solve outcome + type-export authority.
+    SolveResult last_solve_status_ = SolveResult::SOLVED;
+    bool last_type_export_authoritative_ = true;
 
     // Issue #281: per-condition memoization for analyze_predicate_flat.
     // Keyed by cond NodeId + the epoch at which the predicate was
@@ -1891,6 +1908,13 @@ public:
     // FlatAST inference entries
     aura::core::TypeId infer_flat(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                   aura::ast::NodeId node, bool preserve_cs = false);
+    // Issue #3003: last solve_delta/solve outcome for this engine.
+    // last_type_export_authoritative is sticky-false within a
+    // preserve_cs multi-node partial (AND of per-node results).
+    [[nodiscard]] SolveResult last_solve_status() const noexcept { return last_solve_status_; }
+    [[nodiscard]] bool last_type_export_authoritative() const noexcept {
+        return last_type_export_authoritative_;
+    }
     void set_incremental_delta_mode(bool record, bool use_delta_solve) noexcept {
         incremental_delta_record_ = record;
         incremental_delta_solve_ = use_delta_solve;
@@ -2471,6 +2495,19 @@ export struct TypeChecker {
         return last_occurrence_vars_;
     }
     [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
+    // Issue #3003: last infer_flat / infer_flat_partial solve status
+    // and whether query:type / get-inferred-type may treat written
+    // types as authority. Production / Full + not SOLVED → false.
+    [[nodiscard]] SolveResult last_delta_solve_status() const noexcept {
+        return last_delta_solve_status_;
+    }
+    [[nodiscard]] bool last_type_export_authoritative() const noexcept {
+        return last_type_export_authoritative_;
+    }
+    void clear_last_type_export_authoritative() noexcept {
+        last_type_export_authoritative_ = false;
+        last_partial_cs_live_ = false;
+    }
     // Issue #2621: last infer_flat_partial cone soft/hard truncate fidelity.
     [[nodiscard]] bool last_partial_cone_truncated() const noexcept {
         return last_partial_cone_truncated_;
@@ -2973,6 +3010,9 @@ public:
     // Issue #2180: occurrence vars + CS-live flag for composite commit reuse.
     std::vector<aura::core::TypeId> last_occurrence_vars_;
     bool last_partial_cs_live_ = false;
+    // Issue #3003: last solve + type-export authority (Production fail-closed).
+    SolveResult last_delta_solve_status_ = SolveResult::SOLVED;
+    bool last_type_export_authoritative_ = true;
     // Issue #2621: last partial cone truncate (soft/hard overflow #2560).
     bool last_partial_cone_truncated_ = false;
     std::uint64_t last_partial_cone_dropped_ = 0;

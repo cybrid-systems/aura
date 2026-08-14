@@ -168,7 +168,8 @@ static void ac4_source_and_2028_lineage() {
           "force timeout path");
     CHECK(impl.find("solve_delta_unresolved_last_count") != std::string::npos, "metrics wire");
     CHECK(h.find("solve_delta_occurrence") != std::string::npos, "#2028 API retained");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("schema-2107") != std::string::npos, "query schema-2107");
     CHECK(q.find("solve-delta-unresolved-last-count") != std::string::npos, "query last-count");
 }
@@ -599,7 +600,8 @@ static void ac2318_source_cite_rows() {
     const auto tc = read_file("src/compiler/type_checker.ixx");
     const auto tci = read_file("src/compiler/type_checker_impl.cpp");
     const auto obm = read_file("src/compiler/observability_metrics.h");
-    const auto ep = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto ep = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     // #2318 cite in all modified files
     CHECK(tc.find("Issue #2318") != std::string::npos, "AC5: type_checker.ixx cites 2318");
     CHECK(tci.find("Issue #2318") != std::string::npos, "AC5: type_checker_impl.cpp cites 2318");
@@ -761,7 +763,8 @@ static void ac2900_5_source_cite() {
     const auto ixx = read_file("src/compiler/type_checker.ixx");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_solver_budget_2900.py");
     const auto build = read_file("build.py");
@@ -1185,7 +1188,8 @@ static void ac2913_5_source_cite() {
     const auto ixx = read_file("src/compiler/type_checker.ixx");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_solve_delta_locality_slo_2913.py");
     const auto build = read_file("build.py");
@@ -1469,6 +1473,143 @@ static void ac2994_7_source_cite() {
           "2994 AC7: no invent test_issue_2994");
 }
 
+// ── Issue #3003: Production solve_delta fail-closed (no half-solution) ──
+// AC1 production + TIMEOUT → escalate; not SOLVED → reject (no write/stash)
+// AC2 Soft TIMEOUT observe; fail-closed counters quiet
+// AC3 last_type_export_authoritative / stash-not-live
+// AC4 schema-3003 + #2277 lineage
+// AC5 source-cite + linter; no invent / no design
+
+static void ac3003_1_production_solve_delta_fail_closed() {
+    std::println("\n--- #3003 AC1: production TIMEOUT → escalate / reject ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    auto a = cs.fresh_var();
+    Constraint eq1;
+    eq1.kind = Constraint::EQUAL;
+    eq1.lhs = a;
+    eq1.rhs = reg.int_type();
+    Constraint eq2;
+    eq2.kind = Constraint::EQUAL;
+    eq2.lhs = a;
+    eq2.rhs = reg.bool_type();
+    cs.add_delta(std::move(eq1));
+    cs.add_delta(std::move(eq2));
+    cs.force_next_delta_timeout_for_test(true);
+    const auto reject0 = metrics.delta_timeout_reject_total.load();
+    auto injected = cs.solve_delta();
+    CHECK(injected == SolveResult::TIMEOUT, "3003 AC1: force-timeout hook stays raw TIMEOUT");
+    auto post = cs.escalate_if_production(injected);
+    CHECK(post != SolveResult::SOLVED, "3003 AC1: production escalate not SOLVED on conflict");
+    CHECK(metrics.delta_timeout_reject_total.load() > reject0,
+          "3003 AC1: reject total increments (no half-solution)");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3003_2_soft_timeout_observe() {
+    std::println("\n--- #3003 AC2: Soft TIMEOUT observe-only ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    auto a = cs.fresh_var();
+    auto b = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = a;
+    eq.rhs = b;
+    cs.add_delta(std::move(eq));
+    cs.force_next_delta_timeout_for_test(true);
+    const auto fc0 = g_typed_mutation_audit_counters.delta_timeout_fail_closed_total.load(
+        std::memory_order_relaxed);
+    const auto full0 = metrics.delta_timeout_full_solve_total.load();
+    auto post = cs.solve_delta();
+    CHECK(post == SolveResult::TIMEOUT, "3003 AC2: Soft keeps TIMEOUT");
+    CHECK(metrics.delta_timeout_full_solve_total.load() == full0,
+          "3003 AC2: Soft no full-solve escalate");
+    CHECK(g_typed_mutation_audit_counters.delta_timeout_fail_closed_total.load(
+              std::memory_order_relaxed) == fc0,
+          "3003 AC2: Soft no fail-closed bump");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3003_3_no_stash_no_authority() {
+    std::println("\n--- #3003 AC3: type-export authority + no live stash ---");
+    TypeRegistry reg;
+    aura::compiler::TypeChecker tc(reg);
+    CHECK(tc.last_type_export_authoritative(), "3003 AC3: default authoritative");
+    CHECK(tc.last_delta_solve_status() == SolveResult::SOLVED, "3003 AC3: default SOLVED");
+    tc.clear_last_type_export_authoritative();
+    CHECK(!tc.last_type_export_authoritative(), "3003 AC3: cleared authority");
+    CHECK(!tc.last_partial_cs_live(), "3003 AC3: stash not live after clear");
+    const auto gate = read_file("src/orch/security_schedule_gate.h");
+    (void)gate;
+    const auto tc_cpp = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(tc_cpp.find("last_type_export_authoritative") != std::string::npos,
+          "3003 AC3: stash / typecheck gate uses authority");
+    CHECK(tc_cpp.find("type_export_authoritative_") != std::string::npos,
+          "3003 AC3: Evaluator authority flag");
+}
+
+static void ac3003_4_schema_and_lineage() {
+    std::println("\n--- #3003 AC4: schema-3003 + #2277 lineage ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3003 AC4: warm");
+    CHECK(href(svc, "schema-3003") == 3003, "3003 AC4: schema-3003");
+    CHECK(href(svc, "issue-3003") == 3003, "3003 AC4: issue-3003");
+    CHECK(href(svc, "delta-timeout-fail-closed-wired") == 1, "3003 AC4: wired");
+    CHECK(href(svc, "delta-timeout-fail-closed-total") >= 0, "3003 AC4: fail-closed total");
+    CHECK(href(svc, "schema-2277") == 2277, "3003 AC4: schema-2277 preserved");
+    CHECK(href(svc, "delta-timeout-reject-total") >= 0, "3003 AC4: #2277 reject key");
+    CHECK(href(svc, "schema-2913") == 2913, "3003 AC4: schema-2913 preserved");
+}
+
+static void ac3003_5_source_and_linter() {
+    std::println("\n--- #3003 AC5: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_solve_delta_timeout_fail_closed_3003.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kDeltaTimeoutFailClosedIssue = 3003") != std::string::npos,
+          "3003 AC5: issue stamp");
+    CHECK(impl.find("!forced_timeout_this_call_") != std::string::npos,
+          "3003 AC5: wrapper SSOT escalate (skip force-timeout hook)");
+    CHECK(impl.find("do not write a type then mark dirty-clean") != std::string::npos ||
+              impl.find("I1/I5") != std::string::npos,
+          "3003 AC5: infer_flat no write on production fail");
+    CHECK(aud.find("delta_timeout_fail_closed_total") != std::string::npos, "3003 AC5: audit");
+    CHECK(ev.find("type_export_authoritative") != std::string::npos, "3003 AC5: Evaluator flag");
+    CHECK(t.find("ac3003_1_production_solve_delta_fail_closed") != std::string::npos,
+          "3003 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("3003") != std::string::npos, "3003 AC5: linter");
+    CHECK(build.find("check_solve_delta_timeout_fail_closed_3003") != std::string::npos,
+          "3003 AC5: build.py");
+    CHECK(read_file("docs/design/3003-solve-delta-timeout-fail-closed.md").empty(),
+          "3003 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3003.cpp").empty(),
+          "3003 AC5: no invent test_issue_3003");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -1518,6 +1659,12 @@ int run_test_solve_delta_unresolved_export() {
     ac2994_5_quiet_zero_cost();
     ac2994_6_is_default_and_schema();
     ac2994_7_source_cite();
+    std::println("\n=== Issue #3003: Production solve_delta fail-closed ===");
+    ac3003_1_production_solve_delta_fail_closed();
+    ac3003_2_soft_timeout_observe();
+    ac3003_3_no_stash_no_authority();
+    ac3003_4_schema_and_lineage();
+    ac3003_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
