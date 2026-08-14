@@ -30,7 +30,11 @@ using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::hot_update_registry;
 using aura::compiler::castop_density::apply_hard_policy;
+using aura::compiler::castop_density::g_hot_residual_density_keep_total;
+using aura::compiler::castop_density::g_hot_residual_nonidentity_total;
 using aura::compiler::castop_density::hard_env_enabled;
+using aura::compiler::castop_density::kCastOpHotResidualNonidentityIssue;
+using aura::compiler::castop_density::note_hot_residual_nonidentity_castops;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -154,6 +158,27 @@ static void ac5_query_and_source() {
     CHECK(hard_env_enabled(1), "AC5: hard_env_enabled(1) true");
 }
 
+// ── Issue #3046: residual non-identity CastOp density keep ──
+static void ac3046_residual_nonidentity() {
+    std::println("\n--- #3046: residual non-identity CastOp ---");
+    CHECK(kCastOpHotResidualNonidentityIssue == 3046, "3046: issue stamp");
+    CHECK(note_hot_residual_nonidentity_castops(0) == 0, "3046 AC3: Quiet leftover 0");
+    const auto n0 = g_hot_residual_nonidentity_total.load();
+    const auto k0 = g_hot_residual_density_keep_total.load();
+    CHECK(note_hot_residual_nonidentity_castops(2, nullptr, /*production=*/0) == 2,
+          "3046 AC3: Soft observe");
+    CHECK(g_hot_residual_nonidentity_total.load() == n0 + 2, "3046 AC3: Soft counter");
+    CHECK(g_hot_residual_density_keep_total.load() == k0, "3046 AC3: Soft no keep");
+    CHECK(note_hot_residual_nonidentity_castops(1, nullptr, /*production=*/1) == 1,
+          "3046 AC2: Production leftover");
+    CHECK(g_hot_residual_density_keep_total.load() > k0, "3046 AC2: density-policy keep");
+    CHECK(read_file("src/compiler/castop_density_policy.hh").find("#3046") != std::string::npos,
+          "3046: policy cites #3046");
+    CHECK(read_file("src/compiler/coercion_map.ixx").find("kCoercionBlameHfLagIssue") !=
+              std::string::npos,
+          "3046: coercion_map session face");
+}
+
 } // namespace
 
 int run_test_castop_density_hard() {
@@ -163,6 +188,7 @@ int run_test_castop_density_hard() {
     ac4_under_budget_zero_extra();
     ac2_hard_on_force_jit();
     ac3_mutate_still_succeeds();
+    ac3046_residual_nonidentity();
     std::println("\n=== #2358: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

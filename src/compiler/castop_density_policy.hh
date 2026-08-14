@@ -181,6 +181,34 @@ inline void reset_streak_for_test() noexcept {
     return g_gate_reject_total().load(std::memory_order_relaxed);
 }
 
+// Issue #3046: residual non-identity CastOp after DeadCoercion. Production
+// never silently JITs a leftover CastOp on a hot function — density-policy
+// keep + force-JIT/relower (metric). Soft observes only. Quiet leftover==0.
+inline constexpr int kCastOpHotResidualNonidentityIssue = 3046;
+inline std::atomic<std::uint64_t> g_hot_residual_nonidentity_total{0};
+inline std::atomic<std::uint64_t> g_hot_residual_density_keep_total{0};
+inline std::atomic<std::uint64_t> g_hot_residual_relower_total{0};
+inline std::atomic<std::uint32_t> g_hot_residual_nonidentity_wired{1};
+
+inline std::size_t note_hot_residual_nonidentity_castops(std::size_t leftover,
+                                                         CompilerMetrics* m = nullptr,
+                                                         int production_override = -1) noexcept {
+    if (leftover == 0)
+        return 0; // Quiet: identity path / no residual → zero extra
+    g_hot_residual_nonidentity_total.fetch_add(leftover, std::memory_order_relaxed);
+    const bool prod = production_path_enabled(production_override);
+    if (!prod)
+        return leftover; // Soft: observe only
+    g_hot_residual_density_keep_total.fetch_add(1, std::memory_order_relaxed);
+    g_hot_residual_relower_total.fetch_add(1, std::memory_order_relaxed);
+    if (m) {
+        m->castop_density_hard_action_total.fetch_add(1, std::memory_order_relaxed);
+        m->castop_density_hard_wired.store(1, std::memory_order_relaxed);
+    }
+    hot_update_registry().on_force_jit_for_reason(AotReloadFail::Other);
+    return leftover;
+}
+
 } // namespace aura::compiler::castop_density
 
 #endif // AURA_COMPILER_CASTOP_DENSITY_POLICY_HH

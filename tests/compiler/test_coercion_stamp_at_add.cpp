@@ -39,11 +39,13 @@ using aura::compiler::DeferredCoercionProvenanceIn;
 using aura::compiler::g_coercion_blame_chain_complete_total;
 using aura::compiler::g_coercion_blame_epoch_restamp_total;
 using aura::compiler::g_coercion_blame_missing_total;
+using aura::compiler::g_coercion_blame_session_force_total;
 using aura::compiler::g_coercion_provenance_chain_walk_total;
 using aura::compiler::g_coercion_provenance_complete_total;
 using aura::compiler::g_coercion_provenance_fast_path_total;
 using aura::compiler::g_coercion_provenance_miss_total;
 using aura::compiler::g_coercion_stamp_at_add_total;
+using aura::compiler::kCoercionBlameHfLagIssue;
 using aura::compiler::kCoercionBlameHfMutateIssue;
 using aura::compiler::reject_apply_on_provenance_miss;
 using aura::compiler::reset_coercion_provenance_miss_policy_for_test;
@@ -323,6 +325,88 @@ static void ac2991_5_source_linter() {
           "AC5: no docs/design/2991-* per #1655");
 }
 
+// ── Issue #3046: session-always-stamp + leftover epoch reject ──
+
+static void ac3046_1_session_always_stamps_weak() {
+    std::println("\n--- #3046 AC1: session mid overwrites weak leftover ---");
+    CHECK(kCoercionBlameHfLagIssue == 3046, "3046 AC1: issue stamp");
+    clear_coercion_active_mutation_context();
+    CoercionEntry e{};
+    e.original_child = 7;
+    e.source_mutation_id = 7; // weak forensic leftover
+    DeferredCoercionProvenanceIn in;
+    in.engine_active_mid = 42;
+    in.log_back_mid = 99;
+    const auto force0 = g_coercion_blame_session_force_total.load();
+    resolve_deferred_coercion_provenance(e, in);
+    CHECK(e.source_mutation_id == 42, "3046 AC1: session overwrites weak leftover");
+    CHECK(g_coercion_blame_session_force_total.load() > force0, "3046 AC1: session-force counter");
+}
+
+static void ac3046_2_stale_narrowing_rejected() {
+    std::println("\n--- #3046 AC2: leftover narrowing mid not used ---");
+    clear_coercion_active_mutation_context();
+    CoercionEntry e{};
+    e.source_mutation_id = 900; // prior-epoch leftover
+    DeferredCoercionProvenanceIn in;
+    in.explicit_mid = 3;
+    in.narrowing_mid = 900;
+    in.log_back_mid = 901;
+    resolve_deferred_coercion_provenance(e, in);
+    CHECK(e.source_mutation_id == 3, "3046 AC2: session wins over leftover narrowing/log");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("g_coercion_blame_stale_narrowing_drop_total") != std::string::npos,
+          "3046 AC2: leftover NarrowingRecord drop wired");
+}
+
+static void ac3046_3_quiet_no_session() {
+    std::println("\n--- #3046 AC3: Quiet no session → no force ---");
+    clear_coercion_active_mutation_context();
+    const auto force0 = g_coercion_blame_session_force_total.load();
+    CoercionEntry e{};
+    DeferredCoercionProvenanceIn in;
+    resolve_deferred_coercion_provenance(e, in);
+    CHECK(e.source_mutation_id == 0, "3046 AC3: mid stays 0");
+    CHECK(g_coercion_blame_session_force_total.load() == force0, "3046 AC3: no session-force");
+}
+
+static void ac3046_4_schema() {
+    std::println("\n--- #3046 AC4: schema-3046 ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3046") != std::string::npos, "3046 AC4: schema-3046");
+    CHECK(q.find("coercion-blame-session-force-total") != std::string::npos,
+          "3046 AC4: session-force key");
+    CHECK(q.find("schema-2991") != std::string::npos, "3046 AC4: lineage #2991");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
+    CHECK(href(cs, "schema-3046") == 3046, "3046 AC4: live schema-3046");
+    CHECK(href(cs, "issue-3046") == 3046, "3046 AC4: live issue-3046");
+    CHECK(href(cs, "coercion-blame-hf-lag-wired") == 1, "3046 AC4: wired");
+    CHECK(href(cs, "coercion-blame-session-force-total") >= 0, "3046 AC4: force queryable");
+    CHECK(href(cs, "schema-2991") == 2991, "3046 AC4: schema-2991 preserved");
+}
+
+static void ac3046_5_source_cites() {
+    std::println("\n--- #3046 AC5: source cites + no invent ---");
+    CHECK(read_file("src/compiler/coercion_map.ixx").find("kCoercionBlameHfLagIssue = 3046") !=
+              std::string::npos,
+          "3046 AC5: coercion_map");
+    CHECK(read_file("src/compiler/castop_density_policy.hh").find("#3046") != std::string::npos,
+          "3046 AC5: castop_density_policy");
+    CHECK(read_file("src/compiler/optimization_passes.ixx")
+                  .find("note_hot_residual_nonidentity_castops") != std::string::npos,
+          "3046 AC5: DCE sweep cites density keep");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_coercion_hf_lag_hot_residual_3046.py");
+    CHECK(!lint.empty() && lint.find("#3046") != std::string::npos, "3046 AC5: linter");
+    CHECK(read_file("build.py").find("check_coercion_hf_lag_hot_residual_3046") !=
+              std::string::npos,
+          "3046 AC5: build.py gate");
+    CHECK(read_file("tests/compiler/test_issue_3046.cpp").empty(),
+          "3046 AC5: no test_issue_3046.cpp");
+}
+
 } // namespace
 
 int run_test_coercion_stamp_at_add() {
@@ -337,6 +421,11 @@ int run_test_coercion_stamp_at_add() {
     ac2991_3_multi_mutate_loop();
     ac2991_4_metrics_schema();
     ac2991_5_source_linter();
+    ac3046_1_session_always_stamps_weak();
+    ac3046_2_stale_narrowing_rejected();
+    ac3046_3_quiet_no_session();
+    ac3046_4_schema();
+    ac3046_5_source_cites();
     if (g_failed)
         return 1;
     std::println("coercion stamp-at-add #2512: OK ({} passed)", g_passed);
