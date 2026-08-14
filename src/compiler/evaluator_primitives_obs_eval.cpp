@@ -16618,6 +16618,7 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
             std::uint64_t checks = 0, rejects = 0;
             std::uint64_t hw_p = 0, hw_s = 0, hw_v = 0;
             std::uint64_t lim_p = 0, lim_s = 0, lim_v = 0;
+            std::uint64_t lock_hold_ns = 0, lock_samples = 0, soft_hit = 0, bypass = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 checks = m->prim_heap_quota_checks_total.load(std::memory_order_relaxed);
@@ -16628,6 +16629,10 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                 lim_p = m->prim_heap_quota_pairs_limit.load(std::memory_order_relaxed);
                 lim_s = m->prim_heap_quota_strings_limit.load(std::memory_order_relaxed);
                 lim_v = m->prim_heap_quota_vectors_limit.load(std::memory_order_relaxed);
+                lock_hold_ns = m->list_constructor_lock_hold_ns.load(std::memory_order_relaxed);
+                lock_samples = m->list_constructor_lock_samples.load(std::memory_order_relaxed);
+                soft_hit = m->prim_heap_quota_soft_hit_total.load(std::memory_order_relaxed);
+                bypass = m->prim_heap_quota_unlimited_bypass_total.load(std::memory_order_relaxed);
             }
             // Prefer live Evaluator high-water when metrics lag (same process).
             hw_p = std::max(hw_p, ev.prim_heap_high_water(PrimHeapDim::Pairs));
@@ -16638,7 +16643,7 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
             lim_v = std::max(lim_v, ev.prim_heap_quota(PrimHeapDim::Vectors));
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(32);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -16676,6 +16681,11 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                 g_hash_tables.push_back(ht);
                 return make_hash(hidx);
             };
+            std::int64_t recommend = kPrimHeapRecommendOk;
+            if (lock_samples > 0 && (lock_hold_ns / lock_samples) > kPrimHeapLockHoldWarnNs)
+                recommend = kPrimHeapRecommendShrinkFanout;
+            else if (rejects > 0 || soft_hit > 0)
+                recommend = kPrimHeapRecommendRaiseQuota;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"checks-total", make_int(static_cast<std::int64_t>(checks))},
                 {"rejects-total", make_int(static_cast<std::int64_t>(rejects))},
@@ -16688,6 +16698,13 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                 {"pairs-size", make_int(static_cast<std::int64_t>(ev.pairs().size()))},
                 {"strings-size", make_int(static_cast<std::int64_t>(ev.string_heap().size()))},
                 {"schema", make_int(kPrimHeapQuotaSchema)},
+                // Issue #2997: lock SLO + soft-hit + recommend for Agent self-regulation.
+                {"lock-hold-ns", make_int(static_cast<std::int64_t>(lock_hold_ns))},
+                {"lock-samples", make_int(static_cast<std::int64_t>(lock_samples))},
+                {"soft-hit-total", make_int(static_cast<std::int64_t>(soft_hit))},
+                {"unlimited-bypass-total", make_int(static_cast<std::int64_t>(bypass))},
+                {"recommend", make_int(recommend)},
+                {"schema-2997", make_int(kPrimHeapQuotaHotPathIssue)},
             };
             return build_hash(kv);
         });

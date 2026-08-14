@@ -6899,6 +6899,42 @@ public:
             m->pair_alloc_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    inline void bump_pair_alloc_count_n(std::uint64_t n) noexcept {
+        if (n != 0 && compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->pair_alloc_total.fetch_add(n, std::memory_order_relaxed);
+        }
+    }
+
+    // Issue #2997: timed alloc_storage_lock_ for list-like constructors.
+    // Samples always; ns accumulated for Agent SLO (query:prim-heap-quota-stats).
+    inline void note_list_ctor_lock_hold_ns(std::uint64_t ns) noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->list_constructor_lock_hold_ns.fetch_add(ns, std::memory_order_relaxed);
+            m->list_constructor_lock_samples.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    struct ListCtorLockHold {
+        Evaluator& ev;
+        std::lock_guard<std::recursive_mutex> lk;
+        std::chrono::steady_clock::time_point t0;
+        explicit ListCtorLockHold(Evaluator& e) noexcept
+            : ev(e)
+            , lk(e.alloc_storage_lock_)
+            , t0(std::chrono::steady_clock::now()) {}
+        ~ListCtorLockHold() {
+            const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - t0)
+                                .count();
+            ev.note_list_ctor_lock_hold_ns(static_cast<std::uint64_t>(ns < 0 ? 0 : ns));
+        }
+        ListCtorLockHold(const ListCtorLockHold&) = delete;
+        ListCtorLockHold& operator=(const ListCtorLockHold&) = delete;
+    };
+    [[nodiscard]] bool prim_heap_quota_limited(PrimHeapDim dim) const noexcept {
+        return prim_heap_quota(dim) != 0;
+    }
 
     // Issue #2916: soft heap quota for pairs_ / string_heap_ / vector_heap_.
     // after_size = heap size *after* the planned growth. limit 0 = unlimited.
@@ -6924,10 +6960,17 @@ public:
                          : (dim == PrimHeapDim::Strings)
                              ? prim_heap_quota_strings_.load(std::memory_order_relaxed)
                              : prim_heap_quota_vectors_.load(std::memory_order_relaxed);
-        if (lim == 0)
+        if (lim == 0) {
+            // Issue #2997: unlimited — no checks/rejects atomics (fast-path).
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->prim_heap_quota_unlimited_bypass_total.fetch_add(1, std::memory_order_relaxed);
             return true;
-        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+        }
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->prim_heap_quota_checks_total.fetch_add(1, std::memory_order_relaxed);
+            if (after * 10000ull > lim * kPrimHeapQuotaSoftHitBp)
+                m->prim_heap_quota_soft_hit_total.fetch_add(1, std::memory_order_relaxed);
+        }
         if (after > lim) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->prim_heap_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);

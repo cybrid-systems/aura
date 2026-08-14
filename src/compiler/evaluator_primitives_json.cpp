@@ -5,7 +5,7 @@
 module;
 
 #include "runtime_shared.h"
-#include "prim_heap_quota.hh" // Issue #2916
+#include "prim_heap_quota.hh" // Issue #2916 / #2997
 #include "hash_meta.h"        // FNV constants (#901)
 
 #include <stdexcept> // Issue #2480: out_of_range / invalid_argument from stod/stoll
@@ -427,16 +427,20 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 }
                 if (pos < json_str.size() && json_str[pos] == ']')
                     pos++;
-                // Build list in correct order
-                // Issue #2916: soft pairs quota for JSON array materialization.
-                if (!ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + elems.size())) {
+                // Issue #2916 / #2997: lock only materialization; one allow + reserve.
+                Evaluator::ListCtorLockHold hold(ev);
+                const auto n = elems.size();
+                if ((ev.prim_heap_quota_limited(PrimHeapDim::Pairs) ||
+                     n > kPrimHeapUnlimitedSmall) &&
+                    !ev.prim_heap_quota_allow(PrimHeapDim::Pairs, pairs.size() + n)) {
                     return make_primitive_error(
                         string_heap, error_values,
                         std::string(prim_heap_quota_exceeded_msg(PrimHeapDim::Pairs)),
                         primitive_error_counter);
                 }
+                pairs.reserve(pairs.size() + n);
                 EvalValue result = make_void();
-                for (std::size_t i = elems.size(); i > 0; --i) {
+                for (std::size_t i = n; i > 0; --i) {
                     auto pid = pairs.size();
                     pairs.push_back({elems[i - 1], result});
                     result = types::make_pair(pid);
@@ -465,15 +469,38 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
 
             auto parse_object = [&]() -> EvalValue {
                 pos++; // skip {
-                // Issue #2481: start small but grow at 0.7 load factor — fixed
-                // capacity 8 silently dropped keys when the table filled.
+                // Issue #2997: snapshot k/v then reserve capacity (no parse-time grow).
+                std::vector<std::pair<EvalValue, EvalValue>> entries;
+                while (pos < json_str.size() && json_str[pos] != '}') {
+                    skip_ws();
+                    const auto before = pos;
+                    auto key_val = parse_string();
+                    skip_ws();
+                    if (pos < json_str.size() && json_str[pos] == ':')
+                        pos++;
+                    skip_ws();
+                    auto val = parse_value();
+                    // Advance on stuck parse to avoid infinite loops (#1715).
+                    if (pos == before) {
+                        if (pos < json_str.size())
+                            ++pos;
+                        else
+                            break;
+                    }
+                    entries.emplace_back(key_val, val);
+                    skip_ws();
+                    if (pos < json_str.size() && json_str[pos] == ',')
+                        pos++;
+                    skip_ws();
+                }
+                if (pos < json_str.size() && json_str[pos] == '}')
+                    pos++;
+
+                // Issue #2481: start create(8), grow to 0.7 load so keys are not dropped.
                 auto* ht = FlatHashTable::create(8);
                 if (!ht)
                     return make_void();
 
-                // Grow + rehash preserving fingerprint metadata and FNV key
-                // placement (cannot use FlatHashTable::rebuild — that path
-                // expects JIT HASH_OCCUPIED + splitmix64 key bits).
                 auto grow_object_table = [&]() -> bool {
                     auto old_cap = ht->capacity;
                     auto new_cap = old_cap * 2;
@@ -516,22 +543,16 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     return true;
                 };
 
-                while (pos < json_str.size() && json_str[pos] != '}') {
-                    skip_ws();
-                    const auto before = pos;
-                    auto key_val = parse_string();
-                    skip_ws();
-                    if (pos < json_str.size() && json_str[pos] == ':')
-                        pos++;
-                    skip_ws();
-                    auto val = parse_value();
-                    // Advance on stuck parse to avoid infinite loops (#1715).
-                    if (pos == before) {
-                        if (pos < json_str.size())
-                            ++pos;
-                        else
-                            break;
+                while (entries.size() * 10 > ht->capacity * 7) {
+                    if (!grow_object_table()) {
+                        FlatHashTable::destroy(ht);
+                        return make_primitive_error(string_heap, error_values,
+                                                    "json-parse: hash table grow failed",
+                                                    primitive_error_counter);
                     }
+                }
+
+                for (auto& [key_val, val] : entries) {
                     auto kh = json_object_key_hash(key_val);
                     auto fp = static_cast<std::uint8_t>((kh >> 57) & 0x7F) | 0x80;
                     if (fp == 0xFF)
@@ -542,7 +563,6 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     auto vals = ht->values();
                     auto cap = ht->capacity;
 
-                    // Check if key already exists (need string content comparison)
                     bool found = false;
                     for (std::size_t at = 0; at < cap; ++at) {
                         auto idx = ((kh >> 1) + at) & (cap - 1);
@@ -564,22 +584,43 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                             }
                         }
                     }
-                    if (!found) {
-                        // Issue #2481: grow before insert when load factor > 0.7
-                        // (same threshold as aura_hash_set).
-                        if (ht->size * 10 > ht->capacity * 7) {
-                            if (!grow_object_table()) {
-                                FlatHashTable::destroy(ht);
-                                return make_primitive_error(string_heap, error_values,
-                                                            "json-parse: hash table grow failed",
-                                                            primitive_error_counter);
-                            }
-                            meta = ht->metadata();
-                            keys = ht->keys();
-                            vals = ht->values();
-                            cap = ht->capacity;
+                    if (found)
+                        continue;
+                    if (ht->size * 10 > ht->capacity * 7) {
+                        if (!grow_object_table()) {
+                            FlatHashTable::destroy(ht);
+                            return make_primitive_error(string_heap, error_values,
+                                                        "json-parse: hash table grow failed",
+                                                        primitive_error_counter);
                         }
-                        bool inserted = false;
+                        meta = ht->metadata();
+                        keys = ht->keys();
+                        vals = ht->values();
+                        cap = ht->capacity;
+                    }
+                    bool inserted = false;
+                    for (std::size_t at = 0; at < cap; ++at) {
+                        auto idx = ((kh >> 1) + at) & (cap - 1);
+                        if (meta[idx] == 0xFF) {
+                            meta[idx] = fp;
+                            keys[idx] = key_val.val;
+                            vals[idx] = val.val;
+                            ht->size++;
+                            inserted = true;
+                            break;
+                        }
+                    }
+                    if (!inserted) {
+                        if (!grow_object_table()) {
+                            FlatHashTable::destroy(ht);
+                            return make_primitive_error(string_heap, error_values,
+                                                        "json-parse: hash table grow failed",
+                                                        primitive_error_counter);
+                        }
+                        meta = ht->metadata();
+                        keys = ht->keys();
+                        vals = ht->values();
+                        cap = ht->capacity;
                         for (std::size_t at = 0; at < cap; ++at) {
                             auto idx = ((kh >> 1) + at) & (cap - 1);
                             if (meta[idx] == 0xFF) {
@@ -591,44 +632,14 @@ void register_json_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                                 break;
                             }
                         }
-                        // Full table (collisions / all slots filled): force grow + retry.
                         if (!inserted) {
-                            if (!grow_object_table()) {
-                                FlatHashTable::destroy(ht);
-                                return make_primitive_error(string_heap, error_values,
-                                                            "json-parse: hash table grow failed",
-                                                            primitive_error_counter);
-                            }
-                            meta = ht->metadata();
-                            keys = ht->keys();
-                            vals = ht->values();
-                            cap = ht->capacity;
-                            for (std::size_t at = 0; at < cap; ++at) {
-                                auto idx = ((kh >> 1) + at) & (cap - 1);
-                                if (meta[idx] == 0xFF) {
-                                    meta[idx] = fp;
-                                    keys[idx] = key_val.val;
-                                    vals[idx] = val.val;
-                                    ht->size++;
-                                    inserted = true;
-                                    break;
-                                }
-                            }
-                            if (!inserted) {
-                                FlatHashTable::destroy(ht);
-                                return make_primitive_error(string_heap, error_values,
-                                                            "json-parse: hash table insert failed",
-                                                            primitive_error_counter);
-                            }
+                            FlatHashTable::destroy(ht);
+                            return make_primitive_error(string_heap, error_values,
+                                                        "json-parse: hash table insert failed",
+                                                        primitive_error_counter);
                         }
                     }
-                    skip_ws();
-                    if (pos < json_str.size() && json_str[pos] == ',')
-                        pos++;
-                    skip_ws();
                 }
-                if (pos < json_str.size() && json_str[pos] == '}')
-                    pos++;
                 auto hidx = g_hash_tables.size();
                 g_hash_tables.push_back(ht);
                 return types::make_hash(hidx);
