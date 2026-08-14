@@ -2161,7 +2161,7 @@ bool Evaluator::force_linear_rollback(std::string_view op,
         strict_mutate_hold_.store(1, std::memory_order_relaxed);
         ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
     }
-    const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+    const std::uint64_t mid = stamp_boundary_audit_mid();
     const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
     // Issue #2814 M7 audit: close audit_enforcement_gap_total.
     note_invariant_enforcement_ran(mid);
@@ -2239,7 +2239,7 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
             strict_mutate_hold_.store(1, std::memory_order_relaxed);
             ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
         }
-        const std::uint64_t mid0 = total_mutations_.load(std::memory_order_relaxed);
+        const std::uint64_t mid0 = stamp_boundary_audit_mid();
         const std::uint64_t epoch0 = defuse_version_.load(std::memory_order_relaxed);
         // Issue #2814 M7 audit: missing invariant enforcement link
         // before trail write. Call note_invariant_enforcement_ran(mid0)
@@ -2251,7 +2251,7 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
                                    static_cast<std::int64_t>(aura_fiber_current_id()), 0);
         return false;
     }
-    const std::uint64_t mid = total_mutations_.load(std::memory_order_relaxed);
+    const std::uint64_t mid = stamp_boundary_audit_mid();
     const std::uint64_t epoch = defuse_version_.load(std::memory_order_relaxed);
     InvariantAuditResult r{};
     // Always run type + linear suite under hard gate (not Sampled-gated).

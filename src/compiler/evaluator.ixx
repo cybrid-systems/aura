@@ -13207,6 +13207,10 @@ public:
         // Issue #1355: render hot-path lightweight checkpoint (no full
         // children snapshot; field mutations use FlatAST side log).
         bool lightweight = false;
+        // Issue #3016: audit join mid resolved at enter (resolve_audit_
+        // mutation_id). Trail / SE / grant / occurrence use this — not
+        // total_mutations_ (volume only). 0 = production refuse, no stamp.
+        std::uint64_t audit_mid = 0;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).

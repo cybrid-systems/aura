@@ -2234,6 +2234,37 @@ enum class EnforcementLinkKind : std::uint8_t { None = 0, Ran = 1, Skipped = 2 }
 inline thread_local std::uint64_t g_tls_enforcement_link_mid = 0;
 inline thread_local EnforcementLinkKind g_tls_enforcement_link = EnforcementLinkKind::None;
 
+// Issue #3016: mid resolved at outermost Guard enter. Trail / SE / grant
+// / occurrence / proof read this — never Evaluator::total_mutations_
+// (volume metric only). noted=true even when mid==0 (production refuse)
+// so stamp sites do not re-resolve and double-count refused_total.
+inline constexpr int kBoundaryAuditMidIssue = 3016;
+inline thread_local std::uint64_t g_tls_boundary_audit_mid = 0;
+inline thread_local bool g_tls_boundary_audit_noted = false;
+inline std::atomic<std::uint64_t> g_last_stamped_audit_mid{0};
+
+inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
+    g_tls_boundary_audit_mid = mid;
+    g_tls_boundary_audit_noted = true;
+}
+
+inline void clear_boundary_audit_mid() noexcept {
+    g_tls_boundary_audit_mid = 0;
+    g_tls_boundary_audit_noted = false;
+}
+
+[[nodiscard]] inline std::uint64_t current_boundary_audit_mid() noexcept {
+    return g_tls_boundary_audit_mid;
+}
+
+// Prefer enter-resolved TLS mid. 0 under production refuse is sticky.
+// If no boundary noted yet, resolve (Soft fallback / epoch).
+[[nodiscard]] inline std::uint64_t stamp_boundary_audit_mid() noexcept {
+    if (g_tls_boundary_audit_noted)
+        return g_tls_boundary_audit_mid;
+    return resolve_audit_mutation_id();
+}
+
 // Issue #2814: mark that post_mutation_invariant suite (or equivalent)
 // ran for this mutation_id. Call before/during record_invariant_audit_result.
 inline void note_invariant_enforcement_ran(std::uint64_t mutation_id) noexcept {
@@ -2291,8 +2322,13 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
                                        std::uint32_t target_node = 0,
                                        std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
                                        std::uint32_t affected_ref_count = 0) noexcept {
+    // Issue #3016 / #2836: never stamp mid=0 into the trail (production
+    // refuse / missing resolve). Soft resolve already produced a gen.
+    if (mutation_id == 0)
+        return;
     TypedMutationAuditEvent ev{};
     ev.mutation_id = mutation_id;
+    g_last_stamped_audit_mid.store(mutation_id, std::memory_order_relaxed);
     const auto seq =
         g_typed_mutation_audit_counters.trail_seq.fetch_add(1, std::memory_order_relaxed);
     ev.seq = seq;
@@ -2788,6 +2824,8 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 // unit tests keep the fast-iteration path; cold-start process default is
 // Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
+    g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    clear_boundary_audit_mid();
     g_typed_mutation_audit_counters.audits_considered.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.samples_skipped.store(0, std::memory_order_relaxed);
     // Issue #2818

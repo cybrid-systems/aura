@@ -2337,6 +2337,19 @@ def cmd_lint():
             "Issue #3015 scope bp inherit linter failed — run python3 scripts/coverage/checks/check_scope_bp_inherit_3015.py"
         )
         return r
+    # Issue #3016: MutationBoundary trail stamps resolve_audit_mutation_id
+    # (not total_mutations_). Residual of #2493/#2836. Extends
+    # test_audit_mutation_id_unify.cpp (#81967); no docs/design/ (#1655).
+    bam_script = COVERAGE_CHECKS / "check_boundary_audit_mid_3016.py"
+    if not bam_script.exists():
+        fail(f"missing {bam_script}")
+        return 1
+    r = run([sys.executable, str(bam_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3016 boundary audit mid linter failed — run python3 scripts/coverage/checks/check_boundary_audit_mid_3016.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
