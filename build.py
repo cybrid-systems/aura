@@ -2376,6 +2376,18 @@ def cmd_lint():
             "Issue #3018 engine:metrics hash overflow linter failed — run python3 scripts/coverage/checks/check_engine_metrics_hash_overflow_3018.py"
         )
         return r
+    # Issue #3019: unified restamp after boundary / abort / steal / densify.
+    # Extends test_restamp_sla_observability (#81967); no docs/design/ (#1655).
+    ur3019_script = COVERAGE_CHECKS / "check_unified_restamp_3019.py"
+    if not ur3019_script.exists():
+        fail(f"missing {ur3019_script}")
+        return 1
+    r = run([sys.executable, str(ur3019_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3019 unified restamp linter failed — run python3 scripts/coverage/checks/check_unified_restamp_3019.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -7845,6 +7857,31 @@ def cmd_engine_metrics_hash_overflow_3018():
     """
     print(f"{B}=== engine:metrics hash overflow (#3018) ==={N}")
     return cmd_engine_metrics_hash_overflow_3018_coverage()
+
+
+def cmd_unified_restamp_3019_coverage():
+    """Issue #3019: unified restamp after boundary/abort/steal/densify (static)."""
+    print(f"{B}=== unified restamp coverage (#3019) ==={N}")
+    script = COVERAGE_CHECKS / "check_unified_restamp_3019.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("unified restamp (#3019) coverage contract rows failed")
+        return 1
+    ok("unified restamp (#3019) coverage clean")
+    return 0
+
+
+def cmd_unified_restamp_3019():
+    """Issue #3019: unified restamp after boundary / abort / steal / densify.
+
+    Single entry; order node gen → stable-ref → LifetimePin. Soft steal/densify
+    skip extra walks. Budget exceed marks torn visible (schema-3019).
+    """
+    print(f"{B}=== unified restamp (#3019) ==={N}")
+    return cmd_unified_restamp_3019_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -14915,6 +14952,8 @@ def main():
         "moving-incomplete-remap-3017-coverage": cmd_moving_incomplete_remap_3017_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
+        "unified-restamp-3019": cmd_unified_restamp_3019,
+        "unified-restamp-3019-coverage": cmd_unified_restamp_3019_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

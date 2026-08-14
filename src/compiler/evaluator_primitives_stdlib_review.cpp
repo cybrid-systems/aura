@@ -1395,6 +1395,16 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                         "issue-3000",
                         make_int(aura::core::provenance::kQueryStableRefRestampLagIssue));
                     kv.emplace_back("query-stable-ref-restamp-lag-wired", make_int(1));
+                    // Issue #3019: unified restamp torn-visible (additive).
+                    kv.emplace_back("unified-restamp-torn-visible-total",
+                                    make_int(static_cast<std::int64_t>(
+                                        aura::ast::unified_restamp_torn_visible_total_v_read())));
+                    kv.emplace_back("unified-restamp-calls-total",
+                                    make_int(static_cast<std::int64_t>(
+                                        aura::ast::unified_restamp_calls_total_v_read())));
+                    kv.emplace_back("schema-3019", make_int(aura::ast::kUnifiedRestampIssue));
+                    kv.emplace_back("issue-3019", make_int(aura::ast::kUnifiedRestampIssue));
+                    kv.emplace_back("unified-restamp-wired", make_int(1));
                 }
             }
             return build_kv_hash(ev, kv);

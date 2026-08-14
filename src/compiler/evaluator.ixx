@@ -7714,6 +7714,25 @@ public:
     // Unified sweep: restamp_pinned_stable_refs + site counters.
     // Force-calls validate_or_refresh semantics via refresh_if_stale.
     std::size_t auto_restamp_pinned_stable_refs_at(StableRefRefreshSite site) noexcept;
+    // Issue #3019: single restamp entry after Boundary success / abort
+    // restore / steal complete / densify. Order is documented and
+    // fixed: node gen → StableNodeRef → LifetimePin. Soft steal/densify
+    // with no wrap pending and no budget pressure skips the extra
+    // node/pin walks (stable-only, same as pre-#3019).
+    enum class UnifiedRestampSite : std::uint8_t {
+        BoundarySuccess = 0,
+        AbortRestore = 1,
+        StealComplete = 2,
+        Densify = 3,
+    };
+    struct UnifiedRestampResult {
+        std::size_t nodes = 0;
+        std::size_t stables = 0;
+        std::size_t pins = 0;
+        bool budget_exceeded = false;
+        bool skipped_extra = false;
+    };
+    UnifiedRestampResult unified_restamp_after_boundary(UnifiedRestampSite site) noexcept;
     // Issue #1564: policy-gated ensure — full provenance validate/refresh.
     // Default AutoRefreshOnBoundary. Bumps process-wide provenance counters.
     // Returns NodeView on success; nullopt if hard-invalid (fail path).
@@ -14266,6 +14285,9 @@ public:
     // flatast_restamp.hh + evaluator_mutation_boundary.cpp exit path).
     // Issue #3000: export face is separate — query:*-stable must not
     // stamp a pre-mutate generation when last restamp exceeded.
+    // Issue #3019: outermost success/abort uses unified_restamp_after_boundary
+    // (node gen → stable-ref → LifetimePin). Steal complete / densify share
+    // the same entry. Soft steal/densify skip extra walks.
     class MutationBoundaryGuard {
         // Issue #241: did we capture a panic checkpoint at ctor?
         // (save_panic_checkpoint returns false if no source is loaded

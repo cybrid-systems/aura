@@ -883,8 +883,8 @@ void Evaluator::probe_linear_ownership_on_fiber_steal() noexcept {
             m->multifiber_safe_fallback_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1473 / #1497: unified auto-restamp at fiber-steal time.
-    (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::Steal);
+    // Issue #1473 / #1497 / #3019: unified restamp at fiber-steal time.
+    (void)unified_restamp_after_boundary(UnifiedRestampSite::StealComplete);
     // Note: GC root audit already ran inside enforce_linear_boundary_consistency.
 }
 
