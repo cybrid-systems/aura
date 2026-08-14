@@ -64,6 +64,7 @@ def main() -> int:
     test = _read("tests/core/test_moving_compact.cpp")
     bp = _read("build.py")
     mb = _read("src/compiler/evaluator_mutation_boundary.cpp")
+    fm = _read("src/compiler/evaluator_fiber_mutation.cpp")
     gc = _read("src/compiler/evaluator_gc.cpp")
 
     must("Issue #2375" in pin, "AC6: lifetime_pin.hh cites #2375")
@@ -86,14 +87,14 @@ def main() -> int:
         )
 
     # Production callers (arg may be `0` or `std::uint64_t{0}`).
+    # Issue #3019: boundary/steal/densify restamp goes through
+    # unified_restamp_after_boundary in fiber_mutation (still arena_id==0).
+    restamp_all_zero = re.compile(r"restamp_all_pins_for_arena\s*\(\s*(?:std::uint64_t\s*\{\s*0\s*\}|0)\s*,")
     must(
-        re.search(
-            r"restamp_all_pins_for_arena\s*\(\s*(?:std::uint64_t\s*\{\s*0\s*\}|0)\s*,",
-            mb,
-        )
-        is not None,
+        restamp_all_zero.search(mb) is not None or restamp_all_zero.search(fm) is not None,
         "AC5: boundary dtor restamp_all arena_id==0",
     )
+    must("unified_restamp_after_boundary" in mb, "AC5: boundary dtor uses unified restamp")
     must("invalidate_all_pins_for_arena(0)" in gc, "AC5: GC invalidate_all(0)")
 
     # Unit test
