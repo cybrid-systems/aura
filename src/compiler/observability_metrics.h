@@ -8610,7 +8610,11 @@ struct CompilerMetrics {
     // Issue #2959: dual topology restore seal (children_+parent_ under structural exclusive).
     std::atomic<std::uint64_t> topology_dual_restore_total{0};               // #2959
     std::atomic<std::uint64_t> topology_dual_restore_inconsistency_total{0}; // #2959 canary
-    std::atomic<std::uint64_t> generation_auto_restamp_on_wrap{0};           // #1282
+    // Issue #3033: dual-topology abort force-dirties the IR cache (dirty +
+    // zero version stamps) so should_relower is forced true — silent-stale
+    // residual after abort_restore_dual_topology.
+    std::atomic<std::uint64_t> abort_ir_cache_force_dirty_total{0};  // #3033
+    std::atomic<std::uint64_t> generation_auto_restamp_on_wrap{0};   // #1282
     std::atomic<std::uint64_t> generation_wrap_restamp_policy{1};    // #1282 auto-restamp on
     std::atomic<std::uint64_t> provenance_boundary_hooks_active{1};  // #1283
     std::atomic<std::uint64_t> provenance_boundary_capture_count{0}; // #1283

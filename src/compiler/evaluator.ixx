@@ -2534,6 +2534,13 @@ public:
     void set_mark_all_defines_dirty_fn(std::function<void()> fn) {
         mark_all_defines_dirty_fn_ = std::move(fn);
     }
+    // Issue #3033: dual-topology abort hook — after abort_restore_dual_topology
+    // the IR cache version stamps can still point at intermediate/pre-abort
+    // state, so CompilerService force-dirties + zero-restamps every cached
+    // entry (should_relower forced true). No-op when unset (standalone eval).
+    void set_abort_ir_cache_force_dirty_fn(std::function<void()> fn) {
+        abort_ir_cache_force_dirty_fn_ = std::move(fn);
+    }
     // Issue #2730: keep function_sources_ in sync with rebind/set-body.
     void
     set_update_function_source_fn(std::function<void(const std::string&, const std::string&)> fn) {
@@ -5797,6 +5804,9 @@ private:
     // update_function_source_fn_(name,src) → function_sources_ SSOT (#2730)
     std::function<void(const std::string&)> mark_define_dirty_fn_ = nullptr;
     std::function<void()> mark_all_defines_dirty_fn_ = nullptr;
+    // Issue #3033: dual-topology abort → force-dirty IR cache (set by
+    // CompilerService on init; null when standalone).
+    std::function<void()> abort_ir_cache_force_dirty_fn_ = nullptr;
     std::function<void(const std::string&)> invalidate_function_fn_ = nullptr;
     std::function<void(aura::ast::NodeId)> define_impact_scope_fn_ = nullptr;
     std::function<void(const std::string&, const std::string&)> update_function_source_fn_ =

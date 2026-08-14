@@ -168,6 +168,34 @@ static void run_matrix(CompilerService& cs) {
     auto ags = cs.eval("(stats:get \"ast:generation-stats\")");
     CHECK(mls && is_int(*mls), "mutation-log-stats regression");
     CHECK(ags.has_value(), "ast:generation-stats regression");
+
+    std::println("\n--- AC8: dual-topology abort force-dirties IR cache (#3033) ---");
+    // Issue #3033: abort_restore_dual_topology leaves CacheEntryVersionStamp
+    // pointing at intermediate/pre-abort state → should_relower could return
+    // false and silently serve stale IR. After abort, every cached entry must
+    // be dirty + zero-restamped and abort_ir_cache_force_dirty_total bumps.
+    CHECK(cs.eval("(set-code \"(define f3033 (+ 1 2))\")").has_value(), "AC8: define setup");
+    CHECK(cs.eval("(eval-current)").has_value(), "AC8: eval to populate cache");
+    auto& ev = cs.evaluator();
+    const auto* entry = cs.get_define_v2("f3033");
+    CHECK(entry != nullptr, "AC8: cache entry exists");
+    const auto dirty_before = entry ? entry->dirty : false;
+    const auto force0 =
+        cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
+    ev.enter_mutation_boundary();
+    (void)cs.eval("(mutate:rebind \"f3033\" \"9\")");
+    ev.exit_mutation_boundary(false); // abort → force-dirty hook fires
+    const auto force1 =
+        cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
+    const auto* after = cs.get_define_v2("f3033");
+    CHECK(force1 > force0, "AC8: abort_ir_cache_force_dirty_total bumped");
+    CHECK(after != nullptr && after->dirty, "AC8: cache entry forced dirty after abort");
+    // Zero stamps → should_relower forced true on every domain.
+    if (after) {
+        CHECK(after->version_stamp_.mutation_count == 0, "AC8: mutation stamp zeroed");
+        CHECK(after->version_stamp_.bridge_epoch == 0, "AC8: bridge stamp zeroed");
+    }
+    (void)dirty_before;
 }
 
 } // namespace aura_400_detail
