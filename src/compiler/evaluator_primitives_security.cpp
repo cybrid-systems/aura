@@ -751,6 +751,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-durable-grant-deny-total",
                           static_cast<std::int64_t>(snap.capability_durable_grant_deny));
             }
+            // Issue #3029: grant_macro_self_evo TenantAdmin fence.
+            {
+                insert_kv("schema-3029", 3029);
+                insert_kv("issue-3029", 3029);
+                insert_kv("macro-self-evo-grant-tenant-admin-wired", 1);
+                insert_kv("capability-macro-self-evo-grant-deny-total",
+                          static_cast<std::int64_t>(snap.capability_macro_self_evo_grant_deny));
+            }
             // Issue #2968: cross-tenant grant write path gate —
             // grant_cross_tenant_access + foreign-tenant grant_effect_
             // capability require TenantAdmin under production. Deny → SE

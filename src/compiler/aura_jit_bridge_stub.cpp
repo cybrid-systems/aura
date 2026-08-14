@@ -564,6 +564,16 @@ aura_macro_clone_last_reject_reason_v_read(void) noexcept {
 }
 extern "C" __attribute__((weak)) void
 aura_test_reset_macro_clone_same_flat_reject_for_test(void) noexcept {}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_macro_hygiene_last_limit_reason_v_read(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) const char*
+aura_macro_hygiene_last_limit_reason_string(void) noexcept {
+    return "";
+}
+extern "C" __attribute__((weak)) void
+aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {}
 extern "C" __attribute__((weak)) void
 aura_residual_live_closure_remount_tick(std::uint64_t /*budget*/) {}
 extern "C" __attribute__((weak)) void

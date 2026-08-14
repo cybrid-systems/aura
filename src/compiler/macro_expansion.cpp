@@ -20,6 +20,9 @@ import aura.compiler.evaluator_pure;
 
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
+extern "C" __attribute__((weak)) int aura_evaluator_try_restore_macro_expand_checkpoint(void) {
+    return 0;
+}
 extern "C" std::uint64_t aura_fiber_current_id();
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker);
 // Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
@@ -273,11 +276,14 @@ bool set_hygiene_pass_cap(int n) noexcept {
     return true;
 }
 
+extern std::atomic<std::uint8_t> g_macro_hygiene_last_limit_reason;
+
 void reset_hygiene_runtime_caps_for_test() noexcept {
     g_runtime_hygiene_depth_cap.store(MAX_HYGIENE_DEPTH, std::memory_order_release);
     g_runtime_hygiene_pass_cap.store(0, std::memory_order_release);
     // Keep env_loaded=true so tests control caps without env re-apply.
     g_runtime_caps_env_loaded.store(true, std::memory_order_release);
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
 }
 
 // Combine hard ceiling + process runtime + optional capability depth.
@@ -342,6 +348,9 @@ std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total{0};
 // Issue #2804: clone-walk rename_binding ceiling denials (distinct from
 // pre-scan rename_binding_pre bumps of gensym_map_size_exceeded_total).
 std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total{0};
+// Issue #3029: last Agent-visible limit reason (not a new hot-path metric).
+// 0=none 1=hygiene-gensym-ceiling 2=hygiene-depth-limit 3=hygiene-pass-limit
+std::atomic<std::uint8_t> g_macro_hygiene_last_limit_reason{0};
 // Issue #2811: rename_binding_pre ceiling denials that correctly leave
 // hyg_ctr unadvanced (pre-#2811: hyg_ctr++ ran before the size check →
 // serial drift + missing name_map entry). Counts prevented-drift events.
@@ -817,6 +826,25 @@ extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noex
     g_macro_clone_same_flat_reject_total.store(0, std::memory_order_relaxed);
     g_macro_clone_steal_abort_total.store(0, std::memory_order_relaxed);
     g_macro_clone_last_reject_reason.store(0, std::memory_order_relaxed);
+}
+// Issue #3029: Agent-stable hygiene limit reason (ceiling / depth / pass).
+extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexcept {
+    return g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+}
+extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept {
+    switch (g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)) {
+        case 1:
+            return "hygiene-gensym-ceiling";
+        case 2:
+            return "hygiene-depth-limit";
+        case 3:
+            return "hygiene-pass-limit";
+        default:
+            return "";
+    }
+}
+extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
 }
 // Issue #2807: unquote-splicing boundary recognition metric.
 extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept {
@@ -1349,6 +1377,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     else if (depth_limit <= 0)
         depth_limit = combine_depth_limit(0);
     if (hygiene_depth >= depth_limit) {
+        g_macro_hygiene_last_limit_reason.store(2, std::memory_order_relaxed);
         if (!s_warned_this_call) {
             s_warned_this_call = true;
             // Issue #1247: include macro-origin provenance in the diagnostic
@@ -1547,6 +1576,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // unmapped binding.
         const auto gensym_cap = effective_max_gensym_map_size();
         if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
+            g_macro_hygiene_last_limit_reason.store(1, std::memory_order_relaxed);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
@@ -1710,6 +1740,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // without this check max_gensym_map_size is only half-enforced.
         const auto gensym_cap = effective_max_gensym_map_size();
         if (gensym_cap > 0 && name_map->size() >= gensym_cap) {
+            g_macro_hygiene_last_limit_reason.store(1, std::memory_order_relaxed);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
@@ -2122,8 +2153,13 @@ aura::ast::NodeId expand_inner_macros(
     const std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
                              std::equal_to<>>& macros) {
     using namespace aura::ast;
-    if (root == NULL_NODE || depth >= max_depth)
+    if (root == NULL_NODE)
         return root;
+    if (depth >= max_depth) {
+        // Issue #3029: pass/depth of inner expand — stable Agent reason.
+        g_macro_hygiene_last_limit_reason.store(3, std::memory_order_relaxed);
+        return root;
+    }
     // Issue #158: unwrap qq-built cons chains whose head is a
     // known macro. Without this, `(bar ,x)` inside a macro body
     // stays as `(cons (quote bar) ...)` after expand_qq, and the
@@ -2346,6 +2382,7 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                                                aura::ast::StringPool& pool, aura::ast::NodeId root,
                                                int max_passes) {
     using namespace aura::ast;
+    const auto original_root = root;
     // Issue #2019: track whether any pass expanded so we restamp
     // MacroIntroduced gens once before return (FlatAST consistency).
     bool any_expand = false;
@@ -2457,15 +2494,18 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         any_expand = true;
         root = new_root;
     }
-    // Issue #121: hit the pass limit with macros still in the
-    // tree. Emit a warning so the user knows the result is
-    // partial. This is the user-facing equivalent of the
-    // solver TIMEOUT pattern from Issue #118.
+    // Issue #121 / #3029: pass limit with macros still in the tree.
+    // Stable Agent reason + refuse partial write when a checkpoint exists.
+    g_macro_hygiene_last_limit_reason.store(3, std::memory_order_relaxed);
     if (root != NULL_NODE) {
         std::println(std::cerr,
                      "warning: macro_expand_all hit pass limit ({}); "
-                     "the result may have unexpanded macro calls",
+                     "hygiene-pass-limit (half-expand refused when checkpointed)",
                      max_passes);
+    }
+    if (aura_evaluator_mutation_boundary_depth() > 0 &&
+        aura_evaluator_try_restore_macro_expand_checkpoint() != 0) {
+        return original_root;
     }
     // Issue #2019: restamp after multi-pass expand (pass-limit exit).
     if (any_expand)

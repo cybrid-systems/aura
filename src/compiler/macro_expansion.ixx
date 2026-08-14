@@ -136,6 +136,8 @@ export extern std::atomic<std::uint64_t> g_clone_macro_body_concurrent_top_level
 export extern std::atomic<std::uint64_t> g_macro_clone_same_flat_reject_total;
 export extern std::atomic<std::uint64_t> g_macro_clone_steal_abort_total;
 export extern std::atomic<std::uint8_t> g_macro_clone_last_reject_reason;
+// Issue #3029: last ceiling/depth/pass limit reason (Agent-stable).
+export extern std::atomic<std::uint8_t> g_macro_hygiene_last_limit_reason;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).
 export extern std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total;
 // Issue #2808: stamp_rest_param_hygiene MacroIntroduced marker set / skipped.

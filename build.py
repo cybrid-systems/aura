@@ -1587,6 +1587,19 @@ def cmd_lint():
             "Issue #3028 TLS depth / same-FlatAST clone linter failed — run python3 scripts/coverage/checks/check_tls_depth_same_flat_clone_3028.py"
         )
         return r
+    # Issue #3029: grant_macro_self_evo TenantAdmin fence + stable limit reasons.
+    # Extends test_grant_macro_self_evo_stamp + test_macro_hygiene_limits
+    # (#81967); no docs/design.
+    msef_script = COVERAGE_CHECKS / "check_macro_self_evo_grant_fence_3029.py"
+    if not msef_script.exists():
+        fail(f"missing {msef_script}")
+        return 1
+    r = run([sys.executable, str(msef_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3029 grant fence / limit-reason linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_grant_fence_3029.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -11830,6 +11843,27 @@ def cmd_tls_depth_same_flat_clone_3028():
     return cmd_tls_depth_same_flat_clone_3028_coverage()
 
 
+def cmd_macro_self_evo_grant_fence_3029_coverage():
+    """Issue #3029: grant_macro_self_evo TenantAdmin fence (static)."""
+    print(f"{B}=== MacroSelfEvo grant fence coverage (#3029) ==={N}")
+    script = COVERAGE_CHECKS / "check_macro_self_evo_grant_fence_3029.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("MacroSelfEvo grant fence (#3029) coverage contract rows failed")
+        return 1
+    ok("MacroSelfEvo grant fence (#3029) coverage clean")
+    return 0
+
+
+def cmd_macro_self_evo_grant_fence_3029():
+    """Issue #3029: grant_macro_self_evo TenantAdmin fence + stable limit reasons."""
+    print(f"{B}=== MacroSelfEvo grant fence (#3029) ==={N}")
+    return cmd_macro_self_evo_grant_fence_3029_coverage()
+
+
 def cmd_steal_residual_rearm_race_2901_coverage():
     """Issue #2901: residual re-arm race window in steal_safety_transaction.
 
@@ -15343,6 +15377,8 @@ def main():
         "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
         "tls-depth-same-flat-clone-3028": cmd_tls_depth_same_flat_clone_3028,
         "tls-depth-same-flat-clone-3028-coverage": cmd_tls_depth_same_flat_clone_3028_coverage,
+        "macro-self-evo-grant-fence-3029": cmd_macro_self_evo_grant_fence_3029,
+        "macro-self-evo-grant-fence-3029-coverage": cmd_macro_self_evo_grant_fence_3029_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

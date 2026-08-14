@@ -84,8 +84,8 @@ int run_test_hygiene_diagnostic() {
     // ── AC6: source contract ──
     {
         std::println("\n--- AC6: source cites 2167 ---");
-        const auto src = read_file("src/compiler/evaluator_primitives_query.cpp");
-        CHECK(!src.empty(), "query.cpp readable");
+        const auto src = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+        CHECK(!src.empty(), "query_reflect.cpp readable");
         CHECK(src.find("2167") != std::string::npos, "cites 2167");
         CHECK(src.find("query:hygiene-diagnostic") != std::string::npos,
               "query:hygiene-diagnostic registered");
