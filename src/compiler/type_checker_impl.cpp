@@ -2881,6 +2881,40 @@ ConstraintSystem::escalate_locality_slo_if_production(SolveResult prior,
     return full;
 }
 
+SolveResult
+ConstraintSystem::drain_pending_full_solve_before_commit(std::vector<Constraint>* unresolved_out) {
+    using namespace aura::compiler::typed_audit;
+    const auto pending = pending_full_solve_roots_.size();
+    const auto loc = last_locality_pruned_;
+    if (pending == 0 && loc == 0)
+        return SolveResult::SOLVED; // Quiet: two size reads, no extra atomics.
+
+    const auto residual = pending + loc;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_pending_full_solve_residual_observe_total.fetch_add(1, std::memory_order_relaxed);
+        note_pending_full_solve_residual(residual, false);
+        return SolveResult::SOLVED;
+    }
+    g_pending_full_solve_residual_escalate_total.fetch_add(1, std::memory_order_relaxed);
+    SolveResult r = SolveResult::SOLVED;
+    if (loc > 0)
+        r = escalate_locality_slo_if_production(SolveResult::SOLVED, unresolved_out);
+    if (r == SolveResult::SOLVED &&
+        (!pending_full_solve_roots_.empty() || last_locality_pruned_ > 0))
+        r = escalate_if_production(SolveResult::TIMEOUT, unresolved_out);
+    if (r == SolveResult::SOLVED) {
+        pending_full_solve_roots_.clear();
+        last_locality_pruned_ = 0;
+        note_pending_full_solve_residual(0, true);
+        return r;
+    }
+    g_pending_full_solve_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
+    note_pending_full_solve_residual(pending_full_solve_roots_.size() + last_locality_pruned_,
+                                     true);
+    return r == SolveResult::CONFLICT ? r : SolveResult::TIMEOUT;
+}
+
 // Issue #2308: Agent-stable SolverSnapshot — pure read of cs state.
 // Mirrors SolveDeltaOccurrenceResult::unresolved_affected_nodes sample
 // cap (kAffectedSampleCap = 16) so repair_nodes stays small enough for

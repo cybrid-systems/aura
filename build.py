@@ -1613,6 +1613,19 @@ def cmd_lint():
             "Issue #3030 type-linear proof-clear-on-abort linter failed — run python3 scripts/coverage/checks/check_type_linear_proof_clear_on_abort_3030.py"
         )
         return r
+    # Issue #3031: pending_full_solve / locality residual drain before commit.
+    # Extends test_solve_delta_unresolved_export + test_type_linear_commit_health
+    # (#81967); no docs/design.
+    pfsr_script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
+    if not pfsr_script.exists():
+        fail(f"missing {pfsr_script}")
+        return 1
+    r = run([sys.executable, str(pfsr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3031 pending_full_solve residual linter failed — run python3 scripts/coverage/checks/check_pending_full_solve_residual_3031.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -2848,6 +2861,18 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3003 solve_delta timeout fail-closed linter failed — run python3 scripts/coverage/checks/check_solve_delta_timeout_fail_closed_3003.py"
+        )
+        return r
+    # Issue #3031: pending_full_solve / locality residual drain before commit.
+    # Extends test_solve_delta_unresolved_export (#81967); no docs/design/.
+    pfsr2_script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
+    if not pfsr2_script.exists():
+        fail(f"missing {pfsr2_script}")
+        return 1
+    r = run([sys.executable, str(pfsr2_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3031 pending_full_solve residual linter failed — run python3 scripts/coverage/checks/check_pending_full_solve_residual_3031.py"
         )
         return r
     # Issue #3005: ADT exhaustiveness into dirty cone; Production no Dynamic.
@@ -11206,6 +11231,30 @@ def cmd_type_linear_proof_clear_on_abort_3030():
     return cmd_type_linear_proof_clear_on_abort_3030_coverage()
 
 
+def cmd_pending_full_solve_residual_3031_coverage():
+    """Issue #3031: pending_full_solve / locality residual drain before commit.
+
+    Production/Full escalate then hard-reject (force_reason 16) if still
+    dirty. Soft observe. Quiet (no residual) is two size reads.
+    """
+    print(f"{B}=== pending_full_solve residual coverage (#3031) ==={N}")
+    script = COVERAGE_CHECKS / "check_pending_full_solve_residual_3031.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pending_full_solve residual (#3031) coverage contract rows failed")
+        return 1
+    ok("pending_full_solve residual (#3031) coverage clean")
+    return 0
+
+
+def cmd_pending_full_solve_residual_3031():
+    """Alias for coverage check."""
+    return cmd_pending_full_solve_residual_3031_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -15419,6 +15468,8 @@ def main():
         "macro-self-evo-grant-fence-3029-coverage": cmd_macro_self_evo_grant_fence_3029_coverage,
         "type-linear-proof-clear-on-abort-3030": cmd_type_linear_proof_clear_on_abort_3030,
         "type-linear-proof-clear-on-abort-3030-coverage": cmd_type_linear_proof_clear_on_abort_3030_coverage,
+        "pending-full-solve-residual-3031": cmd_pending_full_solve_residual_3031,
+        "pending-full-solve-residual-3031-coverage": cmd_pending_full_solve_residual_3031_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

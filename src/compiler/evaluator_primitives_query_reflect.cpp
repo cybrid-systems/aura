@@ -321,7 +321,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto scored = compute_type_linear_commit_health(snap);
 
             // Issue #3020: ~73 live keys; next_pow2(planned*2) (256).
-            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 85;
+            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 93;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kTypeLinearCommitHealthPlannedKeys));
             if (!ht)
@@ -506,6 +506,29 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
             insert_kv("issue-3030",
                       aura::compiler::typed_audit::kTypeLinearProofClearedOnAbortIssue);
+            // Issue #3031: pending_full_solve / locality residual at commit.
+            insert_kv("pending-full-solve-residual-last",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::pending_full_solve_residual_last_v_read()));
+            insert_kv(
+                "pending-full-solve-residual-observe-total",
+                static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                              pending_full_solve_residual_observe_total_v_read()));
+            insert_kv(
+                "pending-full-solve-residual-escalate-total",
+                static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                              pending_full_solve_residual_escalate_total_v_read()));
+            insert_kv(
+                "pending-full-solve-residual-reject-total",
+                static_cast<std::int64_t>(aura::compiler::typed_audit::
+                                              pending_full_solve_residual_reject_total_v_read()));
+            insert_kv("pending-full-solve-residual-wired",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::g_pending_full_solve_residual_wired.load(
+                              std::memory_order_relaxed)));
+            insert_kv("force-reason-pending-full-solve-residual", 16);
+            insert_kv("schema-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
+            insert_kv("issue-3031", aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
 
             return query_hash_finish(ht, string_heap, overflowed);
         });

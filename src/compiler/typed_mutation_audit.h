@@ -1060,6 +1060,10 @@ struct CommitReadinessInput {
     // hard reject / recover. Soft: observe only via counters.
     bool refined_consistency_hard = false;
     bool refined_consistency_drift = false;
+    // Issue #3031: pending_full_solve / locality residual at commit.
+    // production/Full + residual → escalate then hard-reject if still dirty.
+    bool pending_full_solve_hard = false;
+    bool pending_full_solve_residual = false;
 };
 
 struct CommitReadiness {
@@ -1900,6 +1904,8 @@ inline bool note_arena_compact_linear_root_consistency() noexcept {
         return 14; // #2898
     if (r == "refined_drift")
         return 15; // #2911
+    if (r == "pending_full_solve_residual")
+        return 16; // #3031
     return 0;      // ok
 }
 
@@ -1930,6 +1936,48 @@ inline std::atomic<std::uint32_t> g_cone_outside_goal_drop_recover_reject_wired{
 //   no refined activity → zero cost (face clear; no extra loads beyond faces)
 inline constexpr int kRefinedConsistencyGateIssue = 2911;
 inline std::atomic<std::uint8_t> g_refined_consistency_drift_face{0};
+// Issue #3031: pending_full_solve / locality residual at composite commit.
+// Quiet (count=0): no extra atomics beyond the two loads in drain.
+// Soft: observe only. Production/Full: escalate then latch face on reject.
+inline constexpr int kPendingFullSolveResidualIssue = 3031;
+inline std::atomic<std::uint8_t> g_pending_full_solve_residual_face{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_last{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_observe_total{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_escalate_total{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_reject_total{0};
+inline std::atomic<std::uint32_t> g_pending_full_solve_residual_wired{1};
+
+[[nodiscard]] inline bool pending_full_solve_residual_face_hit() noexcept {
+    return g_pending_full_solve_residual_face.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_last_v_read() noexcept {
+    return g_pending_full_solve_residual_last.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_observe_total_v_read() noexcept {
+    return g_pending_full_solve_residual_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_escalate_total_v_read() noexcept {
+    return g_pending_full_solve_residual_escalate_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_reject_total_v_read() noexcept {
+    return g_pending_full_solve_residual_reject_total.load(std::memory_order_relaxed);
+}
+inline void reset_pending_full_solve_residual_for_test() noexcept {
+    g_pending_full_solve_residual_face.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_last.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_observe_total.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_escalate_total.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_reject_total.store(0, std::memory_order_relaxed);
+}
+inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcept {
+    g_pending_full_solve_residual_last.store(n, std::memory_order_relaxed);
+    if (n == 0) {
+        g_pending_full_solve_residual_face.store(0, std::memory_order_relaxed);
+        return;
+    }
+    if (hard)
+        g_pending_full_solve_residual_face.store(1, std::memory_order_relaxed);
+}
 inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_recover_total{0};
@@ -2129,6 +2177,16 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         // Allow commit under Soft.
     }
 
+    // 6d) Issue #3031: pending_full_solve / locality residual.
+    // Production/Full + residual face → hard-reject (escalate already
+    // attempted at composite drain). Soft: observe allow.
+    // Quiet: residual flag false → zero extra.
+    if (in.pending_full_solve_residual) {
+        if (in.pending_full_solve_hard)
+            return (set("pending_full_solve_residual", false, 700), r);
+        return (set("pending_full_solve_residual", true, 7200), r);
+    }
+
     // 7) ok — clean SOLVED + linear + blame + !truncated + no face hit.
     return (set("ok", true, 10000), r);
 }
@@ -2164,6 +2222,9 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     in.occurrence_face_hard = face_hard;
     // Issue #2911: refined-consistency hard under same production/Full face.
     in.refined_consistency_hard = face_hard;
+    // Issue #3031: pending_full_solve residual face.
+    in.pending_full_solve_hard = face_hard;
+    in.pending_full_solve_residual = pending_full_solve_residual_face_hit();
     if (face_hard) {
         in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
         in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
