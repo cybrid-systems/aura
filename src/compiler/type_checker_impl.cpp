@@ -1997,7 +1997,10 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
     // Issue #258: time the delta solve into CompilerMetrics::delta_solve_time_us.
     // Issue #2318 / #2508: anti-starve streak + goal-priority reverify gate.
     // Issue #2913: locality SLO after local SOLVED residual (Soft observe /
-    // production escalate). TIMEOUT already escalates via #2277 inside impl.
+    // production escalate).
+    // Issue #3003: SSOT escalate for TIMEOUT paths impl returns raw
+    // (force-timeout / dirty==0 truncated reverify). Leftover-worklist
+    // escalate inside impl sets production_escalated_ so this is one-shot.
     // Issue #2993: skip chrono + time fetch_add in Minimal (default).
     SolveResult result;
     if (metrics_full()) {
@@ -2013,6 +2016,10 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
     SolveResult replaced = result;
     if (check_truncate_anti_starve_impl(unresolved_out, result, replaced))
         result = replaced;
+    // Issue #3003: Production TIMEOUT must escalate even when impl
+    // returned raw TIMEOUT (no leftover-worklist path). Soft no-op.
+    if (result == SolveResult::TIMEOUT && !production_escalated_ && !forced_timeout_this_call_)
+        result = escalate_if_production(result, unresolved_out);
     return escalate_locality_slo_if_production(result, unresolved_out);
 }
 
@@ -2023,6 +2030,10 @@ SolveResult ConstraintSystem::solve_delta(std::vector<Constraint>* unresolved_ou
 SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolved_out) {
     // Issue #2913: reset locality residual snapshot for this delta.
     last_locality_pruned_ = 0;
+    // Issue #3003: one escalate cycle per solve_delta (wrapper skips
+    // leftover-worklist re-escalate via production_escalated_).
+    production_escalated_ = false;
+    forced_timeout_this_call_ = false;
     // Issue #2647: empty dirty worklist is NOT proof of SOLVED when live
     // OccurrenceGoals (or residual priority roots) still need revalidation
     // against Union-Find. Vacuous green after clear_blame_context left goals
@@ -2243,6 +2254,7 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
             }
         }
         clear_touched_roots();
+        forced_timeout_this_call_ = true;
         return SolveResult::TIMEOUT;
     }
 
@@ -4245,6 +4257,9 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
         if (incremental_delta_record_)
             cs_.mark_clean();
     }
+    last_solve_status_ = solve_status;
+    if (!preserve_cs)
+        last_type_export_authoritative_ = true;
     if (solve_status != SolveResult::SOLVED) {
         // Build a human-readable summary of the unresolved
         // constraints for the diagnostic. The summary is
@@ -4286,7 +4301,11 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
         // under-constrained types). CONFLICT is always a
         // TypeError; TIMEOUT is a Warning in permissive mode.
         bool is_conflict = (solve_status == SolveResult::CONFLICT);
-        if (strict_ || !permissive_ || is_conflict) {
+        // Issue #3003: Production treats TIMEOUT like CONFLICT —
+        // TypeError, no type write, no dirty clear (I1/I5: no half-solution).
+        // Soft / default Full-without-production_defaults keep #2107 observe.
+        const bool hard = aura::compiler::typed_audit::production_defaults_active();
+        if (hard || strict_ || !permissive_ || is_conflict) {
             const char* kind_str = is_conflict
                                        ? "type constraint solving failed (conflict)"
                                        : "type constraint solving timed out (under-constrained)";
@@ -4300,6 +4319,14 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
             // so unresolved TYPE_VARs are not cached and re-inferred forever.
             // Strict mode still reports TypeError; Dyn keeps incremental cache sane.
             result = reg_.dynamic_type();
+            if (hard) {
+                last_type_export_authoritative_ = false;
+                auto& ac = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                ac.delta_timeout_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+                ac.delta_timeout_reject_total.fetch_add(1, std::memory_order_relaxed);
+                // I1/I5: do not write a type then mark dirty-clean.
+                return result;
+            }
         } else {
             // Non-strict + permissive + TIMEOUT: emit a warning
             // with the constraint list, then fall through to the
@@ -7935,6 +7962,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                             const aura::ast::MutationRecord& rec,
                                             aura::diag::DiagnosticCollector& diag,
                                             void* per_defuse_index_tracker) {
+    // Issue #3003: start of partial is authoritative until a not-SOLVED
+    // Production/Full solve flips the engine flag.
+    last_type_export_authoritative_ = true;
+    last_delta_solve_status_ = SolveResult::SOLVED;
     // Issue #1336: selective incremental TC path entry counter.
     if (metrics_) {
         static_cast<struct CompilerMetrics*>(metrics_)
@@ -8894,6 +8925,14 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                                 solve_delta_cs_.occurrence_priority_roots_size() > 0 ||
                                 solve_delta_cs_.let_poly_dirty_roots_size() > 0 ||
                                 !last_occurrence_vars_.empty() || re_inferred > 0;
+        // Issue #3003: Production / Full + not SOLVED → no stash-as-live
+        // (recover must not commit a half-solution). Repair surface
+        // still imported above.
+        last_delta_solve_status_ = engine.last_solve_status();
+        if (!engine.last_type_export_authoritative()) {
+            last_type_export_authoritative_ = false;
+            last_partial_cs_live_ = false;
+        }
     }
 
     // Issue #688 / #2460 Phase 2: OwnershipEnv re-sim on dirty linear set

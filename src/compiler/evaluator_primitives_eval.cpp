@@ -918,6 +918,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             ev.string_heap_.push_back("out-of-range");
             return make_string(sidx);
         }
+        if (!ev.type_export_authoritative()) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back("not-authoritative");
+            return make_string(sidx);
+        }
         auto type_idx = flat.type_id(node);
         if (type_idx == 0) {
             auto sidx = ev.string_heap_.size();
@@ -965,6 +970,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
                     auto child_type = flat.type_id(v.child(0));
                     if (child_type != 0)
                         type_target = v.child(0);
+                }
+                if (!ev.type_export_authoritative()) {
+                    auto sidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back("not-authoritative");
+                    return make_string(sidx);
                 }
                 auto type_idx = flat.type_id(type_target);
                 if (type_idx == 0) {

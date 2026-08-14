@@ -292,6 +292,17 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #2180/#2220: stash partial CS for composite_txn_commit; with
             // persistent TC the same solve_delta_cs_ is reused next call.
             stash_partial_constraint_state(static_cast<void*>(&tc));
+            // Issue #3003: Production + not SOLVED → rollback,
+            // no stash, no query:type authority (I1/I5).
+            if (!tc.last_type_export_authoritative() &&
+                aura::compiler::typed_audit::production_defaults_active()) {
+                commit_cs_live_ = false;
+                type_export_authoritative_ = false;
+                last_mutate_error_ =
+                    "typecheck after mutate: solve_delta not SOLVED (production fail-closed)";
+                return false;
+            }
+            type_export_authoritative_ = tc.last_type_export_authoritative();
             // Issue #537: mirror per-call TypeChecker narrowing stats
             // into lifetime CompilerMetrics (same as CompilerService
             // typecheck / incremental_infer paths).
@@ -1385,11 +1396,14 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
             (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
                                                       /*mark_all_linear=*/true);
         }
-        if (!audit.type_ok || !cr.solve_ok) {
+        if ((!audit.type_ok || !cr.solve_ok) &&
+            !(aura::compiler::typed_audit::production_defaults_active() && !cr.solve_ok)) {
             c.partial_recovery_type_total.fetch_add(1, std::memory_order_relaxed);
             c.composite_partial_recover_type_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2180: re-run solve_delta_occurrence on stashed CS.
             // Partial type recovery must not paper over CONFLICT/TIMEOUT.
+            // Issue #3003: Production + !solve_ok skips recover-commit
+            // (fail-closed; no half-solution via Full recover).
             if (commit_type_checker_opaque_ && commit_cs_live_) {
                 try {
                     auto* ctc = static_cast<TypeChecker*>(commit_type_checker_opaque_);
@@ -1502,6 +1516,11 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     }
     cr.rejected = true;
     cr.committed = false;
+    // Issue #3003: reject clears partial CS stash (no later recover).
+    if (!cr.solve_ok) {
+        commit_cs_live_ = false;
+        type_export_authoritative_ = false;
+    }
     if (out_commit)
         *static_cast<CompositeTxnCommitResult*>(out_commit) = cr;
     return false;
@@ -2496,9 +2515,10 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
             auto* occ =
                 static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
             *occ = src->last_occurrence_vars();
-            commit_cs_live_ = src->commit_cs_has_work() || src->last_partial_cs_live() ||
-                              src->constraint_system().is_dirty() ||
-                              src->constraint_system().touched_roots_size() > 0 || !occ->empty();
+            commit_cs_live_ = src->last_type_export_authoritative() &&
+                              (src->commit_cs_has_work() || src->last_partial_cs_live() ||
+                               src->constraint_system().is_dirty() ||
+                               src->constraint_system().touched_roots_size() > 0 || !occ->empty());
             return;
         }
         if (commit_type_checker_opaque_ && commit_tc_registry_gen_ != reg_gen)
@@ -2524,9 +2544,10 @@ void Evaluator::stash_partial_constraint_state(void* type_checker_opaque) noexce
             commit_occurrence_vars_opaque_ = new std::vector<aura::core::TypeId>();
         auto* occ = static_cast<std::vector<aura::core::TypeId>*>(commit_occurrence_vars_opaque_);
         *occ = src->last_occurrence_vars();
-        commit_cs_live_ = src->commit_cs_has_work() || src->last_partial_cs_live() ||
-                          dst->constraint_system().is_dirty() ||
-                          dst->constraint_system().touched_roots_size() > 0 || !occ->empty();
+        commit_cs_live_ = src->last_type_export_authoritative() &&
+                          (src->commit_cs_has_work() || src->last_partial_cs_live() ||
+                           dst->constraint_system().is_dirty() ||
+                           dst->constraint_system().touched_roots_size() > 0 || !occ->empty());
     } catch (...) {
         // [SILENCE-PRIM] stash is best-effort; commit falls back to empty CS.
     }

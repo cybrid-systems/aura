@@ -200,6 +200,11 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> delta_timeout_full_solve_total{0};
     std::atomic<std::uint64_t> delta_timeout_reject_total{0};
     std::atomic<std::uint32_t> delta_timeout_hard_gate_wired{1};
+    // Issue #3003: Production / Full fail-closed after solve_delta not
+    // SOLVED — no type write / dirty clear / stash / query:type authority.
+    // Soft observe-only (this counter stays quiet).
+    std::atomic<std::uint64_t> delta_timeout_fail_closed_total{0};
+    std::atomic<std::uint32_t> delta_timeout_fail_closed_wired{1};
     // Issue #2913: solve_delta locality SLO (anti silent under-constrain).
     // Soft + residual: observe_total only (allow SOLVED).
     // production / Full + residual: escalate full solve; reject if unsolved.

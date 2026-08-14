@@ -415,6 +415,20 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             insert_kv("delta-timeout-hard-gate-wired", 1);
             insert_kv("schema-2277", 2277);
             insert_kv("issue-2277", 2277);
+            // Issue #3003: Production fail-closed after solve_delta not SOLVED.
+            {
+                using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                insert_kv("delta-timeout-fail-closed-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.delta_timeout_fail_closed_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("delta-timeout-fail-closed-wired",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.delta_timeout_fail_closed_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-3003", 3003);
+                insert_kv("issue-3003", 3003);
+            }
             // Issue #2900: SolverBudget Agent TIMEOUT policy surface.
             // Additive to #2277; production cannot disable escalate.
             {
