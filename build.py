@@ -2426,6 +2426,18 @@ def cmd_lint():
             "Issue #3022 FFI opaque pin-or-remap linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3022.py"
         )
         return r
+    # Issue #3023: leftover linear_roots unpin on abort / reclaim.
+    # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
+    lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"
+    if not lrar_script.exists():
+        fail(f"missing {lrar_script}")
+        return 1
+    r = run([sys.executable, str(lrar_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3023 linear_roots abort/reclaim linter failed — run python3 scripts/coverage/checks/check_linear_root_abort_release_3023.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -7995,6 +8007,31 @@ def cmd_ffi_opaque_pin_or_remap_3022():
     """
     print(f"{B}=== FFI opaque pin-or-remap (#3022) ==={N}")
     return cmd_ffi_opaque_pin_or_remap_3022_coverage()
+
+
+def cmd_linear_root_abort_release_3023_coverage():
+    """Issue #3023: leftover linear_roots unpin on abort/reclaim (static)."""
+    print(f"{B}=== linear_roots abort/reclaim coverage (#3023) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear_roots abort/reclaim (#3023) coverage contract rows failed")
+        return 1
+    ok("linear_roots abort/reclaim (#3023) coverage clean")
+    return 0
+
+
+def cmd_linear_root_abort_release_3023():
+    """Issue #3023: abort / mutate-fail / fiber reclaim unpin leftover linear_roots.
+
+    post-join = Fiber::release_orphan_roots; post-abort =
+    enforce_linear_post_failure; post-densify verify never unpins.
+    """
+    print(f"{B}=== linear_roots abort/reclaim (#3023) ==={N}")
+    return cmd_linear_root_abort_release_3023_coverage()
 
 
 def cmd_shape_storm_isolation_2683_coverage():
@@ -15073,6 +15110,8 @@ def main():
         "envframe-closure-apply-protocol-3021-coverage": cmd_envframe_closure_apply_protocol_3021_coverage,
         "ffi-opaque-pin-or-remap-3022": cmd_ffi_opaque_pin_or_remap_3022,
         "ffi-opaque-pin-or-remap-3022-coverage": cmd_ffi_opaque_pin_or_remap_3022_coverage,
+        "linear-root-abort-release-3023": cmd_linear_root_abort_release_3023,
+        "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

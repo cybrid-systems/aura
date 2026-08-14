@@ -32,6 +32,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <unordered_set>
@@ -43,10 +45,12 @@ using aura::compiler::CompilerService;
 using aura::core::lifetime::g_linear_pin_miss_total;
 using aura::core::lifetime::g_linear_pin_total;
 using aura::core::lifetime::g_linear_unpin_total;
+using aura::core::lifetime::linear_root_abort_release_total_v_read;
 using aura::core::lifetime::linear_root_snapshot;
 using aura::core::lifetime::linear_roots;
 using aura::core::lifetime::pin_linear_root;
 using aura::core::lifetime::reset_linear_roots_for_test;
+using aura::core::lifetime::unpin_all_linear_roots;
 using aura::core::lifetime::unpin_linear_root;
 using aura::core::lifetime::verify_linear_pins_under_moving_compact;
 using aura::core::lifetime::verify_pins_under_moving_compact;
@@ -359,8 +363,68 @@ int run_test_linear_pin_moving_compact() {
         }
     }
 
+    // ── Issue #3023: abort / reclaim leftover linear_roots unpin ──
+    {
+        std::println("\n--- #3023: abort restore + live_count==0 + reclaim soak ---");
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootA);
+        pin_linear_root(kRootB);
+        CHECK(linear_root_snapshot().live_count == 2, "AC3023: two leftover roots");
+        const auto rel0 = linear_root_abort_release_total_v_read();
+        const auto n = unpin_all_linear_roots();
+        CHECK(n == 2, "AC3023: unpin_all drains both");
+        CHECK(linear_root_snapshot().live_count == 0, "AC3023: live_count==0 after abort drain");
+        CHECK(linear_root_abort_release_total_v_read() > rel0, "AC3023: abort-release counter");
+        CHECK(unpin_all_linear_roots() == 0, "AC3023: empty drain is zero-cost");
+
+        CompilerService cs;
+        (void)cs.eval("(+ 1 1)");
+        auto* ev = &cs.evaluator();
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootC);
+        CHECK(linear_root_snapshot().live_count == 1, "AC3023: pre-post-failure live");
+        (void)ev->enforce_linear_post_failure();
+        CHECK(linear_root_snapshot().live_count == 0,
+              "AC3023: abort restore canary — post-failure live_count==0");
+
+        reset_linear_roots_for_test();
+        for (int i = 0; i < 64; ++i) {
+            pin_linear_root(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB000 + i * 8)));
+        }
+        CHECK(linear_root_snapshot().live_count == 64, "AC3023 soak: 64 leftover");
+        CHECK(unpin_all_linear_roots() == 64, "AC3023 soak: drain 64");
+        CHECK(linear_root_snapshot().live_count == 0, "AC3023 soak: live_count==0");
+
+        auto read_src = [](const char* path) -> std::string {
+            for (const auto& p :
+                 {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+                std::ifstream in(p);
+                if (!in)
+                    continue;
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }
+            return {};
+        };
+        const auto lp = read_src("src/core/lifetime_pin.hh");
+        const auto gc = read_src("src/compiler/evaluator_gc.cpp");
+        const auto fib = read_src("src/serve/fiber.cpp");
+        CHECK(lp.find("post-join") != std::string::npos, "AC3023: post-join responsibility");
+        CHECK(lp.find("post-abort") != std::string::npos, "AC3023: post-abort responsibility");
+        CHECK(lp.find("post-densify") != std::string::npos, "AC3023: post-densify never unpins");
+        CHECK(lp.find("this verify never unpins") != std::string::npos,
+              "AC3023: verify never unpins");
+        CHECK(gc.find("unpin_all_linear_roots") != std::string::npos,
+              "AC3023: abort helper wired in enforce_linear_post_failure");
+        CHECK(fib.find("unpin_all_linear_roots") != std::string::npos,
+              "AC3023: fiber reclaim soak site");
+        const auto schema = cs.eval(
+            "(hash-ref (engine:metrics \"query:lifetime-contract-snapshot\") \"schema-3023\")");
+        CHECK(schema.has_value(), "AC3023: schema-3023 reachable");
+    }
+
     reset_linear_roots_for_test();
-    std::println("=== #2280 done: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("=== #2280 + #3023 done: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
