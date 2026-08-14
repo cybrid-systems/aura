@@ -854,6 +854,46 @@ void ac2360_6_source_cite() {
           "evaluator_primitives_mutate.cpp");
 }
 
+// Issue #3021: EnvFrame use-site + densify proof + steal×compact
+// Guard inventory. Apply/use points force freed/tombstone skip
+// (scan_skip_freed semantics); no second lifetime model.
+void ac3021_envframe_apply_protocol() {
+    std::println("\n--- #3021: EnvFrame use-site + densify gate + steal×compact ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto base = ev.env_frames_size();
+    ev.set_panic_safe_env_frames_size_for_test(base);
+    auto doomed = ev.alloc_env_frame();
+    EnvFrameRef ref(doomed, ev.env_generation());
+    CHECK(ref.still_valid(ev), "AC3021: live Ref still_valid");
+    ev.invalidate_post_rollback_env_frames();
+    CHECK(ev.is_env_frame_invalid(doomed), "AC3021: doomed INVALID_VERSION");
+    CHECK(!ref.still_valid(ev), "AC3021: INVALID_VERSION use-site not live");
+    CHECK(!ref.use_site_check(ev), "AC3021: use_site_check rejects tombstoned frame");
+
+    aura::core::envframe_lifetime::inject_densify_ownership_scan_fail_for_test();
+    const auto proof = aura::core::envframe_lifetime::snapshot_envframe_lifetime_proof();
+    CHECK(proof.densify_scan_fail > 0, "AC3021: densify ownership scan fail visible");
+    CHECK(!proof.would_allow_commit, "AC3021: densify scan fail gates would_allow_commit");
+
+    const auto evf = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto mutb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(evf.find("closure_apply_use_site_ok") != std::string::npos,
+          "AC3021: apply/use-site protocol in eval_flat");
+    CHECK(env.find("is_env_frame_invalid(index)") != std::string::npos,
+          "AC3021: still_valid rejects INVALID_VERSION");
+    CHECK(gc.find("EnvFrameLifetimeSite::FiberSteal") != std::string::npos,
+          "AC3021: steal×compact FiberSteal Guard");
+    CHECK(gc.find("EnvFrameLifetimeSite::CompactSweep") != std::string::npos,
+          "AC3021: steal×compact CompactSweep Guard");
+    CHECK(mutb.find("EnvFrameLifetimeSite::BoundaryExit") != std::string::npos,
+          "AC3021: BoundaryExit Guard site");
+    CHECK(env.find("no Guard") != std::string::npos || evf.find("no Guard") != std::string::npos,
+          "AC3021: Soft apply path is not a Guard");
+}
+
 } // namespace
 
 int main() {
@@ -908,7 +948,9 @@ int main() {
         ac2360_5_query_schema(cs);
     }
     ac2360_6_source_cite();
-    std::println("\n=== #1889 + #2251 + #2268 + #2295 + #2340 + #2360: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    ac3021_envframe_apply_protocol();
+    std::println(
+        "\n=== #1889 + #2251 + #2268 + #2295 + #2340 + #2360 + #3021: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -2659,6 +2659,12 @@ bool EnvFrameRef::still_valid(Evaluator const& ev) const noexcept {
         return false;
     if (env_gen_stamp != 0 && env_gen_stamp != ev.env_generation())
         return false;
+    // Issue #3021: INVALID_VERSION / tombstoned frame is not a live
+    // use-site (same skip as scan_skip_freed). Thin resolve_env_frame
+    // still returns the in-range pointer; is_env_frame_invalid is
+    // the terminal-tombstone predicate.
+    if (ev.is_env_frame_invalid(index))
+        return false;
     return true;
 }
 
