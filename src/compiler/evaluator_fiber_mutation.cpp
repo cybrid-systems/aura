@@ -815,6 +815,15 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
         r.skipped_extra = true;
         return r;
     }
+    // Issue #3063: production steal/densify restamp advances invalidate_gen
+    // *before* node/pin restamp so in-flight IR Move cannot elide on the
+    // pre-restamp green proof. Soft already returned above (zero extra).
+    if ((site == UnifiedRestampSite::StealComplete || site == UnifiedRestampSite::Densify) &&
+        typed_audit::invalidate_fast_path_before_steal_densify_restamp()) {
+        const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+        (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+        aura_aot_record_deopt_on_steal();
+    }
     if (ws) {
         ws->restamp_all_node_generations();
         r.nodes = static_cast<std::size_t>(ws->restamp_nodes_last());

@@ -10449,6 +10449,20 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                                   std::memory_order_relaxed)));
                     insert_kv("schema-3032", kRehydrateMissInvalidateIssue);
                     insert_kv("issue-3032", kRehydrateMissInvalidateIssue);
+                    // Issue #3063: steal/densify success invalidate-before-restamp.
+                    using aura::compiler::typed_audit::g_steal_densify_success_invalidate_wired;
+                    using aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue;
+                    using aura::compiler::typed_audit::
+                        steal_densify_success_invalidate_total_v_read;
+                    insert_kv(
+                        "steal-densify-success-invalidate-total",
+                        static_cast<std::int64_t>(steal_densify_success_invalidate_total_v_read()));
+                    insert_kv(
+                        "steal-densify-success-invalidate-wired",
+                        static_cast<std::int64_t>(g_steal_densify_success_invalidate_wired.load(
+                            std::memory_order_relaxed)));
+                    insert_kv("schema-3063", kStealDensifySuccessInvalidateIssue);
+                    insert_kv("issue-3063", kStealDensifySuccessInvalidateIssue);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.

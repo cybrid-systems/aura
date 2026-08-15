@@ -1730,6 +1730,18 @@ def cmd_lint():
             "Issue #3032 rehydrate-miss invalidate linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py"
         )
         return r
+    # Issue #3063: steal/densify success invalidate-before-restamp (half-green IR).
+    # Extends persist-rehydrate + escape-elision + health (#81967); no docs/design.
+    hg3063_script = COVERAGE_CHECKS / "check_half_green_ir_steal_densify_3063.py"
+    if not hg3063_script.exists():
+        fail(f"missing {hg3063_script}")
+        return 1
+    r = run([sys.executable, str(hg3063_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -3693,6 +3705,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3032 rehydrate-miss invalidate linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_invalidate_3032.py"
+        )
+        return r
+    # Issue #3063: steal/densify success invalidate-before-restamp.
+    hg3063b_script = COVERAGE_CHECKS / "check_half_green_ir_steal_densify_3063.py"
+    if not hg3063b_script.exists():
+        fail(f"missing {hg3063b_script}")
+        return 1
+    r = run([sys.executable, str(hg3063b_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
         )
         return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id)
@@ -11918,6 +11941,30 @@ def cmd_rehydrate_miss_invalidate_3032():
     return cmd_rehydrate_miss_invalidate_3032_coverage()
 
 
+def cmd_half_green_ir_steal_densify_3063_coverage():
+    """Issue #3063: steal/densify success invalidate-before-restamp (static)."""
+    print(f"{B}=== half-green IR steal/densify coverage (#3063) ==={N}")
+    script = COVERAGE_CHECKS / "check_half_green_ir_steal_densify_3063.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("half-green IR steal/densify (#3063) coverage contract rows failed")
+        return 1
+    ok("half-green IR steal/densify (#3063) coverage clean")
+    return 0
+
+
+def cmd_half_green_ir_steal_densify_3063():
+    """Issue #3063: production steal/densify restamp drops green IR elision.
+
+    Soft/Off zero extra. linear_fast_path_ok stays SSOT.
+    """
+    print(f"{B}=== half-green IR steal/densify (#3063) ==={N}")
+    return cmd_half_green_ir_steal_densify_3063_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16262,6 +16309,8 @@ def main():
         "pending-full-solve-residual-3031-coverage": cmd_pending_full_solve_residual_3031_coverage,
         "rehydrate-miss-invalidate-3032": cmd_rehydrate_miss_invalidate_3032,
         "rehydrate-miss-invalidate-3032-coverage": cmd_rehydrate_miss_invalidate_3032_coverage,
+        "half-green-ir-steal-densify-3063": cmd_half_green_ir_steal_densify_3063,
+        "half-green-ir-steal-densify-3063-coverage": cmd_half_green_ir_steal_densify_3063_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
