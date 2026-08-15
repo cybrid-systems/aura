@@ -16,6 +16,8 @@
 #include <string_view>
 #include <vector>
 
+#include "core/wal_append_fail_slo.h" // #3056 shared append-fail SLO
+
 namespace aura::core::audit_wal {
 
 inline constexpr int kAuditWalPhase = 2;
@@ -239,12 +241,22 @@ struct MutationAuditWal {
             rotate_unlocked();
         if (!fp)
             return false;
+        // Issue #3056: inject + fwrite miss share one fail path. WAL-off
+        // never reaches here (AC1: `!enabled || !fp` above).
+        if (::aura::core::wal_slo::consume_wal_inject_append_fail()) {
+            g_audit_wal_metrics().audit_wal_append_fail_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            ::aura::core::wal_slo::note_wal_append_fail();
+            return false;
+        }
         const auto n = std::fwrite(&rec, 1, sizeof(rec), fp);
         if (n != sizeof(rec)) {
             g_audit_wal_metrics().audit_wal_append_fail_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+            ::aura::core::wal_slo::note_wal_append_fail();
             return false;
         }
+        ::aura::core::wal_slo::note_wal_append_ok();
         current_bytes += sizeof(rec);
         last_seq_persisted = rec.seq;
         ++unflushed;
@@ -302,6 +314,7 @@ struct MutationAuditWal {
         m.audit_wal_forced_by_multi_tenant_total.store(0, std::memory_order_relaxed);
         m.audit_wal_forced_by_restricted_total.store(0, std::memory_order_relaxed);
         m.audit_wal_using_default_dir.store(0, std::memory_order_relaxed);
+        ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
         current_bytes = 0;

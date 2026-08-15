@@ -11978,6 +11978,29 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                            ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
                               ? 1
                               : 0));
+            // Issue #3056: same decide as query:security-posture #2534 /
+            // query:audit-wal-stats (AC5 — one surface).
+            {
+                using ::aura::compiler::typed_audit::production_defaults_active;
+                using ::aura::core::audit_wal::snapshot_audit_wal_stats;
+                using ::aura::core::wal_slo::evaluate_wal_append_fail_slo;
+                using ::aura::core::wal_slo::kWalAppendFailSloIssue;
+                using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
+                const auto mut = snapshot_audit_wal_stats();
+                const char* sb = std::getenv("AURA_SANDBOX");
+                const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                         (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+                const bool prod = production_defaults_active();
+                const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
+                    mut.append_fail, wal_snap.append_fail, mut.persisted, wal_snap.persisted,
+                    (wal_snap.enabled != 0) ||
+                        ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled(),
+                    prod, !prod || sandbox_off));
+                insert_kv("wal-append-fail-breach", d.would_arm_degraded ? 1 : 0);
+                insert_kv("wal-append-fail-slo-wired", 1);
+                insert_kv("schema-3056", kWalAppendFailSloIssue);
+                insert_kv("issue-3056", kWalAppendFailSloIssue);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

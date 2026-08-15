@@ -91,6 +91,9 @@ int run_test_security_posture_trail() {
     CHECK(sec.find("query:security-posture") != std::string::npos, "AC6: posture");
     CHECK(sec.find("query:security-correlated-trail") != std::string::npos, "AC6: trail");
     CHECK(sec.find("2534") != std::string::npos, "AC6: cite");
+    CHECK(href(cs, "schema-3056") == 3056, "3056: posture schema");
+    CHECK(href(cs, "wal-append-fail-slo-wired") == 1, "3056: slo wired");
+    CHECK(href(cs, "wal-append-fail-breach") == 0, "3056: idle no breach");
 
     std::println("\n=== #2534: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

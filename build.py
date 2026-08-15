@@ -2094,6 +2094,19 @@ def cmd_lint():
             "Issue #3054 mid-fallback refuse SE linter failed — run python3 scripts/coverage/checks/check_mid_fallback_refuse_se_3054.py"
         )
         return r
+    # Issue #3056: production WAL append_fail arms security-posture
+    # degraded (fail-open residual). Extends test_security_event_wal_replay
+    # (#81967); no docs/design/ (#1655).
+    wafs_script = COVERAGE_CHECKS / "check_wal_append_fail_slo_3056.py"
+    if not wafs_script.exists():
+        fail(f"missing {wafs_script}")
+        return 1
+    r = run([sys.executable, str(wafs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3056 WAL append_fail SLO linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_slo_3056.py"
+        )
+        return r
     # Issue #2837: Moving densify external-root slot remap + sticky densify-off.
     # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     mer_script = COVERAGE_CHECKS / "check_moving_external_root_remap_2837.py"
@@ -8264,6 +8277,32 @@ def cmd_mid_fallback_refuse_se_3054():
     """
     print(f"{B}=== mid-fallback refuse SE (#3054) ==={N}")
     return cmd_mid_fallback_refuse_se_3054_coverage()
+
+
+def cmd_wal_append_fail_slo_3056_coverage():
+    """Issue #3056: production WAL append_fail posture arm (static)."""
+    print(f"{B}=== WAL append_fail SLO coverage (#3056) ==={N}")
+    script = COVERAGE_CHECKS / "check_wal_append_fail_slo_3056.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("WAL append_fail SLO (#3056) coverage contract rows failed")
+        return 1
+    ok("WAL append_fail SLO (#3056) coverage clean")
+    return 0
+
+
+def cmd_wal_append_fail_slo_3056():
+    """Issue #3056: production WAL append_fail arms security-posture.
+
+    Mutation + SE WAL share decide_wal_append_fail_slo. Production +
+    enabled + fail past SLO → wal-append-fail-breach. Soft / WAL-off
+    stay observe-only. Mutation commit remains fail-open.
+    """
+    print(f"{B}=== WAL append_fail SLO (#3056) ==={N}")
+    return cmd_wal_append_fail_slo_3056_coverage()
 
 
 def cmd_moving_pre_densify_completeness_2973_coverage():
@@ -15891,6 +15930,8 @@ def main():
         "general-object-pin-allocate-3053-coverage": cmd_general_object_pin_allocate_3053_coverage,
         "mid-fallback-refuse-se-3054": cmd_mid_fallback_refuse_se_3054,
         "mid-fallback-refuse-se-3054-coverage": cmd_mid_fallback_refuse_se_3054_coverage,
+        "wal-append-fail-slo-3056": cmd_wal_append_fail_slo_3056,
+        "wal-append-fail-slo-3056-coverage": cmd_wal_append_fail_slo_3056_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,

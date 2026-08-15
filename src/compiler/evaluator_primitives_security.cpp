@@ -25,6 +25,7 @@ module;
 #include "core/provenance_tracker.hh"  // #2182: linear enforce mode on enforcement-stats
 #include "compiler/security_health.hh" // #2389: query:security-health score
 #include "compiler/audit_mid_fallback_slo.h" // #2594: g_audit_mid_fallback_slo_counters (query:audit-mid-fallback-slo)
+#include "core/wal_append_fail_slo.h" // #3056: wal-append-fail-breach posture arm
 #include "orch/security_schedule_gate.h" // #2590: g_orch_security_schedule_counters (query:security-schedule-gate)
 
 module aura.compiler.evaluator;
@@ -4388,6 +4389,29 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2150", kAuditWalForceMultiTenantIssue);
             insert_kv("issue-2150", kAuditWalForceMultiTenantIssue);
             insert_kv("flush-every", static_cast<std::int64_t>(MutationAuditWal::kFlushEvery));
+            // Issue #3056: additive — append-fail stays the mutation
+            // counter. Combined SLO + posture arm share one decide.
+            {
+                using ::aura::compiler::typed_audit::production_defaults_active;
+                using ::aura::core::security_event_wal::g_security_event_wal;
+                using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
+                using ::aura::core::wal_slo::evaluate_wal_append_fail_slo;
+                using ::aura::core::wal_slo::kWalAppendFailSloIssue;
+                using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
+                const auto se = snapshot_security_event_wal_stats();
+                const char* sb = std::getenv("AURA_SANDBOX");
+                const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                         (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+                const bool prod = production_defaults_active();
+                const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
+                    snap.append_fail, se.append_fail, snap.persisted, se.persisted,
+                    (snap.enabled != 0) || g_security_event_wal().is_enabled(), prod,
+                    !prod || sandbox_off));
+                insert_kv("wal-append-fail-breach", d.would_arm_degraded ? 1 : 0);
+                insert_kv("wal-append-fail-slo-wired", 1);
+                insert_kv("schema-3056", kWalAppendFailSloIssue);
+                insert_kv("issue-3056", kWalAppendFailSloIssue);
+            }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -4840,7 +4864,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
             // Issue #3020: ~44 live keys; next_pow2(planned*2) ≥64.
             // Issue #3040: +4 keys (schema/issue/wired/total).
-            constexpr std::size_t kSecurityPosturePlannedKeys = 56;
+            // Issue #3056: +4 keys (breach/wired/schema/issue).
+            constexpr std::size_t kSecurityPosturePlannedKeys = 64;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -4945,6 +4970,31 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2534", 2534);
             insert_kv("issue-2534", 2534);
             insert_kv("security-posture-wired", 1);
+            // Issue #3056: production WAL append_fail → posture degraded.
+            // Additive. append-fail counters stay on audit-wal-stats /
+            // wal-append-fail-total. Soft / WAL-off never arm.
+            {
+                using ::aura::compiler::typed_audit::production_defaults_active;
+                using ::aura::core::audit_wal::snapshot_audit_wal_stats;
+                using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
+                using ::aura::core::wal_slo::evaluate_wal_append_fail_slo;
+                using ::aura::core::wal_slo::kWalAppendFailSloIssue;
+                using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
+                const auto mut = snapshot_audit_wal_stats();
+                const auto se = snapshot_security_event_wal_stats();
+                const char* sb = std::getenv("AURA_SANDBOX");
+                const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                         (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+                const bool prod = production_defaults_active();
+                const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
+                    mut.append_fail, se.append_fail, mut.persisted, se.persisted,
+                    g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
+                    prod, !prod || sandbox_off));
+                insert_kv("wal-append-fail-breach", d.would_arm_degraded ? 1 : 0);
+                insert_kv("wal-append-fail-slo-wired", 1);
+                insert_kv("schema-3056", kWalAppendFailSloIssue);
+                insert_kv("issue-3056", kWalAppendFailSloIssue);
+            }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
