@@ -238,6 +238,10 @@ extern "C" __attribute__((weak)) std::uint64_t cross_eval_hard_global_bump_total
 extern "C" __attribute__((weak)) std::uint64_t reemit_owner_missing_reject_total_v_read(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) void aura_aot_mark_peer_slots_soft_stale(void* /*owner*/) {}
+extern "C" __attribute__((weak)) int aura_aot_slot_is_soft_stale(std::int64_t /*func_id*/) {
+    return 0;
+}
 extern "C" void aura_aot_bump_func_table_epoch(void) {
     g_aot_table_epoch_stub.fetch_add(1, std::memory_order_relaxed);
 }
@@ -1232,6 +1236,9 @@ extern "C" __attribute__((weak)) void aura_reemit_keep_failed_obj(const char* /*
 extern "C" __attribute__((weak)) void
 aura_hot_update_set_deopt_storm_threshold(std::uint64_t /*d*/, std::uint64_t /*w*/) {}
 extern "C" __attribute__((weak)) void aura_hot_update_reset_deopt_storm_state_for_test(void) {}
+extern "C" __attribute__((weak)) int aura_hot_update_storm_exit_force_full_active(void) {
+    return 0;
+}
 // Issue #2035: weak no-ops when hot_update_registry.cpp is not linked.
 extern "C" __attribute__((weak)) void aura_hot_update_notify_dirty_define(const char* /*name*/) {}
 // Issue #2601: weak no-op when full bridge not linked (light test bundles).

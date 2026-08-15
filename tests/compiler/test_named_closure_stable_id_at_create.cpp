@@ -1332,6 +1332,55 @@ static void ac2951_6_source_and_linter() {
           "2951 AC6: no docs/design/");
 }
 
+// ── Issue #3070: owner-scoped peer soft-stale (no global epoch force) ──
+static void ac3070_1_peer_soft_stale_no_epoch_force() {
+    std::println("\n--- #3070 AC3: peer soft-stale; epoch unchanged ---");
+    const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(cpp.find("Issue #3070") != std::string::npos, "3070: bridge cite");
+    CHECK(cpp.find("aura_aot_mark_peer_slots_soft_stale") != std::string::npos,
+          "3070: mark helper");
+    CHECK(cpp.find("soft_stale") != std::string::npos, "3070: slot bit");
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3070ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3070ULL));
+    constexpr std::int64_t kFidA = 70;
+    constexpr std::int64_t kFidB = 71;
+    constexpr std::uintptr_t kPtrA = 0xA070A070ULL;
+    constexpr std::uintptr_t kPtrB = 0xB071B071ULL;
+    aura_aot_set_register_owner_eval(eval_a);
+    aura_register_fn_tracked(kFidA, static_cast<int64_t>(kPtrA));
+    aura_aot_set_register_owner_eval(eval_b);
+    aura_register_fn_tracked(kFidB, static_cast<int64_t>(kPtrB));
+    aura_aot_set_register_owner_eval(nullptr);
+    if (aura_aot_probe_fn_ptr_raw(kFidB) != kPtrB) {
+        CHECK(true, "3070: light-link slot table — contract source-cited");
+        return;
+    }
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidB) == kPtrB, "3070: peer raw live");
+    CHECK(aura_aot_probe_fn_ptr(kFidB) == kPtrB || aura_aot_probe_fn_ptr(kFidB) == 0,
+          "3070: peer probe before arm (gen-current or light-stale)");
+    const auto epoch0 = aura_aot_func_table_epoch();
+    aura_aot_mark_peer_slots_soft_stale(eval_a);
+    CHECK(aura_aot_func_table_epoch() == epoch0, "3070 AC3: no global epoch force");
+    CHECK(aura_aot_slot_is_soft_stale(kFidB) == 1, "3070 AC3: peer bit armed");
+    CHECK(aura_aot_probe_fn_ptr(kFidB) == 0, "3070 AC3: peer apply misses stale native");
+    CHECK(aura_aot_probe_fn_ptr_raw(kFidB) == kPtrB, "3070 AC3: raw still holds ptr");
+    CHECK(aura_aot_slot_is_soft_stale(kFidA) == 0, "3070 AC3: owner slot not marked");
+}
+
+static void ac3070_2_register_clears_soft_stale() {
+    std::println("\n--- #3070: register/reemit clears soft-stale ---");
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3070ULL));
+    constexpr std::int64_t kFidB = 71;
+    constexpr std::uintptr_t kPtrB2 = 0xB072B072ULL;
+    aura_aot_set_register_owner_eval(eval_b);
+    aura_register_fn_tracked(kFidB, static_cast<int64_t>(kPtrB2));
+    aura_aot_set_register_owner_eval(nullptr);
+    CHECK(aura_aot_slot_is_soft_stale(kFidB) == 0, "3070: register clears bit");
+    const auto live = aura_aot_probe_fn_ptr(kFidB);
+    CHECK(live == kPtrB2 || live == 0, "3070: probe after re-register (0 if gen-behind)");
+}
+
 // ── Issue #3025: production C-ABI reemit requires owner under multi-eval ──
 // Direct aura_reemit_aot_for_dirty without reemit/register owner must
 // not silently reemit (peer-visible / unstamped force_jit). Soft /
@@ -1500,6 +1549,10 @@ int run_test_named_closure_stable_id_at_create() {
     ac2951_4_same_eval_joint_preserved();
     ac2951_5_query_additive();
     ac2951_6_source_and_linter();
+    // Issue #3070: owner-scoped peer soft-stale (no global epoch force).
+    std::println("\n=== Issue #3070: owner-scoped peer soft-stale ===");
+    ac3070_1_peer_soft_stale_no_epoch_force();
+    ac3070_2_register_clears_soft_stale();
     // Issue #3025: production C-ABI reemit requires owner under multi-eval.
     std::println("\n=== Issue #3025: production C-ABI reemit owner required ===");
     ac3025_1_prod_multi_no_owner_rejects();

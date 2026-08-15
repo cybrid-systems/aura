@@ -50,6 +50,8 @@ import aura.compiler.dirty_propagation; // DepGraph (Issue #2179)
 // contain preprocessor inclusions). Global bit forces full relower;
 // Shape-only does not.
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
+// Issue #3070: Shape/Global → None hysteresis (force-full cooldown).
+extern "C" int aura_hot_update_storm_exit_force_full_active(void);
 
 export namespace aura::compiler {
 
@@ -1333,7 +1335,10 @@ estimate_relower_blocks_impact_checked(std::size_t dirty_count,
 [[nodiscard]] inline bool
 apply_partial_relower_storm_gate(bool want_partial_without_storm) noexcept {
     partial_relower_storm_gate_consult_total_atomic().fetch_add(1, std::memory_order_relaxed);
-    if (storm_level_has_global()) {
+    // Issue #3070: Global bit OR storm-exit cooldown (Shape/Global → None
+    // while the deopt window is still elevated) keeps force-full so
+    // partial↔full cannot oscillate on the first quiet consult.
+    if (storm_level_has_global() || aura_hot_update_storm_exit_force_full_active() != 0) {
         partial_relower_storm_forced_full_total_atomic().fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -1444,7 +1449,13 @@ struct AdaptiveRelowerDecision {
     }
     AdaptiveRelowerPolicy pol;
     pol.base = get_partial_relower_threshold();
-    const bool forced = partial_relower_threshold_is_forced();
+    bool forced = partial_relower_threshold_is_forced();
+    // Issue #3070: a forced-wide thr must not stay wide across an
+    // active storm bit — ignore the freeze and adapt from default.
+    if (forced && (storm_level_has_global() || storm_level_has_shape())) {
+        forced = false;
+        pol.base = kDefaultPartialRelowerThreshold;
+    }
     std::uint32_t reason = 0;
     d.effective_threshold = pol.effective(deopt_window_count, deopt_storm_threshold,
                                           deopt_storm_active, d.dirty_density_bp, forced, &reason);
