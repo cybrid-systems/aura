@@ -22,6 +22,7 @@
 
 // Soft-fuse heal counter (defined in aura_jit_bridge.cpp / stub).
 extern "C" std::uint64_t aura_epoch_invariant_soft_fuse_heal_total_v_read(void);
+extern "C" void aura_reset_epoch_invariant_periodic_for_test(void);
 
 import std;
 import aura.compiler.service;
@@ -262,6 +263,7 @@ static void ac2640_periodic_walk_clears_stale() {
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura_set_epoch_invariant_mode(1);
     aura_set_epoch_invariant_periodic_period_ms(50);
+    aura_reset_epoch_invariant_periodic_for_test();
     // Clear any leftover inject from previous tests.
     for (int i = 0; i < 16; ++i)
         aura_aot_clear_slot_for_test(i);
@@ -352,6 +354,7 @@ static void ac2640_rate_limit_amortizes() {
     aura_set_epoch_invariant_mode(1);
     // 1s period — within a sub-second test window, only first call walks.
     aura_set_epoch_invariant_periodic_period_ms(1000);
+    aura_reset_epoch_invariant_periodic_for_test();
     const auto w_before = aura_epoch_invariant_periodic_walks_total_v_read();
     const auto skip_before = aura_epoch_invariant_periodic_skipped_rate_limited_total_v_read();
     // First call: walks.
@@ -378,6 +381,7 @@ static void ac2640_counters_and_query() {
     aura::compiler::typed_audit::apply_production_audit_defaults();
     aura_set_epoch_invariant_mode(1);
     aura_set_epoch_invariant_periodic_period_ms(50);
+    aura_reset_epoch_invariant_periodic_for_test();
     aura_periodic_epoch_invariant_walk_if_due();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura_set_epoch_invariant_mode(0);
@@ -403,7 +407,9 @@ static void ac2640_source_and_linter() {
     const auto brh = read_file("src/compiler/aura_jit_bridge.h");
     const auto brs = read_file("src/compiler/aura_jit_bridge_stub.cpp");
     const auto dtor = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_reflect.cpp") +
+                   read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto lint =
         read_file("scripts/coverage/checks/check_epoch_invariant_periodic_coverage.py");
     const auto build = read_file("build.py");

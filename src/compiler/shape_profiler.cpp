@@ -37,7 +37,7 @@ extern "C" __attribute__((weak)) int aura_get_storm_isolation_mode(void) noexcep
 // Issue #2433: publish ShapeProfiler storm into HotUpdateRegistry so
 // StormLevel Shape bit + SpecJIT conservative gate observe isolation
 // in the same mutation boundary.
-extern "C" __attribute__((weak)) void aura_hot_update_set_shape_storm_active(int /*active*/) {}
+extern "C" void aura_hot_update_set_shape_storm_active(int active);
 
 // We need EvalValue tag helpers. Since value is a C++ module,
 // include the relevant inline functions directly (they're constexpr/header-only style).

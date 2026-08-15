@@ -974,7 +974,9 @@ extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v) {
 // and force MustDeopt on gen-behind survivors (not already MustDeopt,
 // not freed). Returns newly-marked count. Called from
 // CompilerService::run_epoch_invariant_if_enabled under soft+hard.
-extern "C" std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void) {
+// C ABI aura_epoch_invariant_must_deopt_stale_live_closures lives in
+// runtime_ssot.cpp and forwards here (same walk body).
+static std::size_t epoch_invariant_must_deopt_stale_live_closures_impl(void) {
     const auto cur = aura_aot_func_table_epoch();
     std::unique_lock<std::shared_mutex> lock(g_closure_table_mtx);
     const auto n = g_closure_func_ids.size();
@@ -998,6 +1000,16 @@ extern "C" std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void)
     }
     return marked;
 }
+
+extern "C" void aura_register_epoch_must_deopt_fn(std::size_t (*fn)(void));
+namespace {
+    struct EpochMustDeoptReg {
+        EpochMustDeoptReg() {
+            aura_register_epoch_must_deopt_fn(&epoch_invariant_must_deopt_stale_live_closures_impl);
+        }
+    };
+    [[maybe_unused]] EpochMustDeoptReg g_epoch_must_deopt_reg;
+} // namespace
 
 // Issue #2501 test: force a live JIT closure's bridge_epoch one behind.
 extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t closure_id) {

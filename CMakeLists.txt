@@ -2844,7 +2844,7 @@ target_compile_definitions(test_aot_jit_stamp_batch PRIVATE
 aura_test_compile_options(test_aot_jit_stamp_batch)
 target_link_libraries(test_aot_jit_stamp_batch PRIVATE
     aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-aura_issue_test_link_light(test_aot_jit_stamp_batch)
+aura_issue_test_link_llvm_jit(test_aot_jit_stamp_batch)
 add_test(NAME test_aot_jit_stamp_batch_verification COMMAND ./test_aot_jit_stamp_batch)
 if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_aot_jit_stamp_batch)
@@ -3346,7 +3346,7 @@ target_compile_definitions(test_epoch_invariant_misc_batch PRIVATE
 aura_test_compile_options(test_epoch_invariant_misc_batch)
 target_link_libraries(test_epoch_invariant_misc_batch PRIVATE
     aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-aura_issue_test_link_light(test_epoch_invariant_misc_batch)
+aura_issue_test_link_llvm_jit(test_epoch_invariant_misc_batch)
 add_test(NAME test_epoch_invariant_misc_batch_verification COMMAND ./test_epoch_invariant_misc_batch)
 if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_epoch_invariant_misc_batch)

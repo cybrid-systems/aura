@@ -188,22 +188,14 @@ extern "C" std::uint64_t aura_get_linear_ownership_epoch(void) {
 //   aot_stale_reject_count, aot_region_mismatch,
 //   aot_hot_update_success_count.
 //
-// The host sets g_aot_metrics at startup (NULL default → counters
-// no-op). Issue #1368: also auto-wired from Evaluator::set_compiler_metrics
+// Issue #1368: pointer + setter live in runtime_ssot.cpp (libaura_tl_arena.so)
+// so libaura_test_objects.so resolves aura_set_aot_metrics at load time.
+// Issue #1368: also auto-wired from Evaluator::set_compiler_metrics
 // and aura_ensure_aot_metrics (lazy) so bare Evaluator usage is not silent.
-static aura::compiler::CompilerMetrics* g_aot_metrics = nullptr;
-static std::atomic<std::uint64_t> g_aot_metrics_lazy_init_total{0};
-static std::atomic<std::uint64_t> g_aot_metrics_explicit_sets{0};
 
 // Issue #1368: single access helper used by all counter sites.
 static inline aura::compiler::CompilerMetrics* aot_metrics() noexcept {
-    return g_aot_metrics;
-}
-
-extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
-    g_aot_metrics = m;
-    if (m)
-        g_aot_metrics_explicit_sets.fetch_add(1, std::memory_order_relaxed);
+    return static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics());
 }
 
 // Issue #2092: thin C-linkage helper for bumping the legacy
@@ -471,47 +463,47 @@ extern "C" std::uint64_t aura_static_steal_snapshot_mismatch_force_deopt_total()
 // Read in MutationBoundaryGuard::~MutationBoundaryGuard via std::atomic
 // load — racy by design (best-effort policy).
 extern "C" void aura_set_long_mutation_threshold_us(std::uint64_t us) {
-    if (g_aot_metrics)
-        g_aot_metrics->long_mutation_threshold_us.store(us, std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        m->long_mutation_threshold_us.store(us, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_get_long_mutation_threshold_us(void) {
-    if (g_aot_metrics)
-        return g_aot_metrics->long_mutation_threshold_us.load(std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        return m->long_mutation_threshold_us.load(std::memory_order_relaxed);
     return 500'000;
 }
 
 extern "C" void aura_set_long_mutation_strict_mode(int on) {
-    if (g_aot_metrics)
-        g_aot_metrics->long_mutation_strict_mode.store(on ? 1u : 0u, std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        m->long_mutation_strict_mode.store(on ? 1u : 0u, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_get_long_mutation_strict_mode(void) {
-    if (g_aot_metrics)
-        return g_aot_metrics->long_mutation_strict_mode.load(std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        return m->long_mutation_strict_mode.load(std::memory_order_relaxed);
     return 0;
 }
 
 extern "C" void aura_set_max_extreme_mutation_us(std::uint64_t us) {
-    if (g_aot_metrics)
-        g_aot_metrics->max_extreme_mutation_us.store(us, std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        m->max_extreme_mutation_us.store(us, std::memory_order_relaxed);
 }
 
 // Issue #2199: optional hard_timeout_us override (0 = use max_extreme).
 extern "C" void aura_set_hard_timeout_us(std::uint64_t us) {
-    if (g_aot_metrics)
-        g_aot_metrics->hard_timeout_us.store(us, std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        m->hard_timeout_us.store(us, std::memory_order_relaxed);
 }
 
 extern "C" std::uint64_t aura_get_hard_timeout_us(void) {
-    if (g_aot_metrics)
-        return g_aot_metrics->hard_timeout_us.load(std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        return m->hard_timeout_us.load(std::memory_order_relaxed);
     return 0;
 }
 
 extern "C" std::uint64_t aura_get_long_mutation_forced_abort_total(void) {
-    if (g_aot_metrics)
-        return g_aot_metrics->long_mutation_forced_abort_total.load(std::memory_order_relaxed);
+    if (auto* m = aot_metrics())
+        return m->long_mutation_forced_abort_total.load(std::memory_order_relaxed);
     return 0;
 }
 
@@ -542,27 +534,8 @@ extern "C" std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void) {
     return g_long_mutation_scheduler_hook_calls.load(std::memory_order_relaxed);
 }
 
-// Lazy: only binds when global is still null (does not overwrite host wire-up).
-extern "C" void aura_ensure_aot_metrics(void* metrics) {
-    if (!metrics)
-        return;
-    if (g_aot_metrics == nullptr) {
-        g_aot_metrics = static_cast<aura::compiler::CompilerMetrics*>(metrics);
-        g_aot_metrics_lazy_init_total.fetch_add(1, std::memory_order_relaxed);
-    }
-}
-
-extern "C" void* aura_get_aot_metrics(void) {
-    return g_aot_metrics;
-}
-
-extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
-    return g_aot_metrics_lazy_init_total.load(std::memory_order_relaxed);
-}
-
-extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
-    return g_aot_metrics_explicit_sets.load(std::memory_order_relaxed);
-}
+// aura_ensure_aot_metrics / aura_get_aot_metrics / lazy+explicit
+// counters live in runtime_ssot.cpp (libaura_tl_arena.so).
 
 // Issue #2095: default-LLVM reemit postmortem hook. When
 // AURA_REEMIT_KEEP_FAIL=1 (or AURA_REEMIT_KEEP_FAIL_N=count), the
@@ -898,7 +871,7 @@ extern "C" void aura_cleanup_aot_state(void* eval_ptr) {
         aot_metrics()->aot_per_eval_state_clears.fetch_add(1, std::memory_order_relaxed);
 }
 
-extern "C" std::uint64_t aura_aot_state_map_size(void) {
+static std::uint64_t aot_state_map_size_impl(void) {
     std::lock_guard<std::mutex> lock(g_aot_state_mtx);
     return static_cast<std::uint64_t>(g_aot_state_map.size());
 }
@@ -2066,7 +2039,7 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
 //   - Bumps aot_reload_fall_back_slot_invalidate_total by slot
 //     count + aot_reload_fall_back_slot_invalidate_calls_total by 1.
 //   - Records last eval_ptr for Agent dashboards (#2299 AC4).
-extern "C" std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_ptr) {
+static std::size_t aot_invalidate_all_stale_slots_for_eval_impl(void* eval_ptr) {
     g_aot_last_slot_invalidate_eval.store(reinterpret_cast<std::uintptr_t>(eval_ptr),
                                           std::memory_order_release);
     const auto cur_epoch = g_aot_table_epoch.load(std::memory_order_acquire);
@@ -4700,65 +4673,15 @@ static bool aot_flat_functions_to_binary(const aura::jit::FlatFunction* function
 // Mode is the source of truth for run_epoch_invariant_if_enabled (service
 // reads via aura_epoch_invariant_mode). Soft=metric only; hard=abort.
 // File-local atomics keep non-module tests free of service.ixx include.
-static std::atomic<std::uint64_t> g_epoch_invariant_violation_total{0};
-static std::atomic<std::uint64_t> g_epoch_invariant_walks_total{0};
-// Issue #2501 additive breakdown.
-static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total{0};
-static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total{0};
-// 0=off, 1=soft, 2=hard
-static std::atomic<std::uint8_t> g_epoch_invariant_mode{0};
-
-extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
-    return g_epoch_invariant_violation_total.load(std::memory_order_relaxed);
-}
-
-extern "C" std::uint64_t aura_epoch_invariant_walks_total_v_read(void) {
-    return g_epoch_invariant_walks_total.load(std::memory_order_relaxed);
-}
-
-extern "C" std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void) {
-    return g_epoch_invariant_slot_stale_total.load(std::memory_order_relaxed);
-}
-
-extern "C" std::uint64_t aura_epoch_invariant_closure_must_deopt_total_v_read(void) {
-    return g_epoch_invariant_closure_must_deopt_total.load(std::memory_order_relaxed);
-}
-
-extern "C" void aura_set_epoch_invariant_mode(int mode) {
-    if (mode < 0)
-        mode = 0;
-    if (mode > 2)
-        mode = 2;
-    g_epoch_invariant_mode.store(static_cast<std::uint8_t>(mode), std::memory_order_relaxed);
-}
-
-extern "C" int aura_epoch_invariant_mode(void) {
-    return static_cast<int>(g_epoch_invariant_mode.load(std::memory_order_relaxed));
-}
+// Epoch-invariant counters + note_* + v_read live in runtime_ssot.cpp.
 
 extern "C" void aura_set_epoch_invariant_hard_enabled(int enabled) {
     // Backward-compat (#2304): enabled → hard (2); disabled → off (0).
     aura_set_epoch_invariant_mode(enabled != 0 ? 2 : 0);
 }
 
-extern "C" void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept {
-    g_epoch_invariant_walks_total.fetch_add(1, std::memory_order_relaxed);
-    if (violations > 0)
-        g_epoch_invariant_violation_total.fetch_add(violations, std::memory_order_relaxed);
-}
-
-extern "C" void aura_epoch_invariant_note_slot_stale(std::uint64_t n) noexcept {
-    if (n > 0)
-        g_epoch_invariant_slot_stale_total.fetch_add(n, std::memory_order_relaxed);
-}
-
-extern "C" void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept {
-    if (n > 0)
-        g_epoch_invariant_closure_must_deopt_total.fetch_add(n, std::memory_order_relaxed);
-}
-
 // Issue #2366: count live generation-behind AOT slots (fn_ptr≠0 && gen≠cur).
-extern "C" std::size_t aura_aot_count_live_generation_behind_slots(void) {
+static std::size_t aot_count_live_generation_behind_slots_impl(void) {
     const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
     std::size_t n = 0;
     for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
@@ -4771,7 +4694,9 @@ extern "C" std::size_t aura_aot_count_live_generation_behind_slots(void) {
     return n;
 }
 
-extern "C" void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id) {
+// C ABI aura_aot_inject_live_stale_slot_for_test lives in runtime_ssot.cpp
+// and forwards here.
+static void aot_inject_live_stale_slot_for_test_impl(std::int64_t func_id) {
     if (func_id < 0)
         return;
     const auto idx = static_cast<unsigned>(func_id);
@@ -4784,7 +4709,7 @@ extern "C" void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id) {
     slot.table_generation.store(cur > 0 ? cur - 1 : 0, std::memory_order_release);
 }
 
-extern "C" void aura_aot_clear_slot_for_test(std::int64_t func_id) {
+static void aot_clear_slot_for_test_impl(std::int64_t func_id) {
     if (func_id < 0)
         return;
     const auto idx = static_cast<unsigned>(func_id);
@@ -4907,6 +4832,10 @@ extern "C" std::uint64_t aura_epoch_invariant_periodic_period_ms_v_read(void) {
 }
 extern "C" void aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms) {
     g_epoch_invariant_periodic_period_ms.store(ms, std::memory_order_relaxed);
+}
+
+extern "C" void aura_reset_epoch_invariant_periodic_for_test(void) {
+    g_epoch_invariant_periodic_last_walk_at_ms.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2640: env init — AURA_EPOCH_INVARIANT_PERIOD_MS (default 5000, 0=disabled).
@@ -5437,3 +5366,15 @@ extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void) {
             return;
     }
 }
+
+namespace {
+struct AotSlotCAbiReg {
+    AotSlotCAbiReg() {
+        aura_register_aot_slot_c_abi(
+            &aot_count_live_generation_behind_slots_impl, &aot_inject_live_stale_slot_for_test_impl,
+            &aot_clear_slot_for_test_impl, &aot_invalidate_all_stale_slots_for_eval_impl,
+            &aot_state_map_size_impl);
+    }
+};
+[[maybe_unused]] AotSlotCAbiReg g_aot_slot_c_abi_reg;
+} // namespace

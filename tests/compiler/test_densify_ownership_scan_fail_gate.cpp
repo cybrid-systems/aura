@@ -93,6 +93,14 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+// Query surface is split across evaluator_primitives_query*.cpp + obs_jit.
+static std::string read_query_surface() {
+    return read_file("src/compiler/evaluator_primitives_query.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_reflect.cpp") +
+           read_file("src/compiler/evaluator_primitives_query_type_stats.cpp") +
+           read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+}
+
 static std::int64_t href(CompilerService& cs, const char* key) {
     auto r = cs.eval(std::format(
         "(hash-ref (engine:metrics \"query:lifetime-contract-snapshot\") \"{}\")", key));
@@ -476,7 +484,8 @@ static void ac2673_2664_external_root_independent() {
     const auto impl = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto ixx = read_file("src/compiler/evaluator.ixx");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
     // #2664 cited in densify success path + authority table.
     CHECK(emb.find("#2664") != std::string::npos, "AC5 #2673: #2664 cited in densify path");
     CHECK(ixx.find("#2664") != std::string::npos,
@@ -691,7 +700,7 @@ static void ac2711_4_read_only_snapshot() {
 // Issue #2711 AC5: additive query keys + schema sentinels.
 static void ac2711_5_query_keys_added() {
     std::println("\n--- #2711 AC5: additive query keys ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_surface();
     const auto qobs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
     CHECK(q.find("envframe-lifetime-proof-hold-gen") != std::string::npos,
           "AC5: query exposes envframe-lifetime-proof-hold-gen");
@@ -724,7 +733,7 @@ static void ac2711_5_query_keys_added() {
 static void ac2711_6_source_and_linter() {
     std::println("\n--- #2711 AC6: source-cite + linter + no docs/design/ ---");
     const auto efl = read_file("src/core/envframe_lifetime.ixx");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_surface();
     const auto t = read_file("tests/compiler/test_densify_ownership_scan_fail_gate.cpp");
     const auto lint = read_file("scripts/check_envframe_lifetime_proof_2711.py");
     const auto build = read_file("build.py");
@@ -886,7 +895,7 @@ static void ac2888_3_quiet_path_zero_cost() {
 
 static void ac2888_4_query_additive() {
     std::println("\n--- #2888 AC4: additive query keys + schema ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_surface();
     CHECK(q.find("query:lifetime-consistency-proof") != std::string::npos, "AC4: query registered");
     CHECK(q.find("lifetime-consistency-proof-envframe-densify-scan-fail") != std::string::npos,
           "AC4: envframe axis key");
@@ -918,7 +927,7 @@ static void ac2888_5_source_and_linter() {
     const auto h = read_file("src/core/lifetime_consistency_proof.hh");
     const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_query_surface();
     const auto t = read_file("tests/compiler/test_densify_ownership_scan_fail_gate.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_lifetime_consistency_proof_2888.py");
     const auto build = read_file("build.py");

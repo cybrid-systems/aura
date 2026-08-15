@@ -18,6 +18,8 @@
 #include "hot_update_registry.hh"
 #include "observability_metrics.h"
 
+extern "C" void* aura_get_aot_metrics(void);
+
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
@@ -33,9 +35,7 @@ extern "C" void aura_notify_jit_unhandled_opcode(const char* fn_name) {
 
 // Additional stubs for symbols that aura_jit.cpp may reference.
 // Add as needed when new tests fail to link.
-static void* g_aot_metrics_stub = nullptr;
-static std::uint64_t g_aot_metrics_lazy_stub = 0;
-static std::uint64_t g_aot_metrics_explicit_stub = 0;
+// AOT metrics pointer lives in runtime_ssot.cpp (libaura_tl_arena.so).
 // Issue #243: aura_jit.cpp reads defuse epoch at emit time.
 // Full impl lives in aura_jit_bridge.cpp; light JIT test binaries
 // only need a process-local counter so the link succeeds.
@@ -215,9 +215,7 @@ aura_get_aot_env_frame_version_for_eval(void* /*eval*/) {
     return g_aot_env_frame_version_for_eval_stub;
 }
 extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
-extern "C" __attribute__((weak)) std::uint64_t aura_aot_state_map_size(void) {
-    return 0;
-}
+// aura_aot_state_map_size lives in runtime_ssot.cpp (hook, default 0).
 static std::atomic<std::uint64_t> g_aot_table_epoch_stub{1};
 extern "C" __attribute__((weak)) std::uint64_t aura_aot_func_table_epoch(void) {
     return g_aot_table_epoch_stub.load(std::memory_order_relaxed);
@@ -647,21 +645,21 @@ aura_bump_must_deopt_force_deopt_fail_total(std::uint64_t /*n*/) {}
 // g_aot_metrics_stub so counter assertions observe real motion (mirrors
 // full bridge in aura_jit_bridge.cpp).
 extern "C" __attribute__((weak)) void aura_bump_cross_cow_soft_migrate_total(void) noexcept {
-    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub))
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
         m->cross_cow_soft_migrate_total.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void
 aura_bump_cross_cow_soft_migrate_same_gen_total(void) noexcept {
-    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub))
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
         m->cross_cow_soft_migrate_same_gen_total.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void aura_bump_cross_cow_hard_reject_total(void) noexcept {
-    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub))
+    if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics()))
         m->cross_cow_hard_reject_total.fetch_add(1, std::memory_order_relaxed);
 }
 extern "C" __attribute__((weak)) void
 aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept {
-    auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub);
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics());
     if (!m)
         return;
     m->cross_cow_last_hard_reject_reason.store(reason, std::memory_order_relaxed);
@@ -692,7 +690,7 @@ aura_bump_cross_cow_hard_reject_reason(std::uint8_t reason) noexcept {
 }
 extern "C" __attribute__((weak)) std::uint8_t
 aura_cross_cow_last_hard_reject_reason(void) noexcept {
-    auto* m = static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub);
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics());
     return m ? m->cross_cow_last_hard_reject_reason.load(std::memory_order_relaxed) : 0;
 }
 extern "C" __attribute__((weak)) int aura_cross_cow_soft_migrate_enabled(void) noexcept {
@@ -783,11 +781,7 @@ extern "C" __attribute__((weak)) std::uint64_t aura_jit_fallback_count_v_read(vo
     return 0;
 }
 
-extern "C" void aura_set_aot_metrics(void* metrics) {
-    g_aot_metrics_stub = metrics;
-    if (metrics)
-        ++g_aot_metrics_explicit_stub;
-}
+// aura_set_aot_metrics lives in runtime_ssot.cpp (libaura_tl_arena.so).
 
 // Issue #1443: long-mutation policy knob stubs (test binaries link this
 // instead of full aura_jit_bridge.cpp). All are no-ops in tests.
@@ -830,24 +824,8 @@ extern "C" std::uint64_t aura_long_mutation_scheduler_hook_calls_total(void) {
     return 0;
 }
 
-extern "C" void aura_ensure_aot_metrics(void* metrics) {
-    if (metrics && !g_aot_metrics_stub) {
-        g_aot_metrics_stub = metrics;
-        ++g_aot_metrics_lazy_stub;
-    }
-}
-
-extern "C" void* aura_get_aot_metrics(void) {
-    return g_aot_metrics_stub;
-}
-
-extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
-    return g_aot_metrics_lazy_stub;
-}
-
-extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
-    return g_aot_metrics_explicit_stub;
-}
+// aura_ensure_aot_metrics / aura_get_aot_metrics / counters live
+// in runtime_ssot.cpp (libaura_tl_arena.so).
 // Issue #2093: weak stub for the last-reload-fail-reason getter
 // (production impl is in aura_jit_bridge.cpp; light test binaries
 // that don't link the production bridge TU link cleanly).
@@ -1001,7 +979,6 @@ static std::atomic<std::uint64_t> g_epoch_invariant_violation_total_stub{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_walks_total_stub{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total_stub{0};
 static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total_stub{0};
-static std::atomic<std::uint8_t> g_epoch_invariant_mode_stub{0};
 
 extern "C" __attribute__((weak)) std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
     return g_epoch_invariant_violation_total_stub.load(std::memory_order_relaxed);
@@ -1016,16 +993,8 @@ extern "C" __attribute__((weak)) std::uint64_t
 aura_epoch_invariant_closure_must_deopt_total_v_read(void) {
     return g_epoch_invariant_closure_must_deopt_total_stub.load(std::memory_order_relaxed);
 }
-extern "C" __attribute__((weak)) void aura_set_epoch_invariant_mode(int mode) {
-    if (mode < 0)
-        mode = 0;
-    if (mode > 2)
-        mode = 2;
-    g_epoch_invariant_mode_stub.store(static_cast<std::uint8_t>(mode), std::memory_order_relaxed);
-}
-extern "C" __attribute__((weak)) int aura_epoch_invariant_mode(void) {
-    return static_cast<int>(g_epoch_invariant_mode_stub.load(std::memory_order_relaxed));
-}
+// aura_set_epoch_invariant_mode / aura_epoch_invariant_mode live in
+// runtime_ssot.cpp (libaura_tl_arena.so).
 extern "C" __attribute__((weak)) void aura_set_epoch_invariant_hard_enabled(int enabled) {
     aura_set_epoch_invariant_mode(enabled != 0 ? 2 : 0);
 }
@@ -1089,9 +1058,8 @@ extern "C" __attribute__((weak)) void
 aura_set_epoch_invariant_periodic_period_ms(std::uint64_t ms) {
     g_epoch_invariant_periodic_period_ms_stub.store(ms, std::memory_order_relaxed);
 }
-extern "C" __attribute__((weak)) void aura_periodic_epoch_invariant_walk_if_due(void) {
-    // No-op in light bundles (no AOT table, no JIT). Counters stay zero.
-}
+extern "C" __attribute__((weak)) void aura_periodic_epoch_invariant_walk_if_due(void) {}
+extern "C" __attribute__((weak)) void aura_reset_epoch_invariant_periodic_for_test(void) {}
 
 // Issue #2668: event-driven walk counters (distinct from periodic).
 static std::atomic<std::uint64_t> g_epoch_invariant_event_walks_total_stub{0};
@@ -1150,13 +1118,7 @@ extern "C" __attribute__((weak)) int aura_get_epoch_invariant_soft_fuse_k(void) 
     return aura_epoch_invariant_soft_fuse_k_default();
 }
 
-// No AOT slot table in light stubs — always 0 generation-behind.
-extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
-    return 0;
-}
-extern "C" __attribute__((weak)) void
-aura_aot_inject_live_stale_slot_for_test(std::int64_t /*func_id*/) {}
-extern "C" __attribute__((weak)) void aura_aot_clear_slot_for_test(std::int64_t /*func_id*/) {}
+// AOT slot C ABI lives in runtime_ssot.cpp (hook, default no-op).
 
 // Issue #2050 / runtime soft-dirty path: weak counter bump.
 extern "C" __attribute__((weak)) void
@@ -1256,13 +1218,8 @@ extern "C" __attribute__((weak)) int aura_hot_update_should_throttle_reemit(void
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_hot_update_on_reemit_throttled(void) {}
-// Issue #2094: weak stubs for the unified StormLevel facade.
-// Returns 0 (None) by default; production aura_jit_bridge.cpp owns
-// the real impl that ORs registry + shape-storm detectors.
-extern "C" __attribute__((weak)) std::uint8_t aura_hot_update_current_storm_level(void) {
-    return 0; // StormLevel::None
-}
-extern "C" __attribute__((weak)) void aura_hot_update_set_shape_storm_active(int /*active*/) {}
+// StormLevel C ABI lives in runtime_ssot.cpp; hot_update_registry
+// registers the real getter/setter when this DSO loads.
 // Issue #2095: weak stubs for the default-LLVM reemit postmortem hook.
 // Light test binaries that don't link the production bridge TU still
 // link cleanly; the real impl reads AURA_REEMIT_KEEP_FAIL env and
@@ -1315,7 +1272,7 @@ aura_evaluator_bump_macro_provenance_repin_on_steal(void* /*ev_ptr*/) noexcept {
 // host calls aura_set_aot_metrics (same contract as full bridge). No-op when
 // metrics is null — zero cost hot path when tests don't wire metrics.
 static inline aura::compiler::CompilerMetrics* aot_metrics_stub_() noexcept {
-    return static_cast<aura::compiler::CompilerMetrics*>(g_aot_metrics_stub);
+    return static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics());
 }
 extern "C" __attribute__((weak)) void
 aura_bump_live_closure_epoch_restamp_total(std::uint64_t /*n*/) {}

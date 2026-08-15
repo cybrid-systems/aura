@@ -55,6 +55,25 @@ using aura_fiber_id_fn_t = std::uint64_t (*)();
 extern "C" void aura_set_current_fiber_id_fn(aura_fiber_id_fn_t fn);
 extern "C" aura_fiber_id_fn_t aura_get_current_fiber_id_fn();
 
+// ── AOT metrics + storm / slot C ABI (SSOT in runtime_ssot.cpp) ──
+// service.ixx / evaluator.ixx / shape_profiler.cpp live in
+// libaura_test_objects.so and call these at boot. x86_64 glibc will
+// not resolve an undefined from a later-loaded JIT DSO at load time
+// (mold --as-needed → rc=127: undefined symbol: aura_set_aot_metrics).
+// Strong defs live here; JIT libs register the real impls via the
+// hook setters so they interpose after their .so is loaded.
+extern "C" void* aura_get_aot_metrics(void);
+extern "C" void aura_ensure_aot_metrics(void* metrics);
+extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void);
+extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void);
+
+extern "C" void aura_register_storm_c_abi(std::uint8_t (*get)(void), void (*set_shape)(int));
+extern "C" void aura_register_aot_slot_c_abi(std::size_t (*count_behind)(void),
+                                             void (*inject)(std::int64_t),
+                                             void (*clear_slot)(std::int64_t),
+                                             std::size_t (*invalidate)(void*),
+                                             std::uint64_t (*map_size)(void));
+
 // ── Bridge-hook workspace write lock (Issue #1998 / B-024) ──
 // Acquiring before push to file-scope g_owned_pair_slots_ (and other
 // shared runtime state) prevents races with the static
@@ -294,8 +313,9 @@ extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* us
 
 // Issue #452: AOT bridge metrics pointer (aot_stale_reject_count_,
 // aot_region_mismatch_, aot_hot_update_success_). Defined in
-// aura_jit_bridge.cpp; exposed as C linkage so the service layer
-// can bind it at startup.
+// runtime_ssot.cpp (libaura_tl_arena.so) so test_objects resolves
+// it at load time; exposed as C linkage so the service layer can
+// bind it at startup.
 namespace aura::compiler {
 struct CompilerMetrics;
 }
