@@ -11,8 +11,9 @@
 #define AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 
 #include "core/provenance_tracker.hh"
-#include "core/resource_quota.hh"  // process_resource_quota_manager (#2493 mid resolve)
-#include "core/workspace_epoch.hh" // current_mutation_epoch (#2493 mid resolve)
+#include "core/resource_quota.hh"     // process_resource_quota_manager (#2493 mid resolve)
+#include "core/security_event_wal.hh" // #3054 emit_security_event_durable on refuse
+#include "core/workspace_epoch.hh"    // current_mutation_epoch (#2493 mid resolve)
 // Issue #2836: resolve-time mid-fallback hard face is absolute zero-tolerance
 // (no SLO rate check). Schedule-gate (#2630/#2594) still uses
 // audit_mid_fallback_slo.h; include removed from this header after #2836.
@@ -274,6 +275,9 @@ struct TypedMutationAuditCounters {
     // production_defaults_active() || Full (returns 0; no gen bump).
     // Distinct from audit_mid_fallback_gen_total (Soft join-stamp path).
     std::atomic<std::uint64_t> audit_mid_fallback_refused_total{0};
+    // Issue #3054: joinable SE emit count + last ring seq (not a second bus).
+    std::atomic<std::uint64_t> audit_mid_fallback_refuse_se_total{0};
+    std::atomic<std::uint64_t> audit_mid_fallback_refuse_se_seq{0};
     // Issue #1884: TypePropagation / predicate_memo ↔ invariant correlation.
     std::atomic<std::uint64_t> type_prop_invariant_correlation_total{0};
     std::atomic<std::uint64_t> type_prop_invariant_pass_with_evidence_total{0};
@@ -788,6 +792,15 @@ inline void clear_soft_truncated_silent_dep_escalate_for_test() noexcept {
     g_last_soft_truncated_silent_dep_count.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3054: one joinable SE per boundary on mid-fallback refuse.
+// Nested / re-resolve under the same boundary must not double-emit.
+inline constexpr int kMidFallbackRefuseSeIssue = 3054;
+inline thread_local bool g_tls_mid_fallback_refuse_se_emitted = false;
+
+inline void clear_mid_fallback_refuse_se_tls() noexcept {
+    g_tls_mid_fallback_refuse_se_emitted = false;
+}
+
 // Issue #2053: production multi-tenant AI — capture every self-modify event.
 // Full strategy + production_defaults_active=1. Issue #2818: Full is also
 // the cold-start static default; this call additionally arms production
@@ -798,6 +811,7 @@ inline void apply_production_audit_defaults() noexcept {
     set_sample_ratio(1);
     g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
+    clear_mid_fallback_refuse_se_tls();
 }
 
 // Issue #2053: restore fast-iteration Sampled defaults (tests / AURA_SANDBOX=off).
@@ -810,6 +824,7 @@ inline void apply_dev_audit_defaults() noexcept {
     set_sample_ratio(4);
     g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
+    clear_mid_fallback_refuse_se_tls();
 }
 
 // Issue #2818: one-shot warn when Sampled under-samples without apply_dev
@@ -2410,6 +2425,23 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
         // does NOT bump audit_mid_fallback_gen_total (#2836 AC1).
         g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #3054: exactly one joinable SE (ring + WAL when enabled).
+        // Soft never reaches this branch. TLS suppresses nested re-resolve.
+        if (!g_tls_mid_fallback_refuse_se_emitted) {
+            g_tls_mid_fallback_refuse_se_emitted = true;
+            using ::aura::core::security_event::g_security_event_ring;
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0,
+                                        /*mid=*/0, /*epoch=*/ep, /*effect_bits=*/0,
+                                        "resolve-audit-mid", "mid-fallback-refused",
+                                        /*denied=*/true, /*fiber=*/0);
+            const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
+                seq == 0 ? 0 : seq - 1, std::memory_order_relaxed);
+            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         return 0;
     }
     // Soft / Sampled: last-resort process-origin stamp + gen counter.
@@ -2442,6 +2474,7 @@ inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
 inline void clear_boundary_audit_mid() noexcept {
     g_tls_boundary_audit_mid = 0;
     g_tls_boundary_audit_noted = false;
+    clear_mid_fallback_refuse_se_tls();
 }
 
 [[nodiscard]] inline std::uint64_t current_boundary_audit_mid() noexcept {
@@ -3107,6 +3140,10 @@ inline void reset_for_test() noexcept {
                                                                        std::memory_order_relaxed);
     // Issue #2836
     g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
         0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.type_prop_invariant_correlation_total.store(
         0, std::memory_order_relaxed);

@@ -44,6 +44,7 @@
 #include "compiler/audit_mid_fallback_slo.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/resource_quota.hh"
+#include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 
 #include <atomic>
@@ -70,14 +71,20 @@ using aura::compiler::reset_audit_mid_fallback_slo_for_test;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::clear_boundary_audit_mid;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 using aura::compiler::typed_audit::get_strategy;
+using aura::compiler::typed_audit::note_boundary_audit_mid;
 using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::typed_audit::resolve_audit_mutation_id;
 using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
 using aura::core::current_mutation_epoch;
 using aura::core::store_workspace_epoch;
 using aura::core::WorkspaceEpochKind;
@@ -125,6 +132,21 @@ std::int64_t href(CompilerService& cs, std::string_view key) {
 std::string read_env_safe(const char* name) {
     const char* v = std::getenv(name);
     return v ? std::string(v) : std::string{};
+}
+
+std::size_t count_mid_fallback_refuse_se() {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_relaxed);
+    std::size_t n = 0;
+    for (std::size_t i = 0; i < kSecurityEventRingSize && i < head; ++i) {
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.denied &&
+            std::string_view(e.reason).find("mid-fallback-refused") != std::string_view::npos)
+            ++n;
+    }
+    return n;
 }
 
 } // namespace
@@ -502,6 +524,133 @@ int run_test_audit_mid_fallback_slo() {
               "2836 AC6: no test_issue_2836.cpp (#81967)");
 
         // Restore Soft defaults for any subsequent batch members.
+        apply_dev_audit_defaults();
+    }
+
+    // ── #3054 AC1-AC6: refuse emits one joinable SecurityEvent ──
+    {
+        std::println("\n--- #3054: mid-fallback refuse joinable SE ---");
+        using aura::core::security_event::g_security_event_ring;
+        using aura::core::security_event::reset_security_event_ring_for_test;
+        using aura::core::security_event::SecurityEventKind;
+
+        // AC1: production + all upstream mid=0 → one SE, mid=0, reason.
+        apply_production_audit_defaults();
+        force_all_upstream_mids_zero();
+        reset_security_event_ring_for_test();
+        g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.store(
+            0, std::memory_order_relaxed);
+        const auto se0 = count_mid_fallback_refuse_se();
+        const auto mid = resolve_audit_mutation_id(0);
+        CHECK(mid == 0, "3054 AC1: resolve still returns 0");
+        CHECK(count_mid_fallback_refuse_se() == se0 + 1, "3054 AC1: exactly one refuse SE");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.load(
+                  std::memory_order_relaxed) == 1,
+              "3054 AC1: refuse-se-total = 1");
+        {
+            auto& ring = g_security_event_ring();
+            const auto head = ring.seq.load(std::memory_order_relaxed);
+            CHECK(head > 0, "3054 AC1: ring advanced");
+            const auto& e =
+                ring.ring[(head - 1) % aura::core::security_event::kSecurityEventRingSize];
+            CHECK(e.kind == SecurityEventKind::InvariantFail, "3054 AC1: kind InvariantFail");
+            CHECK(e.mutation_id == 0, "3054 AC1: mutation_id = 0");
+            CHECK(e.denied, "3054 AC1: denied");
+            CHECK(std::string_view(e.op) == "resolve-audit-mid", "3054 AC1: op");
+            CHECK(std::string_view(e.reason) == "mid-fallback-refused", "3054 AC1: reason");
+        }
+
+        // AC3: nested re-resolve does not double-emit.
+        note_boundary_audit_mid(0);
+        (void)resolve_audit_mutation_id(0);
+        CHECK(count_mid_fallback_refuse_se() == se0 + 1, "3054 AC3: no second SE under boundary");
+        clear_boundary_audit_mid();
+
+        // AC2: Soft / Sampled — no SE from resolve.
+        apply_dev_audit_defaults();
+        force_all_upstream_mids_zero();
+        reset_security_event_ring_for_test();
+        const auto se_soft0 = count_mid_fallback_refuse_se();
+        const auto se_tot0 =
+            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.load(
+                std::memory_order_relaxed);
+        const auto mid_soft = resolve_audit_mutation_id(0);
+        CHECK(mid_soft != 0, "3054 AC2: Soft still stamps");
+        CHECK(count_mid_fallback_refuse_se() == se_soft0, "3054 AC2: Soft emits no refuse SE");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.load(
+                  std::memory_order_relaxed) == se_tot0,
+              "3054 AC2: refuse-se-total unchanged on Soft");
+
+        // AC4: query:security-audit reason filter + existing counters.
+        apply_production_audit_defaults();
+        force_all_upstream_mids_zero();
+        reset_security_event_ring_for_test();
+        (void)resolve_audit_mutation_id(0);
+        CHECK(href(cs, "schema-3054") == 3054, "3054 AC4: schema-3054");
+        CHECK(href(cs, "issue-3054") == 3054, "3054 AC4: issue-3054");
+        CHECK(href(cs, "mid-fallback-refuse-se-wired") == 1, "3054 AC4: wired");
+        CHECK(href(cs, "refuse-se-total") >= 1, "3054 AC4: refuse-se-total visible");
+        CHECK(href(cs, "refused-total") >= 1, "3054 AC4: refused-total still truthful");
+        CHECK(href(cs, "mid-fallback-refused") == 1, "3054 AC4: mid-fallback-refused flag");
+        auto q =
+            cs.eval(R"((engine:metrics "query:security-audit" 16 0 0 0 0 "mid-fallback-refused"))");
+        CHECK(q.has_value(), "3054 AC4: query:security-audit reason filter callable");
+        bool saw_reason = false;
+        if (q) {
+            auto cur = *q;
+            int guard = 0;
+            auto& ev = cs.evaluator();
+            auto& pairs = ev.pairs();
+            auto heap = ev.string_heap();
+            while (is_pair(cur) && guard++ < 64) {
+                const auto idx = as_pair_idx(cur);
+                if (idx >= pairs.size())
+                    break;
+                if (is_string(pairs[idx].car)) {
+                    const auto sidx = as_string_idx(pairs[idx].car);
+                    if (sidx < heap.size()) {
+                        const std::string ln(heap[sidx]);
+                        if (ln.find("reason=\"mid-fallback-refused\"") != std::string::npos &&
+                            ln.find("kind=InvariantFail") != std::string::npos)
+                            saw_reason = true;
+                    }
+                }
+                cur = pairs[idx].cdr;
+            }
+        }
+        CHECK(saw_reason, "3054 AC4: reason filter returns refuse SE");
+
+        // AC5: refuse stays zero side-effect on success state.
+        apply_production_audit_defaults();
+        force_all_upstream_mids_zero();
+        const auto gen0 = g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+            std::memory_order_relaxed);
+        const auto mid5 = resolve_audit_mutation_id(0);
+        CHECK(mid5 == 0, "3054 AC5: no process-origin stamp");
+        CHECK(g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.load(
+                  std::memory_order_relaxed) == gen0,
+              "3054 AC5: gen total unchanged");
+
+        // AC6: source-cite + linter + no invent / no docs/design/.
+        const auto tma = read_repo_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("Issue #3054") != std::string::npos, "3054 AC6: tma cites #3054");
+        CHECK(tma.find("emit_security_event_durable") != std::string::npos,
+              "3054 AC6: reuses emit_security_event_durable");
+        CHECK(tma.find("kMidFallbackRefuseSeIssue = 3054") != std::string::npos, "3054 AC6: stamp");
+        CHECK(tma.find("g_tls_mid_fallback_refuse_se_emitted") != std::string::npos,
+              "3054 AC3/AC6: TLS single-shot");
+        const auto sec = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(sec.find("schema-3054") != std::string::npos, "3054 AC6: query cites schema-3054");
+        CHECK(sec.find("mid-fallback-refused") != std::string::npos,
+              "3054 AC6: reason filter surface");
+        const auto build = read_repo_file("build.py");
+        CHECK(build.find("check_mid_fallback_refuse_se_3054") != std::string::npos,
+              "3054 AC6: build.py wires linter");
+        CHECK(!repo_file_exists("tests/compiler/test_issue_3054.cpp"),
+              "3054 AC6: no test_issue_3054.cpp (#81967)");
+        CHECK(read_repo_file("docs/design/3054-mid-fallback-refuse-se.md").empty(),
+              "3054 AC6: no docs/design/3054-* (#1655)");
+
         apply_dev_audit_defaults();
     }
 
