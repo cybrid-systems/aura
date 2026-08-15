@@ -3622,8 +3622,9 @@ public:
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
-    // Issue #3003: query:type / get-inferred-type authority. False after
-    // Production / Full solve_delta that is not SOLVED (no half-solution).
+    // Issue #3003 / #3081: query:type / get-inferred-type authority.
+    // False after Production / Full solve_delta that is not SOLVED, and
+    // after Soft TIMEOUT / CONFLICT (allow_timeout_commit included).
     [[nodiscard]] bool type_export_authoritative() const noexcept {
         return type_export_authoritative_;
     }

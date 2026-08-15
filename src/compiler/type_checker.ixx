@@ -438,6 +438,8 @@ export enum class SolveResult : std::uint8_t {
 // still wrote types + cleared dirty (half-solution authority). Soft
 // remains observe-only.
 inline constexpr int kDeltaTimeoutFailClosedIssue = 3003;
+// Issue #3081: Soft + allow_timeout_commit TIMEOUT is never query:type authority.
+inline constexpr int kSoftTimeoutExportNonAuthoritativeIssue = 3081;
 
 // Issue #3005: ADT variant / match-pattern mutate must put exhaustiveness
 // goals into the dirty cone / solve_delta dep-closure. Production / Full
@@ -2306,6 +2308,9 @@ export struct TypeCheckResult {
     // rationale.
     std::uint64_t schema_cache_lookups = 0;
     std::uint64_t schema_cache_hits = 0;
+    // Issue #3081: Soft TIMEOUT / CONFLICT is not query:type authority.
+    bool type_export_authoritative = true;
+    SolveResult last_solve_status = SolveResult::SOLVED;
 };
 
 // Pure: type-check a FlatAST subtree and return the inferred
@@ -2630,9 +2635,11 @@ export struct TypeChecker {
         return last_occurrence_vars_;
     }
     [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
-    // Issue #3003: last infer_flat / infer_flat_partial solve status
-    // and whether query:type / get-inferred-type may treat written
-    // types as authority. Production / Full + not SOLVED → false.
+    // Issue #3003 / #3081: last infer_flat / infer_flat_partial solve
+    // status and whether query:type / get-inferred-type may treat
+    // written types as authority. Production / Full + not SOLVED →
+    // false. Soft + TIMEOUT / CONFLICT (allow_timeout_commit included)
+    // also false — half-solutions are never Agent-visible truth.
     [[nodiscard]] SolveResult last_delta_solve_status() const noexcept {
         return last_delta_solve_status_;
     }

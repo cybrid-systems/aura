@@ -2690,6 +2690,8 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
 
     // Soft + allow_timeout_commit: explicit TIMEOUT export, never SOLVED.
     // Production ignores allow_timeout_commit (cannot ship half-solved).
+    // Issue #3081: infer_flat / query:type must treat this TIMEOUT as
+    // non-authoritative (half-solved CS is observe-only).
     if (!prod && budget.allow_timeout_commit) {
         c.solver_budget_timeout_export_total.fetch_add(1, std::memory_order_relaxed);
         if (metrics_) {
@@ -4359,6 +4361,10 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     if (!preserve_cs)
         last_type_export_authoritative_ = true;
     if (solve_status != SolveResult::SOLVED) {
+        // Issue #3081: TIMEOUT / CONFLICT (including Soft +
+        // allow_timeout_commit) is never query:type authority.
+        // One store on this export path (AC4: zero cost when SOLVED).
+        last_type_export_authoritative_ = false;
         // Build a human-readable summary of the unresolved
         // constraints for the diagnostic. The summary is
         // intentionally short ("T42 ~ T43 (consistent)") to keep
@@ -7916,6 +7922,10 @@ TypeId TypeChecker::infer_flat(FlatAST& flat, StringPool& pool, NodeId node,
     stats_.predicate_memo_evictions += r.predicate_memo_evictions;
     stats_.predicate_memo_partial_evictions += r.predicate_memo_partial_evictions;
     last_coercions_ = std::move(r.coercions);
+    // Issue #3081: TypeChecker::infer_flat is typecheck-current's path —
+    // copy engine authority so query:type never treats a TIMEOUT CS as truth.
+    last_type_export_authoritative_ = r.type_export_authoritative;
+    last_delta_solve_status_ = r.last_solve_status;
     // Issue #2514: sticky synth hard-fail for MutationBoundary authority.
     // Soft Warning does not set the flag; only production/strict hard.
     if (r.linear_synth_hard_fail) {
@@ -8020,6 +8030,9 @@ TypeCheckResult type_check_flat_pure(
     result.linear_synth_violation_count = engine.linear_synth_violation_count();
     result.uncovered_bidirectional_tag_hard_fail = engine.uncovered_bidirectional_tag_hard_fail();
     result.uncovered_bidirectional_tag_count = engine.uncovered_bidirectional_tag_count();
+    // Issue #3081: plumb Soft TIMEOUT / CONFLICT authority to TypeChecker.
+    result.type_export_authoritative = engine.last_type_export_authoritative();
+    result.last_solve_status = engine.last_solve_status();
     return result;
 }
 
