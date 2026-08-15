@@ -1360,6 +1360,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     ev.workspace_flat() && ev.workspace_flat()->restamp_generation_torn() ? 1 : 0));
             insert_kv("schema-3037", 3037);
             insert_kv("issue-3037", 3037);
+            // Issue #3076: Soft-observe counters are not Hard guarantees.
+            insert_kv("soft-observe-not-hard-guarantee", 1);
+            insert_kv("schema-3076", 3076);
+            insert_kv("issue-3076", 3076);
             // Issue #3058: as-stable-ref / ensure-ref torn visible.
             insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);

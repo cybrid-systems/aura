@@ -1072,6 +1072,19 @@ def cmd_lint():
             "Issue #3075 production QueryEpoch strict linter failed — run python3 scripts/coverage/checks/check_query_epoch_production_strict_3075.py"
         )
         return r
+    # Issue #3076: Soft-observe counters are not Hard production
+    # guarantees. Production Hard-sibling faces reject; Soft observe
+    # stays 0. Extends hygiene/restamp canaries (#81967).
+    sonh3076_script = COVERAGE_CHECKS / "check_soft_observe_not_hard_3076.py"
+    if not sonh3076_script.exists():
+        fail(f"missing {sonh3076_script}")
+        return 1
+    r = run([sys.executable, str(sonh3076_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3076 Soft-observe not Hard linter failed — run python3 scripts/coverage/checks/check_soft_observe_not_hard_3076.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12381,6 +12394,30 @@ def cmd_query_epoch_production_strict_3075():
     return cmd_query_epoch_production_strict_3075_coverage()
 
 
+def cmd_soft_observe_not_hard_3076_coverage():
+    """Issue #3076: Soft-observe is not a Hard production guarantee (static)."""
+    print(f"{B}=== soft-observe not Hard coverage (#3076) ==={N}")
+    script = COVERAGE_CHECKS / "check_soft_observe_not_hard_3076.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("soft-observe not Hard (#3076) coverage contract rows failed")
+        return 1
+    ok("soft-observe not Hard (#3076) coverage clean")
+    return 0
+
+
+def cmd_soft_observe_not_hard_3076():
+    """Issue #3076: production Hard-sibling faces reject; Soft observe stays 0.
+
+    Soft/dev unchanged. Schema-3076 tags Soft counters as not-guarantee.
+    """
+    print(f"{B}=== soft-observe not Hard (#3076) ==={N}")
+    return cmd_soft_observe_not_hard_3076_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16775,6 +16812,8 @@ def main():
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "query-epoch-production-strict-3075": cmd_query_epoch_production_strict_3075,
         "query-epoch-production-strict-3075-coverage": cmd_query_epoch_production_strict_3075_coverage,
+        "soft-observe-not-hard-3076": cmd_soft_observe_not_hard_3076,
+        "soft-observe-not-hard-3076-coverage": cmd_soft_observe_not_hard_3076_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

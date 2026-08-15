@@ -688,6 +688,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(snap.hard_fiber_isolation));
                 insert_kv("fiber-hard-deny", static_cast<std::int64_t>(snap.fiber_hard_deny));
                 insert_kv("hard-fiber-isolation-wired", 1);
+                // Issue #3076: fiber-mismatch Soft observe is not Hard deny
+                // (#2536 Restricted share). Agents must read fiber-hard-deny.
+                insert_kv("soft-observe-not-hard-guarantee", 1);
+                insert_kv("schema-3076", 3076);
+                insert_kv("issue-3076", 3076);
                 // Issue #2943: production multi-tenant/Strict hard default
                 // (query:capability-effect-stats surface; lineage #2151).
                 insert_kv("schema-2943", 2943);

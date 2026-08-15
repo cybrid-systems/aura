@@ -709,6 +709,9 @@ struct CapabilityRegistry {
                 return false;
             }
             // Fiber mismatch: soft (metric) or hard deny (#2151).
+            // Issue #3076: capability_fiber_mismatch_total is Soft-observe
+            // (not a Hard guarantee). Hard sibling is fiber_hard_deny
+            // under hard_fiber_isolation (#2536 Restricted share stays Soft).
             if (g.grant_fiber_id != 0 && prov.fiber_id != 0 && g.grant_fiber_id != prov.fiber_id) {
                 g_capability_effect_metrics().capability_fiber_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);

@@ -2696,6 +2696,10 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                         .load(std::memory_order_relaxed)));
             insert_kv("schema-3037", 3037);
             insert_kv("issue-3037", 3037);
+            // Issue #3076: Soft-observe counters are not Hard guarantees.
+            insert_kv("soft-observe-not-hard-guarantee", 1);
+            insert_kv("schema-3076", 3076);
+            insert_kv("issue-3076", 3076);
             insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             insert_kv("schema-3041", 3041);
