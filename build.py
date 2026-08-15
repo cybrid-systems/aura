@@ -981,6 +981,19 @@ def cmd_lint():
             "Issue #3068 partial map-ensure linter failed — run python3 scripts/coverage/checks/check_partial_map_ensure_3068.py"
         )
         return r
+    # Issue #3069: abort force_ir_cache_dirty_after_abort generation
+    # fence vs concurrent lookup. Extends test_mutation_rollback_coverage
+    # (#81967); no docs/design; no new query keys.
+    afg3069_script = COVERAGE_CHECKS / "check_abort_force_generation_fence_3069.py"
+    if not afg3069_script.exists():
+        fail(f"missing {afg3069_script}")
+        return 1
+    r = run([sys.executable, str(afg3069_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3069 abort-force generation fence linter failed — run python3 scripts/coverage/checks/check_abort_force_generation_fence_3069.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12146,6 +12159,30 @@ def cmd_partial_map_ensure_3068():
     return cmd_partial_map_ensure_3068_coverage()
 
 
+def cmd_abort_force_generation_fence_3069_coverage():
+    """Issue #3069: abort-force generation fence (static)."""
+    print(f"{B}=== abort-force generation fence coverage (#3069) ==={N}")
+    script = COVERAGE_CHECKS / "check_abort_force_generation_fence_3069.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("abort-force generation fence (#3069) coverage contract rows failed")
+        return 1
+    ok("abort-force generation fence (#3069) coverage clean")
+    return 0
+
+
+def cmd_abort_force_generation_fence_3069():
+    """Issue #3069: abort force dirty generation fence vs concurrent lookup.
+
+    Soft/never-aborted: one acquire of 0 on lookup.
+    """
+    print(f"{B}=== abort-force generation fence (#3069) ==={N}")
+    return cmd_abort_force_generation_fence_3069_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16502,6 +16539,8 @@ def main():
         "hybrid-deferred-cascade-3067-coverage": cmd_hybrid_deferred_cascade_3067_coverage,
         "partial-map-ensure-3068": cmd_partial_map_ensure_3068,
         "partial-map-ensure-3068-coverage": cmd_partial_map_ensure_3068_coverage,
+        "abort-force-generation-fence-3069": cmd_abort_force_generation_fence_3069,
+        "abort-force-generation-fence-3069-coverage": cmd_abort_force_generation_fence_3069_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

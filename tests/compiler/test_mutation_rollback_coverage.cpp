@@ -18,11 +18,17 @@
 
 #include "test_harness.hpp"
 
+#include <atomic>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <string>
+#include <thread>
+#include <vector>
 
 import std;
 import aura.compiler.evaluator;
+import aura.compiler.ir;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core;
@@ -198,6 +204,100 @@ static void run_matrix(CompilerService& cs) {
     (void)dirty_before;
 }
 
+// Issue #3069: abort force fence vs concurrent lookup_define_v2.
+static void test_abort_force_generation_fence_3069() {
+    std::println("\n--- AC9: abort-force generation fence vs concurrent lookup (#3069) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3069 (lambda (x) (+ x 1))) (f3069 1)\")").has_value(),
+          "3069 set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3069 eval");
+    if (!cs.get_define_v2("f3069"))
+        (void)cs.eval("(compile:cache-define \"f3069\")");
+    CHECK(cs.get_define_v2("f3069") != nullptr, "3069 cache entry");
+    const auto hash = cs.get_define_v2("f3069")->source_hash;
+    const auto force0 =
+        cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
+    const auto gen0 = cs.public_abort_force_generation();
+
+    cs.public_set_abort_force_hold(true);
+    std::atomic<int> forcer_started{0};
+    std::thread forcer([&] {
+        forcer_started.store(1, std::memory_order_release);
+        cs.public_force_ir_cache_dirty_after_abort();
+    });
+    while (forcer_started.load(std::memory_order_acquire) == 0)
+        std::this_thread::yield();
+    while (cs.public_abort_force_generation() == gen0)
+        std::this_thread::yield();
+    CHECK(cs.public_abort_force_in_progress(), "3069 AC1: in-progress during hold");
+    int clean_hits = 0;
+    int dirty_hits = 0;
+    for (int i = 0; i < 256; ++i) {
+        const int st = cs.lookup_define_v2("f3069", hash);
+        if (st == 0)
+            ++clean_hits;
+        else if (st == 1)
+            ++dirty_hits;
+    }
+    CHECK(clean_hits == 0, "3069 AC1: no clean hit during abort force");
+    CHECK(dirty_hits > 0, "3069 AC1: lookups return need-relower");
+    cs.public_set_abort_force_hold(false);
+    forcer.join();
+
+    const auto force1 =
+        cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
+    CHECK(force1 > force0, "3069 AC2: abort_ir_cache_force_dirty_total bumped");
+    const auto* after = cs.get_define_v2("f3069");
+    CHECK(after != nullptr && after->dirty, "3069 AC2: dirty after abort");
+    CHECK(after && after->version_stamp_.mutation_count == 0, "3069 AC2: mutation stamp zeroed");
+    CHECK(after && after->version_stamp_.bridge_epoch == 0, "3069 AC2: bridge stamp zeroed");
+    CHECK(after &&
+              after->version_stamp_.abort_force_generation == cs.public_abort_force_generation(),
+          "3069 AC2: entry acked abort gen");
+    CHECK(cs.public_source_to_ir_map_consistent("f3069"), "3069 AC2: map consistent");
+    CHECK(!cs.public_abort_force_in_progress(), "3069 AC2: in-progress cleared");
+    CHECK(cs.lookup_define_v2("f3069", hash) == 1, "3069 AC2: post-abort still need-relower");
+
+    // AC3: success-path store acks the fence → clean hit.
+    {
+        aura::ir::IRFunction top;
+        top.id = 0;
+        top.name = "__top__";
+        top.blocks.push_back({0, {}, {}});
+        aura::ir::IRFunction body;
+        body.id = 1;
+        body.name = "f3069_body";
+        body.blocks.push_back({0, {}, {}});
+        std::vector<aura::ir::IRFunction> irs;
+        irs.push_back(std::move(top));
+        irs.push_back(std::move(body));
+        const std::string src = "(define f3069 (lambda (x) (+ x 1)))";
+        cs.store_define_v2("f3069", src, std::move(irs), {}, {});
+        const auto stored = cs.get_define_v2("f3069");
+        CHECK(stored && !stored->dirty, "3069 AC3: store clears dirty");
+        CHECK(stored && stored->version_stamp_.abort_force_generation ==
+                            cs.public_abort_force_generation(),
+              "3069 AC3: store acks abort gen");
+        CHECK(cs.lookup_define_v2("f3069", stored->source_hash) == 0,
+              "3069 AC3: success-path store is clean hit");
+    }
+
+    const auto svc = []() {
+        std::ifstream in("src/compiler/service.ixx");
+        if (in)
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::ifstream in2("../src/compiler/service.ixx");
+        if (in2)
+            return std::string((std::istreambuf_iterator<char>(in2)),
+                               std::istreambuf_iterator<char>());
+        return std::string{};
+    }();
+    CHECK(svc.find("Issue #3069") != std::string::npos, "3069 AC4: service cite");
+    CHECK(svc.find("abort_force_generation_") != std::string::npos, "3069 AC4: generation");
+    CHECK(svc.find("abort_force_in_progress_") != std::string::npos, "3069 AC4: in-progress");
+}
+
 } // namespace aura_400_detail
 
 int main() {
@@ -207,5 +307,6 @@ int main() {
     aura_400_detail::test_field_int_rollback();
     aura::compiler::CompilerService cs;
     aura_400_detail::run_matrix(cs);
+    aura_400_detail::test_abort_force_generation_fence_3069();
     return RUN_ALL_TESTS();
 }

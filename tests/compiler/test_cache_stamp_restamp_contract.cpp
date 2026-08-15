@@ -28,6 +28,7 @@ namespace {
 using aura::compiler::CacheEntryVersionStamp;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::kRelowerAbortForce;
 using aura::compiler::kRelowerBridgeEpoch;
 using aura::compiler::kRelowerMutationDrift;
 using aura::compiler::restamp_cache_entry;
@@ -102,6 +103,17 @@ int run_test_cache_stamp_restamp_contract() {
         CHECK(need, "force relower");
         CHECK((reasons & kRelowerMutationDrift) != 0 || (reasons & kRelowerBridgeEpoch) != 0,
               "stamp domain reason");
+        // Issue #3069: abort-force gen behind live → need-relower even if clean.
+        CacheEntryVersionStamp clean;
+        restamp_cache_entry(clean, 3, 7, 2, 0);
+        clean.abort_force_generation = 0;
+        std::uint32_t ar = 0;
+        CHECK(should_relower(1, 1, false, clean, 3, 7, 2, &ar, 0, /*abort_gen*/ 4),
+              "3069: abort fence forces relower");
+        CHECK((ar & kRelowerAbortForce) != 0, "3069: kRelowerAbortForce bit");
+        std::uint32_t ar0 = 0;
+        CHECK(!should_relower(1, 1, false, clean, 3, 7, 2, &ar0, 0, /*abort_gen*/ 0),
+              "3069: abort gen 0 is zero-cost skip");
     }
 
     // ── AC5: adversarial inject stale stamp on service entry ──
