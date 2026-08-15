@@ -65,7 +65,7 @@ def main() -> int:
     must("restamp_eager_", "AC1 eager bit", impl)
     must("node_eagerly_restamped", "AC1 allow", sec)
     must("record_query_stable_ref_restamp_torn_reject", "AC1", sec)
-    must("production_defaults_active()", "AC1", sec)
+    must("should_hard_reject_soft_sibling", "AC1", sec)  # #3076 Hard-sibling SSOT
     must("allow_query_stable_ref_export", "AC1 query", qws)
     must("generation torn", "AC1 torn message", qws)
     must("ac3037_1_production_torn_after_lazy_align", "AC1 test", test)
