@@ -32,8 +32,13 @@ using aura::compiler::hot_update_registry;
 using aura::compiler::castop_density::apply_hard_policy;
 using aura::compiler::castop_density::g_hot_residual_density_keep_total;
 using aura::compiler::castop_density::g_hot_residual_nonidentity_total;
+using aura::compiler::castop_density::g_hot_residual_relower_total;
+using aura::compiler::castop_density::g_hot_residual_soft_must_deopt_pending;
+using aura::compiler::castop_density::g_hot_residual_soft_must_deopt_total;
 using aura::compiler::castop_density::hard_env_enabled;
+using aura::compiler::castop_density::hot_residual_soft_must_deopt_pending;
 using aura::compiler::castop_density::kCastOpHotResidualNonidentityIssue;
+using aura::compiler::castop_density::kCastOpHotResidualSoftMustDeoptIssue;
 using aura::compiler::castop_density::note_hot_residual_nonidentity_castops;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -54,6 +59,14 @@ static std::string read_file(const char* path) {
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(
         std::format("(hash-ref (engine:metrics \"query:castop-density-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static std::int64_t href_layered(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:dead-coercion-layered-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -179,6 +192,105 @@ static void ac3046_residual_nonidentity() {
           "3046: coercion_map session face");
 }
 
+// ── Issue #3084: Soft residual CastOp must force deopt (no relower) ──
+static void ac3084_1_soft_residual_must_deopt() {
+    std::println("\n--- #3084 AC1: Soft leftover → MustDeopt, no relower ---");
+    CHECK(kCastOpHotResidualSoftMustDeoptIssue == 3084, "3084 AC1: issue stamp");
+    const auto n0 = g_hot_residual_nonidentity_total.load();
+    const auto d0 = g_hot_residual_soft_must_deopt_total.load();
+    const auto k0 = g_hot_residual_density_keep_total.load();
+    const auto r0 = g_hot_residual_relower_total.load();
+    g_hot_residual_soft_must_deopt_pending.store(0, std::memory_order_relaxed);
+    CHECK(note_hot_residual_nonidentity_castops(2, nullptr, /*production=*/0) == 2,
+          "3084 AC1: Soft leftover returned");
+    CHECK(g_hot_residual_nonidentity_total.load() == n0 + 2, "3084 AC1: observe counter");
+    CHECK(g_hot_residual_soft_must_deopt_total.load() == d0 + 1, "3084 AC1: MustDeopt total");
+    CHECK(hot_residual_soft_must_deopt_pending(), "3084 AC1: pending MustDeopt");
+    CHECK(g_hot_residual_density_keep_total.load() == k0, "3084 AC1: Soft no density-keep");
+    CHECK(g_hot_residual_relower_total.load() == r0, "3084 AC1: Soft no relower");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("Issue #3084") != std::string::npos, "3084 AC1: policy cites #3084");
+    CHECK(pol.find("aura_jit_batch_deopt_for") != std::string::npos ||
+              pol.find("on_stale_deopt") != std::string::npos,
+          "3084 AC1: force-deopt equivalent");
+}
+
+static void ac3084_2_production_relower_unchanged() {
+    std::println("\n--- #3084 AC2: Production still density-keep + relower ---");
+    const auto k0 = g_hot_residual_density_keep_total.load();
+    const auto r0 = g_hot_residual_relower_total.load();
+    CHECK(note_hot_residual_nonidentity_castops(1, nullptr, /*production=*/1) == 1,
+          "3084 AC2: Production leftover");
+    CHECK(g_hot_residual_density_keep_total.load() > k0, "3084 AC2: density-policy keep");
+    CHECK(g_hot_residual_relower_total.load() > r0, "3084 AC2: force-JIT/relower");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("on_force_jit_for_reason") != std::string::npos, "3084 AC2: Production relower");
+}
+
+static void ac3084_3_quiet_zero() {
+    std::println("\n--- #3084 AC3: leftover == 0 → zero extra ---");
+    const auto n0 = g_hot_residual_nonidentity_total.load();
+    const auto d0 = g_hot_residual_soft_must_deopt_total.load();
+    const auto k0 = g_hot_residual_density_keep_total.load();
+    CHECK(note_hot_residual_nonidentity_castops(0) == 0, "3084 AC3: Quiet 0");
+    CHECK(g_hot_residual_nonidentity_total.load() == n0, "3084 AC3: observe quiet");
+    CHECK(g_hot_residual_soft_must_deopt_total.load() == d0, "3084 AC3: MustDeopt quiet");
+    CHECK(g_hot_residual_density_keep_total.load() == k0, "3084 AC3: keep quiet");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    CHECK(opt.find("leftover == 0") != std::string::npos ||
+              opt.find("leftover==0") != std::string::npos,
+          "3084 AC3: Soft sweep Quiet leftover==0");
+}
+
+static void ac3084_4_blame_default_unchanged() {
+    std::println("\n--- #3084 AC4: Soft blame-complete default unchanged ---");
+    const auto pol = read_file("src/compiler/coercion_provenance_policy.hh");
+    CHECK(pol.find("require_blame_complete_on_commit = false (#2221 observe-only)") !=
+              std::string::npos,
+          "3084 AC4: Soft default observe-only");
+    CHECK(pol.find("require_blame_complete_on_commit = true under Restricted/Strict") !=
+              std::string::npos,
+          "3084 AC4: Restricted/Strict still force");
+    CHECK(read_file("src/compiler/castop_density_policy.hh")
+                  .find("require_blame_complete_on_commit") == std::string::npos,
+          "3084 AC4: residual path does not flip blame policy");
+}
+
+static void ac3084_5_schema_and_linter() {
+    std::println("\n--- #3084 AC5: schema + linter + no invent ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3084") != std::string::npos, "3084 AC5: schema-3084");
+    CHECK(q.find("hot-residual-soft-must-deopt-total") != std::string::npos,
+          "3084 AC5: MustDeopt key");
+    CHECK(q.find("schema-3046") != std::string::npos, "3084 AC5: lineage #3046");
+    CHECK(read_file("src/compiler/castop_density_policy.hh")
+                  .find("kCastOpHotResidualSoftMustDeoptIssue = 3084") != std::string::npos,
+          "3084 AC5: issue stamp");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3084 AC5: warm");
+    CHECK(href_layered(cs, "schema-3084") == 3084, "3084 AC5: live schema-3084");
+    CHECK(href_layered(cs, "issue-3084") == 3084, "3084 AC5: live issue-3084");
+    CHECK(href_layered(cs, "hot-residual-soft-must-deopt-wired") == 1, "3084 AC5: wired");
+    CHECK(href_layered(cs, "hot-residual-soft-must-deopt-total") >= 0, "3084 AC5: total");
+    CHECK(href_layered(cs, "schema-3046") == 3046, "3084 AC5: schema-3046 preserved");
+    const auto t = read_file("tests/compiler/test_castop_density_hard.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_hot_residual_soft_must_deopt_3084.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3084_1_soft_residual_must_deopt") != std::string::npos, "3084 AC5: AC1");
+    CHECK(t.find("ac3084_2_production_relower_unchanged") != std::string::npos, "3084 AC5: AC2");
+    CHECK(t.find("ac3084_3_quiet_zero") != std::string::npos, "3084 AC5: AC3");
+    CHECK(t.find("ac3084_4_blame_default_unchanged") != std::string::npos, "3084 AC5: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #3084") != std::string::npos, "3084 AC5: linter");
+    CHECK(build.find("check_hot_residual_soft_must_deopt_3084") != std::string::npos,
+          "3084 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3084.cpp").empty(),
+          "3084 AC5: no invent test_issue_3084");
+    CHECK(read_file("docs/design/3084-hot-residual-soft-must-deopt.md").empty(),
+          "3084 AC5: no docs/design/");
+}
+
 } // namespace
 
 int run_test_castop_density_hard() {
@@ -189,7 +301,12 @@ int run_test_castop_density_hard() {
     ac2_hard_on_force_jit();
     ac3_mutate_still_succeeds();
     ac3046_residual_nonidentity();
-    std::println("\n=== #2358: {} passed, {} failed ===", g_passed, g_failed);
+    ac3084_1_soft_residual_must_deopt();
+    ac3084_2_production_relower_unchanged();
+    ac3084_3_quiet_zero();
+    ac3084_4_blame_default_unchanged();
+    ac3084_5_schema_and_linter();
+    std::println("\n=== #2358/#3046/#3084: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

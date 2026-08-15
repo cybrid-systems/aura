@@ -183,22 +183,42 @@ inline void reset_streak_for_test() noexcept {
 
 // Issue #3046: residual non-identity CastOp after DeadCoercion. Production
 // never silently JITs a leftover CastOp on a hot function — density-policy
-// keep + force-JIT/relower (metric). Soft observes only. Quiet leftover==0.
+// keep + force-JIT/relower (metric). Soft observes leftover count.
+// Issue #3084: Soft leftover>0 also marks MustDeopt / force-deopt so the
+// next execution does not run leftover CastOp. No Soft relower (cost).
+// Quiet leftover==0.
 inline constexpr int kCastOpHotResidualNonidentityIssue = 3046;
+inline constexpr int kCastOpHotResidualSoftMustDeoptIssue = 3084;
 inline std::atomic<std::uint64_t> g_hot_residual_nonidentity_total{0};
 inline std::atomic<std::uint64_t> g_hot_residual_density_keep_total{0};
 inline std::atomic<std::uint64_t> g_hot_residual_relower_total{0};
 inline std::atomic<std::uint32_t> g_hot_residual_nonidentity_wired{1};
+inline std::atomic<std::uint64_t> g_hot_residual_soft_must_deopt_total{0};
+inline std::atomic<std::uint32_t> g_hot_residual_soft_must_deopt_pending{0};
+inline std::atomic<std::uint32_t> g_hot_residual_soft_must_deopt_wired{1};
+
+[[nodiscard]] inline bool hot_residual_soft_must_deopt_pending() noexcept {
+    return g_hot_residual_soft_must_deopt_pending.load(std::memory_order_acquire) != 0;
+}
 
 inline std::size_t note_hot_residual_nonidentity_castops(std::size_t leftover,
                                                          CompilerMetrics* m = nullptr,
-                                                         int production_override = -1) noexcept {
+                                                         int production_override = -1,
+                                                         const char* fn_name = nullptr) noexcept {
     if (leftover == 0)
         return 0; // Quiet: identity path / no residual → zero extra
     g_hot_residual_nonidentity_total.fetch_add(leftover, std::memory_order_relaxed);
     const bool prod = production_path_enabled(production_override);
-    if (!prod)
-        return leftover; // Soft: observe only
+    if (!prod) {
+        // Soft: observe + MustDeopt. Do not density-keep / relower.
+        g_hot_residual_soft_must_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        g_hot_residual_soft_must_deopt_pending.store(1, std::memory_order_release);
+        if (fn_name && fn_name[0] != '\0')
+            (void)aura_jit_batch_deopt_for(fn_name, 0);
+        else
+            hot_update_registry().on_stale_deopt();
+        return leftover;
+    }
     g_hot_residual_density_keep_total.fetch_add(1, std::memory_order_relaxed);
     g_hot_residual_relower_total.fetch_add(1, std::memory_order_relaxed);
     if (m) {

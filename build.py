@@ -3291,6 +3291,19 @@ def cmd_lint():
             "Issue #3046 coercion hf-lag / hot residual linter failed — run python3 scripts/coverage/checks/check_coercion_hf_lag_hot_residual_3046.py"
         )
         return r
+    # Issue #3084: Soft residual non-identity CastOp MustDeopt (no
+    # relower). Production keep + force-JIT unchanged. Extends
+    # test_castop_density_hard (#81967); no docs/design/.
+    hrsmd3084 = COVERAGE_CHECKS / "check_hot_residual_soft_must_deopt_3084.py"
+    if not hrsmd3084.exists():
+        fail(f"missing {hrsmd3084}")
+        return 1
+    r = run([sys.executable, str(hrsmd3084)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3084 Soft residual MustDeopt linter failed — run python3 scripts/coverage/checks/check_hot_residual_soft_must_deopt_3084.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
@@ -11891,6 +11904,31 @@ def cmd_coercion_hf_lag_hot_residual_3046_coverage():
     return 0
 
 
+def cmd_hot_residual_soft_must_deopt_3084_coverage():
+    """Issue #3084: Soft residual CastOp MustDeopt (static)."""
+    print(f"{B}=== Soft residual CastOp MustDeopt coverage (#3084) ==={N}")
+    script = COVERAGE_CHECKS / "check_hot_residual_soft_must_deopt_3084.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("Soft residual CastOp MustDeopt (#3084) coverage contract rows failed")
+        return 1
+    ok("Soft residual CastOp MustDeopt (#3084) coverage clean")
+    return 0
+
+
+def cmd_hot_residual_soft_must_deopt_3084():
+    """Issue #3084: Soft leftover CastOp marks MustDeopt, no relower.
+
+    Production density-keep + force-JIT unchanged. leftover==0 Quiet.
+    Blame-complete default unchanged.
+    """
+    print(f"{B}=== Soft residual CastOp MustDeopt (#3084) ==={N}")
+    return cmd_hot_residual_soft_must_deopt_3084_coverage()
+
+
 def cmd_gradual_permissiveness_2992_coverage():
     """Issue #2992: non-strict ground-type Warning + AURA_GRADUAL_PERMISSIVENESS."""
     print(f"{B}=== gradual permissiveness coverage (#2992) ==={N}")
@@ -16865,6 +16903,8 @@ def main():
         "scoped-parallel-overlap-hard-reject-3039-coverage": cmd_scoped_parallel_overlap_hard_reject_3039_coverage,
         "coercion-provenance-hf-mutate-2991": cmd_coercion_provenance_hf_mutate_2991_coverage,
         "coercion-hf-lag-hot-residual-3046": cmd_coercion_hf_lag_hot_residual_3046_coverage,
+        "hot-residual-soft-must-deopt-3084": cmd_hot_residual_soft_must_deopt_3084,
+        "hot-residual-soft-must-deopt-3084-coverage": cmd_hot_residual_soft_must_deopt_3084_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
         "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,

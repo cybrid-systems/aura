@@ -113,8 +113,17 @@ inline std::size_t sweep_production_hot_residual_castops(aura::ir::IRFunction& f
                                                          const aura::core::TypeRegistry* reg,
                                                          std::uint64_t epoch = 0) noexcept {
     const bool production = aura::compiler::typed_audit::production_defaults_active();
-    if (!production)
-        return count_identity_castops(f); // Soft / identity path: zero extra
+    if (!production) {
+        // Soft / identity path: zero extra when leftover==0 (one count
+        // walk). Issue #3084: leftover>0 marks MustDeopt, no relower.
+        const auto leftover = count_all_castops(f);
+        if (leftover == 0)
+            return 0;
+        (void)aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
+            leftover, nullptr, /*production_override=*/0,
+            f.name.empty() ? nullptr : f.name.c_str());
+        return leftover;
+    }
     dead_coercion_hot_residual_sweep_total.fetch_add(1, std::memory_order_relaxed);
     if (count_identity_castops(f) > 0) {
         aura::compiler::DeadCoercionEliminationPass pass(reg);

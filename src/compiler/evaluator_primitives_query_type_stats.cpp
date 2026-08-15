@@ -4022,6 +4022,24 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           static_cast<std::int64_t>(
                               aura::compiler::castop_density::g_hot_residual_nonidentity_wired.load(
                                   std::memory_order_relaxed)));
+                // Issue #3084: Soft leftover CastOp MustDeopt (no relower).
+                insert_kv("schema-3084", 3084);
+                insert_kv("issue-3084", 3084);
+                insert_kv(
+                    "hot-residual-soft-must-deopt-total",
+                    static_cast<std::int64_t>(
+                        aura::compiler::castop_density::g_hot_residual_soft_must_deopt_total.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "hot-residual-soft-must-deopt-pending",
+                    static_cast<std::int64_t>(
+                        aura::compiler::castop_density::g_hot_residual_soft_must_deopt_pending.load(
+                            std::memory_order_relaxed)));
+                insert_kv(
+                    "hot-residual-soft-must-deopt-wired",
+                    static_cast<std::int64_t>(
+                        aura::compiler::castop_density::g_hot_residual_soft_must_deopt_wired.load(
+                            std::memory_order_relaxed)));
                 // Issue #3065: DeadCoercion elim / residual CastOp remirror
                 // into the type∪IR dirty cone (additive; lineage #2556/#3007/#3046).
                 insert_kv("schema-3065", 3065);
