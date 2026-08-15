@@ -1946,6 +1946,19 @@ def cmd_lint():
             "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
         )
         return r
+    # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
+    # via invalidate_gen. Extends persist-rehydrate + escape-elision
+    # (#81967); no docs/design/.
+    rml3085_script = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
+    if not rml3085_script.exists():
+        fail(f"missing {rml3085_script}")
+        return 1
+    r = run([sys.executable, str(rml3085_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3085 rehydrate-miss lowering elision linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_lowering_elision_3085.py"
+        )
+        return r
     # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
     # ac2807 in test_unquote_splicing_hygiene.
     ush_script = COVERAGE_CHECKS / "check_unquote_splicing_hygiene_2807.py"
@@ -3933,6 +3946,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
+        )
+        return r
+    # Issue #3085: densify/steal miss blocks lowering elision.
+    rml3085b = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
+    if not rml3085b.exists():
+        fail(f"missing {rml3085b}")
+        return 1
+    r = run([sys.executable, str(rml3085b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3085 rehydrate-miss lowering elision linter failed — run python3 scripts/coverage/checks/check_rehydrate_miss_lowering_elision_3085.py"
         )
         return r
     # Issue #2635: production mid-fallback SLO hard-deny (resolve_audit_mutation_id)
@@ -12223,6 +12247,31 @@ def cmd_half_green_ir_steal_densify_3063_coverage():
     return 0
 
 
+def cmd_rehydrate_miss_lowering_elision_3085_coverage():
+    """Issue #3085: densify/steal miss blocks lowering elision (static)."""
+    print(f"{B}=== rehydrate-miss lowering elision coverage (#3085) ==={N}")
+    script = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("rehydrate-miss lowering elision (#3085) coverage contract rows failed")
+        return 1
+    ok("rehydrate-miss lowering elision (#3085) coverage clean")
+    return 0
+
+
+def cmd_rehydrate_miss_lowering_elision_3085():
+    """Issue #3085: densify/steal rehydrate-miss blocks Move lowering elision.
+
+    invalidate_gen is consulted by depth_or_densify_block. Abort clear
+    unchanged. Soft / no densify: inv==0.
+    """
+    print(f"{B}=== rehydrate-miss lowering elision (#3085) ==={N}")
+    return cmd_rehydrate_miss_lowering_elision_3085_coverage()
+
+
 def cmd_half_green_ir_steal_densify_3063():
     """Issue #3063: production steal/densify restamp drops green IR elision.
 
@@ -16945,6 +16994,8 @@ def main():
         "rehydrate-miss-invalidate-3032-coverage": cmd_rehydrate_miss_invalidate_3032_coverage,
         "half-green-ir-steal-densify-3063": cmd_half_green_ir_steal_densify_3063,
         "half-green-ir-steal-densify-3063-coverage": cmd_half_green_ir_steal_densify_3063_coverage,
+        "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
+        "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,
         "inline-macro-body-marker-3064-coverage": cmd_inline_macro_body_marker_3064_coverage,
         "dead-coercion-elim-cone-3065": cmd_dead_coercion_elim_cone_3065,

@@ -57,7 +57,8 @@ extern "C" int aura_escape_move_gate_active() noexcept;
 // Issue #3006: unified linear_fast_path_ok for lowering (depth / escape /
 // densify_pending must keep blocking Move/Drop elision after IR emit).
 extern "C" int aura_linear_fast_path_ok() noexcept;
-// Mid-boundary / densify-pending only (does not blanket-block #2263 clean elide).
+// Mid-boundary / densify-pending / rehydrate-miss gen (Issue #3085).
+// Does not blanket-block #2263 clean elide when gens match.
 extern "C" int aura_linear_fast_path_depth_or_densify_block() noexcept;
 extern "C" int aura_escape_blocks_move_elision(const char* binding) noexcept;
 // Issue #2286: keyed variants. publish stores under (eval, cow_gen);

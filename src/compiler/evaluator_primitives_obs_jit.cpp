@@ -10478,6 +10478,15 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                             std::memory_order_relaxed)));
                     insert_kv("schema-3063", kStealDensifySuccessInvalidateIssue);
                     insert_kv("issue-3063", kStealDensifySuccessInvalidateIssue);
+                    using aura::compiler::typed_audit::
+                        g_linear_fast_path_rehydrate_gen_elision_wired;
+                    using aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue;
+                    insert_kv("linear-fast-path-rehydrate-gen-elision-wired",
+                              static_cast<std::int64_t>(
+                                  g_linear_fast_path_rehydrate_gen_elision_wired.load(
+                                      std::memory_order_relaxed)));
+                    insert_kv("schema-3085", kLinearFastPathRehydrateGenElisionIssue);
+                    insert_kv("issue-3085", kLinearFastPathRehydrateGenElisionIssue);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.
