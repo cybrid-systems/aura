@@ -172,7 +172,13 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
     using aura::core::resource_quota::Dimension;
     using aura::core::resource_quota::process_resource_quota;
     using aura::core::resource_quota::process_resource_quota_manager;
-    if (auto err = process_resource_quota_manager().check_and_consume_fiber()) {
+    // Issue #3049: key fiber reserve by admission tenant when per-tenant
+    // quota is armed (TLS or parent fiber principal). tenant=0 keeps the
+    // process-global path (AC3).
+    auto spawn_tenant = aura::core::resource_quota::current_quota_tenant();
+    if (spawn_tenant == 0 && g_current_fiber)
+        spawn_tenant = g_current_fiber->assigned_tenant_id();
+    if (auto err = process_resource_quota_manager().check_and_consume_fiber(spawn_tenant)) {
         (void)err;
         // Issue #1600: orchestration spawn reject metrics (typed error at caller).
         process_resource_quota().fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
@@ -183,6 +189,7 @@ Fiber* Scheduler::spawn(Fiber::Func func, size_t stack_size) {
 
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
+    ptr->set_quota_tenant_id(spawn_tenant);
 
     // Issue #2227: owner Scheduler back-pointer so the orch join path
     // can register hard-reclaim orphans without a global FiberId → Scheduler
@@ -238,7 +245,10 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
     // Issue #1579 / #1618: same process-wide fiber quota as spawn() via manager.
     using aura::core::resource_quota::process_resource_quota;
     using aura::core::resource_quota::process_resource_quota_manager;
-    if (auto err = process_resource_quota_manager().check_and_consume_fiber()) {
+    auto spawn_tenant = aura::core::resource_quota::current_quota_tenant();
+    if (spawn_tenant == 0 && g_current_fiber)
+        spawn_tenant = g_current_fiber->assigned_tenant_id();
+    if (auto err = process_resource_quota_manager().check_and_consume_fiber(spawn_tenant)) {
         (void)err;
         // Issue #1600
         process_resource_quota().fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
@@ -249,6 +259,7 @@ Fiber* Scheduler::spawn_with_affinity(Fiber::Func func, int worker_id, size_t st
 
     auto fb = std::make_unique<Fiber>(std::move(func), stack_size);
     auto* ptr = fb.get();
+    ptr->set_quota_tenant_id(spawn_tenant);
     if (worker_id >= 0 && worker_id < static_cast<int>(workers_.size())) {
         ptr->set_affinity(worker_id);
     }
@@ -325,8 +336,9 @@ void Scheduler::on_fiber_done(Fiber* fiber) {
     if (!fiber)
         return;
     // Issue #1579: release process fiber quota reserved at spawn.
+    // Issue #3049: same tenant key as reserve (0 = process-global).
     aura::core::resource_quota::process_resource_quota().release(
-        aura::core::resource_quota::Dimension::Fibers, 1);
+        aura::core::resource_quota::Dimension::Fibers, 1, fiber->quota_tenant_id());
 
     int evfd = fiber->eventfd();
     if (evfd >= 0) {

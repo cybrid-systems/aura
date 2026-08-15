@@ -1042,6 +1042,15 @@ public:
     [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
         return assigned_tenant_id_.load(std::memory_order_acquire);
     }
+    // Issue #3049: tenant charged at fiber-quota reserve so on_fiber_done
+    // releases the same key. Distinct from assigned_tenant_id_ (capability
+    // principal) because spawn consumes quota before orch stamps principal.
+    void set_quota_tenant_id(std::uint64_t t) noexcept {
+        quota_tenant_id_.store(t, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t quota_tenant_id() const noexcept {
+        return quota_tenant_id_.load(std::memory_order_acquire);
+    }
     // Issue #2491: process-wide TenantScope mismatch counter (soft observe).
     static void bump_tenant_scope_mismatch() noexcept {
         static_tenant_scope_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
@@ -1275,6 +1284,8 @@ private:
     // resume hook skips TenantScope installation in that case (unit
     // / Soft path stays unchanged per AC5).
     std::atomic<std::uint64_t> assigned_tenant_id_{0};
+    // Issue #3049: tenant id charged against ResourceQuota at spawn.
+    std::atomic<std::uint64_t> quota_tenant_id_{0};
     // Issue #2491: process-wide counter for TenantScope install
     // mismatch (resume detects current capability_tenant_id_ !=
     // assigned_tenant_id_). Mirrors Fiber::static_*_total() pattern

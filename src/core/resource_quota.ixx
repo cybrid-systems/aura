@@ -17,11 +17,18 @@ using ::aura::core::resource_quota::QuotaError;
 using ::aura::core::resource_quota::ResourceQuota;
 using ::aura::core::resource_quota::ResourceQuotaManager;
 using FiberToken = ResourceQuota::FiberToken;
+using ::aura::core::resource_quota::clear_quota_per_tenant_test_override;
+using ::aura::core::resource_quota::current_quota_tenant;
+using ::aura::core::resource_quota::kQuotaPerTenantIssue;
 using ::aura::core::resource_quota::kResourceQuotaIssue;
 using ::aura::core::resource_quota::kResourceQuotaPhase;
 using ::aura::core::resource_quota::process_resource_quota;
 using ::aura::core::resource_quota::process_resource_quota_manager;
+using ::aura::core::resource_quota::quota_per_tenant_enabled;
 using ::aura::core::resource_quota::reset_process_resource_quota_for_test;
+using ::aura::core::resource_quota::set_current_quota_tenant;
+using ::aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+using ::aura::core::resource_quota::TenantId;
 
 // Bridge QuotaError → AuraError for AuraResult hot paths.
 // Issue #1618: ResourceQuotaManager::format_reason stamps provenance.
