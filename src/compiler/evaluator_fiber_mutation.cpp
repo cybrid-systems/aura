@@ -1959,6 +1959,26 @@ extern "C" int aura_evaluator_try_restore_macro_expand_checkpoint(void) {
     return ev->restore_panic_checkpoint() ? 1 : 0;
 }
 
+// Issue #3062: install / commit the same panic-checkpoint brick used by
+// MutationBoundary so a top-level (no-boundary) production expand can
+// refuse a half-expanded tree. Soft/Off never calls these.
+extern "C" int aura_evaluator_try_save_macro_expand_checkpoint(void) {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (!ev)
+        return 0;
+    return ev->save_panic_checkpoint() ? 1 : 0;
+}
+
+extern "C" void aura_evaluator_commit_macro_expand_checkpoint(void) {
+    auto* ev = Evaluator::yield_hook_evaluator();
+    if (!ev)
+        ev = evaluator_for_scheduler_hooks();
+    if (ev && ev->has_panic_checkpoint())
+        ev->commit_panic_checkpoint();
+}
+
 // Issue #2810: resolve active Evaluator* for module-aware macro_expansion
 // dual-write (yield hook → query TLS → scheduler process-wide). Returns
 // nullptr when no Evaluator is wired (true module-unaware / early boot).

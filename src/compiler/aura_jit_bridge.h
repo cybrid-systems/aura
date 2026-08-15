@@ -377,6 +377,10 @@ extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noex
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexcept;
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept;
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept;
+// Issue #3062: lightweight expand checkpoint (panic-checkpoint reuse).
+extern "C" int aura_evaluator_try_save_macro_expand_checkpoint(void);
+extern "C" void aura_evaluator_commit_macro_expand_checkpoint(void);
+extern "C" int aura_evaluator_try_restore_macro_expand_checkpoint(void);
 // Issue #2807: unquote-splicing treated as caller-scope boundary in pre_scan.
 extern "C" std::uint64_t aura_unquote_splicing_hygiene_mismatch_total_v_read(void) noexcept;
 extern "C" void aura_test_reset_unquote_splicing_hygiene_mismatch_total_for_test(void) noexcept;

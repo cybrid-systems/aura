@@ -23,6 +23,11 @@ extern "C" void aura_evaluator_bump_macro_expand_checkpoint_save();
 extern "C" __attribute__((weak)) int aura_evaluator_try_restore_macro_expand_checkpoint(void) {
     return 0;
 }
+// Issue #3062: lightweight expand checkpoint — reuse panic-checkpoint save/commit.
+extern "C" __attribute__((weak)) int aura_evaluator_try_save_macro_expand_checkpoint(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void aura_evaluator_commit_macro_expand_checkpoint(void) {}
 extern "C" std::uint64_t aura_fiber_current_id();
 extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker);
 // Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
@@ -2376,6 +2381,19 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
     }
 }
 
+// Issue #3062 / Issue #3029: lightweight expand checkpoint so a
+// production pass/depth limit can refuse a half-expanded tree even
+// when the caller did not wrap expand in MutationBoundary. Reuses
+// save/restore/commit_panic_checkpoint. Returns 1 only when *this*
+// call installed a checkpoint we must later restore or commit.
+// Soft/Off never calls this (zero-cost). Existing NameMapCheckpoint
+// + steal-abort paths are unchanged.
+[[nodiscard]] static int install_macro_expand_checkpoint() noexcept {
+    if (aura_evaluator_mutation_boundary_depth() > 0)
+        return 0;
+    return aura_evaluator_try_save_macro_expand_checkpoint();
+}
+
 // Issue #2023: body of macro_expand_all after capability gate (DepthPolicyGuard
 // is held by the caller via TLS already set).
 static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
@@ -2383,6 +2401,26 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                                                int max_passes) {
     using namespace aura::ast;
     const auto original_root = root;
+    // Issue #3062: Restricted/Strict (sandbox active) refuse partial writes
+    // on limit. Soft/Off keeps the historical half-expand return (zero-cost).
+    const bool production_surface = aura::core::sandbox::is_sandbox_active();
+    struct ExpandCheckpointGuard {
+        bool owned = false;
+        bool consumed = false;
+        void ensure_installed() noexcept {
+            if (owned || consumed)
+                return;
+            owned = install_macro_expand_checkpoint() != 0;
+        }
+        void try_restore() noexcept {
+            consumed = true;
+            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+        }
+        ~ExpandCheckpointGuard() {
+            if (owned && !consumed)
+                aura_evaluator_commit_macro_expand_checkpoint();
+        }
+    } expand_ckpt;
     // Issue #2019: track whether any pass expanded so we restamp
     // MacroIntroduced gens once before return (FlatAST consistency).
     bool any_expand = false;
@@ -2426,6 +2464,11 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                 restamp_after_expand(flat);
             return root;
         }
+
+        // Issue #3062: before any clone work, install a lightweight
+        // expand checkpoint when production and no MutationBoundary.
+        if (production_surface)
+            expand_ckpt.ensure_installed();
 
         // Phase 2: find and expand macro calls
         bool expanded_any = false;
@@ -2487,6 +2530,15 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         }
 
         if (!expanded_any) {
+            // Issue #3062: earlier passes expanded, this pass could not
+            // (depth ceiling in clone_macro_body) — refuse the residual
+            // half-tree under production. NameMapCheckpoint already
+            // rolled the failed clone.
+            if (production_surface && any_expand &&
+                g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2) {
+                expand_ckpt.try_restore();
+                return original_root;
+            }
             if (any_expand)
                 restamp_after_expand(flat);
             return root;
@@ -2494,8 +2546,9 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
         any_expand = true;
         root = new_root;
     }
-    // Issue #121 / #3029: pass limit with macros still in the tree.
-    // Stable Agent reason + refuse partial write when a checkpoint exists.
+    // Issue #121 / #3029 / #3062: pass limit with macros still in the tree.
+    // Stable Agent reason + refuse partial write (checkpoint restore when
+    // one exists; production always returns original_root even without).
     g_macro_hygiene_last_limit_reason.store(3, std::memory_order_relaxed);
     if (root != NULL_NODE) {
         std::println(std::cerr,
@@ -2503,11 +2556,12 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
                      "hygiene-pass-limit (half-expand refused when checkpointed)",
                      max_passes);
     }
-    if (aura_evaluator_mutation_boundary_depth() > 0 &&
-        aura_evaluator_try_restore_macro_expand_checkpoint() != 0) {
+    if (production_surface || aura_evaluator_mutation_boundary_depth() > 0) {
+        expand_ckpt.try_restore();
         return original_root;
     }
     // Issue #2019: restamp after multi-pass expand (pass-limit exit).
+    // Soft/Off only — production refused the partial write above.
     if (any_expand)
         restamp_after_expand(flat);
     return root;
