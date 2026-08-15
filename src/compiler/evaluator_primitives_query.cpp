@@ -1360,6 +1360,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     ev.workspace_flat() && ev.workspace_flat()->restamp_generation_torn() ? 1 : 0));
             insert_kv("schema-3037", 3037);
             insert_kv("issue-3037", 3037);
+            // Issue #3058: as-stable-ref / ensure-ref torn visible.
+            insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+            insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+            insert_kv("query-stable-ref-over-budget-visible-wired", 1);
             // Issue #3041: restamp-budget QueryEpoch stale (poll after Guard).
             insert_kv("restamp-budget-query-epoch-stale-total",
                       static_cast<std::int64_t>(

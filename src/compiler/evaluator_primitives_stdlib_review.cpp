@@ -1430,6 +1430,13 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                                         aura::ast::unified_restamp_calls_total_v_read())));
                     kv.emplace_back("schema-3019", make_int(aura::ast::kUnifiedRestampIssue));
                     kv.emplace_back("issue-3019", make_int(aura::ast::kUnifiedRestampIssue));
+                    // Issue #3058: query:*-stable over-budget torn visible
+                    // (as-stable-ref / ensure-ref gated). Additive.
+                    kv.emplace_back("schema-3058",
+                                    make_int(aura::ast::kUnifiedRestampQueryVisibleIssue));
+                    kv.emplace_back("issue-3058",
+                                    make_int(aura::ast::kUnifiedRestampQueryVisibleIssue));
+                    kv.emplace_back("query-stable-ref-over-budget-visible-wired", make_int(1));
                     // Issue #3041: production restamp-budget QueryEpoch stale.
                     kv.emplace_back("restamp-budget-query-epoch-stale-total",
                                     make_int(static_cast<std::int64_t>(

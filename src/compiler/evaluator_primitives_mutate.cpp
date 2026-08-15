@@ -2716,6 +2716,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
             return make_void();
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+        // Issue #3058: over-budget torn must not silently stamp a
+        // pre-restamp gen (same gate as query:stable-ref). Soft
+        // observe-only (allow returns true). Empty = torn visible.
+        if (!ev.allow_query_stable_ref_export(id))
+            return make_void();
         // Issue #2224: route Agent-facing ref through export_ref so
         // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
         // required_effects; primary outbound surface for ast: / query: /
