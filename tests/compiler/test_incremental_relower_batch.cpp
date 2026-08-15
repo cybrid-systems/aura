@@ -35,6 +35,7 @@
 import std;
 import aura.compiler.evaluator;
 import aura.compiler.ir;
+import aura.compiler.ir_cache_pure;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -47,10 +48,13 @@ using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
 static std::string read_file(const std::string& path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    for (const auto& p : {path, std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 static std::string read_first(std::initializer_list<const char*> paths) {
@@ -565,11 +569,122 @@ static void run_1605() {
     }
 }
 
+// ── Issue #3068: map ensure + impact_ub snapshot before partial ──
+static void run_3068() {
+    using aura::compiler::source_to_ir_map_is_consistent;
+    using aura::compiler::source_to_ir_map_missing_instr_loc;
+
+    // AC1: inject source_to_ir_map desync then relower → recover or full.
+    {
+        std::println("\n--- ac3068_1_inject_desync: recover or force full ---");
+        CompilerService cs;
+        seed_workspace_fn(cs, "h", "(define (h x) (+ x 1))");
+        CHECK(cs.get_define_v2("h") != nullptr, "3068 AC1: cache entry");
+        auto* m = metrics_of(cs);
+        CHECK(m != nullptr, "3068 AC1: metrics");
+        const auto rec0 = load_u64(m->source_to_ir_desync_recovered_total);
+        const auto reb0 = load_u64(m->source_to_ir_map_rebuild_total);
+        const auto pat0 = load_u64(m->source_to_ir_map_patch_total);
+        const auto forced0 = load_u64(m->partial_forced_full_by_impact_total);
+        CHECK(cs.inject_source_to_ir_map_desync_for_test("h"), "3068 AC1: inject desync");
+        const auto* e = cs.get_define_v2("h");
+        CHECK(e && !source_to_ir_map_is_consistent(e->irs, e->source_to_ir_map),
+              "3068 AC1: desync present");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        e = cs.get_define_v2("h");
+        CHECK(e != nullptr, "3068 AC1: entry after relower");
+        CHECK(source_to_ir_map_is_consistent(e->irs, e->source_to_ir_map),
+              "3068 AC1: map consistent after decision");
+        const auto rec1 = load_u64(m->source_to_ir_desync_recovered_total);
+        const auto reb1 = load_u64(m->source_to_ir_map_rebuild_total);
+        const auto pat1 = load_u64(m->source_to_ir_map_patch_total);
+        const auto forced1 = load_u64(m->partial_forced_full_by_impact_total);
+        CHECK(rec1 > rec0 || reb1 > reb0 || pat1 > pat0 || forced1 > forced0,
+              "3068 AC1: recover/rebuild/patch or force-full observed");
+        auto v = cs.eval("(h 3)");
+        CHECK(v && is_int(*v) && as_int(*v) == 4, "3068 AC1: (h 3) == 4 no stale IR");
+    }
+
+    // AC2: drop CastOp / instr loc → must recover or force full (no silent partial).
+    {
+        std::println("\n--- ac3068_2_missing_instr_loc: no silent partial ---");
+        CompilerService cs;
+        // Identity-ish body that still lowers; CastOp preferred if present.
+        seed_workspace_fn(cs, "k", "(define (k x) (if x x x))");
+        CHECK(cs.get_define_v2("k") != nullptr, "3068 AC2: cache entry");
+        auto* m = metrics_of(cs);
+        const auto rec0 = load_u64(m->source_to_ir_desync_recovered_total);
+        const auto reb0 = load_u64(m->source_to_ir_map_rebuild_total);
+        const auto forced0 = load_u64(m->partial_forced_full_by_impact_total);
+        const bool dropped = cs.inject_source_to_ir_map_drop_instr_loc_for_test("k");
+        if (dropped) {
+            const auto* e = cs.get_define_v2("k");
+            CHECK(e && source_to_ir_map_missing_instr_loc(e->irs, e->source_to_ir_map),
+                  "3068 AC2: missing instr loc injected");
+            (void)cs.public_relower_dirty_defines_from_workspace();
+            e = cs.get_define_v2("k");
+            CHECK(e != nullptr, "3068 AC2: entry after relower");
+            CHECK(!source_to_ir_map_missing_instr_loc(e->irs, e->source_to_ir_map) ||
+                      load_u64(m->partial_forced_full_by_impact_total) > forced0,
+                  "3068 AC2: loc restored or force-full");
+            const auto rec1 = load_u64(m->source_to_ir_desync_recovered_total);
+            const auto reb1 = load_u64(m->source_to_ir_map_rebuild_total);
+            const auto forced1 = load_u64(m->partial_forced_full_by_impact_total);
+            CHECK(rec1 > rec0 || reb1 > reb0 || forced1 > forced0,
+                  "3068 AC2: rebuild/recover or force-full observed");
+        } else {
+            CHECK(true, "3068 AC2: no instr loc to drop (soft)");
+        }
+        auto v = cs.eval("(k 1)");
+        CHECK(v.has_value(), "3068 AC2: eval after missing-loc path");
+    }
+
+    // AC3: clean path — no extra recover/force-full.
+    {
+        std::println("\n--- ac3068_3_clean_path_zero_extra ---");
+        CompilerService cs;
+        seed_workspace_fn(cs, "c", "(define (c x) x)");
+        auto* m = metrics_of(cs);
+        const auto rec0 = load_u64(m->source_to_ir_desync_recovered_total);
+        const auto forced0 = load_u64(m->partial_forced_full_by_impact_total);
+        CHECK(cs.get_define_v2("c") != nullptr, "3068 AC3: entry");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        CHECK(load_u64(m->source_to_ir_desync_recovered_total) == rec0,
+              "3068 AC3: no recover on clean");
+        CHECK(load_u64(m->partial_forced_full_by_impact_total) == forced0,
+              "3068 AC3: no force-full on clean");
+    }
+
+    // AC4: schema + existing counters + source cites (no new middle-layer).
+    {
+        std::println("\n--- ac3068_4_schema_and_linter ---");
+        CompilerService cs;
+        CHECK(href(cs, "schema-3068") == 3068, "3068 AC4: schema-3068");
+        CHECK(href(cs, "issue-3068") == 3068, "3068 AC4: issue-3068");
+        CHECK(href(cs, "map-ensure-before-partial-wired") == 1, "3068 AC4: wired");
+        CHECK(href(cs, "partial_forced_full_by_impact_total") >= 0, "3068 AC4: impact counter");
+        CHECK(href(cs, "source_to_ir_map_rebuild_total") >= 0, "3068 AC4: rebuild counter");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+        const auto dirty = read_file("src/compiler/service_dirty.cpp");
+        CHECK(svc.find("Issue #3068") != std::string::npos, "3068 AC4: service cite");
+        CHECK(svc.find("prepare_source_to_ir_map_for_partial_") != std::string::npos,
+              "3068 AC4: prepare helper");
+        CHECK(svc.find("ensure_source_to_ir_map_") != std::string::npos, "3068 AC4: ensure");
+        CHECK(pure.find("source_to_ir_map_missing_instr_loc") != std::string::npos,
+              "3068 AC4: missing-loc helper");
+        CHECK(dirty.find("Issue #3068") != std::string::npos, "3068 AC4: dirty cite");
+        CHECK(read_file("tests/compiler/test_issue_3068.cpp").empty(),
+              "3068 AC4: no test_issue_3068.cpp");
+    }
+}
+
 } // namespace aura_incremental_relower_batch
 
 int main() {
     aura_incremental_relower_batch::run_1639();
     aura_incremental_relower_batch::run_1601();
     aura_incremental_relower_batch::run_1605();
+    aura_incremental_relower_batch::run_3068();
     return RUN_ALL_TESTS();
 }
