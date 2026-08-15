@@ -9107,6 +9107,21 @@ void ObservabilityPrims::register_jit_p68(PrimRegistrar add, Evaluator& ev) {
             insert_kv("last-stamped-audit-mid",
                       static_cast<std::int64_t>(
                           g_last_stamped_audit_mid.load(std::memory_order_relaxed)));
+            // Issue #3066: composite / lockless batch typed↔SE join mid.
+            insert_kv("schema-3066", 3066);
+            insert_kv("issue-3066", 3066);
+            insert_kv("composite-audit-se-join-wired",
+                      static_cast<std::int64_t>(
+                          g_composite_audit_se_join_wired.load(std::memory_order_relaxed)));
+            insert_kv("last-composite-batch-join-mid",
+                      static_cast<std::int64_t>(
+                          g_last_composite_batch_join_mid.load(std::memory_order_relaxed)));
+            insert_kv("composite-batch-join-pin-total",
+                      static_cast<std::int64_t>(
+                          g_composite_batch_join_pin_total.load(std::memory_order_relaxed)));
+            insert_kv("composite-batch-se-join-total",
+                      static_cast<std::int64_t>(
+                          g_composite_batch_se_join_total.load(std::memory_order_relaxed)));
             // Issue #2223: ADT exhaustiveness invariant dimension
             insert_kv("adt-invariant-ok", static_cast<std::int64_t>(
                                               g_typed_mutation_audit_counters.adt_invariant_ok.load(

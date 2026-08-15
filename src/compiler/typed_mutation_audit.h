@@ -2501,9 +2501,19 @@ inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
     g_tls_boundary_audit_noted = true;
 }
 
+// Issue #3066: single join mid for composite / lockless batch so typed
+// deny + SE trail share last_stamped_audit_mid. Soft/quiet: no extra.
+inline constexpr int kCompositeAuditSeJoinIssue = 3066;
+inline thread_local std::uint64_t g_tls_composite_batch_join_mid = 0;
+inline std::atomic<std::uint64_t> g_last_composite_batch_join_mid{0};
+inline std::atomic<std::uint64_t> g_composite_batch_join_pin_total{0};
+inline std::atomic<std::uint64_t> g_composite_batch_se_join_total{0};
+inline std::atomic<std::uint32_t> g_composite_audit_se_join_wired{1};
+
 inline void clear_boundary_audit_mid() noexcept {
     g_tls_boundary_audit_mid = 0;
     g_tls_boundary_audit_noted = false;
+    g_tls_composite_batch_join_mid = 0;
     clear_mid_fallback_refuse_se_tls();
 }
 
@@ -2517,6 +2527,68 @@ inline void clear_boundary_audit_mid() noexcept {
     if (g_tls_boundary_audit_noted)
         return g_tls_boundary_audit_mid;
     return resolve_audit_mutation_id();
+}
+
+// Issue #3066: SE + typed trail join key. Caller mid wins; else pinned
+// composite/batch mid; else non-zero boundary mid; else resolve.
+// Soft/quiet with nothing pinned → resolve (existing Sampled/Off path).
+[[nodiscard]] inline std::uint64_t join_audit_and_se_mid(std::uint64_t caller_mid = 0) noexcept {
+    if (caller_mid != 0)
+        return caller_mid;
+    if (g_tls_composite_batch_join_mid != 0)
+        return g_tls_composite_batch_join_mid;
+    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        return g_tls_boundary_audit_mid;
+    return resolve_audit_mutation_id(0);
+}
+
+// Issue #3066: pin one join mid for the composite / lockless batch and
+// publish to TLS + last_stamped (queryable) before sub-mutates. Soft /
+// quiet (no caller, no epoch, not production/Full) → 0 extra, no alloc.
+// Production/Full with empty upstream: one batch-join stamp + SE.
+inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) noexcept {
+    if (g_tls_composite_batch_join_mid != 0)
+        return g_tls_composite_batch_join_mid;
+    std::uint64_t mid = caller_mid;
+    if (mid == 0 && g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        mid = g_tls_boundary_audit_mid;
+    if (mid == 0)
+        mid = ::aura::core::current_mutation_epoch();
+    if (mid == 0) {
+        using ::aura::core::resource_quota::process_resource_quota_manager;
+        mid = process_resource_quota_manager().provenance_mutation_id;
+    }
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (mid == 0 && !hard)
+        return 0; // Soft/Sampled quiet: no extra mid allocation
+    if (mid == 0) {
+        mid = next_audit_mutation_id();
+        g_composite_batch_join_pin_total.fetch_add(1, std::memory_order_relaxed);
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        emit_security_event_durable(SecurityEventKind::EffectAllow, /*tenant=*/0, mid,
+                                    /*epoch=*/mid, /*effect_bits=*/0, "composite-batch-join",
+                                    "composite-batch-join", /*denied=*/false, /*fiber=*/0);
+        g_composite_batch_se_join_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_tls_composite_batch_join_mid = mid;
+    note_boundary_audit_mid(mid);
+    g_last_composite_batch_join_mid.store(mid, std::memory_order_relaxed);
+    g_last_stamped_audit_mid.store(mid, std::memory_order_relaxed);
+    return mid;
+}
+
+// Issue #3066 AC2: Sampled + force-reason — pin deny mid so later SE
+// emits join the same key (no silent fallback divergence).
+inline std::uint64_t promote_sampled_force_join_mid(std::uint64_t deny_mid = 0) noexcept {
+    auto mid = deny_mid != 0 ? deny_mid : join_audit_and_se_mid(0);
+    if (mid == 0)
+        mid = next_audit_mutation_id();
+    g_tls_composite_batch_join_mid = mid;
+    note_boundary_audit_mid(mid);
+    g_last_composite_batch_join_mid.store(mid, std::memory_order_relaxed);
+    g_last_stamped_audit_mid.store(mid, std::memory_order_relaxed);
+    return mid;
 }
 
 // Issue #2814: mark that post_mutation_invariant suite (or equivalent)
@@ -2644,6 +2716,11 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
                          ev.name);
         }
     }
+    // Issue #3066 AC2: Error/Rollback pins the deny mid for SE join.
+    if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) {
+        if (g_tls_composite_batch_join_mid == 0)
+            (void)promote_sampled_force_join_mid(mutation_id);
+    }
 }
 
 inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
@@ -2670,7 +2747,9 @@ inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::st
                                               std::uint32_t target_node = 0,
                                               std::int64_t fiber_id = 0) noexcept {
     g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
-    const std::uint64_t mid = resolve_audit_mutation_id(mutation_id);
+    // Issue #3066: prefer pinned composite/batch mid so SE + typed share
+    // one join key. Fallback remains resolve_audit_mutation_id(mutation_id).
+    const std::uint64_t mid = join_audit_and_se_mid(mutation_id);
     const auto use_epoch = epoch != 0 ? epoch : ::aura::core::current_mutation_epoch();
     capture_audit_event_forced(mid, op, classify_kind(op), use_epoch, use_epoch,
                                denied ? AuditOutcome::Error : AuditOutcome::Success, target_node,
@@ -3079,6 +3158,9 @@ inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
 // Full (#2818) until this or apply_dev is called.
 inline void reset_for_test() noexcept {
     g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
+    g_composite_batch_join_pin_total.store(0, std::memory_order_relaxed);
+    g_composite_batch_se_join_total.store(0, std::memory_order_relaxed);
     clear_boundary_audit_mid();
     g_typed_mutation_audit_counters.audits_considered.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.samples_skipped.store(0, std::memory_order_relaxed);

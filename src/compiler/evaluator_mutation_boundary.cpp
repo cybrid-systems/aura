@@ -335,6 +335,9 @@ void Evaluator::enter_mutation_boundary() {
     }
     active_mutation_stack().push_back(std::move(cp));
     const std::size_t depth = active_mutation_stack().size();
+    // Issue #3066: nested / atomic_batch pins one join mid for SE + typed.
+    if (depth > 1 || bump_suppressed_at_entry)
+        (void)typed_audit::pin_composite_batch_join_mid();
     // Issue #2105: mark txn-dirty for nested / atomic_batch so Agents
     // see half-typed views as not commit-consistent until composite_txn_commit.
     if (depth > 1 || bump_suppressed_at_entry)

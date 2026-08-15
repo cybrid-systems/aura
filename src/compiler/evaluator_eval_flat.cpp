@@ -10,6 +10,7 @@ module;
 #include "compiler/value_tags.h"       // Issue #2259: pure tag hot path + metrics
 #include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
 #include "serve/fiber.h"               // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
+#include "typed_mutation_audit.h"      // Issue #3066: pin composite/batch join mid
 
 module aura.compiler.evaluator;
 
@@ -2562,6 +2563,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     const bool nested_outer_batch = flat.atomic_batch_active();
     if (!nested_outer_batch)
         flat.begin_atomic_batch();
+    // Issue #3066: lockless replace-pattern batch shares one join mid.
+    (void)aura::compiler::typed_audit::pin_composite_batch_join_mid();
     for (auto& match_ref : matches) {
         // Issue #2800: gen-stale or free-slot → skip (no set_child on raw id).
         if (!match_ref.is_valid_in(flat)) {
