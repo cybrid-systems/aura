@@ -12137,7 +12137,7 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             totals.moving_blocked_precondition_total =
                 aura::ast::g_moving_blocked_precondition_total.load(std::memory_order_relaxed);
             const auto s = mdh::snapshot(totals);
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -12303,6 +12303,15 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                       aura::core::densify_consistency::kMovingIncompleteRemapResidual3017Issue);
             insert_kv("issue-3017",
                       aura::core::densify_consistency::kMovingIncompleteRemapResidual3017Issue);
+            // Issue #3055: post-Moving last_object_remap_ residual.
+            // Additive — slot + pin + RootRemapPass stay the remap SSOT.
+            insert_kv(
+                "post-moving-stale-total",
+                static_cast<std::int64_t>(
+                    aura::core::densify_consistency::moving_post_moving_stale_total_v_read()));
+            insert_kv("post-moving-stale-wired", 1);
+            insert_kv("schema-3055", aura::core::densify_consistency::kMovingPostMovingStaleIssue);
+            insert_kv("issue-3055", aura::core::densify_consistency::kMovingPostMovingStaleIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

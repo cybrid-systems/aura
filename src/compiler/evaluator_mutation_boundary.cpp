@@ -4619,8 +4619,11 @@ Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region
     };
 }
 
-// Issue #2935 / #2889: exhaustive known intermediate + compiler root inventory
-// for Moving densify. Shared by densify-entry walk and Agent sticky recovery.
+// Issue #2935 / #2889 / #3055: exhaustive known intermediate + compiler
+// root inventory for Moving densify. Shared by densify-entry walk and
+// Agent sticky recovery. #3055 residual (EnvFrame SoA / Closure / FFI /
+// JIT) rolls in via the same slot register — RootRemapPass + slot + pin
+// stay the only remap mechanisms (no second registry).
 std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     if (!arena_group_)
         return 0;

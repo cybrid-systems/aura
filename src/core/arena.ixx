@@ -694,6 +694,10 @@ export struct LiveCompactResult {
     // Issue #2837: prep-registered values that were densify old addresses
     // but no slot rewrite covered them (stale external root residual).
     std::size_t external_roots_stale_unremapped_count = 0;
+    // Issue #3055: post-Moving live ptrs on known residual paths
+    // (EnvFrame/Closure/FFI/JIT canary) that still hold a last_object_remap_
+    // key after slot + pin + RootRemapPass. Observe-only — not a remap.
+    std::size_t post_moving_stale_count = 0;
     // Issue #2267: RootRemapPass counters (StableNodeRef + Closure captures).
     std::size_t root_remap_stable_ref_total = 0;
     std::size_t root_remap_stable_ref_fail_total = 0;
@@ -1034,6 +1038,16 @@ public:
             return;
         external_root_slots_for_densify_.push_back(slot);
         register_external_root_for_densify(*slot);
+    }
+
+    // Issue #3055: observe-only live pointer for the post-Moving stale
+    // scan. Not a slot (no rewrite) and not cover (#3017). After
+    // objects_moved>0, if `p` is still a last_object_remap_ key the
+    // window fail-closes. Soft / no-move never walks this list.
+    void note_post_moving_live_ptr_canary(void* p) noexcept {
+        if (!p)
+            return;
+        post_moving_live_canaries_.push_back(p);
     }
 
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
@@ -1862,6 +1876,36 @@ public:
                     result.pin_contract_held = false;
                 }
             }
+            // Issue #3055: post-Moving residual — known-path live ptrs
+            // (EnvFrame/Closure/FFI/JIT canary) still holding a densify-old
+            // address after slot rewrite + pin remap + RootRemapPass.
+            // Soft / no-move: canary empty or this branch not taken.
+            if (result.moved_live_objects && !last_object_remap_.empty()) {
+                const auto stale = count_post_moving_stale_known_ptrs_();
+                result.post_moving_stale_count = stale;
+                if (stale > 0) {
+                    result.pin_contract_held = false;
+                    result.moving_incomplete_remap = true;
+                    aura::core::densify_consistency::g_moving_post_moving_stale_total.fetch_add(
+                        stale, std::memory_order_relaxed);
+                    const int hard_pref =
+                        g_moving_untracked_hard_abort_pref.load(std::memory_order_relaxed);
+                    if (hard_pref > 0) {
+                        result.moving_blocked_precondition = true;
+                        result.soft_gated = true;
+                        g_moving_incomplete_remap_densify_hard_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        const auto prev_sticky =
+                            g_moving_incomplete_remap_sticky_densify_off.exchange(
+                                1, std::memory_order_acq_rel);
+                        if (prev_sticky == 0) {
+                            g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    }
+                }
+            }
+            post_moving_live_canaries_.clear();
         }
 
         invoke_compact_hook_with_deopt_();
@@ -2477,6 +2521,19 @@ private:
         root_remap_closure_capture_fail_total_.fetch_add(cc_fail, std::memory_order_relaxed);
     }
 
+    // Issue #3055: observe-only. Count canaries that still hold a
+    // last_object_remap_ key (old address). Does not rewrite.
+    [[nodiscard]] std::size_t count_post_moving_stale_known_ptrs_() const noexcept {
+        if (post_moving_live_canaries_.empty() || last_object_remap_.empty())
+            return 0;
+        std::size_t stale = 0;
+        for (void* p : post_moving_live_canaries_) {
+            if (p && last_object_remap_.find(p) != last_object_remap_.end())
+                ++stale;
+        }
+        return stale;
+    }
+
     void invoke_compact_hook_() {
         std::function<void()> hook_copy;
         {
@@ -2581,6 +2638,8 @@ private:
     // Issue #2267: RootRemapPass callback (StableNodeRef + Closure captures).
     mutable std::mutex root_remap_mtx_;
     RootRemapCallback root_remap_;
+    // Issue #3055: observe-only residual live ptrs (not a remap registry).
+    std::vector<void*> post_moving_live_canaries_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.
     // Issue #1663: owner_mtx_ protects the dual-word owner pair.
     mutable std::shared_mutex owner_mtx_;
