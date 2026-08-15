@@ -103,8 +103,8 @@ static void ac2_try_acquire_in_mutate_paths() {
     std::println("\n--- AC2: try_acquire present on mutate surface ---");
     auto mutate = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     auto helpers = read_file("src/compiler/mutation_guard_helpers.hh");
-    CHECK(mutate.find("MutationBoundaryGuard::try_acquire") != std::string::npos,
-          "mutate.cpp uses try_acquire");
+    CHECK(mutate.find("mutate_dispatch_try_acquire") != std::string::npos,
+          "mutate.cpp uses mutate_dispatch_try_acquire (#3074)");
     CHECK(helpers.find("try_acquire") != std::string::npos,
           "run_under_mutation_guard uses try_acquire");
     // Count try_acquire vs add_mutate roughly
@@ -192,6 +192,53 @@ static void ac5_gate_docs() {
     CHECK(bp.find("--strict") != std::string::npos, "strict mode");
     CHECK(bp.find("#2124") != std::string::npos || bp.find("2124") != std::string::npos,
           "build.py cites #2124");
+}
+
+static void ac3074_1_structural_routes_dispatch() {
+    std::println("\n--- #3074 AC1: structural mutate:* acquire via mutate_dispatch ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto hh = read_file("src/compiler/mutate_dispatch.hh");
+    CHECK(hh.find("mutate_dispatch_try_acquire") != std::string::npos, "AC1: dispatch acquire");
+    CHECK(hh.find("kMutateDispatchSoleGuardIssue = 3074") != std::string::npos, "AC1: issue stamp");
+    CHECK(mut.find("mutate_dispatch_try_acquire") != std::string::npos, "AC1: mutate.cpp routes");
+    CHECK(mut.find("mutate:replace-pattern") != std::string::npos, "AC1: replace-pattern");
+    CHECK(mut.find("mutate:atomic-batch") != std::string::npos, "AC1: atomic-batch");
+    CHECK(mut.find("mutate:rename-symbol") != std::string::npos, "AC1: rename-symbol");
+    CHECK(mut.find("mutate:move-node") != std::string::npos, "AC1: move-node");
+}
+
+static void ac3074_2_guard_exempt_preserved() {
+    std::println("\n--- #3074 AC2: GUARD_EXEMPT metadata prims stay exempt ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("GUARD_EXEMPT:") != std::string::npos, "AC2: GUARD_EXEMPT comments");
+    CHECK(mut.find("/*guard_exempt=*/true") != std::string::npos ||
+              mut.find("guard_exempt") != std::string::npos,
+          "AC2: guard_exempt flag");
+}
+
+static void ac3074_3_metrics_live() {
+    std::println("\n--- #3074 AC3: MutateDispatchMetrics live (not simulate) ---");
+    const auto hh = read_file("src/compiler/mutate_dispatch.hh");
+    CHECK(hh.find("simulate applied") == std::string::npos, "AC3: no simulate applied");
+    CHECK(hh.find("mutate_dispatch_note") != std::string::npos, "AC3: live note");
+    CHECK(hh.find("rejected_total") != std::string::npos, "AC3: rejected counter");
+    CHECK(hh.find("MutateDispatchResult::Rejected") != std::string::npos, "AC3: reject path");
+    CHECK(hh.find("MutateDispatchResult::Applied") != std::string::npos, "AC3: applied path");
+}
+
+static void ac3074_5_source_and_linter() {
+    std::println("\n--- #3074 AC5/AC6: linter + no invent + no docs/design ---");
+    const auto t = read_file("tests/compiler/test_mutation_guard_try_acquire_unit.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py");
+    CHECK(t.find("ac3074_1_structural_routes_dispatch") != std::string::npos, "AC5: AC1 test");
+    CHECK(build.find("check_mutate_dispatch_sole_guard_3074") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("3074") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/compiler/test_issue_3074.cpp").empty(),
+          "AC5: no invent test file per #81967");
+    CHECK(read_file("docs/design/3074-mutate-dispatch.md").empty(),
+          "AC6: no docs/design/3074-* per #1655");
 }
 
 static void ac2986_1_every_mutate_wrapped_or_exempt() {
@@ -320,6 +367,10 @@ int run_test_mutation_guard_try_acquire_unit() {
     ac3_quota_reject_no_panic_checkpoint();
     ac4_metrics_move();
     ac5_gate_docs();
+    ac3074_1_structural_routes_dispatch();
+    ac3074_2_guard_exempt_preserved();
+    ac3074_3_metrics_live();
+    ac3074_5_source_and_linter();
     ac2986_1_every_mutate_wrapped_or_exempt();
     ac2986_2_linter_catches_naked();
     ac2986_3_metrics_and_fail_closed();

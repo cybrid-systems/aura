@@ -13,17 +13,9 @@
 //   single dispatch entry point. Existing `add("mutate:*", ...)`
 //   primitives become thin wrappers around this function.
 //
-// Cycle 4 follow-up plan:
-// - Migrate existing `add("mutate:*", ...)` primitives
-//   (mutate:set-body, engine:redefine, mutate:from-verification-
-//   feedback, typed mutation, structural mutation) to thin
-//   wrappers around mutate_dispatch().
-// - Add per-kind observability counters (applied_total /
-//   rejected_total / deferred_total per MutateKind) to
-//   MutateDispatchMetrics.
-// - Add a linter to track per-primitive migration progress.
-// - Update scripts/coverage/checks/check_primitive_surface.py to count the new
-//   mutate:* surface area.
+// Issue #3074 (cycle 4 follow-up): structural mutate:* bodies acquire
+// the Guard only via mutate_dispatch_try_acquire. Metrics are live.
+// GUARD_EXEMPT metadata prims stay exempt. See check_mutate_dispatch_sole_guard_3074.py.
 //
 // See docs/agent-safety-mechanisms-simplification.md §"Mutation
 // paths" for the design rationale.
@@ -75,17 +67,22 @@ inline MutateDispatchMetrics& g_mutate_dispatch_metrics() noexcept {
     return m;
 }
 
-// Canonical single dispatch entry point. Cycle 4 ship only
-// defines the signature; cycle 4-followup wires the actual
-// routing logic. Until then, callers should use the existing
-// `add("mutate:*", ...)` primitives directly.
-[[nodiscard]] inline MutateDispatchResult mutate_dispatch(MutateKind kind, std::string_view target,
-                                                          std::string_view body) noexcept {
+// Issue #3074: live (not simulate) applied/rejected bumps. Soft path
+// is whatever try_acquire already does; no extra hot-path work beyond
+// one relaxed add on the already-rare mutate entry.
+inline constexpr int kMutateDispatchSoleGuardIssue = 3074;
+inline std::atomic<std::uint32_t> g_mutate_dispatch_sole_guard_wired{1};
+
+inline void mutate_dispatch_note(MutateKind kind, MutateDispatchResult result) noexcept {
     auto& m = g_mutate_dispatch_metrics();
-    // Cycle 4 ship: simulate applied path. Real routing lands in
-    // cycle 4-followup.
-    (void)target;
-    (void)body;
+    if (result == MutateDispatchResult::Deferred) {
+        m.deferred_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+    if (result != MutateDispatchResult::Applied) {
+        m.rejected_total.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
     m.applied_total.fetch_add(1, std::memory_order_relaxed);
     switch (kind) {
         case MutateKind::SetBody:
@@ -104,7 +101,34 @@ inline MutateDispatchMetrics& g_mutate_dispatch_metrics() noexcept {
             m.structural_applied_total.fetch_add(1, std::memory_order_relaxed);
             break;
     }
-    return MutateDispatchResult::Applied;
+}
+
+// Issue #3074: sole Guard acquire for structural mutate:* bodies.
+// Same AuraResult as MutationBoundaryGuard::try_acquire so call sites
+// stay `if (!guard_r) / error() / std::move(*guard_r)`. Metrics are
+// live: acquire fail → rejected; acquire ok → applied (dispatch entered
+// the body). Include this header after Evaluator is in scope.
+[[nodiscard]] inline aura::core::AuraResult<std::unique_ptr<Evaluator::MutationBoundaryGuard>>
+mutate_dispatch_try_acquire(Evaluator& ev, std::uint64_t pending_count, bool* success_flag,
+                            bool fine_rollback = false,
+                            MutateKind kind = MutateKind::Structural) noexcept {
+    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, pending_count, success_flag,
+                                                            fine_rollback);
+    if (!gr)
+        mutate_dispatch_note(kind, MutateDispatchResult::Rejected);
+    else
+        mutate_dispatch_note(kind, MutateDispatchResult::Applied);
+    return gr;
+}
+
+// Cycle-4 signature kept for source-cite / 1964 tests. Does not simulate
+// applied — real Guard path is mutate_dispatch_try_acquire.
+[[nodiscard]] inline MutateDispatchResult mutate_dispatch(MutateKind kind, std::string_view target,
+                                                          std::string_view body) noexcept {
+    (void)kind;
+    (void)target;
+    (void)body;
+    return MutateDispatchResult::Deferred;
 }
 
 // String ↔ MutateKind mapping for the add("mutate:*", …) wrappers.

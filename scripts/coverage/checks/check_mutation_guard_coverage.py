@@ -38,6 +38,7 @@ TRY_ACQUIRE_PATTERNS = [
     re.compile(r"run_compile_dirty_under_guard\("),
     re.compile(r"with_compiler_service_pin\("),
     re.compile(r"MutationBoundaryGuard::try_acquire\("),
+    re.compile(r"mutate_dispatch_try_acquire\("),  # Issue #3074 sole structural acquire
     re.compile(r"aura_orch_agent_body_try_acquire\("),
     re.compile(r"transaction_guard_host\("),
     re.compile(r"make_transaction_guard\("),

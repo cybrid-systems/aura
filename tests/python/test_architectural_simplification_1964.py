@@ -48,7 +48,10 @@ class ArchitecturalSimplification1964(unittest.TestCase):
 
     def test_set_body_bookkeeps_dispatch(self) -> None:
         mut = (COMPILER / "evaluator_primitives_mutate.cpp").read_text(encoding="utf-8")
-        self.assertIn("mutate_dispatch(MutateKind::SetBody", mut)
+        # Issue #3074: live dispatch (no cycle-4 simulate). Set-body notes
+        # via mutate_dispatch_note; structural bodies use try_acquire wrapper.
+        self.assertIn("mutate_dispatch_note(MutateKind::SetBody", mut)
+        self.assertIn("mutate_dispatch_try_acquire", mut)
         self.assertIn("TransactionGuard", mut)
         self.assertIn("query:architectural-simplification-stats", mut)
 
