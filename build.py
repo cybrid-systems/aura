@@ -1033,6 +1033,19 @@ def cmd_lint():
             "Issue #3071 hold-budget in-body window linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_window_3071.py"
         )
         return r
+    # Issue #3073: production soak readiness gate — residual-zero
+    # (LifetimeProof + EnvFrame) × hold-after-cancel max. Soft/unit
+    # print-only. Extends chaos residual_zero (#81967).
+    cpr3073_script = COVERAGE_CHECKS / "check_chaos_production_readiness_3073.py"
+    if not cpr3073_script.exists():
+        fail(f"missing {cpr3073_script}")
+        return 1
+    r = run([sys.executable, str(cpr3073_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3073 production soak readiness linter failed — run python3 scripts/coverage/checks/check_chaos_production_readiness_3073.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12270,6 +12283,30 @@ def cmd_hold_budget_inbody_window_3071():
     return cmd_hold_budget_inbody_window_3071_coverage()
 
 
+def cmd_chaos_production_readiness_3073_coverage():
+    """Issue #3073: production soak readiness gate (static)."""
+    print(f"{B}=== chaos production readiness coverage (#3073) ==={N}")
+    script = COVERAGE_CHECKS / "check_chaos_production_readiness_3073.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("chaos production readiness (#3073) coverage contract rows failed")
+        return 1
+    ok("chaos production readiness (#3073) coverage clean")
+    return 0
+
+
+def cmd_chaos_production_readiness_3073():
+    """Issue #3073: residual-zero × hold-after-cancel max soak gate.
+
+    Soft/unit: print only. Production soak: fail-closed.
+    """
+    print(f"{B}=== chaos production readiness (#3073) ==={N}")
+    return cmd_chaos_production_readiness_3073_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16658,6 +16695,8 @@ def main():
         "storm-exit-hysteresis-peer-soft-stale-3070-coverage": cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage,
         "hold-budget-inbody-window-3071": cmd_hold_budget_inbody_window_3071,
         "hold-budget-inbody-window-3071-coverage": cmd_hold_budget_inbody_window_3071_coverage,
+        "chaos-production-readiness-3073": cmd_chaos_production_readiness_3073,
+        "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

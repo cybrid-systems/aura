@@ -1532,6 +1532,17 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                           mutation_hold_budget_inbody_window_wired_v_read()));
                             insert_kv("schema-3071", 3071);
                             insert_kv("issue-3071", 3071);
+                            // Issue #3073: production soak readiness
+                            // gate (steal residual-zero + hold-after-
+                            // cancel max). Additive wired sentinel;
+                            // no new hot-path increment.
+                            insert_kv("production-readiness-soak-"
+                                      "gate-wired",
+                                      static_cast<std::int64_t>(
+                                          g_chaos_production_readiness_gate_wired.load(
+                                              std::memory_order_relaxed)));
+                            insert_kv("schema-3073", 3073);
+                            insert_kv("issue-3073", 3073);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail
