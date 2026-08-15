@@ -1534,9 +1534,197 @@ int run_test_join_drain_reclaim() {
         }
     }
 
-    std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
-                 aura::test::g_failed);
-    return aura::test::g_failed ? 1 : 0;
+    // ── #3051: Aura orch:agent-join / scope-join-all auto short-wait
+    // when production surfaces must_wait_reclaimed (C++ JoinPolicy
+    // default stays unset). ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::AgentHandle;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::kProductionWaitReclaimedMsDefault;
+        using aura::orch::maybe_auto_wait_reclaimed_production;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        std::println("\n--- #3051 AC1: production + body exit → reservation released ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "3051 AC1: C++ join still Reclaimed");
+            CHECK(h.must_wait_reclaimed, "3051 AC1: must_wait after unset wait");
+            CHECK(!h.wait_reclaimed_used, "3051 AC4: C++ join_agent does not auto-wait");
+            CHECK(h.reserved_memory_bytes == 4096, "3051 AC1: held until language auto-wait");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            const auto clean0 =
+                g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+            const auto extra =
+                maybe_auto_wait_reclaimed_production(h, /*caller_passed_wait_reclaimed_ms=*/false);
+            (void)extra;
+            CHECK(h.wait_reclaimed_used, "3051 AC3: wait-reclaimed reflects auto call");
+            CHECK(!h.wait_reclaimed_timeout, "3051 AC1: body already exited, no timeout");
+            CHECK(h.reserved_memory_bytes == 0,
+                  "3051 AC1: reservation released without explicit wait-reclaimed");
+            CHECK(!h.reclaimed_deferred_cleanup, "3051 AC3: Done-path cleanup ran");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) ==
+                      wait0 + 1,
+                  "3051 AC5: reuses wait_reclaimed_total");
+            CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(
+                      std::memory_order_relaxed) == clean0 + 1,
+                  "3051 AC5: reuses wait_reclaimed_cleanup_total");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #3051 AC1b/AC3: still-running auto-wait times out, no release ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            const auto extra = maybe_auto_wait_reclaimed_production(h, false);
+            CHECK(h.wait_reclaimed_used, "3051 AC3: wait-reclaimed set on timeout path");
+            CHECK(h.wait_reclaimed_timeout, "3051 AC3: wait-timeout after 50ms window");
+            CHECK(h.reserved_memory_bytes == 2048, "3051: #2661 no release on timeout");
+            CHECK(extra > 0, "3051: auto-wait folded wait_us");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3051 AC2: explicit wait wins; Soft stays zero-cost ---");
+        {
+            apply_dev_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 1024;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(!h.must_wait_reclaimed, "3051 AC1 Soft: must_wait false");
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            CHECK(maybe_auto_wait_reclaimed_production(h, false) == 0,
+                  "3051 AC1 Soft: no auto-wait");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+                  "3051 AC1 Soft: wait_reclaimed_total not bumped");
+            CHECK(!h.wait_reclaimed_used, "3051 AC1 Soft: wait-reclaimed unset");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 512;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            policy.wait_reclaimed_ms = 1; // explicit 1ms — join_agent waits
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            (void)join_agent(h, policy);
+            CHECK(h.wait_reclaimed_used, "3051 AC2: explicit :wait-reclaimed-ms 1 used");
+            CHECK(!h.must_wait_reclaimed, "3051 AC2: explicit wait does not set must_wait");
+            const auto wait1 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            CHECK(wait1 == wait0 + 1, "3051 AC2: join_agent waited once");
+            CHECK(maybe_auto_wait_reclaimed_production(h, /*caller_passed=*/true) == 0,
+                  "3051 AC2: no double-wait when caller passed :wait-reclaimed-ms");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait1,
+                  "3051 AC2: helper no-op when caller_passed");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3051 AC4/AC6: Aura surface + source-cite + no invent ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto scope = read_file("src/orch/agent_scope.h");
+            CHECK(spawn.find("maybe_auto_wait_reclaimed_production") != std::string::npos,
+                  "3051 AC4: helper lives in agent_spawn.h");
+            CHECK(spawn.find("kProductionWaitReclaimedMsDefault") != std::string::npos,
+                  "3051: reuses documented 50ms default");
+            CHECK(agent.find("maybe_auto_wait_reclaimed_production") != std::string::npos,
+                  "3051 AC1: orch:agent-join / scope-join-all call helper");
+            CHECK(agent.find("schema-3051") != std::string::npos, "3051 AC3: schema-3051");
+            CHECK(agent.find("join-auto-wait-reclaimed-wired") != std::string::npos,
+                  "3051 AC3: wired sentinel");
+            CHECK(scope.find("#3051") != std::string::npos,
+                  "3051 AC4: join_all documents no C++ inject");
+            CHECK(agent.find("wait_reclaimed_ms.has_value()") != std::string::npos,
+                  "3051 AC2: explicit :wait-reclaimed-ms wins");
+            CHECK(kProductionWaitReclaimedMsDefault == 50, "3051: default is 50ms");
+            CHECK(read_file("docs/design/3051-auto-wait-reclaimed.md").empty(),
+                  "3051 AC6: no docs/design/3051-* per #1655");
+            std::ifstream invent("tests/orch/test_issue_3051.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_3051.cpp");
+            CHECK(!invent.good(), "3051 AC6: no test_issue_3051.cpp per #81967");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_join_auto_wait_reclaimed_3051") != std::string::npos,
+                  "3051 AC6: build.py wires linter");
+        }
+    }
+}
+}
+
+std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed, aura::test::g_failed);
+return aura::test::g_failed ? 1 : 0;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
