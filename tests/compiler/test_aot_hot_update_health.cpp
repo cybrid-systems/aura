@@ -220,6 +220,7 @@ static void ac5_schema_and_source() {
 
     const auto hh = read_file("src/compiler/aot_hot_update_health.hh");
     const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto qr = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     CHECK(hh.find("compute_aot_hot_update_health") != std::string::npos, "AC5: pure compute");
@@ -227,7 +228,7 @@ static void ac5_schema_and_source() {
     CHECK(hh.find("force-jit") != std::string::npos, "AC5: force-jit in weights docs");
     CHECK(hh.find("storm") != std::string::npos, "AC5: storm in weights docs");
     CHECK(q.find("query:aot-hot-update-health") != std::string::npos, "AC5: query registered");
-    CHECK(q.find("query:hot-update-health") != std::string::npos, "AC5: alias registered");
+    CHECK(qr.find("query:hot-update-health") != std::string::npos, "AC5: alias registered");
     CHECK(q.find("aot_hot_update_health.hh") != std::string::npos, "AC5: includes health hh");
     CHECK(obs.find("query:aot-hot-update-health") != std::string::npos, "AC5: catalog");
     CHECK(cmake.find("test_aot_hot_update_health") != std::string::npos, "AC5: cmake target");

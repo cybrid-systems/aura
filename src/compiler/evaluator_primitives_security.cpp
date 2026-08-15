@@ -970,7 +970,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         "query:tenant-isolation-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::core::workspace_isolation;
             const auto snap = snapshot_tenant_isolation_stats();
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+            if (m) {
                 m->tenant_boundary_violation_prevented_total.store(
                     snap.boundary_violations_prevented, std::memory_order_relaxed);
                 m->cross_tenant_provenance_deny_total.store(snap.cross_tenant_provenance_deny,
@@ -1030,6 +1031,34 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(snap.nodeid_only_entry_prevented));
             insert_kv("nodeid-only-entry-prevented-wired", 1);
             insert_kv("schema-3040", 3040);
+            // Issue #2224: full key set (schema-2224 / -total suffix parity with
+            // the obs_eval surface). This registration runs after
+            // register_eval_observability_primitives and overwrites it, so it
+            // must carry the complete key set the #2224 tests expect while
+            // keeping the legacy #1566 keys + metrics mirror above.
+            insert_kv("schema-2224", 2224);
+            insert_kv("issue-2224", 2224);
+            insert_kv("issue", snap.issue);
+            insert_kv("tenant-boundary-checks-total", static_cast<std::int64_t>(snap.checks));
+            insert_kv("tenant-boundary-violation-prevented-total",
+                      static_cast<std::int64_t>(snap.boundary_violations_prevented));
+            insert_kv("cross-tenant-provenance-deny-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_provenance_deny));
+            insert_kv("cross-tenant-capability-grant-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_capability_grants));
+            insert_kv("cross-tenant-capability-deny-total",
+                      static_cast<std::int64_t>(snap.cross_tenant_capability_deny));
+            insert_kv("isolation-audit-total", static_cast<std::int64_t>(snap.audits));
+            insert_kv("strict-sandbox-isolation-denials",
+                      static_cast<std::int64_t>(snap.strict_denials));
+            insert_kv("allow-cross-tenant", snap.allow_cross);
+            insert_kv("atomic-batch-tenant-isolation-denials",
+                      m ? static_cast<std::int64_t>(m->atomic_batch_tenant_isolation_denials.load(
+                              std::memory_order_relaxed))
+                        : 0);
+            insert_kv("export-ref-mandate", 1);
+            insert_kv("resolve-stamped-gate", 1);
+>>>>>>> 698176757 (fix(test): green pre-existing FAIL members in test_aot_jit_stamp_batch after llvm_jit link)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

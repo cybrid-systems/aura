@@ -99,12 +99,13 @@ int run_test_instr_level_relower_pass() {
         auto pure = read_file("src/compiler/ir_cache_pure.ixx");
         auto svc = read_file("src/compiler/service.ixx");
         auto pm = read_file("src/compiler/pass_manager.ixx");
+        auto opt = read_file("src/compiler/optimization_passes.ixx");
         auto met = read_file("src/compiler/observability_metrics.h");
         CHECK(pure.find("#2133") != std::string::npos &&
                   pure.find("has_instr_precision") != std::string::npos,
               "ir_cache_pure #2133");
         CHECK(svc.find("relower_affected_instrs_") != std::string::npos, "relower_affected_instrs");
-        CHECK(pm.find("set_instruction_dirty_fn") != std::string::npos, "pass instr dirty");
+        CHECK(opt.find("set_instruction_dirty_fn") != std::string::npos, "pass instr dirty");
         CHECK(met.find("instr_level_relower_total") != std::string::npos, "metrics");
     }
 
