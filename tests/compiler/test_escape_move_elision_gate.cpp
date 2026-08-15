@@ -1173,6 +1173,41 @@ static void ac3063_hermetic_success_invalidate() {
     clear_type_linear_commit_proof_for_test();
 }
 
+static void ac3085_hermetic_lowering_block() {
+    std::println("\n--- #3085 AC: hermetic miss blocks lowering helper ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(30850);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "3085: green ok");
+    CHECK(aura_linear_fast_path_depth_or_densify_block() == 0, "3085: lowering open");
+    CHECK(invalidate_fast_path_on_rehydrate_miss(), "3085: miss");
+    CHECK(!linear_fast_path_ok(), "3085: !ok");
+    CHECK(!linear_ir_fastpath_try_skip(), "3085: no skip");
+    CHECK(linear_fast_path_rehydrate_gen_blocks_elision(), "3085: gen blocks");
+    CHECK(aura_linear_fast_path_depth_or_densify_block() != 0, "3085: lowering blocked");
+    {
+        CompilerService cs;
+        CHECK(href(cs, "schema-3085") == 3085, "3085: schema-3085 on escape-postmutate");
+        CHECK(href(cs, "linear-fast-path-rehydrate-gen-elision-wired") == 1, "3085: wired");
+    }
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_type_linear_commit_proof_for_test();
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1225,6 +1260,8 @@ int run_test_escape_move_elision_gate() {
     ac3032_hermetic_invalidate();
     std::println("\n=== Issue #3063: steal/densify success invalidate-before-restamp ===");
     ac3063_hermetic_success_invalidate();
+    std::println("\n=== Issue #3085: densify/steal miss blocks lowering elision ===");
+    ac3085_hermetic_lowering_block();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

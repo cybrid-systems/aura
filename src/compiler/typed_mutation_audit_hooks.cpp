@@ -185,6 +185,9 @@ extern "C" void aura_escape_move_gate_clear() noexcept {
 // Issue #3006: lowering hard-block for mid-boundary / densify-pending
 // (escape-blocked names stay on the keyed #2263/#2344 path so clean
 // bindings under an active summary can still elide).
+// Issue #3085: also block when rehydrate-miss / steal-densify
+// invalidate_gen has not been green-bound (does not use the escape
+// arm — #2263 clean elide stays when gens match).
 extern "C" int aura_linear_fast_path_ok() noexcept {
     return aura::compiler::typed_audit::linear_fast_path_ok() ? 1 : 0;
 }
@@ -200,6 +203,8 @@ extern "C" int aura_linear_fast_path_depth_or_densify_block() noexcept {
         return 1;
     if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
             std::memory_order_relaxed) > 0)
+        return 1;
+    if (aura::compiler::typed_audit::linear_fast_path_rehydrate_gen_blocks_elision())
         return 1;
     return 0;
 }

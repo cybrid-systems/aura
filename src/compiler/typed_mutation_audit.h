@@ -1191,6 +1191,21 @@ inline constexpr int kStealDensifySuccessInvalidateIssue = 3063;
 inline std::atomic<std::uint64_t> g_steal_densify_success_invalidate_total{0};
 inline std::atomic<std::uint32_t> g_steal_densify_success_invalidate_wired{1};
 
+// Issue #3085: lowering Move elision must honor the rehydrate-miss /
+// steal-densify invalidate gen *before* the next IR lower. #3032 /
+// #3063 already advance gen; this is the elision-side consult so a
+// still-green proof stamp cannot elide between the miss and the next
+// outermost restamp. Soft / no densify: inv==0 → one acquire load.
+inline constexpr int kLinearFastPathRehydrateGenElisionIssue = 3085;
+inline std::atomic<std::uint32_t> g_linear_fast_path_rehydrate_gen_elision_wired{1};
+
+[[nodiscard]] inline bool linear_fast_path_rehydrate_gen_blocks_elision() noexcept {
+    const auto inv = g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire);
+    if (inv == 0)
+        return false; // Soft / no densify: no second load
+    return inv != g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed);
+}
+
 [[nodiscard]] inline std::uint64_t rehydrate_miss_invalidate_gen_v_read() noexcept {
     return g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed);
 }
