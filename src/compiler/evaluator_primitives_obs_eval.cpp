@@ -7783,6 +7783,12 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"impact-cross-check-wired", make_int(1)},
                 {"schema-3034", make_int(3034)},
                 {"issue-3034", make_int(3034)},
+                // Issue #3068: map ensure + impact_ub snapshot before
+                // partial decision. Existing counters only (no new
+                // middle-layer metrics).
+                {"map-ensure-before-partial-wired", make_int(1)},
+                {"schema-3068", make_int(3068)},
+                {"issue-3068", make_int(3068)},
                 // Issue #2044: cascade full re-lower uses full dirty pass suite
                 {"cascade_incremental_pass_pipeline_total",
                  make_int(m ? load(m->cascade_incremental_pass_pipeline_total) : 0)},

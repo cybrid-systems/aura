@@ -5125,10 +5125,70 @@ public:
     }
 
     // Ensure entry has a usable map (lazy rebuild if empty after load).
+    // Issue #3068: emptiness-only. Callers that need a *complete*
+    // map before an impact snapshot use prepare_source_to_ir_map_for_partial_.
     void ensure_source_to_ir_map_(IRCacheEntry& entry) {
         if (!entry.source_to_ir_map.empty() || entry.irs.empty())
             return;
         rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
+    }
+
+    // Issue #3068: fail-closed map prepare for the partial-relower
+    // decision. Same critical section as the threshold consult:
+    //   1. ensure (empty → rebuild)
+    //   2. if desynced → recover_source_to_ir_map_desync (patch, then rebuild)
+    //   3. if IR stamps still lack instr locs → rebuild once more
+    // Returns false when the map is still unusable → caller MUST
+    // upgrade to full (no silent partial). Already-consistent +
+    // complete maps pay only the consistency / missing-loc walks
+    // (no rebuild — Soft/Off zero extra on clean windows).
+    [[nodiscard]] bool prepare_source_to_ir_map_for_partial_(IRCacheEntry& entry) {
+        if (entry.irs.empty())
+            return true;
+        ensure_source_to_ir_map_(entry);
+        if (entry.source_to_ir_map.empty())
+            return false;
+        if (!source_to_ir_map_is_consistent(entry.irs, entry.source_to_ir_map)) {
+            const auto bad =
+                count_source_to_ir_map_inconsistencies(entry.irs, entry.source_to_ir_map);
+            if (bad > 0)
+                metrics_.source_to_ir_map_inconsistency_total.fetch_add(bad,
+                                                                        std::memory_order_relaxed);
+            std::vector<std::size_t> preferred;
+            preferred.reserve(entry.block_dirty_per_func_.size());
+            for (std::size_t fi = 0; fi < entry.block_dirty_per_func_.size(); ++fi) {
+                if (entry.func_dirty_block_count(fi) > 0)
+                    preferred.push_back(fi);
+            }
+            auto rec =
+                recover_source_to_ir_map_desync(entry.irs, entry.source_to_ir_map, preferred);
+            if (rec.funcs_patched > 0) {
+                metrics_.source_to_ir_desync_funcs_patched.fetch_add(
+                    static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
+                metrics_.source_to_ir_map_patch_total.fetch_add(
+                    static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
+            }
+            if (rec.used_full_rebuild)
+                metrics_.source_to_ir_map_rebuild_total.fetch_add(1, std::memory_order_relaxed);
+            if (rec.recovered) {
+                metrics_.source_to_ir_desync_recovered_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                metrics_.source_to_ir_map_consistent_checks_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                return false;
+            }
+        }
+        if (source_to_ir_map_missing_instr_loc(entry.irs, entry.source_to_ir_map)) {
+            // Restore from current IR so CastOp / type cone cannot
+            // silent-partial on a block-only or dropped loc.
+            rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
+            if (source_to_ir_map_missing_instr_loc(entry.irs, entry.source_to_ir_map) ||
+                entry.source_to_ir_map.empty())
+                return false;
+        }
+        return source_to_ir_map_is_consistent(entry.irs, entry.source_to_ir_map) &&
+               !entry.source_to_ir_map.empty();
     }
 
     // Issue #2034 / #2139: canonical cascade-exit SoA dirty finish.
@@ -5351,8 +5411,14 @@ public:
             root = *found;
         }
         ensure_source_to_ir_map_(entry);
-        if (entry.source_to_ir_map.empty())
-            return 0;
+        // Issue #3068: empty / desynced / missing-instr-loc map is
+        // unknown impact, not empty impact. Sentinel forces
+        // should_partial_relower_impact_checked to upgrade to full.
+        // no-flat / no-root above still return 0 (Soft zero-cost).
+        if (entry.source_to_ir_map.empty() ||
+            !source_to_ir_map_is_consistent(entry.irs, entry.source_to_ir_map) ||
+            source_to_ir_map_missing_instr_loc(entry.irs, entry.source_to_ir_map))
+            return static_cast<std::size_t>(-1);
         std::unordered_map<std::string, std::size_t, aura::core::TransparentStringHash,
                            std::equal_to<>>
             ir_cache_index;
@@ -6780,12 +6846,27 @@ public:
             // bound. Monotonic — only upgrades partial → full, never lowers
             // (storm gates stay the outer envelope). Zero cost on clean /
             // empty-impact windows (helper returns 0 → no upgrade).
+            // Issue #3068: ensure / recover the source_to_ir_map and
+            // snapshot impact_ub in the same critical section as the
+            // threshold consult. A stale or incomplete map must not
+            // under-estimate (silent partial peel). Recovered maps
+            // keep partial when the bound is still ≤ dirty_n (#2206).
             if (want_partial && dirty_n > 0) {
-                const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
-                if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
+                if (!prepare_source_to_ir_map_for_partial_(it->second)) {
                     want_partial = false;
+                    it->second.mark_all_blocks_dirty();
+                    it->second.dirty = true;
                     metrics_.partial_forced_full_by_impact_total.fetch_add(
                         1, std::memory_order_relaxed);
+                } else {
+                    const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
+                    if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
+                        want_partial = false;
+                        it->second.mark_all_blocks_dirty();
+                        it->second.dirty = true;
+                        metrics_.partial_forced_full_by_impact_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
             }
             if (want_partial)
@@ -7011,6 +7092,55 @@ public:
                                                                         std::memory_order_relaxed);
         }
         return rec.recovered;
+    }
+
+    // Issue #3068 test: drop instr precision on one reverse-index entry
+    // (prefer CastOp) so missing-loc prepare must recover or force full.
+    bool inject_source_to_ir_map_drop_instr_loc_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end() || it->second.irs.empty())
+            return false;
+        auto& entry = it->second;
+        ensure_source_to_ir_map_(entry);
+        if (entry.source_to_ir_map.empty())
+            rebuild_source_to_ir_map_from_irs(entry.irs, entry.source_to_ir_map);
+        SourceToIrMap::iterator drop = entry.source_to_ir_map.end();
+        for (auto mit = entry.source_to_ir_map.begin(); mit != entry.source_to_ir_map.end();
+             ++mit) {
+            if (!mit->second.has_instr())
+                continue;
+            const auto fi = mit->second.function_index;
+            const auto bi = mit->second.block_index;
+            const auto ii = mit->second.instr_index;
+            if (fi >= entry.irs.size() || bi >= entry.irs[fi].blocks.size() ||
+                ii >= entry.irs[fi].blocks[bi].instructions.size())
+                continue;
+            if (entry.irs[fi].blocks[bi].instructions[ii].opcode == aura::ir::IROpcode::CastOp) {
+                drop = mit;
+                break;
+            }
+            if (drop == entry.source_to_ir_map.end())
+                drop = mit;
+        }
+        if (drop == entry.source_to_ir_map.end())
+            return false;
+        drop->second.instr_index = UINT32_MAX;
+        if (entry.block_dirty_per_func_.empty())
+            entry.block_dirty_per_func_.resize(entry.irs.size());
+        if (!entry.block_dirty_per_func_.empty() && entry.block_dirty_per_func_[0].empty())
+            entry.block_dirty_per_func_[0].assign(1, 0);
+        if (!entry.block_dirty_per_func_.empty() && !entry.block_dirty_per_func_[0].empty())
+            entry.block_dirty_per_func_[0][0] = 1;
+        entry.dirty = true;
+        return source_to_ir_map_missing_instr_loc(entry.irs, entry.source_to_ir_map);
+    }
+
+    // Issue #3068 test: same prepare used by the production decision.
+    [[nodiscard]] bool prepare_source_to_ir_map_for_partial_for_test(const std::string& name) {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return true;
+        return prepare_source_to_ir_map_for_partial_(it->second);
     }
 
     // Get all cached defines' names (for the (eval-current) full-lower fallback).

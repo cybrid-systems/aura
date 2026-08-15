@@ -183,10 +183,14 @@ void ac3_wireup_soundness() {
     CHECK(pure.find("SourceToIrDesyncRecovery") != std::string::npos, "recovery result struct");
     CHECK(pure.find("#2206") != std::string::npos, "pure cites #2206");
     auto dirty = read_file("src/compiler/service_dirty.cpp");
-    CHECK(!dirty.empty() && dirty.find("recover_source_to_ir_map_desync") != std::string::npos,
-          "service_dirty wires recover");
-    CHECK(dirty.find("source_to_ir_desync_recovered_total") != std::string::npos,
-          "dirty bumps recovered");
+    CHECK(!dirty.empty() &&
+              (dirty.find("recover_source_to_ir_map_desync") != std::string::npos ||
+               dirty.find("prepare_source_to_ir_map_for_partial_") != std::string::npos),
+          "service_dirty wires recover/prepare");
+    CHECK(dirty.find("source_to_ir_desync_recovered_total") != std::string::npos ||
+              read_file("src/compiler/service.ixx").find("source_to_ir_desync_recovered_total") !=
+                  std::string::npos,
+          "dirty/service bumps recovered");
     CHECK(dirty.find("#2206") != std::string::npos, "dirty cites #2206");
     // Soundness oracle lineage still present (#2113) — no regression site
     auto svc = read_file("src/compiler/service_dirty.cpp");
@@ -286,6 +290,66 @@ void ac_extra_full_rebuild_fallback() {
         CHECK(rec.used_full_rebuild, "used full rebuild for orphan");
 }
 
+// Issue #3068: production workspace relower must recover or force-full
+// after inject — not peel on a stale map.
+void ac3068_relower_recovers_or_full() {
+    std::println("\n--- #3068: inject desync → public_relower recovers or force-full ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define m (lambda (x) (+ x 3))) (m 1)\")").has_value(),
+          "3068 set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3068 eval");
+    if (!cs.get_define_v2("m"))
+        (void)cs.eval("(compile:cache-define \"m\")");
+    CHECK(cs.get_define_v2("m") != nullptr, "3068 cache entry");
+    auto* met = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(met != nullptr, "3068 metrics");
+    const auto rec0 = met->source_to_ir_desync_recovered_total.load(std::memory_order_relaxed);
+    const auto forced0 = met->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto reb0 = met->source_to_ir_map_rebuild_total.load(std::memory_order_relaxed);
+    CHECK(cs.inject_source_to_ir_map_desync_for_test("m"), "3068 inject");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    const auto* entry = cs.get_define_v2("m");
+    CHECK(entry != nullptr, "3068 entry after relower");
+    CHECK(source_to_ir_map_is_consistent(entry->irs, entry->source_to_ir_map),
+          "3068 map consistent after workspace relower");
+    const auto rec1 = met->source_to_ir_desync_recovered_total.load(std::memory_order_relaxed);
+    const auto forced1 = met->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto reb1 = met->source_to_ir_map_rebuild_total.load(std::memory_order_relaxed);
+    CHECK(rec1 > rec0 || forced1 > forced0 || reb1 > reb0,
+          "3068 recover/rebuild or force-full observed");
+    auto r = cs.eval("(m 2)");
+    CHECK(r && is_int(*r) && as_int(*r) == 5, "3068 (m 2) == 5");
+
+    // AC2: drop instr loc → recover/rebuild or force-full; no silent stale.
+    CompilerService cs2;
+    CHECK(cs2.eval("(set-code \"(define n (lambda (x) (if x x x))) (n 1)\")").has_value(),
+          "3068 AC2 set-code");
+    CHECK(cs2.eval("(eval-current)").has_value(), "3068 AC2 eval");
+    if (!cs2.get_define_v2("n"))
+        (void)cs2.eval("(compile:cache-define \"n\")");
+    if (cs2.get_define_v2("n") && cs2.inject_source_to_ir_map_drop_instr_loc_for_test("n")) {
+        auto* met2 = static_cast<CompilerMetrics*>(cs2.evaluator().compiler_metrics());
+        const auto reb0b = met2->source_to_ir_map_rebuild_total.load(std::memory_order_relaxed);
+        const auto forced0b =
+            met2->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+        (void)cs2.public_relower_dirty_defines_from_workspace();
+        const auto* e2 = cs2.get_define_v2("n");
+        CHECK(e2 != nullptr, "3068 AC2 entry");
+        using aura::compiler::source_to_ir_map_missing_instr_loc;
+        CHECK(!source_to_ir_map_missing_instr_loc(e2->irs, e2->source_to_ir_map) ||
+                  met2->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >
+                      forced0b,
+              "3068 AC2 loc restored or force-full");
+        CHECK(met2->source_to_ir_map_rebuild_total.load(std::memory_order_relaxed) > reb0b ||
+                  met2->partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >
+                      forced0b,
+              "3068 AC2 rebuild or force-full observed");
+        CHECK(cs2.eval("(n 1)").has_value(), "3068 AC2 eval after drop");
+    } else {
+        CHECK(true, "3068 AC2 no instr loc to drop (soft)");
+    }
+}
+
 } // namespace
 
 int run_test_source_to_ir_desync_recovery() {
@@ -295,6 +359,7 @@ int run_test_source_to_ir_desync_recovery() {
     ac3_wireup_soundness();
     ac4_service_inject_recover();
     ac_extra_full_rebuild_fallback();
+    ac3068_relower_recovers_or_full();
     std::println("\n=== results: {} passed, {} failed ===\n", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

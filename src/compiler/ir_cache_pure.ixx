@@ -594,6 +594,30 @@ source_to_ir_map_is_consistent(const std::vector<aura::ir::IRFunction>& irs,
     return count_source_to_ir_map_inconsistencies(irs, map) == 0;
 }
 
+// Issue #3068: IR→map completeness. Map→IR consistency (#2045) does
+// not catch a *missing* reverse entry (or a block-only loc) for an
+// instruction that still carries a source stamp. ImpactScope then
+// under-counts — CastOp / type-cone is the motivating case (#3065
+// owns the type remirror; this is decision-time map completeness).
+// Empty irs or empty stamps → false (no miss).
+[[nodiscard]] inline bool
+source_to_ir_map_missing_instr_loc(const std::vector<aura::ir::IRFunction>& irs,
+                                   const SourceToIrMap& map) noexcept {
+    for (const auto& fn : irs) {
+        for (const auto& blk : fn.blocks) {
+            for (const auto& ins : blk.instructions) {
+                if (ins.source_ast_node_id == 0)
+                    continue;
+                const auto nid = static_cast<aura::ast::NodeId>(ins.source_ast_node_id);
+                auto it = map.find(nid);
+                if (it == map.end() || !it->second.has_instr())
+                    return true;
+            }
+        }
+    }
+    return false;
+}
+
 // Debug/fuzz assert: returns true when consistent. In debug builds
 // with AURA_ASSERT_SOURCE_TO_IR (or !NDEBUG), fires assert on failure.
 // Always safe to call in release (returns false on inconsistency).

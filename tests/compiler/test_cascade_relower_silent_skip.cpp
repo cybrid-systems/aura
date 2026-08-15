@@ -86,6 +86,11 @@ int run_test_cascade_relower_silent_skip() {
         CHECK(svc.find("Issue #1495 / #2813") != std::string::npos ||
                   svc.find("#2813") != std::string::npos,
               "AC1: service wiring cites #2813");
+        // Issue #3068: workspace relower must prepare the map before
+        // the partial decision (no silent peel on a stale reverse index).
+        CHECK(svc.find("Issue #3068") != std::string::npos, "AC1: service cites #3068");
+        CHECK(svc.find("prepare_source_to_ir_map_for_partial_") != std::string::npos,
+              "AC1: map prepare before impact snapshot");
         CHECK(met.find("cascade_relower_skipped_total") != std::string::npos, "AC1: metrics.h");
         CHECK(met.find("cascade_relower_ran_total") != std::string::npos, "AC1: ran in metrics.h");
         CHECK(obs.find("schema-2813") != std::string::npos, "AC1: query schema-2813");

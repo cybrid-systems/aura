@@ -968,6 +968,19 @@ def cmd_lint():
             "Issue #3067 hybrid deferred cascade linter failed — run python3 scripts/coverage/checks/check_hybrid_deferred_cascade_3067.py"
         )
         return r
+    # Issue #3068: partial relower ensure_source_to_ir_map_ + snapshot
+    # impact_ub before decision. Extends test_incremental_relower_batch
+    # (#81967); no docs/design.
+    pme3068_script = COVERAGE_CHECKS / "check_partial_map_ensure_3068.py"
+    if not pme3068_script.exists():
+        fail(f"missing {pme3068_script}")
+        return 1
+    r = run([sys.executable, str(pme3068_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3068 partial map-ensure linter failed — run python3 scripts/coverage/checks/check_partial_map_ensure_3068.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12109,6 +12122,30 @@ def cmd_hybrid_deferred_cascade_3067():
     return cmd_hybrid_deferred_cascade_3067_coverage()
 
 
+def cmd_partial_map_ensure_3068_coverage():
+    """Issue #3068: map ensure + impact_ub snapshot before partial (static)."""
+    print(f"{B}=== partial map ensure coverage (#3068) ==={N}")
+    script = COVERAGE_CHECKS / "check_partial_map_ensure_3068.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("partial map ensure (#3068) coverage contract rows failed")
+        return 1
+    ok("partial map ensure (#3068) coverage clean")
+    return 0
+
+
+def cmd_partial_map_ensure_3068():
+    """Issue #3068: partial relower ensure + snapshot impact_ub first.
+
+    Soft/clean: no extra rebuild on an already-consistent map.
+    """
+    print(f"{B}=== partial map ensure (#3068) ==={N}")
+    return cmd_partial_map_ensure_3068_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16463,6 +16500,8 @@ def main():
         "composite-audit-mid-se-join-3066-coverage": cmd_composite_audit_mid_se_join_3066_coverage,
         "hybrid-deferred-cascade-3067": cmd_hybrid_deferred_cascade_3067,
         "hybrid-deferred-cascade-3067-coverage": cmd_hybrid_deferred_cascade_3067_coverage,
+        "partial-map-ensure-3068": cmd_partial_map_ensure_3068,
+        "partial-map-ensure-3068-coverage": cmd_partial_map_ensure_3068_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
