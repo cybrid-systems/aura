@@ -242,6 +242,9 @@ struct CompilerMetrics {
     //   - partial_relower_threshold_used: last threshold observed at decision
     // Issue #2112: adaptive partial/full cost history
     std::atomic<std::uint64_t> dep_graph_edge_reject_stale_total{0};
+    // Issue #3067: stale-reject deferred hybrid_node_cascade_ drains.
+    std::atomic<std::uint64_t> hybrid_deferred_cascade_total{0};
+    std::atomic<std::uint32_t> hybrid_deferred_cascade_wired{1};
     std::atomic<std::uint64_t> dep_graph_generation_total{0};
     std::atomic<std::uint64_t> partial_relower_threshold_used{8};
     // Issue #2248: Agent-driven adaptive relower threshold from

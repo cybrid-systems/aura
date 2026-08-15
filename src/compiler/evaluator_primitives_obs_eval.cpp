@@ -7588,6 +7588,15 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 {"partial-relower-threshold-wired", make_int(1)},
                 {"schema-2032", make_int(2032)},
                 {"issue-2032", make_int(2032)},
+                // Issue #3067: stale-reject deferred hybrid cascade drain.
+                {"hybrid-deferred-cascade-total",
+                 make_int(m ? load(m->hybrid_deferred_cascade_total) : 0)},
+                {"hybrid-deferred-cascade-wired",
+                 make_int(m ? static_cast<std::int64_t>(
+                                  m->hybrid_deferred_cascade_wired.load(std::memory_order_relaxed))
+                            : 1)},
+                {"schema-3067", make_int(3067)},
+                {"issue-3067", make_int(3067)},
                 // Issue #2112: adaptive partial/full threshold policy
                 {"avg-partial-relower-cost-ns",
                  make_int(
@@ -18034,6 +18043,14 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 {"dual-dep-graph-parity-wired", make_int(1)},
                 {"schema-2247", make_int(2247)},
                 {"issue-2247", make_int(2247)},
+                {"schema-3067", make_int(3067)},
+                {"issue-3067", make_int(3067)},
+                {"hybrid-deferred-cascade-total",
+                 make_int(m ? load(m->hybrid_deferred_cascade_total) : 0)},
+                {"hybrid-deferred-cascade-wired",
+                 make_int(m ? static_cast<std::int64_t>(
+                                  m->hybrid_deferred_cascade_wired.load(std::memory_order_relaxed))
+                            : 1)},
                 {"schema-2191", make_int(2191)},
                 {"issue-2191", make_int(2191)},
                 {"schema-2063", make_int(2063)},
