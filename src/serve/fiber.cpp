@@ -293,6 +293,38 @@ void publish_current_fiber_mutation_safety(std::size_t depth, bool held,
     f->publish_mutation_safety_mirrors(depth, held, defuse_version);
 }
 
+void set_current_fiber_session_mid(std::uint64_t mid) noexcept {
+    Fiber* f = g_current_fiber;
+    if (f == nullptr)
+        return;
+    f->set_session_mid(mid);
+}
+
+void clear_current_fiber_session_mid() noexcept {
+    Fiber* f = g_current_fiber;
+    if (f == nullptr)
+        return;
+    f->clear_session_mid();
+}
+
+std::uint64_t current_fiber_session_mid() noexcept {
+    Fiber* f = g_current_fiber;
+    if (f == nullptr)
+        return 0;
+    return f->session_mid();
+}
+
+// Issue #3048: cross-fiber session-mid probe for force-degrade abort revoke.
+extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return 0;
+    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    Fiber* f = find_fiber_by_id_locked_held(fiber_id);
+    if (!f)
+        return 0;
+    return f->session_mid();
+}
+
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup. See fiber.h for the rationale.
 void* (*g_fiber_setter_)(void*) = nullptr;
