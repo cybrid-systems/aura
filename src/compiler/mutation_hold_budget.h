@@ -432,6 +432,73 @@ inline void clear_mutation_hold_budget_forced_unlock_for_test() noexcept {
     g_mutation_hold_budget_forced_unlock_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3071: in-body non-poll window after cancel+force-safepoint.
+// #3035 closes the dtor half; a body that never reaches check_gc_safepoint
+// / yield / Phase-5 can still hold workspace_mtx_ until it happens to
+// exit. This stamps cancel-arm time and lets the scheduler idle path
+// poll: if the holder is still outermost-held past a bounded multiple
+// of the hold SLO, bump inbody-window-exceeded and re-arm force-safepoint
+// (no preemptive unlock — topology stays consistent). Soft: observe only.
+inline std::atomic<std::uint64_t> g_mutation_hold_budget_inbody_window_exceeded_total{0};
+inline std::atomic<std::uint32_t> g_mutation_hold_budget_inbody_window_wired{1};
+inline constexpr int kMutationHoldBudgetInbodyWindowIssue = 3071;
+inline std::atomic<std::uint64_t> g_hold_budget_cancel_armed_ns{0};
+inline std::atomic<std::uint64_t> g_hold_budget_cancel_armed_fiber{0};
+// First production escalate per arm (force_degrade once; later polls
+// only re-arm force-safepoint so holder-degrade totals stay honest).
+inline std::atomic<std::uint32_t> g_hold_budget_cancel_escalated{0};
+
+[[nodiscard]] inline std::uint64_t mutation_hold_inbody_window_bound_us() noexcept {
+    const char* e = std::getenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    if (e != nullptr && e[0] != '\0') {
+        if (e[0] == '0' && e[1] == '\0')
+            return 0;
+        std::uint64_t v = 0;
+        for (const char* p = e; *p >= '0' && *p <= '9'; ++p)
+            v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+        if (v > 0)
+            return v;
+    }
+    auto slo = mutation_hold_slo_us();
+    if (slo == 0)
+        slo = mutation_hold_budget_us();
+    return slo * 2ULL; // default 2× hold SLO
+}
+
+inline void mutation_hold_budget_note_cancel_armed(std::uint64_t fiber_id) noexcept {
+    std::uint64_t expected = 0;
+    const auto now = mutation_hold_steady_ns_now();
+    if (g_hold_budget_cancel_armed_ns.compare_exchange_strong(
+            expected, now, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+        g_hold_budget_cancel_armed_fiber.store(fiber_id, std::memory_order_release);
+        g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    }
+}
+
+inline void mutation_hold_budget_note_cancel_consumed(std::uint64_t fiber_id) noexcept {
+    const auto armed = g_hold_budget_cancel_armed_fiber.load(std::memory_order_acquire);
+    if (armed != 0 && (fiber_id == 0 || armed == fiber_id)) {
+        g_hold_budget_cancel_armed_fiber.store(0, std::memory_order_release);
+        g_hold_budget_cancel_armed_ns.store(0, std::memory_order_release);
+        g_hold_budget_cancel_escalated.store(0, std::memory_order_release);
+    }
+}
+
+[[nodiscard]] inline std::uint64_t
+mutation_hold_budget_inbody_window_exceeded_total_v_read() noexcept {
+    return g_mutation_hold_budget_inbody_window_exceeded_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t mutation_hold_budget_inbody_window_wired_v_read() noexcept {
+    return g_mutation_hold_budget_inbody_window_wired.load(std::memory_order_relaxed);
+}
+
+inline void clear_mutation_hold_budget_inbody_window_for_test() noexcept {
+    g_mutation_hold_budget_inbody_window_exceeded_total.store(0, std::memory_order_relaxed);
+    g_hold_budget_cancel_armed_ns.store(0, std::memory_order_relaxed);
+    g_hold_budget_cancel_armed_fiber.store(0, std::memory_order_relaxed);
+    g_hold_budget_cancel_escalated.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2724: region/subtree-scoped MutationBoundary concurrent admit.
 // Shared header so evaluator_mutation_boundary (writers) and
 // evaluator_primitives_query (query surface) share one definition.

@@ -1313,7 +1313,8 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
 // cooperative safepoint edge (Fiber::check_gc_safepoint / yield).
 // Issue #2999: outermost Guard dtor is the *exit* half if this edge
 // never ran. In-body still needs this ABI + force-safepoint to *enter*
-// dtor — the remaining in-body window is not gone.
+// dtor. Issue #3071 bounds the remaining window (scheduler poll +
+// re-arm; no preemptive unlock).
 //
 // Under production / AURA_MUTATION_HOLD_BUDGET_HARD=1, when the holder
 // fiber has pending_hold_budget_cancel_ (set by #2726 force-degrade +

@@ -11,6 +11,7 @@
 #include "../compiler/messaging_bridge.h"     // Issue #285: g_flush_mutation_boundary
 #include "../compiler/shape.h"                // Issue #570: record_shape_fiber_refresh
 #include "../compiler/typed_mutation_audit.h" // Issue #2853: production_residual_policy_locked()
+#include "../compiler/mutation_hold_budget.h" // Issue #3071: in-body cancel-arm watchdog
 #include "aura_platform.h"
 #include "core/gc_hooks.h"      // Issue #1364
 #include "core/lifetime_pin.hh" // Issue #3023: post-join linear_roots unpin
@@ -248,8 +249,82 @@ extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noe
     Fiber* f = find_fiber_by_id_locked_held(fiber_id);
     if (!f)
         return 0;
-    f->request_hold_budget_cancel();
-    f->request_force_safepoint(); // #2932: pair force-safepoint with cancel
+    f->request_hold_budget_cancel(); // #3071: stamps cancel-arm time
+    f->request_force_safepoint();    // #2932: pair force-safepoint with cancel
+    return 1;
+}
+
+// Issue #3071: stamp / clear cancel-arm next to the pending flag so the
+// scheduler watchdog can bound the remaining in-body non-poll window.
+// Do not unlock workspace_mtx_ here (topology stays consistent; AC2).
+void Fiber::request_hold_budget_cancel() noexcept {
+    pending_hold_budget_cancel_.store(true, std::memory_order_release);
+    aura::compiler::mutation_hold_budget_note_cancel_armed(id());
+}
+
+bool Fiber::consume_hold_budget_cancel() noexcept {
+    bool expected = true;
+    if (!pending_hold_budget_cancel_.compare_exchange_strong(
+            expected, false, std::memory_order_acq_rel, std::memory_order_acquire))
+        return false;
+    aura::compiler::mutation_hold_budget_note_cancel_consumed(id());
+    return true;
+}
+
+// Issue #2932: hold-budget forced fail-closed at cooperative edges
+// (strong def in evaluator_fiber_mutation.cpp; weak no-op in fiber_bridge).
+// Declared early so #3071 poll can escalate via the existing degrade ABI.
+extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id) noexcept;
+
+// Issue #3071: diagnostic — cancel-arm timestamp still live.
+extern "C" int aura_hold_budget_cancel_armed(void) noexcept {
+    return aura::compiler::g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire) != 0 ? 1
+                                                                                              : 0;
+}
+
+// Issue #3071: production watchdog for the in-body non-poll window after
+// cancel+force-safepoint. If the holder is still outermost-held past a
+// bounded multiple of the hold SLO, bump inbody-window-exceeded and
+// escalate via aura_evaluator_force_degrade_outermost_holder (re-arms
+// force-safepoint; no workspace_mtx_ unlock — AC2). Soft: observe only.
+// Happy path (armed_ns == 0): one acquire.
+extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
+    using namespace aura::compiler;
+    const auto armed_ns = g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire);
+    if (armed_ns == 0)
+        return 0; // Issue #3071 happy path: one acquire
+    const auto bound_us = mutation_hold_inbody_window_bound_us();
+    if (bound_us == 0)
+        return 0; // env 0 disables
+    const auto now = mutation_hold_steady_ns_now();
+    if (now <= armed_ns)
+        return 0;
+    const auto elapsed_us = (now - armed_ns) / 1000ULL;
+    if (elapsed_us <= bound_us)
+        return 0;
+    const auto snap = mutation_hold_live_snapshot();
+    const auto armed_fiber = g_hold_budget_cancel_armed_fiber.load(std::memory_order_acquire);
+    if (!snap.held || (armed_fiber != 0 && snap.fiber_id != 0 && snap.fiber_id != armed_fiber)) {
+        // Holder gone or a different outermost holder — window no longer applies.
+        mutation_hold_budget_note_cancel_consumed(armed_fiber);
+        return 0;
+    }
+    g_mutation_hold_budget_inbody_window_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+    if (!mutation_hold_budget_reject_enabled())
+        return 0; // Soft / sandbox=off: metric-only (AC1/AC2)
+    const auto fid = snap.fiber_id != 0 ? snap.fiber_id : armed_fiber;
+    if (fid == 0)
+        return 0;
+    // First exceed per arm: existing force-degrade (re-arms cancel +
+    // force-safepoint). Later polls only re-arm force-safepoint so
+    // holder-degrade totals stay one-shot per window.
+    if (g_hold_budget_cancel_escalated.exchange(1, std::memory_order_acq_rel) == 0) {
+        aura_evaluator_force_degrade_outermost_holder(fid);
+    } else {
+        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+        if (Fiber* f = find_fiber_by_id_locked_held(fid))
+            f->request_force_safepoint();
+    }
     return 1;
 }
 
@@ -672,7 +747,9 @@ void Fiber::check_gc_safepoint() {
     // independently force-fail (outermost success flag only).
     // Issue #2999: dtor consume is the *exit* half if this edge never
     // ran. In-body still needs this force-safepoint poll to *enter*
-    // dtor — do not claim that remaining window is gone.
+    // dtor. Issue #3071 bounds the remaining window: after cancel is
+    // armed, the scheduler idle path polls and re-arms force-safepoint
+    // if the holder is still outermost-held past 2× SLO (no unlock).
     if (auto* cur = g_current_fiber) {
         if (cur->peek_hold_budget_cancel()) {
             (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();

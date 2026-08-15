@@ -767,22 +767,19 @@ public:
     //
     // request_hold_budget_cancel: cross-fiber setter (called from the
     // force-degrade ABI; atomic store under release).
+    // Issue #3071: out-of-line so cancel-arm timestamp is stamped next
+    // to the flag (scheduler watchdog bounds the remaining in-body
+    // non-poll window; no preemptive unlock).
     //
     // consume_hold_budget_cancel: one-shot CAS true→false; returns true iff
     // the flag was set, so the caller can fire mark_outermost_mutation_failed
     // exactly once per request. AC3 — only the outermost Guard poll path
     // and the #2932 safepoint fail-closed path call this (nested guards
-    // ignore the flag).
+    // ignore the flag). Out-of-line so consume also clears the #3071 arm.
     //
     // peek_hold_budget_cancel: read-only diagnostic accessor (relaxed load).
-    void request_hold_budget_cancel() noexcept {
-        pending_hold_budget_cancel_.store(true, std::memory_order_release);
-    }
-    [[nodiscard]] bool consume_hold_budget_cancel() noexcept {
-        bool expected = true;
-        return pending_hold_budget_cancel_.compare_exchange_strong(
-            expected, false, std::memory_order_acq_rel, std::memory_order_acquire);
-    }
+    void request_hold_budget_cancel() noexcept;
+    [[nodiscard]] bool consume_hold_budget_cancel() noexcept;
     [[nodiscard]] bool peek_hold_budget_cancel() const noexcept {
         return pending_hold_budget_cancel_.load(std::memory_order_acquire);
     }
@@ -1359,6 +1356,14 @@ private:
     // Issue #1597 join latency histogram (process-wide).
     static std::atomic<std::uint64_t> join_latency_hist_[kJoinLatencyHistBuckets];
 };
+
+// Issue #3071: scheduler idle poll of the in-body cancel window.
+// Returns 1 when production detected an exceeded bound (re-armed
+// force-safepoint via aura_evaluator_force_degrade_outermost_holder;
+// no workspace_mtx_ unlock). Soft: 0 (observe only). Happy path:
+// one acquire of armed_ns == 0.
+extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept;
+extern "C" int aura_hold_budget_cancel_armed(void) noexcept;
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup, to avoid the circular include between

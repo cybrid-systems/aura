@@ -442,6 +442,9 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
             sched.resume_from_gc();
             // Tick-driven orphan reclaim (#2396 / #2513 AC3 surface).
             (void)sched.maybe_reap_orphans_on_tick();
+            // Issue #3071: host-side poll of the in-body cancel window
+            // (scheduler run() also polls; this covers soak host ticks).
+            (void)aura::serve::aura_hold_budget_poll_inbody_window();
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -682,6 +685,34 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
             if (p99_hot)
                 CHECK(!held_still,
                       "#3002: holder released after cancel+safepoint (not still outermost held)");
+        }
+    }
+
+    // Issue #3071: soak fail-closed if hold-after-cancel is still live
+    // past the in-body bound (cancel armed + outermost holder still
+    // held). Transient exceed that then reached safepoint/dtor is OK.
+    {
+        const auto bound = aura::compiler::mutation_hold_inbody_window_bound_us();
+        const auto armed_ns =
+            aura::compiler::g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire);
+        const auto snap = aura::compiler::mutation_hold_live_snapshot();
+        std::uint64_t hold_after_us = 0;
+        if (armed_ns != 0) {
+            const auto now = aura::compiler::mutation_hold_steady_ns_now();
+            if (now > armed_ns)
+                hold_after_us = (now - armed_ns) / 1000ULL;
+        }
+        const auto exceeded =
+            aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read();
+        std::println("  #3071 inbody window: armed={} hold_after_us={} bound_us={} held={} "
+                     "exceeded={} (gate={})",
+                     armed_ns != 0 ? 1 : 0, hold_after_us, bound, snap.held ? 1 : 0, exceeded,
+                     residual_zero_gate ? 1 : 0);
+        const bool soak_abort = residual_zero_gate || prod_gate;
+        if (soak_abort && aura::compiler::typed_audit::production_defaults_active() && bound > 0 &&
+            armed_ns != 0 && snap.held) {
+            CHECK(hold_after_us <= bound,
+                  "#3071: max hold-after-cancel exceeds inbody bound (holder still live)");
         }
     }
 
@@ -1825,6 +1856,29 @@ static void ac3035_residual_force_unlock_cite() {
     CHECK(read_file("tests/serve/test_issue_3035.cpp").empty(), "#3035: no invent test file");
 }
 
+// Issue #3071: in-body window residual cite — cancel-arm watchdog
+// re-arms force-safepoint (no unlock); soak fail-closed if holder
+// still live past the bound (chaos residual_zero stays 0).
+static void ac3071_residual_inbody_window_cite() {
+    std::println("\n--- #3071: in-body window cite (residual_zero lineage) ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto sc = read_file("src/serve/scheduler.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(fc.find("Issue #3071") != std::string::npos, "#3071: fiber.cpp cites poll");
+    CHECK(fc.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+          "#3071: poll implemented");
+    CHECK(sc.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+          "#3071: scheduler idle poll");
+    CHECK(mhb.find("kMutationHoldBudgetInbodyWindowIssue = 3071") != std::string::npos,
+          "#3071: issue stamp");
+    CHECK(q.find("schema-3071") != std::string::npos, "#3071: schema-3071 wired");
+    CHECK(chaos.find("max hold-after-cancel exceeds inbody bound") != std::string::npos,
+          "#3071: soak fail-closed cite");
+    CHECK(read_file("tests/serve/test_issue_3071.cpp").empty(), "#3071: no invent test file");
+}
+
 static void ac3036_mailbox_residual_prod_fail_closed_cite() {
     std::println("\n--- #3036: soak forces production_defaults (mailbox residual fail-closed) ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
@@ -1858,6 +1912,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2999_residual_dtor_consume_cite();
         ac3002_mailbox_hold_slo_soak_cite();
         ac3036_mailbox_residual_prod_fail_closed_cite();
+        ac3071_residual_inbody_window_cite();
         std::println("\n=== Results (release blocker only): {} passed, {} failed ===", g_passed,
                      g_failed);
         return g_failed ? 1 : 0;
@@ -1869,6 +1924,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2554_pr_gate_short();
         ac2999_residual_dtor_consume_cite();
         ac3002_mailbox_hold_slo_soak_cite();
+        ac3071_residual_inbody_window_cite();
         std::println("\n=== Results (PR gate only): {} passed, {} failed ===", g_passed, g_failed);
         return g_failed ? 1 : 0;
     }
@@ -1897,6 +1953,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac2999_residual_dtor_consume_cite();
     ac3002_mailbox_hold_slo_soak_cite();
     ac3036_mailbox_residual_prod_fail_closed_cite();
+    ac3071_residual_inbody_window_cite();
 
     // Issue #2856: production chaos gate (release blocker) — multi-fiber
     // mutate × densify × steal × mailbox composition under production

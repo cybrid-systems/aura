@@ -1509,6 +1509,29 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                       static_cast<std::int64_t>(1));
                             insert_kv("schema-3035", 3035);
                             insert_kv("issue-3035", 3035);
+                            // Issue #3071: in-body non-poll window
+                            // after cancel+force-safepoint. Watchdog
+                            // bumps exceeded when the holder is still
+                            // outermost-held past 2× SLO (or
+                            // AURA_HOLD_BUDGET_INBODY_BOUND_US).
+                            // Additive — all #2932/#2999/#3035
+                            // surfaces preserved. No unlock.
+                            insert_kv(
+                                "mutation-hold-budget-inbody-"
+                                "window-exceeded-total",
+                                static_cast<std::int64_t>(
+                                    mutation_hold_budget_inbody_window_exceeded_total_v_read()));
+                            insert_kv(
+                                "hold-budget-inbody-window-"
+                                "exceeded-total",
+                                static_cast<std::int64_t>(
+                                    mutation_hold_budget_inbody_window_exceeded_total_v_read()));
+                            insert_kv("mutation-hold-budget-inbody-"
+                                      "window-wired",
+                                      static_cast<std::int64_t>(
+                                          mutation_hold_budget_inbody_window_wired_v_read()));
+                            insert_kv("schema-3071", 3071);
+                            insert_kv("issue-3071", 3071);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail

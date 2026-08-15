@@ -812,6 +812,11 @@ void Scheduler::run() {
             const auto iv = static_cast<int>(orphan_reap_interval_ms());
             wait_ms = iv > 0 ? iv : 50;
         }
+        // Issue #3071: when hold-budget cancel is armed, shrink the
+        // idle wait so the in-body window watchdog polls well inside
+        // the 2× SLO bound (no unlock; cooperative re-arm only).
+        if (aura_hold_budget_cancel_armed() && wait_ms > 10)
+            wait_ms = 10;
         int n = ::epoll_wait(epoll_fd_, events, 64, wait_ms);
 
         if (!running_.load(std::memory_order_acquire))
@@ -953,6 +958,9 @@ void Scheduler::run() {
         // Zero cost when orphan_count_cached_ == 0; interval-gated when set.
         // Cancel storms converge without test-only reap_orphans_now calls.
         (void)maybe_reap_orphans_on_tick();
+        // Issue #3071: idle-tick poll of the in-body cancel window.
+        // Happy path (armed_ns == 0): one acquire inside the C ABI.
+        (void)aura_hold_budget_poll_inbody_window();
     }
 #else
     // macOS: no epoll. Workers start then immediately stop.
