@@ -81,6 +81,12 @@ inline std::atomic<std::uint64_t> g_steal_safety_transaction_calls_total{0};
 inline std::atomic<std::uint64_t> g_steal_safety_transaction_reject_hard_total{0};
 inline std::atomic<std::uint64_t> g_steal_safety_transaction_ok_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_transaction_wired{1};
+// Issue #3072: static sole-enqueue proof. ok_total is the authorized
+// stolen-enqueue count (1:1 with the sole local_queue_.push(stolen)
+// by CI linter). No extra hot-path increment — enqueue-vs-ok delta
+// is 0 by construction (Agents read schema-3072 + wired).
+inline constexpr int kStealEnqueueSoleGateIssue = 3072;
+inline std::atomic<std::uint32_t> g_steal_enqueue_sole_gate_wired{1};
 
 // Issue #2721: hard-AND residual safety checks inside the atomic
 // decision. #2699 stamped the ticket only on the Ok path, but residual
@@ -144,6 +150,9 @@ inline std::atomic<std::uint32_t> g_steal_safety_invariant_table_wired{1};
 }
 [[nodiscard]] inline std::uint32_t steal_safety_transaction_wired_v_read() noexcept {
     return g_steal_safety_transaction_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t steal_enqueue_sole_gate_wired_v_read() noexcept {
+    return g_steal_enqueue_sole_gate_wired.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint64_t steal_safety_residual_boundary_unsafe_total_v_read() noexcept {
     return g_steal_safety_residual_boundary_unsafe_total.load(std::memory_order_relaxed);

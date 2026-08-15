@@ -11718,6 +11718,16 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
                               aura::serve::steal_safety_invariant_table_wired_v_read()));
                 insert_kv("schema-2929", 2929);
                 insert_kv("issue-2929", 2929);
+                // Issue #3072: static sole-enqueue proof. ok_total is
+                // the authorized stolen-enqueue count; delta is 0 by
+                // construction (no extra hot-path increment). Additive
+                // — #2699/#2721/#2844/#2929 counters preserved.
+                insert_kv(
+                    "steal-enqueue-sole-gate-wired",
+                    static_cast<std::int64_t>(aura::serve::steal_enqueue_sole_gate_wired_v_read()));
+                insert_kv("steal-enqueue-vs-ok-delta", 0);
+                insert_kv("schema-3072", 3072);
+                insert_kv("issue-3072", 3072);
                 insert_kv("schema-2721", 2721);
                 insert_kv("issue-2721", 2721);
                 insert_kv("schema-2699", 2699);

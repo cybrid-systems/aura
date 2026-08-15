@@ -603,6 +603,20 @@ def cmd_lint():
             "Issue #2844 steal sole enqueue gate linter failed — run python3 scripts/coverage/checks/check_steal_sole_enqueue_gate_2844.py"
         )
         return r
+    # Issue #3072: every stolen-fiber Ready enqueue in src/ must be
+    # dominated by steal_safety_transaction Ok (static proof residual
+    # of #2844/#2929). Scans all steal-result bindings, not just
+    # local_queue_.push(stolen). Soft unchanged; additive schema-3072.
+    se3072_script = COVERAGE_CHECKS / "check_steal_enqueue_sole_gate_3072.py"
+    if not se3072_script.exists():
+        fail(f"missing {se3072_script}")
+        return 1
+    r = run([sys.executable, str(se3072_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3072 steal enqueue sole-gate linter failed — run python3 scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py"
+        )
+        return r
     # Issue #2700: mailbox + long-hold MutationBoundary interleaving —
     # happens-before contract: outermost MutationBoundaryGuard held ⇒
     # mailbox StableNodeRef payloads require handoff_completed; otherwise
@@ -13087,6 +13101,30 @@ def cmd_steal_invariant_table_2929_coverage():
     return 0
 
 
+def cmd_steal_enqueue_sole_gate_3072_coverage():
+    """Issue #3072: stolen-fiber enqueue sole-gate static proof."""
+    print(f"{B}=== steal enqueue sole-gate coverage (#3072) ==={N}")
+    script = COVERAGE_CHECKS / "check_steal_enqueue_sole_gate_3072.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal enqueue sole-gate (#3072) coverage contract rows failed")
+        return 1
+    ok("steal enqueue sole-gate (#3072) coverage clean")
+    return 0
+
+
+def cmd_steal_enqueue_sole_gate_3072():
+    """Issue #3072: every stolen Ready enqueue dominated by transaction Ok.
+
+    Soft/Off: linter still runs; no new runtime force.
+    """
+    print(f"{B}=== steal enqueue sole-gate (#3072) ==={N}")
+    return cmd_steal_enqueue_sole_gate_3072_coverage()
+
+
 def cmd_bridge_epoch_zero_stale_2930_coverage():
     """Issue #2930: production residual treat bridge_epoch==0 as stale.
 
@@ -16447,6 +16485,8 @@ def main():
         "reemit-success-sync-covered-2978": cmd_reemit_success_sync_covered_remount_2978_coverage,
         "epoch-residual-merged-heal-2980": cmd_epoch_residual_merged_heal_2980_coverage,
         "steal-invariant-table-2929": cmd_steal_invariant_table_2929_coverage,
+        "steal-enqueue-sole-gate-3072": cmd_steal_enqueue_sole_gate_3072,
+        "steal-enqueue-sole-gate-3072-coverage": cmd_steal_enqueue_sole_gate_3072_coverage,
         "bridge-epoch-zero-stale-2930": cmd_bridge_epoch_zero_stale_2930_coverage,
         "chaos-steal-gc-nightly-2931": cmd_chaos_steal_gc_nightly_2931,
         "chaos-steal-gc-nightly-2931-coverage": cmd_chaos_steal_gc_nightly_2931_coverage,
