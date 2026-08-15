@@ -223,10 +223,11 @@ def main() -> int:
                     failures.append(
                         f"AC3: aura_hot_update_maybe_retry_exhausted_min_dirty body does not bump {counter}"
                     )
-            if "aura_reemit_aot_for_dirty" not in retry_body:
+            if "aura_reemit_aot_for_dirty" not in retry_body and "decide_and_reemit" not in retry_body:
                 failures.append(
                     "AC3: aura_hot_update_maybe_retry_exhausted_min_dirty body "
-                    "does not call aura_reemit_aot_for_dirty (no reemit drive)"
+                    "does not call decide_and_reemit / aura_reemit_aot_for_dirty "
+                    "(no reemit drive; #3059 facade)"
                 )
             if "decide_exhausted_min_dirty_retry" not in retry_body:
                 failures.append(

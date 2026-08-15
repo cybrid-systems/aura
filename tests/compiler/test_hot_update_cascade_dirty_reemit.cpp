@@ -292,6 +292,8 @@ static void ac8_source_outmost_dtor_pipeline() {
           "throttle check present");
     CHECK(mcp.find("aura_hot_update_on_reemit_throttled") != std::string::npos,
           "on_reemit_throttled hook present");
+    CHECK(mcp.find("decide_and_reemit") != std::string::npos,
+          "3059: recovery/drain uses decide_and_reemit facade");
     CHECK(mcp.find("aura_reemit_aot_for_dirty") != std::string::npos,
           "reemit_aot_for_dirty call present");
     CHECK(mcp.find("aura_hot_update_notify_epoch_bump") != std::string::npos,
@@ -455,6 +457,96 @@ static void ac2273_deferred_reemit_seen_on_steal(CompilerService& cs) {
     }
 }
 
+// ── Issue #3059: unify reemit through decide_and_reemit ──────────────
+static void ac3059_1_facade_source() {
+    std::println("\n--- #3059 AC1: production sites use decide_and_reemit ---");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(hh.find("kHotUpdateDecideAndReemitIssue = 3059") != std::string::npos, "3059 AC1: stamp");
+    CHECK(hh.find("decide_and_reemit") != std::string::npos, "3059 AC1: facade decl");
+    CHECK(hh.find("ReemitReason") != std::string::npos, "3059 AC1: reason enum");
+    CHECK(cpp.find("HotUpdateRegistry::decide_and_reemit") != std::string::npos,
+          "3059 AC1: facade impl");
+    CHECK(cpp.find("aura_reemit_aot_for_dirty") != std::string::npos,
+          "3059 AC1: facade calls low-level C ABI");
+    CHECK(dirty.find("ReemitReason::Cascade") != std::string::npos, "3059 AC1: cascade site");
+    CHECK(mb.find("ReemitReason::BoundaryExit") != std::string::npos, "3059 AC1: BoundaryExit");
+    CHECK(mb.find("ReemitReason::ResidualPipeline") != std::string::npos,
+          "3059 AC1: recovery residual");
+    CHECK(br.find("ReemitReason::ReloadRecovery") != std::string::npos, "3059 AC1: reload");
+    CHECK(br.find("ReemitReason::ExhaustedMinDirty") != std::string::npos,
+          "3059 AC1: exhausted min-dirty");
+    CHECK(cpp.find("ReemitReason::StormClear") != std::string::npos, "3059 AC1: storm-clear");
+}
+
+static void ac3059_2_cascade_coverage_matches_pipeline() {
+    std::println("\n--- #3059 AC2: cascade success stamps last_success like pipeline ---");
+    auto& reg = hot_update_registry();
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+
+    const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    CHECK((reg.force_jit_regions_mask() & defuse_bit) != 0, "3059 AC2: force bit set");
+    reg.on_reemit_pipeline_call(1, 1);
+    const auto pipe_last = reg.last_reemit_success_region_mask();
+    CHECK(pipe_last == defuse_bit, "3059 AC2: pipeline last_success = demoted");
+
+    // n==0 must not invent coverage (same as a 0-success pipeline call).
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+    reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+    CHECK(reg.last_reemit_success_region_mask() == 0, "3059 AC2: last_success cleared");
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    const auto n0 =
+        reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::Cascade);
+    CHECK(n0 == 0, "3059 AC2: unwired facade returns 0");
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3059 AC2: n==0 does not invent last_success");
+
+    // n>0 coverage branch is the same stamp the pipeline uses.
+    reg.note_reemit_success_coverage(defuse_bit);
+    CHECK(reg.last_reemit_success_region_mask() == pipe_last,
+          "3059 AC2: success stamp matches pipeline last_success");
+    CHECK(reg.residual_force_mask() == (reg.force_jit_regions_mask() & ~pipe_last),
+          "3059 AC2: residual = force & ~last_success");
+
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("ReemitReason::Cascade") != std::string::npos &&
+              dirty.find("decide_and_reemit") != std::string::npos,
+          "3059 AC2: cascade notify uses facade");
+
+    reg.on_reload_success();
+    reg.reset_force_jit_repromote_for_test();
+}
+
+static void ac3059_3_unwired_zero_cost() {
+    std::println("\n--- #3059 AC3: provider unwired → no extra work ---");
+    aura_set_reemit_candidate_fn(nullptr, nullptr);
+    aura_set_aot_emit_fn(nullptr, nullptr);
+    auto& reg = hot_update_registry();
+    CHECK(!reg.reemit_provider_wired(), "3059 AC3: provider off");
+    const auto last0 = reg.last_reemit_success_region_mask();
+    const auto n =
+        reg.decide_and_reemit(1, aura::compiler::HotUpdateRegistry::ReemitReason::Cascade);
+    CHECK(n == 0, "3059 AC3: unwired returns 0");
+    CHECK(reg.last_reemit_success_region_mask() == last0, "3059 AC3: no coverage stamp");
+}
+
+static void ac3059_4_linter_no_invent() {
+    std::println("\n--- #3059 AC5: linter + no invent ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_hot_update_decide_and_reemit_3059") != std::string::npos,
+          "3059 AC5: build.py wires linter");
+    CHECK(read_file("tests/compiler/test_issue_3059.cpp").empty(),
+          "3059 AC5: no test_issue_3059.cpp");
+    CHECK(read_file("docs/design/3059-decide-and-reemit.md").empty(),
+          "3059 AC5: no docs/design/3059-* per #1655");
+}
+
 } // namespace
 
 int main() {
@@ -476,6 +568,11 @@ int main() {
     reset_runtime_after_cs();
     ac9_recovery_metrics_and_idempotent();
     reset_runtime_after_cs();
+    ac3059_1_facade_source();
+    ac3059_2_cascade_coverage_matches_pipeline();
+    reset_runtime_after_cs();
+    ac3059_3_unwired_zero_cost();
+    ac3059_4_linter_no_invent();
     {
         CompilerService cs;
         ac2273_deferred_reemit_seen_on_steal(cs);

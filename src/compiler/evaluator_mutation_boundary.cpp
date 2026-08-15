@@ -1272,7 +1272,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
                     ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
                 } owner_guard(static_cast<void*>(this));
-                const auto n = aura_reemit_aot_for_dirty(v);
+                // Issue #3059: BoundaryExit drain uses the Registry
+                // facade (decide_and_reemit → aura_reemit_aot_for_dirty).
+                const auto n =
+                    reg.decide_and_reemit(v, HotUpdateRegistry::ReemitReason::BoundaryExit);
                 if (n > 0)
                     aura_bump_reemit_auto_drain_success_total();
             }
@@ -4166,7 +4169,10 @@ void Evaluator::run_hot_update_recovery_if_needed(bool success,
         ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
         ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
     } owner_guard(static_cast<void*>(this));
-    const std::size_t n_reemit = aura_reemit_aot_for_dirty(cur_defuse);
+    // Issue #3059: recovery reemit uses the Registry facade
+    // (decide_and_reemit → aura_reemit_aot_for_dirty).
+    const std::size_t n_reemit = hot_update_registry().decide_and_reemit(
+        cur_defuse, HotUpdateRegistry::ReemitReason::ResidualPipeline);
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
         m->boundary_reemit_success_total.fetch_add(static_cast<std::uint64_t>(n_reemit),
                                                    std::memory_order_relaxed);

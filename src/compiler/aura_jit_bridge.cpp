@@ -3198,7 +3198,11 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
     for (int attempt = 0; attempt < policy.max_reemit; ++attempt) {
         if (aot_metrics())
             aot_metrics()->aot_reload_policy_attempt_total.fetch_add(1, std::memory_order_relaxed);
-        (void)aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+        // Issue #3059: reload auto-retry reemit goes through the Registry
+        // facade (decide_and_reemit → aura_reemit_aot_for_dirty).
+        (void)aura::compiler::hot_update_registry().decide_and_reemit(
+            aura_get_aot_defuse_version(),
+            aura::compiler::HotUpdateRegistry::ReemitReason::ReloadRecovery);
         const std::uint64_t retry_version = (reason == AotReloadFail::Version) ? 0 : version;
         const bool ok = aura_reload_aot_module_for_eval_once(eval_ptr, path, retry_version);
         if (ok) {
@@ -3260,7 +3264,11 @@ extern "C" bool aura_reload_aot_module_for_eval(void* eval_ptr, const char* path
             if (aot_metrics())
                 aot_metrics()->aot_reload_exhausted_min_dirty_reemit_attempt_total.fetch_add(
                     1, std::memory_order_relaxed);
-            const auto n_md = aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+            // Issue #3059: exhausted min-dirty reemit uses the Registry
+            // facade (decide_and_reemit → aura_reemit_aot_for_dirty).
+            const auto n_md = hur_md.decide_and_reemit(
+                aura_get_aot_defuse_version(),
+                aura::compiler::HotUpdateRegistry::ReemitReason::ExhaustedMinDirty);
             if (n_md > 0) {
                 if (aot_metrics())
                     aot_metrics()->aot_reload_exhausted_min_dirty_reemit_success_total.fetch_add(
@@ -5338,7 +5346,11 @@ extern "C" void aura_hot_update_maybe_retry_exhausted_min_dirty(void) {
                 aot_metrics()->aot_exhausted_min_dirty_retry_total.fetch_add(
                     1, std::memory_order_relaxed);
             }
-            const auto n = aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+            // Issue #3059: #2601 retry drive uses the Registry facade
+            // (decide_and_reemit → aura_reemit_aot_for_dirty).
+            const auto n = hur.decide_and_reemit(
+                aura_get_aot_defuse_version(),
+                aura::compiler::HotUpdateRegistry::ReemitReason::ExhaustedMinDirty);
             if (n > 0) {
                 if (aot_metrics())
                     aot_metrics()->aot_exhausted_min_dirty_retry_success_total.fetch_add(

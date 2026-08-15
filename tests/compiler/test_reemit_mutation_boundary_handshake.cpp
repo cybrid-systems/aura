@@ -288,6 +288,8 @@ static void ac2604_deferred_triggers_reemit() {
           "AC1: auto-drain guarded on outermost + success");
     CHECK(eval_cpp.find("has_deferred_reemit") != std::string::npos,
           "AC1: auto-drain checks has_deferred_reemit()");
+    CHECK(eval_cpp.find("decide_and_reemit") != std::string::npos,
+          "AC1: auto-drain uses decide_and_reemit facade (#3059)");
     CHECK(eval_cpp.find("aura_reemit_aot_for_dirty") != std::string::npos,
           "AC1: auto-drain calls aura_reemit_aot_for_dirty (region-filtered pass)");
     CHECK(eval_cpp.find("aura_bump_reemit_auto_drain_success_total") != std::string::npos,

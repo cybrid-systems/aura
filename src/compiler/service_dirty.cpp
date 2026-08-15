@@ -167,7 +167,11 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
             ReemitEvalOwnerGuard(const ReemitEvalOwnerGuard&) = delete;
             ReemitEvalOwnerGuard& operator=(const ReemitEvalOwnerGuard&) = delete;
         } owner_guard(static_cast<void*>(&evaluator_));
-        const auto n = aura_reemit_aot_for_dirty(evaluator_.defuse_version());
+        // Issue #3059: cascade reemit goes through the Registry facade
+        // (decide_and_reemit → aura_reemit_aot_for_dirty) so coverage /
+        // only_covered match the pipeline path.
+        const auto n = reg.decide_and_reemit(evaluator_.defuse_version(),
+                                             HotUpdateRegistry::ReemitReason::Cascade);
         // Always count the cascade-driven reemit attempt (#1640 / #2035).
         metrics_.aot_incremental_reemit_triggered.fetch_add(1, std::memory_order_relaxed);
         if (n > 0)

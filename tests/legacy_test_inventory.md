@@ -1634,7 +1634,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_epoch_invariant_complete.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft inject stale AOT slot → violation count; hard clears fn_ptr
 - `tests/compiler/test_force_jit_repromote.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2895 — last success coverage + partial re-promote knobs
 - `tests/compiler/test_hot_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #2684 — rebind dirty / jit-stats observability (H7).
-- `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2035; notify_hot_update_after_cascade_ +
+- `tests/compiler/test_hot_update_cascade_dirty_reemit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2035; notify_hot_update_after_cascade_ +
 - `tests/compiler/test_incremental_effectiveness_snapshot_fail.cpp` (—) [domain_suite, theme_compiler] — Issue #1669/#1854/#1856 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_incremental_perblock_closure_bridge_safety.cpp` (—) [domain_suite, theme_compiler] — test_incremental_perblock_closure_bridge_safety.cpp — Issue #600:
 - `tests/compiler/test_incremental_relower_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_incremental_relower_batch.cpp — batch driver for incremental_relower family.

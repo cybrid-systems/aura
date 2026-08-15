@@ -79,6 +79,35 @@ void HotUpdateRegistry::on_stable_func_id_preserve(bool preserved) noexcept {
         stable_id_assign_.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #3059: sole production reemit entry. Does not re-apply storm /
+// Defer / SoftEnter / owner gates (those stay inside the C ABI so
+// existing handshake tests stay identical). On n>0, coverage is the
+// same stamp the pipeline uses so cascade / BoundaryExit cannot
+// restamp IR while leaving last_success / only_covered stale.
+std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
+                                                   ReemitReason reason) noexcept {
+    (void)reason;
+    // Always call the low-level C ABI (storm / Defer / SoftEnter / owner /
+    // provider-not-wired already no-op there). Extra work only on n>0
+    // when force-JIT bits are live and last_success was not stamped.
+    const auto n = aura_reemit_aot_for_dirty(defuse_version);
+    if (n > 0) {
+        const auto demoted = force_jit_regions_mask_.load(std::memory_order_relaxed);
+        if (demoted != 0) {
+            // Pipeline body already called on_reemit_pipeline_call.
+            // If last_success is still 0, publish the same coverage
+            // the pipeline would have (override or full demoted mask).
+            if (last_reemit_success_region_mask_.load(std::memory_order_relaxed) == 0) {
+                auto covered = reemit_success_coverage_override_.load(std::memory_order_relaxed);
+                if (covered == 0)
+                    covered = demoted;
+                note_reemit_success_coverage(covered);
+            }
+        }
+    }
+    return n;
+}
+
 void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
                                                 std::uint64_t successes) noexcept {
     reemit_pipeline_calls_.fetch_add(1, std::memory_order_relaxed);
@@ -213,7 +242,7 @@ void HotUpdateRegistry::maybe_storm_clear_health_pass() noexcept {
         // we skip the reemit call (no version to reemit).
         const auto v = take_deferred_reemit_version();
         if (v != 0)
-            reemit_pipeline_returned_n = aura_reemit_aot_for_dirty(v);
+            reemit_pipeline_returned_n = decide_and_reemit(v, ReemitReason::StormClear);
         drove_recovery = true;
     } else if (force_jit_regions_mask_.load(std::memory_order_relaxed) != 0) {
         // Issue #2952: production residual coverage-verify may re-seed
@@ -352,7 +381,7 @@ bool HotUpdateRegistry::maybe_coverage_verify_min_dirty() noexcept {
 
     consume_exhausted_min_dirty_retry_attempt();
     aot_exhausted_min_dirty_retry_total_.fetch_add(1, std::memory_order_relaxed);
-    const auto n = aura_reemit_aot_for_dirty(aura_get_aot_defuse_version());
+    const auto n = decide_and_reemit(aura_get_aot_defuse_version(), ReemitReason::CoverageVerify);
     if (n > 0) {
         aot_exhausted_min_dirty_retry_success_total_.fetch_add(1, std::memory_order_relaxed);
         coverage_verify_success_total_.fetch_add(1, std::memory_order_relaxed);
@@ -1581,7 +1610,7 @@ void HotUpdateRegistry::drain_pending_recovery(std::uint8_t why) noexcept {
     // Issue #2669: drive recovery body on drain success path.
     if (p.kinds & kPendingDeferred) {
         if (p.defuse_version != 0) {
-            const auto n = aura_reemit_aot_for_dirty(p.defuse_version);
+            const auto n = decide_and_reemit(p.defuse_version, ReemitReason::ResidualPipeline);
             if (n > 0)
                 g_pending_recovery_success_total_atomic().fetch_add(1, std::memory_order_relaxed);
         }
