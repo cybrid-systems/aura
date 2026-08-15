@@ -5164,6 +5164,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // rollback (hygiene self-evo audit) without requiring :snapshot? #t.
         ev.workspace_flat_->begin_atomic_batch();
         ev.sync_atomic_batch_metadata_metrics();
+        // Issue #3066: pin join mid after batch open (idempotent if
+        // begin_atomic_batch_pinning already published).
+        (void)aura::compiler::typed_audit::pin_composite_batch_join_mid();
         // Issue #2790: sub-op failure must flip BOTH ok (batch control flow)
         // and guard_ok (MutationBoundaryGuard RAII commit/rollback). Setting
         // only ok and deferring guard_ok to the post-loop path is fragile —

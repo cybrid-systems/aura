@@ -50,6 +50,8 @@ using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::capture_security_correlated_audit;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 using aura::compiler::typed_audit::resolve_audit_mutation_id;
+using aura::compiler::types::as_int;
+using aura::compiler::types::is_int;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
@@ -280,6 +282,135 @@ static void ac7_boundary_trail_uses_resolve() {
     }
 }
 
+static std::int64_t href_audit(aura::compiler::CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:typed-mutation-audit-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static bool se_ring_has_mid(std::uint64_t mid) {
+    using aura::core::security_event::g_security_event_ring;
+    using aura::core::security_event::kSecurityEventRingSize;
+    auto& ring = g_security_event_ring();
+    const auto head = ring.seq.load(std::memory_order_relaxed);
+    for (std::size_t i = 0; i < kSecurityEventRingSize && i < head; ++i) {
+        const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+        if (e.mutation_id == mid)
+            return true;
+    }
+    return false;
+}
+
+// Issue #3066: composite / lockless batch typed↔SE join mid.
+static void ac3066_1_production_batch_share_mid() {
+    std::println("\n--- #3066 AC1: production batch typed + SE share mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.begin_atomic_batch_pinning();
+    const auto pin = aura::compiler::typed_audit::current_boundary_audit_mid();
+    CHECK(pin != 0, "3066 AC1: production batch pins a join mid");
+    CHECK(aura::compiler::typed_audit::g_last_stamped_audit_mid.load() == pin,
+          "3066 AC1: last_stamped == pin");
+    CHECK(aura::compiler::typed_audit::g_last_composite_batch_join_mid.load() == pin,
+          "3066 AC1: last composite join == pin");
+    CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == pin,
+          "3066 AC1: join helper returns pin");
+
+    capture_security_correlated_audit(/*mutation_id=*/0, "test:3066-ac1", /*epoch=*/0,
+                                      /*denied=*/true, 0, 0);
+    CHECK(aura::compiler::typed_audit::g_last_stamped_audit_mid.load() == pin,
+          "3066 AC1: SE-correlated stamp stays on pin");
+    aura::compiler::typed_audit::TypedMutationAuditEvent te{};
+    CHECK(aura::compiler::typed_audit::trail_find_by_mutation_id(pin, te),
+          "3066 AC1: typed trail find pin");
+    CHECK(se_ring_has_mid(pin), "3066 AC1: SE ring has same mid");
+    CHECK(href_audit(cs, "schema-3066") == 3066, "3066 AC1: live schema-3066");
+    CHECK(href_audit(cs, "last-stamped-audit-mid") == static_cast<std::int64_t>(pin),
+          "3066 AC1: query last-stamped == pin");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::clear_boundary_audit_mid();
+    (void)ev;
+}
+
+static void ac3066_2_sampled_force_joinable() {
+    std::println("\n--- #3066 AC2: Sampled + force-reason joinable mid ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+
+    constexpr std::uint64_t kDeny = 4242;
+    aura::compiler::typed_audit::capture_audit_event_forced(
+        kDeny, "test:3066-force", aura::compiler::typed_audit::MutationKind::Structural, 1, 2,
+        aura::compiler::typed_audit::AuditOutcome::Error, 0, 0, 0, 0);
+    CHECK(aura::compiler::typed_audit::g_last_stamped_audit_mid.load() == kDeny,
+          "3066 AC2: force stamps deny mid");
+    CHECK(aura::compiler::typed_audit::join_audit_and_se_mid(0) == kDeny,
+          "3066 AC2: join pinned to deny mid");
+    capture_security_correlated_audit(0, "test:3066-ac2-se", 0, /*denied=*/true, 0, 0);
+    CHECK(aura::compiler::typed_audit::g_last_stamped_audit_mid.load() == kDeny,
+          "3066 AC2: subsequent SE uses same mid (no fallback diverge)");
+    aura::compiler::typed_audit::TypedMutationAuditEvent te{};
+    CHECK(aura::compiler::typed_audit::trail_find_by_mutation_id(kDeny, te),
+          "3066 AC2: trail joinable by deny mid");
+}
+
+static void ac3066_3_soft_zero_extra() {
+    std::println("\n--- #3066 AC3: Soft/Off no extra pin ---");
+    reset_all();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+    process_resource_quota_manager().provenance_mutation_id = 0;
+    const auto pin0 = aura::compiler::typed_audit::g_composite_batch_join_pin_total.load();
+    const auto se0 = aura::compiler::typed_audit::g_composite_batch_se_join_total.load();
+    CHECK(aura::compiler::typed_audit::pin_composite_batch_join_mid() == 0,
+          "3066 AC3: Soft pin is no-op");
+    CHECK(aura::compiler::typed_audit::g_composite_batch_join_pin_total.load() == pin0,
+          "3066 AC3: Soft no pin-total bump");
+    CHECK(aura::compiler::typed_audit::g_composite_batch_se_join_total.load() == se0,
+          "3066 AC3: Soft no SE join emit");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("join_audit_and_se_mid") != std::string::npos,
+          "3066 AC3: require_effect uses join");
+    CHECK(sec.find("mid = 1") != std::string::npos || sec.find("mid = 1;") != std::string::npos ||
+              sec.find("non-zero join stamp") != std::string::npos,
+          "3066 AC3: Soft historical mid=1 retained");
+}
+
+static void ac3066_4_linter_no_design() {
+    std::println("\n--- #3066 AC4: linter + no invent / no design ---");
+    const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_composite_audit_mid_se_join_3066.py");
+    const auto build = read_file("build.py");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(t.find("ac3066_1_production_batch_share_mid") != std::string::npos, "3066 AC4: AC1");
+    CHECK(t.find("ac3066_2_sampled_force_joinable") != std::string::npos, "3066 AC4: AC2");
+    CHECK(t.find("ac3066_3_soft_zero_extra") != std::string::npos, "3066 AC4: AC3");
+    CHECK(tma.find("Issue #3066") != std::string::npos, "3066 AC4: header cite");
+    CHECK(tma.find("pin_composite_batch_join_mid") != std::string::npos, "3066 AC4: pin helper");
+    CHECK(tma.find("join_audit_and_se_mid") != std::string::npos, "3066 AC4: join helper");
+    CHECK(!lint.empty() && lint.find("Issue #3066") != std::string::npos, "3066 AC4: linter");
+    CHECK(build.find("check_composite_audit_mid_se_join_3066") != std::string::npos,
+          "3066 AC4: build.py gate");
+    CHECK(build.find("cmd_composite_audit_mid_se_join_3066") != std::string::npos,
+          "3066 AC4: build.py cmd");
+    CHECK(read_file("tests/compiler/test_issue_3066.cpp").empty(),
+          "3066 AC4: no test_issue_3066.cpp");
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -291,6 +422,10 @@ int run_test_audit_mutation_id_unify() {
     ac5_correlated_audit_join();
     ac6_source_and_gate();
     ac7_boundary_trail_uses_resolve();
+    ac3066_1_production_batch_share_mid();
+    ac3066_2_sampled_force_joinable();
+    ac3066_3_soft_zero_extra();
+    ac3066_4_linter_no_design();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

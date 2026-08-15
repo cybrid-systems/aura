@@ -13880,6 +13880,9 @@ public:
     void begin_atomic_batch_pinning() noexcept {
         atomic_batch_pinned_refs_.clear();
         last_atomic_batch_snapshot_id_ = -1;
+        // Issue #3066: pin one join mid before lockless sub-mutates so
+        // typed trail + SE share last_stamped_audit_mid. Soft/quiet no-op.
+        (void)typed_audit::pin_composite_batch_join_mid();
     }
     void pin_node_for_atomic_batch(aura::ast::NodeId id) noexcept {
         if (!workspace_flat_ || id >= workspace_flat_->size())

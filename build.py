@@ -944,6 +944,18 @@ def cmd_lint():
             "Issue #3065 DeadCoercion elim cone remirror linter failed — run python3 scripts/coverage/checks/check_dead_coercion_elim_cone_3065.py"
         )
         return r
+    # Issue #3066: composite / lockless batch typed-audit mid == SE trail.
+    # Extends test_audit_mutation_id_unify (#81967); no docs/design.
+    camj3066_script = COVERAGE_CHECKS / "check_composite_audit_mid_se_join_3066.py"
+    if not camj3066_script.exists():
+        fail(f"missing {camj3066_script}")
+        return 1
+    r = run([sys.executable, str(camj3066_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3066 composite audit mid SE join linter failed — run python3 scripts/coverage/checks/check_composite_audit_mid_se_join_3066.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12037,6 +12049,30 @@ def cmd_dead_coercion_elim_cone_3065():
     return cmd_dead_coercion_elim_cone_3065_coverage()
 
 
+def cmd_composite_audit_mid_se_join_3066_coverage():
+    """Issue #3066: composite/batch typed↔SE join mid (static)."""
+    print(f"{B}=== composite audit mid SE join coverage (#3066) ==={N}")
+    script = COVERAGE_CHECKS / "check_composite_audit_mid_se_join_3066.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("composite audit mid SE join (#3066) coverage contract rows failed")
+        return 1
+    ok("composite audit mid SE join (#3066) coverage clean")
+    return 0
+
+
+def cmd_composite_audit_mid_se_join_3066():
+    """Issue #3066: one join mid for composite / lockless batch.
+
+    Soft/quiet: no extra mid allocation.
+    """
+    print(f"{B}=== composite audit mid SE join (#3066) ==={N}")
+    return cmd_composite_audit_mid_se_join_3066_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16387,6 +16423,8 @@ def main():
         "inline-macro-body-marker-3064-coverage": cmd_inline_macro_body_marker_3064_coverage,
         "dead-coercion-elim-cone-3065": cmd_dead_coercion_elim_cone_3065,
         "dead-coercion-elim-cone-3065-coverage": cmd_dead_coercion_elim_cone_3065_coverage,
+        "composite-audit-mid-se-join-3066": cmd_composite_audit_mid_se_join_3066,
+        "composite-audit-mid-se-join-3066-coverage": cmd_composite_audit_mid_se_join_3066_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

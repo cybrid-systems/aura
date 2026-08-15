@@ -393,8 +393,13 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
         aura::core::resource_quota::process_resource_quota_manager().provenance_mutation_id;
     if (mid == 0)
         mid = ::aura::core::current_mutation_epoch();
+    // Issue #3066: prefer pinned composite/batch / boundary mid so SE
+    // trail and typed deny share last_stamped_audit_mid. Soft/Off with
+    // nothing pinned keeps the historical process-origin stamp 1.
     if (mid == 0)
-        mid = 1; // non-zero join stamp (process origin)
+        mid = typed_audit::join_audit_and_se_mid(0);
+    if (mid == 0)
+        mid = 1; // Soft / standalone: non-zero join stamp (process origin)
     return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_, mid);
 }
 
