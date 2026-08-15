@@ -431,7 +431,7 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     // Opaque: store pointer in opaque_heap_, return OpaqueRef
                     auto oi = opaque_heap_.size();
                     opaque_heap_.push_back(reinterpret_cast<void*>(result_i));
-                    // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: ffi-return-external
+                    // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: ffi-return-external
                     // FFI return is a native/C pointer, not an arena create.
                     aura::core::lifetime::note_ffi_opaque_create_exempt("ffi-return-external");
                     return types::make_opaque(oi);

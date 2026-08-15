@@ -3112,10 +3112,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // compact runs. Shared helper
             // Evaluator::register_known_moving_densify_root_slots() walks the
             // full inventory (workspace / mutate-target / current flat+pool,
-            // WorkspaceTree layer slots, RootRemap stable + closure capture).
-            // Soft / no Moving never reaches here → zero extra work (AC5).
-            // Truly foreign pointers stay unregistered → hard fail-closed
-            // preserved (AC2). Additive counters only (AC4).
+            // WorkspaceTree layer slots, RootRemap stable + closure capture,
+            // FFI opaque_heap_ aliases (#3057)). Soft / no Moving never
+            // reaches here → zero extra work (AC5). Truly foreign
+            // pointers stay unregistered → hard fail-closed preserved
+            // (AC2). Additive counters only (AC4).
             (void)ev_->register_known_moving_densify_root_slots();
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
@@ -4619,11 +4620,11 @@ Evaluator::transaction_guard_host_for_region(Evaluator& ev, std::uint64_t region
     };
 }
 
-// Issue #2935 / #2889 / #3055: exhaustive known intermediate + compiler
-// root inventory for Moving densify. Shared by densify-entry walk and
-// Agent sticky recovery. #3055 residual (EnvFrame SoA / Closure / FFI /
-// JIT) rolls in via the same slot register — RootRemapPass + slot + pin
-// stay the only remap mechanisms (no second registry).
+// Issue #2935 / #2889 / #3055 / #3057: exhaustive known intermediate +
+// compiler root inventory for Moving densify. Shared by densify-entry
+// walk and Agent sticky recovery. #3057 walks FFI opaque_heap_ slots
+// (densify-tracked aliases). RootRemapPass + slot + pin stay the only
+// remap mechanisms (no second registry).
 std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     if (!arena_group_)
         return 0;
@@ -4665,6 +4666,15 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     for (void** slot : root_remap_registered_slots_snapshot()) {
         if (slot != nullptr && *slot != nullptr)
             known_slots.push_back(slot);
+    }
+    // Issue #3057: FFI opaque_heap_ aliases. libc-heap / external-native
+    // EXEMPT entries are harmless (would_move=false). Arena-tracked
+    // aliases get slot rewrite — #3022 note_ffi_opaque_create_exempt
+    // is observe-only and is not cover. Vector is stable for the
+    // densify window (no push during compact).
+    for (void*& op : opaque_heap_) {
+        if (op)
+            known_slots.push_back(&op);
     }
     if (known_slots.empty())
         return 0;

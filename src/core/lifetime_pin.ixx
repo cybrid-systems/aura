@@ -26,6 +26,7 @@ export namespace aura::core::lifetime {
 
 // Phase / inventory stamps
 using ::aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
+using ::aura::core::lifetime::kFfiOpaquePinOrRemapResidualIssue;
 using ::aura::core::lifetime::kGeneralObjectPinAdoptIssue;
 using ::aura::core::lifetime::kGeneralObjectPinAdoptSiteCount;
 using ::aura::core::lifetime::kGeneralObjectPinAutoWireIssue;

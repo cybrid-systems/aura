@@ -38,6 +38,7 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <vector>
 #include <string_view>
 
 import std;
@@ -1926,6 +1927,108 @@ static void ac3055_6_source_cite_no_invent() {
           "AC6: no test_issue_3055.cpp per #81967");
 }
 
+// ── Issue #3057: FFI opaque alias pin / slot / EXEMPT (close #3022) ──
+static void ac3057_1_ffi_alias_slot_remaps() {
+    std::println("\n--- #3057 AC1: densify-tracked FFI alias remaps via slot ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    // FFI opaque_heap_ shape: second alias of a densify-tracked object.
+    std::vector<void*> opaque_heap{p0};
+    arena.register_external_root_slot_for_densify(&opaque_heap[0]);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.post_moving_stale_count == 0, "AC1: no stale after FFI slot");
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC1: pin_contract_held after FFI slot remap");
+        CHECK(opaque_heap[0] != nullptr, "AC1: opaque slot non-null");
+        CHECK(static_cast<Pod16*>(opaque_heap[0])->a == 1, "AC1: remapped FFI alias payload");
+        CHECK(opaque_heap[0] == s0, "AC1: FFI alias matches remapped slot");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC1: no-move payloads intact");
+    }
+}
+
+static void ac3057_2_uncovered_ffi_alias_fail_closed() {
+    std::println("\n--- #3057 AC1: uncovered FFI alias fail-closed ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    void* ffi_alias = p0; // not slotted — observe-only residual
+    arena.note_post_moving_live_ptr_canary(ffi_alias);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(r.post_moving_stale_count > 0, "AC1: uncovered FFI alias stale");
+        CHECK(!r.pin_contract_held, "AC1: pin_contract_held=false");
+        CHECK(r.moving_incomplete_remap, "AC1: incomplete-remap");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC1: no-move payloads intact");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3057_3_soft_no_walk() {
+    std::println("\n--- #3057 AC2: Soft / no Moving skips opaque walk ---");
+    RequiredPinGuard off(0);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    std::vector<void*> opaque_heap{p0};
+    const auto r = arena.live_compact(LiveCompactMode::Soft);
+    CHECK(r.objects_moved == 0, "AC2: Soft does not relocate");
+    CHECK(opaque_heap[0] == p0, "AC2: FFI alias unchanged");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("for (void*& op : opaque_heap_)") != std::string::npos,
+          "AC2: Evaluator walks opaque_heap_");
+    CHECK(mb.find("moving_compact_enabled()") != std::string::npos,
+          "AC2: known-root walk gated on Moving");
+}
+
+static void ac3057_4_exempt_reason_no_second_registry() {
+    std::println("\n--- #3057 AC3/AC4: EXEMPT reason + no second registry ---");
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: external-native-addr") != std::string::npos,
+          "AC3: c-opaque EXEMPT reason");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: libc-heap") != std::string::npos,
+          "AC3: c-alloc EXEMPT reason");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy") != std::string::npos,
+          "AC3: struct-ref EXEMPT reason");
+    CHECK(lp.find("kFfiOpaquePinOrRemapResidualIssue = 3057") != std::string::npos, "AC4: stamp");
+    CHECK(mb.find("no second registry") != std::string::npos, "AC4: no second registry");
+    CHECK(mb.find("register_external_root_slot_for_densify_all") != std::string::npos,
+          "AC4: reuse external-root-slot");
+}
+
+static void ac3057_5_source_cite_no_invent() {
+    std::println("\n--- #3057 AC5: source-cite + no invent ---");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto build = read_file("build.py");
+    CHECK(obs.find("schema-3057") != std::string::npos, "AC5: schema-3057");
+    CHECK(obs.find("ffi-opaque-slot-cover-wired") != std::string::npos, "AC5: wired");
+    CHECK(build.find("check_ffi_opaque_pin_or_remap_3057") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3057-ffi-opaque-slot.md").empty(),
+          "AC5: no docs/design/3057-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3057.cpp").empty(),
+          "AC5: no test_issue_3057.cpp per #81967");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -1945,6 +2048,8 @@ int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #3053: allocate / pool+flat residual on required pin cover "
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3055: post-Moving last_object_remap_ residual "
+                 "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #3057: FFI opaque slot cover residual of #3022 "
                  "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
@@ -2034,6 +2139,12 @@ int run_test_moving_densify_fail_closed() {
     ac3055_4_no_second_remap();
     ac3055_5_envframe_hold_depth_unchanged();
     ac3055_6_source_cite_no_invent();
+    // Issue #3057: FFI opaque_heap_ slot cover (extends this suite).
+    ac3057_1_ffi_alias_slot_remaps();
+    ac3057_2_uncovered_ffi_alias_fail_closed();
+    ac3057_3_soft_no_walk();
+    ac3057_4_exempt_reason_no_second_registry();
+    ac3057_5_source_cite_no_invent();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 

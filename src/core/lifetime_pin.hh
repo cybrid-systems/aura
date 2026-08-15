@@ -80,6 +80,11 @@ inline constexpr std::uint64_t kGeneralObjectPinAdoptSiteCount = 7;
 // EXEMPT (not create-point observe). Sibling of #3017. Soft extra
 // cost is one required-pref load — zero extra pin. No second registry.
 inline constexpr int kFfiOpaquePinOrRemapIssue = 3022;
+// Issue #3057: densify-tracked FFI opaque aliases (opaque_heap_ slots)
+// must be pin / slot / EXEMPT(reason) — #3022 create-point observe
+// (note_ffi_opaque_create_exempt) is not remap cover. Soft extra cost
+// remains one required-pref load. No second registry.
+inline constexpr int kFfiOpaquePinOrRemapResidualIssue = 3057;
 // Issue #3053: allocate_raw / try_allocate / allocate_checked (and
 // pool+flat creates that share those paths) must join the same
 // pin / slot / EXEMPT pre-move triad as ASTArena::create. Value-only

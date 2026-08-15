@@ -2681,6 +2681,20 @@ def cmd_lint():
             "Issue #3022 FFI opaque pin-or-remap linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3022.py"
         )
         return r
+    # Issue #3057: FFI opaque_heap_ aliases must be slot-covered
+    # (close #3022 observe-only residual). Extends
+    # test_moving_densify_fail_closed + test_general_object_pin (#81967);
+    # no docs/design/ (#1655).
+    fop57_script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3057.py"
+    if not fop57_script.exists():
+        fail(f"missing {fop57_script}")
+        return 1
+    r = run([sys.executable, str(fop57_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3057 FFI opaque slot-cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3057.py"
+        )
+        return r
     # Issue #3023: leftover linear_roots unpin on abort / reclaim.
     # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
     lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"
@@ -8506,6 +8520,32 @@ def cmd_ffi_opaque_pin_or_remap_3022():
     """
     print(f"{B}=== FFI opaque pin-or-remap (#3022) ==={N}")
     return cmd_ffi_opaque_pin_or_remap_3022_coverage()
+
+
+def cmd_ffi_opaque_pin_or_remap_3057_coverage():
+    """Issue #3057: FFI opaque slot cover residual of #3022 (static)."""
+    print(f"{B}=== FFI opaque slot-cover residual coverage (#3057) ==={N}")
+    script = COVERAGE_CHECKS / "check_ffi_opaque_pin_or_remap_3057.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("FFI opaque slot-cover residual (#3057) coverage contract rows failed")
+        return 1
+    ok("FFI opaque slot-cover residual (#3057) coverage clean")
+    return 0
+
+
+def cmd_ffi_opaque_pin_or_remap_3057():
+    """Issue #3057: densify-tracked FFI opaque aliases are slot-covered.
+
+    #3022 create-point observe is not remap cover. Known-root walk
+    registers opaque_heap_ slots. Soft / no Moving skip the walk.
+    EXEMPT still requires a reason.
+    """
+    print(f"{B}=== FFI opaque slot-cover residual (#3057) ==={N}")
+    return cmd_ffi_opaque_pin_or_remap_3057_coverage()
 
 
 def cmd_linear_root_abort_release_3023_coverage():
@@ -15948,6 +15988,8 @@ def main():
         "envframe-closure-apply-protocol-3021-coverage": cmd_envframe_closure_apply_protocol_3021_coverage,
         "ffi-opaque-pin-or-remap-3022": cmd_ffi_opaque_pin_or_remap_3022,
         "ffi-opaque-pin-or-remap-3022-coverage": cmd_ffi_opaque_pin_or_remap_3022_coverage,
+        "ffi-opaque-pin-or-remap-3057": cmd_ffi_opaque_pin_or_remap_3057,
+        "ffi-opaque-pin-or-remap-3057-coverage": cmd_ffi_opaque_pin_or_remap_3057_coverage,
         "linear-root-abort-release-3023": cmd_linear_root_abort_release_3023,
         "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,

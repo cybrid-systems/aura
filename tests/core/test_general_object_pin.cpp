@@ -365,6 +365,21 @@ static void ac3022_pin_required_and_soak() {
     CHECK(schema == 3022 || schema == -1, "AC3022: schema-3022 queryable or hash-ref skip");
 }
 
+static void ac3057_ffi_opaque_slot_cover() {
+    std::println("\n--- #3057: densify-tracked FFI alias is slot-covered ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(lp.find("kFfiOpaquePinOrRemapResidualIssue = 3057") != std::string::npos,
+          "AC3057: stamp");
+    CHECK(mb.find("opaque_heap_") != std::string::npos, "AC3057: known-root walk includes heap");
+    CHECK(obs.find("schema-3057") != std::string::npos, "AC3057: schema");
+    CHECK(obs.find("ffi-opaque-slot-cover-wired") != std::string::npos, "AC3057: wired");
+    CompilerService cs;
+    const auto schema = href(cs, "schema-3057");
+    CHECK(schema == 3057 || schema == -1, "AC3057: schema-3057 queryable or hash-ref skip");
+}
+
 } // namespace
 
 int run_test_general_object_pin() {
@@ -382,7 +397,9 @@ int run_test_general_object_pin() {
     ac3022_ffi_handoff_inventory();
     ac3022_ffi_owned_blocks_reclaim();
     ac3022_pin_required_and_soak();
-    std::println("\n=== #2298 + #2337 + #3022: {} passed, {} failed ===", g_passed, g_failed);
+    ac3057_ffi_opaque_slot_cover();
+    std::println("\n=== #2298 + #2337 + #3022 + #3057: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
