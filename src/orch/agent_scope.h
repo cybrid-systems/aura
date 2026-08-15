@@ -377,10 +377,14 @@ public:
         return *children_.at(i);
     }
 
-    // Join all live handles. Mirrors join_agents (#2082/#2153): on non-Ok,
-    // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
-    // per-handle reservation release. Release is idempotent (#2009).
-    // Issue #2782: Scheduler dead → release reservations only (no fiber join).
+    // Join all live handles. Mirrors join_agents (#2082/#2153/#3050):
+    // on non-Ok, cancel + secondary drain (default 2s, JoinPolicy.drain_ms)
+    // before per-handle reservation release. Release is idempotent (#2009).
+    // Issue #3050: returned JoinResult is the batch aggregate; per-handle
+    // Reclaimed vs Done cleanup / must_wait_reclaimed is decided inside
+    // join_agents (authoritative flags live on AgentHandle; Aura
+    // orch:scope-resolve reads them). Issue #2782: Scheduler dead →
+    // release reservations only (no fiber join).
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
         ScopeEnterGuard g(this, "join_all");
         if (handles_.empty()) {

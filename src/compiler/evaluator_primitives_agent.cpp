@@ -3807,6 +3807,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Issue #2588 AC1 + AC4: orch:scope-join-all — cancel + drain + reservation
     // release for every handle in the scope. Returns hash {ok, status,
     // wait-us, joined-count, cancelled, schema=2588}.
+    // Issue #3050: `status` is the batch aggregate (worst-case / first
+    // non-Ok). Per-agent Reclaimed vs Done is authoritative on the
+    // AgentHandle (must_wait_reclaimed / reservation-held /
+    // reclaimed_deferred_cleanup) and on subsequent orch:scope-resolve.
     add("orch:scope-join-all",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
             orch_sched.ensure(2);
@@ -3835,6 +3839,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
             const auto jr = scope->join_all(policy);
+            // Issue #3050: count per-handle flags before drop (batch
+            // `status` remains the aggregate; these counts are additive).
+            std::int64_t reclaimed_n = 0;
+            std::int64_t must_wait_n = 0;
+            std::int64_t reservation_held_n = 0;
+            for (const auto& hp : scope->handles()) {
+                if (hp.reclaimed_deferred_cleanup ||
+                    (hp.fiber && hp.fiber->is_reclaimed() && !hp.fiber->is_done()))
+                    ++reclaimed_n;
+                if (hp.must_wait_reclaimed)
+                    ++must_wait_n;
+                if (hp.reserved_memory_bytes != 0)
+                    ++reservation_held_n;
+            }
             // ~AgentScope semantics: after join_all, scope holds no live
             // handles (drop the per-Evaluator storage slot so the next
             // scope-spawn creates a fresh scope with empty handles_).
@@ -3870,6 +3888,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema", make_int(2588)},
                 {"schema-2083", make_int(2083)},
                 {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+                // Issue #3050: aggregate status is not per-agent. Counts
+                // tell supervisors how many handles actually deferred.
+                {"reclaimed-count", make_int(reclaimed_n)},
+                {"must-wait-count", make_int(must_wait_n)},
+                {"reservation-held-count", make_int(reservation_held_n)},
+                {"schema-3050", make_int(3050)},
+                {"issue-3050", make_int(3050)},
+                {"scope-join-per-handle-wired", make_int(1)},
             };
             return build_orch_hash(kv);
         });
@@ -3949,11 +3975,17 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return build_orch_hash(kv);
             }
             // Live status (same labels as directory_snapshot #2751).
+            // Issue #3050: Reclaimed-but-not-done is "reclaimed" (not
+            // "alive") so supervisors see per-handle status after
+            // orch:scope-join-all (batch hash `status` is aggregate).
             const char* st = "unknown";
             if (!hp->ok) {
                 st = "spawn-failed";
             } else if (!hp->fiber) {
                 st = "unknown";
+            } else if (hp->reclaimed_deferred_cleanup ||
+                       (hp->fiber->is_reclaimed() && !hp->fiber->is_done())) {
+                st = "reclaimed";
             } else if (hp->fiber->is_done()) {
                 st = "done";
             } else if (hp->fiber->is_cancel_requested()) {
@@ -3976,6 +4008,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-2588", make_int(2588)},
                 {"issue-2926", make_int(2926)},
                 {"scope-resolve-wired", make_int(1)},
+                // Issue #3050: per-handle flags after mixed batch join
+                // (authoritative vs orch:scope-join-all aggregate status).
+                {"must-wait-reclaimed", make_bool(hp->must_wait_reclaimed)},
+                {"reservation-held", make_bool(hp->reserved_memory_bytes != 0)},
+                {"deferred-cleanup", make_bool(hp->reclaimed_deferred_cleanup)},
+                {"schema-3050", make_int(3050)},
+                {"issue-3050", make_int(3050)},
             };
             return build_orch_hash(kv);
         });

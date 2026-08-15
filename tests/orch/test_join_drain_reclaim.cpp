@@ -53,6 +53,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <print>
+#include <span>
 #include <string>
 #include <thread>
 #include <vector>
@@ -1414,6 +1415,122 @@ int run_test_join_drain_reclaim() {
             const auto build = read_file("build.py");
             CHECK(build.find("check_join_must_wait_reclaimed_3012") != std::string::npos,
                   "3012 AC6: build.py wires #3012 linter");
+        }
+    }
+
+    // ── #3050: join_agents per-handle Reclaimed vs Done (not shared jr) ──
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::AgentHandle;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::join_agents;
+        using aura::orch::JoinPolicy;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        std::println("\n--- #3050 AC1: mixed batch — only reclaimed handle defers ---");
+        {
+            apply_dev_audit_defaults();
+            auto ok_f = std::make_unique<Fiber>([] {});
+            ok_f->set_state(FiberState::Done);
+            auto rec_f = std::make_unique<Fiber>([] {});
+            rec_f->mark_reclaimed();
+            AgentHandle hs[2];
+            hs[0].ok = true;
+            hs[0].name = "ok-sib";
+            hs[0].fiber = ok_f.get();
+            hs[0].reserved_memory_bytes = 1111;
+            hs[1].ok = true;
+            hs[1].name = "rec-sib";
+            hs[1].fiber = rec_f.get();
+            hs[1].reserved_memory_bytes = 2222;
+            const auto def0 = g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(
+                std::memory_order_relaxed);
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            const auto jr = join_agents(std::span<AgentHandle>(hs, 2), policy);
+            CHECK(jr.status == JoinStatus::Reclaimed,
+                  "3050 AC2: batch jr stays aggregate Reclaimed");
+            CHECK(hs[0].reserved_memory_bytes == 0, "3050 AC1: Ok sibling released reservation");
+            CHECK(!hs[0].reclaimed_deferred_cleanup, "3050 AC1: Ok sibling is not deferred");
+            CHECK(!hs[0].must_wait_reclaimed, "3050 AC1: Ok sibling no must-wait");
+            CHECK(hs[1].reserved_memory_bytes == 2222,
+                  "3050 AC1: reclaimed handle keeps reservation (#2661)");
+            CHECK(hs[1].reclaimed_deferred_cleanup, "3050 AC1: reclaimed handle deferred");
+            const auto def1 = g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(
+                std::memory_order_relaxed);
+            CHECK(def1 == def0 + 1, "3050 AC1: deferred-cleanup counter +1 (not +N)");
+            rec_f->set_state(FiberState::Done);
+            rec_f->note_body_exit_if_reclaimed();
+            hs[1].finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3050 AC1b: production unset wait → must-wait only on reclaimed ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto ok_f = std::make_unique<Fiber>([] {});
+            ok_f->set_state(FiberState::Done);
+            auto rec_f = std::make_unique<Fiber>([] {});
+            rec_f->mark_reclaimed();
+            AgentHandle hs[2];
+            hs[0].ok = true;
+            hs[0].fiber = ok_f.get();
+            hs[0].reserved_memory_bytes = 100;
+            hs[1].ok = true;
+            hs[1].fiber = rec_f.get();
+            hs[1].reserved_memory_bytes = 200;
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agents(std::span<AgentHandle>(hs, 2), policy);
+            CHECK(!hs[0].must_wait_reclaimed, "3050: Ok sibling must_wait=0");
+            CHECK(hs[1].must_wait_reclaimed, "3050: reclaimed handle must_wait=1");
+            CHECK(!hs[0].wait_reclaimed_used && !hs[1].wait_reclaimed_used,
+                  "3050 AC3: no auto-wait when wait_reclaimed_ms unset");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+                  "3050 AC3: wait_reclaimed_total not bumped");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            rec_f->set_state(FiberState::Done);
+            rec_f->note_body_exit_if_reclaimed();
+            hs[1].finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3050 AC4/AC6: Aura surface + source-cite + no invent ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto scope = read_file("src/orch/agent_scope.h");
+            CHECK(spawn.find("Issue #3050") != std::string::npos,
+                  "3050 AC6: join_agents cites #3050");
+            CHECK(spawn.find("a.fiber->is_reclaimed()") != std::string::npos,
+                  "3050 AC1: per-handle is_reclaimed");
+            CHECK(agent.find("schema-3050") != std::string::npos, "3050 AC4: schema-3050");
+            CHECK(agent.find("reclaimed-count") != std::string::npos,
+                  "3050 AC4: scope-join-all reclaimed-count");
+            CHECK(agent.find("scope-join-per-handle-wired") != std::string::npos,
+                  "3050 AC4: wired sentinel");
+            CHECK(agent.find("authoritative") != std::string::npos ||
+                      scope.find("authoritative") != std::string::npos,
+                  "3050 AC4: documents per-handle flags as authoritative");
+            CHECK(scope.find("#3050") != std::string::npos, "3050 AC6: agent_scope.h cites #3050");
+            CHECK(read_file("docs/design/3050-join-agents-per-handle.md").empty(),
+                  "3050 AC6: no docs/design/3050-* per #1655");
+            std::ifstream invent("tests/orch/test_issue_3050.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_3050.cpp");
+            CHECK(!invent.good(), "3050 AC6: no test_issue_3050.cpp per #81967");
         }
     }
 
