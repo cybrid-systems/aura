@@ -1890,7 +1890,7 @@ static int remount_or_force_deopt_unlocked_no_call_time_counter(
         return 0;
     if (g_closure_must_deopt.size() <= cid)
         g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
-    g_closure_must_deopt[cid] = 1;
+    g_closure_must_deopt[cid] = 1; // Issue #3060: residual / drain fail-closed
     if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
         aura_jit_batch_deopt_for(g_closure_names[cid].c_str(), batch_deopt_epoch);
     // NOTE: NO call-time counter bumps here (sync path has its own).
@@ -1904,7 +1904,8 @@ static int remount_or_force_deopt_unlocked_no_call_time_counter(
 // and calls remount_or_force_deopt_unlocked_no_call_time_counter for
 // each (MustDeopt + batch_deopt_for already applied on fail inside
 // #2503 shared path). Anonymous (sid=0) stay on the existing
-// call-time path — no sync walk contribution.
+// call-time path — no sync walk contribution. Issue #3060: pure-anon
+// still never enters this named walk.
 // Bumps live_closure_sync_remount_ok_total / _fail_total (distinct
 // from call-time closure_capture_remount_ok_total / _fail_total).
 // Soft zero-cost when no live named closures (decide path
@@ -2395,7 +2396,13 @@ static std::atomic<std::uint64_t> g_pure_anon_bg_drain_ok_total{0};
 static std::atomic<std::uint64_t> g_pure_anon_bg_drain_fail_total{0};
 static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_total{0};
 // Issue #3024: production overflow that forced MustDeopt (leave native).
+// Issue #3060: same counter reused for pressure force-leave (no new keys).
 static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_must_deopt_total{0};
+// Issue #3060: consecutive residual budget_skip streak (production only).
+static std::atomic<std::uint32_t> g_residual_budget_skip_streak{0};
+static constexpr std::size_t kPureAnonPressurePendingThresh = 32;
+static constexpr std::uint32_t kPureAnonBudgetSkipStreakForce = 3;
+static constexpr std::size_t kPureAnonPressureForceBatch = 8;
 
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept {
     return static_cast<std::uint64_t>(g_pure_anon_bg_size.load(std::memory_order_relaxed));
@@ -2425,10 +2432,10 @@ extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
     // Totals stay monotonic (Agents delta); do not zero.
 }
 
-// Issue #3024: production overflow fail-closed. Set MustDeopt + poison
-// bridge_epoch so dual-fresh / call leave native immediately. Residual
-// remount (#2928) restamps on heal — not a second closure table. Caller
-// must NOT hold g_pure_anon_bg_mtx (queue → table is unused elsewhere).
+// Issue #3024 / #3060: production fail-closed leave-native. Set MustDeopt
+// + poison bridge_epoch so dual-fresh / call leave native immediately.
+// Residual remount (#2928) restamps on heal — not a second closure table.
+// Caller must NOT hold g_pure_anon_bg_mtx (queue → table is unused elsewhere).
 static void pure_anon_bg_overflow_force_leave_native(std::int64_t closure_id) noexcept {
     if (closure_id < 0)
         return;
@@ -2477,6 +2484,33 @@ extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept {
     }
 }
 
+// Issue #3060: production pressure — peek oldest pending pure-anon and
+// MustDeopt them (reuse #3024 helper). Do not pop: later quiet drain
+// can remount-heal. Soft never calls this. Bounded batch, no new counter.
+static void pure_anon_pressure_force_leave_oldest(std::size_t max_n) noexcept {
+    if (max_n == 0)
+        return;
+    std::int64_t batch[kPureAnonPressureForceBatch];
+    std::size_t n = 0;
+    {
+        std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
+        auto sz = g_pure_anon_bg_size.load(std::memory_order_relaxed);
+        auto head = g_pure_anon_bg_head;
+        const auto lim = max_n < kPureAnonPressureForceBatch ? max_n : kPureAnonPressureForceBatch;
+        while (n < lim && n < sz) {
+            batch[n++] = g_pure_anon_bg_q[head];
+            head = (head + 1) % kPureAnonBgQueueCap;
+        }
+    }
+    for (std::size_t i = 0; i < n; ++i) {
+        if (batch[i] < 0)
+            continue;
+        pure_anon_bg_overflow_force_leave_native(batch[i]);
+        g_pure_anon_bg_overflow_must_deopt_total.fetch_add(1, std::memory_order_relaxed);
+        aura_bump_pure_anon_bg_overflow_must_deopt_total(1);
+    }
+}
+
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
     // Quiet path: empty queue → single relaxed load, no remount work.
     if (g_pure_anon_bg_size.load(std::memory_order_relaxed) == 0 || max_n == 0)
@@ -2520,6 +2554,8 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
                 continue;
             if (aura_closure_has_env_or_linear_captures_unlocked(cid))
                 continue;
+            // Issue #3060: remount fail uses the shared MustDeopt path
+            // (remount_or_force_deopt_unlocked_no_call_time_counter).
             if (remount_or_force_deopt_unlocked_no_call_time_counter(cid, live_env,
                                                                      /*linear_fp=*/0,
                                                                      table_epoch) != 0)
@@ -2633,6 +2669,7 @@ extern "C" void aura_test_reset_residual_remount_state() noexcept {
     g_residual_remount_cursor.store(0, std::memory_order_relaxed);
     g_residual_remount_budget_override.store(UINT64_MAX, std::memory_order_relaxed);
     g_residual_force_skip.store(0, std::memory_order_relaxed);
+    g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
     // Do not zero ok/skip totals — monotonic for Agents; tests delta against snapshot.
 }
 
@@ -2651,8 +2688,10 @@ static std::uint64_t residual_closure_sid_region_bits_unlocked(std::size_t cid) 
 
 extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
     // AC4: budget=0 → zero walk (caller may still have done one relaxed load).
-    if (budget == 0)
+    if (budget == 0) {
+        g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
         return;
+    }
 
     // AC2: hard storm / health throttle → skip remount storm.
     // storm_level >= 2 = Global or Both; should_throttle covers deopt hard window.
@@ -2662,8 +2701,23 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         aura_hot_update_should_throttle_reemit() != 0) {
         g_residual_remount_budget_skip_total.fetch_add(1, std::memory_order_relaxed);
         aura_bump_residual_remount_totals(/*ok=*/0, /*budget_skip=*/1);
+        // Issue #3060: production + repeated budget_skip (or pending past
+        // the soft threshold) force-leaves oldest pending pure-anon via
+        // the #3024 helper. Soft / Off: skip counter only. Queue stays
+        // so a later quiet drain can remount-heal.
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            const auto streak =
+                g_residual_budget_skip_streak.fetch_add(1, std::memory_order_relaxed) + 1;
+            const auto pending = g_pure_anon_bg_size.load(std::memory_order_relaxed);
+            if (pending > 0 && (pending >= kPureAnonPressurePendingThresh ||
+                                streak >= kPureAnonBudgetSkipStreakForce))
+                pure_anon_pressure_force_leave_oldest(kPureAnonPressureForceBatch);
+        } else {
+            g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
+        }
         return;
     }
+    g_residual_budget_skip_streak.store(0, std::memory_order_relaxed);
 
     std::uint64_t ok = 0;
     std::uint64_t prefer_hit = 0;
@@ -2782,7 +2836,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
 // Budget-exempt vs residual (#2928); cap N so a huge named table
 // cannot stall the pipeline. Overflow stays MustDeopt and residual
 // still rotates them (AC4). Anonymous / pure-anon stay on residual
-// / #2950 (AC3). Soft / mask==0 / cap==0 → zero walk (AC2).
+// / #2950 (AC3). Issue #3060 does not promote sid==0 into this walk.
+// Soft / mask==0 / cap==0 → zero walk (AC2).
 // On remount ok: clear MustDeopt + restamp (same heal as #2928)
 // so the next call does not force-deopt.
 
