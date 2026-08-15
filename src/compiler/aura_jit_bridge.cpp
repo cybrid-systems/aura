@@ -1186,6 +1186,9 @@ struct AotFuncSlot {
     // register time. 0 = process-default / unowned. Per-eval physical
     // invalidate only clears slots matching the requested eval_ptr.
     std::atomic<std::uintptr_t> owner_eval{0};
+    // Issue #3070: peer soft-stale after owner-scoped invalidate.
+    // Bit only — does not advance g_aot_table_epoch (#2841).
+    std::atomic<std::uint8_t> soft_stale{0};
 };
 
 AotFuncSlot g_aot_func_slots[kMaxAotFuncs];
@@ -1236,6 +1239,7 @@ void apply_aot_staging_to_live() noexcept {
         slot.table_generation.store(epoch, std::memory_order_relaxed);
         // Issue #2299: stamp owner for per-eval invalidate filtering.
         slot.owner_eval.store(owner, std::memory_order_relaxed);
+        slot.soft_stale.store(0, std::memory_order_release);
     }
 }
 
@@ -1514,7 +1518,7 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
     // current table epoch (same domain JIT capture_fn_epoch uses).
     const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
     const auto gen = slot.table_generation.load(std::memory_order_acquire);
-    if (gen != cur) {
+    if (gen != cur || slot.soft_stale.load(std::memory_order_acquire) != 0) {
         if (aot_metrics()) {
             aot_metrics()->aot_stale_probe_hard_reject_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
@@ -1524,6 +1528,7 @@ extern "C" std::uintptr_t aura_aot_probe_fn_ptr(std::int64_t func_id) {
         }
         return 0; // Issue #2252 AC1: hard-reject native (nullptr) —
                   // never execute generation-behind AOT code.
+                  // Issue #3070: same reject for peer soft-stale (no epoch bump).
     }
     return ptr;
 }
@@ -1551,7 +1556,9 @@ extern "C" int aura_aot_slot_is_stale(std::int64_t func_id) {
         return 1;
     const auto cur = g_aot_table_epoch.load(std::memory_order_acquire);
     const auto gen = slot.table_generation.load(std::memory_order_acquire);
-    return gen != cur ? 1 : 0;
+    if (gen != cur)
+        return 1;
+    return slot.soft_stale.load(std::memory_order_acquire) != 0 ? 1 : 0;
 }
 
 // Issue #2692: cross-eval sid ↔ AOT slot owner mismatch counter bumper
@@ -1610,6 +1617,8 @@ extern "C" void aura_register_fn_tracked(int64_t func_id, int64_t fn_ptr) {
     // Issue #2299: stamp owning eval (0 when process-default / unset).
     slot.owner_eval.store(reinterpret_cast<std::uintptr_t>(g_aot_register_owner_eval),
                           std::memory_order_relaxed);
+    // Issue #3070: successful register/reemit clears peer soft-stale.
+    slot.soft_stale.store(0, std::memory_order_release);
     // Issue #2692: cross-eval sid ↔ AOT slot owner consistency assert.
     // Soft single-eval / process-default (filter eval = nullptr) keeps
     // this at 0. Production hard path clears the slot to prevent the
@@ -1938,6 +1947,31 @@ extern "C" int aura_aot_cross_eval_hard_owner_scoped_armed(void) {
     return cross_eval_hard_owner_scoped_armed() ? 1 : 0;
 }
 
+// Issue #3070: arm soft-stale on live slots not owned by `owner`
+// (peer table). Probe returns 0; raw probe still sees the pointer.
+// No table-epoch advance.
+extern "C" void aura_aot_mark_peer_slots_soft_stale(void* owner) {
+    const auto self = reinterpret_cast<std::uintptr_t>(owner);
+    for (unsigned i = 0; i < kMaxAotFuncs; ++i) {
+        auto& slot = g_aot_func_slots[i];
+        if (slot.fn_ptr.load(std::memory_order_acquire) == 0)
+            continue;
+        const auto slot_owner = slot.owner_eval.load(std::memory_order_acquire);
+        if (self != 0 && slot_owner == self)
+            continue;
+        slot.soft_stale.store(1, std::memory_order_release);
+    }
+}
+
+extern "C" int aura_aot_slot_is_soft_stale(std::int64_t func_id) {
+    if (func_id < 0)
+        return 1;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return 1;
+    return g_aot_func_slots[idx].soft_stale.load(std::memory_order_acquire) != 0 ? 1 : 0;
+}
+
 extern "C" void aura_aot_bump_func_table_epoch(void) {
     // Issue #2841 / #2744 / #2951: multi-eval cascade tax action. When >1
     // live AotState and throttle is armed (production default, or env),
@@ -1973,6 +2007,10 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
             if (hard_os_pref)
                 g_cross_eval_hard_owner_scoped_total.fetch_add(1, std::memory_order_relaxed);
             (void)aura_aot_invalidate_all_stale_slots_for_eval(owner);
+            // Issue #3070: mark peer live slots soft-stale so apply
+            // cannot execute pre-invalidate native. No g_aot_table_epoch
+            // bump (#2841). Same batch as owner invalidate / restamp.
+            aura_aot_mark_peer_slots_soft_stale(owner);
             // Do not notify_epoch_bump / event walk — no global epoch change.
             return;
         }
@@ -2071,6 +2109,7 @@ static std::size_t aot_invalidate_all_stale_slots_for_eval_impl(void* eval_ptr) 
         slot.fn_ptr.store(0, std::memory_order_release);
         slot.table_generation.store(0, std::memory_order_release);
         slot.owner_eval.store(0, std::memory_order_release);
+        slot.soft_stale.store(0, std::memory_order_release);
         ++invalidated;
     }
     if (auto* m = aot_metrics()) {

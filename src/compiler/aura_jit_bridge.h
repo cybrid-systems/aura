@@ -743,6 +743,9 @@ std::uint64_t cross_eval_hard_owner_scoped_total_v_read(void);
 std::uint64_t cross_eval_hard_global_bump_total_v_read(void);
 // Issue #3025: production multi-eval C-ABI reemit rejected (no owner).
 std::uint64_t reemit_owner_missing_reject_total_v_read(void);
+// Issue #3070: peer soft-stale after owner-scoped invalidate (no epoch bump).
+void aura_aot_mark_peer_slots_soft_stale(void* owner);
+int aura_aot_slot_is_soft_stale(std::int64_t func_id);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)

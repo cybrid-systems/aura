@@ -994,6 +994,18 @@ def cmd_lint():
             "Issue #3069 abort-force generation fence linter failed — run python3 scripts/coverage/checks/check_abort_force_generation_fence_3069.py"
         )
         return r
+    # Issue #3070: Shape→None hysteresis + forced-thr freeze + peer
+    # soft-stale. Extends storm / owner-scoped suites (#81967).
+    seh3070_script = COVERAGE_CHECKS / "check_storm_exit_hysteresis_peer_soft_stale_3070.py"
+    if not seh3070_script.exists():
+        fail(f"missing {seh3070_script}")
+        return 1
+    r = run([sys.executable, str(seh3070_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3070 storm-exit hysteresis linter failed — run python3 scripts/coverage/checks/check_storm_exit_hysteresis_peer_soft_stale_3070.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12183,6 +12195,30 @@ def cmd_abort_force_generation_fence_3069():
     return cmd_abort_force_generation_fence_3069_coverage()
 
 
+def cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage():
+    """Issue #3070: storm-exit hysteresis + peer soft-stale (static)."""
+    print(f"{B}=== storm-exit hysteresis + peer soft-stale coverage (#3070) ==={N}")
+    script = COVERAGE_CHECKS / "check_storm_exit_hysteresis_peer_soft_stale_3070.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("storm-exit hysteresis + peer soft-stale (#3070) coverage contract rows failed")
+        return 1
+    ok("storm-exit hysteresis + peer soft-stale (#3070) coverage clean")
+    return 0
+
+
+def cmd_storm_exit_hysteresis_peer_soft_stale_3070():
+    """Issue #3070: Shape→None hysteresis + peer AOT soft-stale.
+
+    Soft/Off: cooldown only after a real storm exit.
+    """
+    print(f"{B}=== storm-exit hysteresis + peer soft-stale (#3070) ==={N}")
+    return cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16541,6 +16577,8 @@ def main():
         "partial-map-ensure-3068-coverage": cmd_partial_map_ensure_3068_coverage,
         "abort-force-generation-fence-3069": cmd_abort_force_generation_fence_3069,
         "abort-force-generation-fence-3069-coverage": cmd_abort_force_generation_fence_3069_coverage,
+        "storm-exit-hysteresis-peer-soft-stale-3070": cmd_storm_exit_hysteresis_peer_soft_stale_3070,
+        "storm-exit-hysteresis-peer-soft-stale-3070-coverage": cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

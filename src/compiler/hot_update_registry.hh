@@ -203,6 +203,10 @@ public:
     // without needing to import shape_profiler.h.
     void set_shape_storm_active(bool active) noexcept;
     [[nodiscard]] bool shape_storm_active() const noexcept;
+    // Issue #3070: sample storm level; on Both/Global→None or Shape→None
+    // with residual deopt window, arm a force-full cooldown. Returns 1
+    // and consumes one consult while the cooldown is live.
+    [[nodiscard]] bool storm_exit_force_full_active() noexcept;
     // Issue #2093: reason-aware rollback hook. The per-reason atomic
     // counter + last-reason file-scope atomic are bumped here so the
     // Agent snapshot (taken via get_snapshot / get_stats_snapshot) can
@@ -792,6 +796,10 @@ private:
     std::atomic<std::uint8_t> force_jit_repromote_allow_pending_idle_when_force_jit_covered_{0};
     // Issue #2639: storm-clear edge detection (lazy hook).
     std::atomic<StormLevel> prev_storm_level_{StormLevel::None};
+    // Issue #3070: last StormLevel sampled by the partial-relower gate
+    // (distinct from prev_storm_level_ used by #2639 health pass).
+    std::atomic<std::uint8_t> hysteresis_prev_storm_level_{0};
+    std::atomic<std::uint32_t> storm_exit_force_full_remaining_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_total_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_success_total_{0};
     std::atomic<std::uint64_t> reemit_storm_clear_health_pass_skipped_reentered_storm_total_{0};
@@ -1410,6 +1418,8 @@ extern "C" void aura_hot_update_set_shape_storm_active(int active);
 void aura_hot_update_set_deopt_storm_threshold(std::uint64_t deopts_per_window,
                                                std::uint64_t window_ms);
 void aura_hot_update_reset_deopt_storm_state_for_test(void);
+// Issue #3070: 1 while storm-exit force-full cooldown is live (consumes one consult).
+int aura_hot_update_storm_exit_force_full_active(void);
 // Issue #2017: module-safe C entry for epoch notify (compact-env-frames etc.).
 // Module partitions cannot attach HotUpdateRegistry (link discipline #1956).
 void aura_hot_update_notify_epoch_bump(std::uint64_t epoch);

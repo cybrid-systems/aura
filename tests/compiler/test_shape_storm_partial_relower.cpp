@@ -27,11 +27,13 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::decide_workload_adaptive_partial_relower;
 using aura::compiler::get_partial_relower_threshold;
 using aura::compiler::kDefaultPartialRelowerThreshold;
 using aura::compiler::kStormLevelGlobal;
 using aura::compiler::kStormLevelShape;
 using aura::compiler::partial_relower_storm_forced_full_total_atomic;
+using aura::compiler::partial_relower_threshold_is_forced;
 using aura::compiler::partial_relower_under_shape_storm_total_atomic;
 using aura::compiler::prefer_partial_under_shape_storm;
 using aura::compiler::reset_partial_relower_threshold_for_test;
@@ -205,6 +207,51 @@ static void ac4_lineage_and_source() {
     reset_partial_relower_threshold_for_test();
 }
 
+static void ac3070_hysteresis_and_forced_thr() {
+    std::println("\n--- #3070: storm-exit hysteresis + forced-thr under storm ---");
+    reset_partial_relower_threshold_for_test();
+    clear_storm();
+
+    // Shape → None with residual deopt window: keep force-full for a cooldown.
+    aura_hot_update_set_deopt_storm_threshold(1000, 10000);
+    for (int i = 0; i < 4; ++i)
+        aura_hot_update_note_deopt();
+    aura_hot_update_set_shape_storm_active(1);
+    CHECK(should_partial_relower_storm_aware(3), "3070: Shape+3 still partial");
+    aura_hot_update_set_shape_storm_active(0);
+    CHECK(!storm_level_has_shape() && !storm_level_has_global(), "3070: now None");
+    const auto f0 = partial_relower_storm_forced_full_total_atomic().load();
+    CHECK(!should_partial_relower_storm_aware(3), "3070 AC1: cooldown force-full after Shape→None");
+    CHECK(partial_relower_storm_forced_full_total_atomic().load() > f0,
+          "3070 AC1: forced_full advances on cooldown");
+    // After cooldown window (8 consults including the one above), None is partial.
+    for (int i = 0; i < 10; ++i)
+        (void)should_partial_relower_storm_aware(3);
+    CHECK(should_partial_relower_storm_aware(3), "3070 AC1: after cooldown, None is partial");
+
+    // Test reset drops cooldown immediately (existing None ACs).
+    aura_hot_update_set_shape_storm_active(1);
+    for (int i = 0; i < 4; ++i)
+        aura_hot_update_note_deopt();
+    aura_hot_update_set_shape_storm_active(0);
+    clear_storm();
+    CHECK(should_partial_relower_storm_aware(3), "3070 AC1: reset clears hysteresis");
+
+    // Forced-wide thr cannot stay wide under Global (adapt from default).
+    reset_partial_relower_threshold_for_test();
+    clear_storm();
+    set_partial_relower_threshold(32);
+    CHECK(partial_relower_threshold_is_forced(), "3070: forced");
+    trip_global_storm();
+    auto d = decide_workload_adaptive_partial_relower(7, 10, /*deopt_win*/ 10,
+                                                      /*deopt_thr*/ 5, /*storm*/ true);
+    CHECK(d.effective_threshold < 32, "3070 AC2: forced-wide not kept under Global");
+    CHECK(d.effective_threshold <= kDefaultPartialRelowerThreshold,
+          "3070 AC2: adapt from default base");
+    clear_storm();
+    reset_partial_relower_threshold_for_test();
+}
+
 } // namespace
 
 int run_test_shape_storm_partial_relower() {
@@ -213,6 +260,7 @@ int run_test_shape_storm_partial_relower() {
     ac2_global_only_no_partial_prefer();
     ac3_query_schema_2212();
     ac4_lineage_and_source();
+    ac3070_hysteresis_and_forced_thr();
 
     std::println("\n=== test_shape_storm_partial_relower: {} passed, {} failed ===", g_passed,
                  g_failed);
