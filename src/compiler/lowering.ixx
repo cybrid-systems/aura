@@ -258,6 +258,8 @@ export struct LoweringState {
             // propagate_marker_from_ast) to the IR instruction. InlinePass
             // consults IRInstruction::source_marker at the call-site
             // level; JIT/AOT/deopt restore rely on this stamp.
+            // Issue #3064: InlinePass also consults callee-body
+            // source_marker so a User wrapper cannot hide MacroIntroduced.
             // 0=User, 1=MacroIntroduced, 2=BoolLiteral.
             auto mk = propagate_marker_from_ast(*current_flat, current_source_id);
             blk.instructions.back().source_marker = static_cast<std::uint8_t>(mk);

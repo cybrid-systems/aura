@@ -920,6 +920,18 @@ def cmd_lint():
             "Issue #2764 IR/JIT MacroIntroduced enforcement linter failed — run python3 scripts/coverage/checks/check_ir_jit_macro_marker_enforcement_2764.py"
         )
         return r
+    # Issue #3064: InlinePass refuses MacroIntroduced body instructions.
+    # Extends test_jit_macro_introduced_preserve (#81967); no docs/design.
+    imb3064_script = COVERAGE_CHECKS / "check_inline_macro_body_marker_3064.py"
+    if not imb3064_script.exists():
+        fail(f"missing {imb3064_script}")
+        return 1
+    r = run([sys.executable, str(imb3064_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3064 InlinePass MacroIntroduced body linter failed — run python3 scripts/coverage/checks/check_inline_macro_body_marker_3064.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -11965,6 +11977,30 @@ def cmd_half_green_ir_steal_densify_3063():
     return cmd_half_green_ir_steal_densify_3063_coverage()
 
 
+def cmd_inline_macro_body_marker_3064_coverage():
+    """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
+    print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
+    script = COVERAGE_CHECKS / "check_inline_macro_body_marker_3064.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("InlinePass MacroIntroduced body (#3064) coverage contract rows failed")
+        return 1
+    ok("InlinePass MacroIntroduced body (#3064) coverage clean")
+    return 0
+
+
+def cmd_inline_macro_body_marker_3064():
+    """Issue #3064: InlinePass refuses MacroIntroduced body without allow.
+
+    Soft/allow (respect_macro_hygiene_ == false) skips the scan.
+    """
+    print(f"{B}=== InlinePass MacroIntroduced body (#3064) ==={N}")
+    return cmd_inline_macro_body_marker_3064_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16311,6 +16347,8 @@ def main():
         "rehydrate-miss-invalidate-3032-coverage": cmd_rehydrate_miss_invalidate_3032_coverage,
         "half-green-ir-steal-densify-3063": cmd_half_green_ir_steal_densify_3063,
         "half-green-ir-steal-densify-3063-coverage": cmd_half_green_ir_steal_densify_3063_coverage,
+        "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,
+        "inline-macro-body-marker-3064-coverage": cmd_inline_macro_body_marker_3064_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
