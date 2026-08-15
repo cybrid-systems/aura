@@ -470,6 +470,11 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
         insert_kv("deopt-restore-macro-introduced-wired", 1);
         insert_kv("schema-2764", 2764);
         insert_kv("issue-2764", 2764);
+        // Issue #3064: InlinePass refuses MacroIntroduced *body*
+        // instructions even when IRFunction.marker stayed User.
+        insert_kv("inline-body-macro-hygiene-wired", 1);
+        insert_kv("schema-3064", 3064);
+        insert_kv("issue-3064", 3064);
         insert_kv("issue", 2022);
         insert_kv("schema", 2022); // lineage 2764 / 2100 / 2022 / 1891 / 1610
         auto hidx = g_hash_tables.size();

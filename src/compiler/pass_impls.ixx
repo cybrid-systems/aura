@@ -3250,6 +3250,19 @@ public:
     void set_respect_macro_hygiene(bool v) { respect_macro_hygiene_ = v; }
     bool get_respect_macro_hygiene() const { return respect_macro_hygiene_; }
 
+    // Issue #3064: User-level IRFunction may still carry MacroIntroduced
+    // instructions (expanded body under a User wrapper). Soft/allow
+    // (respect_macro_hygiene_ == false) skips this scan (zero extra).
+    [[nodiscard]] static bool body_has_macro_introduced(const aura::ir::IRFunction& func) noexcept {
+        for (const auto& b : func.blocks) {
+            for (const auto& instr : b.instructions) {
+                if (instr.source_marker == 1 /*MacroIntroduced*/)
+                    return true;
+            }
+        }
+        return false;
+    }
+
 private:
     // True if the function is a "constant-returning single-block
     // function" that can be inlined trivially. Specifically:
@@ -3267,7 +3280,8 @@ private:
         // macro-introduced body). Trivial inlining (constant
         // substitution) is normally safe even for macro-introduced
         // code, but we apply the same guard for consistency.
-        if (respect_macro_hygiene_ && func.marker == 1 /*MacroIntroduced*/) {
+        if (respect_macro_hygiene_ &&
+            (func.marker == 1 /*MacroIntroduced*/ || body_has_macro_introduced(func))) {
             return false;
         }
         if (func.blocks.size() != 1)
@@ -3369,11 +3383,14 @@ private:
             // callee is MacroIntroduced, skip inlining + bump the
             // hygiene-skip metric (no silent aggressive inline across
             // hygiene boundary). Covers trivial + branch-aware paths.
-            if (respect_macro_hygiene_ && (instr.source_marker == 1 /*MacroIntroduced*/ ||
-                                           callee->marker == 1 /*MacroIntroduced*/)) {
+            if (respect_macro_hygiene_ &&
+                (instr.source_marker == 1 /*MacroIntroduced*/ ||
+                 callee->marker == 1 /*MacroIntroduced*/ || body_has_macro_introduced(*callee))) {
                 macro_hygiene_skipped_.fetch_add(1, std::memory_order_relaxed);
                 // Host metrics aggregate via total_macro_hygiene_skipped()
                 // + query:ir-hygiene-stats (inline-hygiene-skipped).
+                // Issue #3064: also refuse a User callee whose body
+                // instructions still carry MacroIntroduced.
                 continue;
             }
             // Check trivial-inlinable (pre-#197 fast path:
@@ -3435,7 +3452,8 @@ private:
         // introduced callees. Set respect_macro_hygiene_ = false
         // via set_respect_macro_hygiene(false) to opt in to
         // inlining macro-introduced code.
-        if (respect_macro_hygiene_ && func.marker == 1 /*MacroIntroduced*/) {
+        if (respect_macro_hygiene_ &&
+            (func.marker == 1 /*MacroIntroduced*/ || body_has_macro_introduced(func))) {
             return false;
         }
         // Size heuristic: avoid blowing up the caller.
@@ -3575,8 +3593,9 @@ private:
         // public test wrappers that call try_inline_branch_aware
         // directly). Any MacroIntroduced on call site OR callee →
         // refuse inline when respect_macro_hygiene_ is on.
-        if (respect_macro_hygiene_ && (call_instr.source_marker == 1 /*MacroIntroduced*/ ||
-                                       callee.marker == 1 /*MacroIntroduced*/)) {
+        if (respect_macro_hygiene_ &&
+            (call_instr.source_marker == 1 /*MacroIntroduced*/ ||
+             callee.marker == 1 /*MacroIntroduced*/ || body_has_macro_introduced(callee))) {
             return false;
         }
         // arg_count must match callee.arg_count.

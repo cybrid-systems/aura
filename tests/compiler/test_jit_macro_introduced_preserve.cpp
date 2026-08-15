@@ -28,6 +28,8 @@
 import std;
 import aura.compiler.service;
 import aura.compiler.value;
+import aura.compiler.ir;
+import aura.compiler.pass_manager;
 
 // Issue #2022 C APIs (defined in aura_jit_runtime.cpp).
 extern "C" void aura_jit_stamp_fn_macro_marker(std::int64_t func_id, std::uint8_t marker,
@@ -44,6 +46,7 @@ extern "C" void aura_jit_note_native_macro_preserved(std::uint8_t marker, std::u
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::InlinePass;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -367,6 +370,95 @@ static void ac8_unstamp_macro_introduced_2176() {
           "AC8: macro_expansion.cpp has C-linkage accessor");
 }
 
+// ── Issue #3064: per-instruction source_marker + InlinePass body refuse ──
+
+static aura::ir::IRFunction make_const_return_fn(std::uint8_t fn_marker,
+                                                 std::uint8_t instr_marker) {
+    aura::ir::IRFunction func;
+    func.name = "k42";
+    func.local_count = 2;
+    func.marker = fn_marker;
+    func.blocks.push_back({0});
+    aura::ir::IRInstruction c;
+    c.opcode = aura::ir::IROpcode::ConstI64;
+    c.operands = {0, 42, 0, 0};
+    c.source_marker = instr_marker;
+    aura::ir::IRInstruction r;
+    r.opcode = aura::ir::IROpcode::Return;
+    r.operands = {0, 0, 0, 0};
+    r.source_marker = instr_marker;
+    func.blocks.back().instructions.push_back(c);
+    func.blocks.back().instructions.push_back(r);
+    return func;
+}
+
+static void ac3064_1_fn_marker_still_preserved() {
+    std::println("\n--- #3064 AC1: function-level marker still preserved ---");
+    auto fn = make_const_return_fn(/*fn_marker=*/1, /*instr_marker=*/0);
+    CHECK(!InlinePass::is_trivial_inlinable_for_test(fn),
+          "3064 AC1: IRFunction.marker=MacroIntroduced still refuses");
+    CHECK(!InlinePass::is_inlinable_branch_aware_for_test(fn),
+          "3064 AC1: branch-aware also refuses fn marker");
+    auto user = make_const_return_fn(/*fn_marker=*/0, /*instr_marker=*/0);
+    CHECK(InlinePass::is_trivial_inlinable_for_test(user),
+          "3064 AC1: User fn + User instr still inlinable");
+}
+
+static void ac3064_2_instr_marker_after_lowering() {
+    std::println("\n--- #3064 AC2: instruction-level marker present after lowering ---");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "3064 AC2: macro workspace");
+    (void)cs.eval("(eval-current)");
+    (void)cs.eval("(query:pattern \"*\")");
+    const auto ir_macro = href(cs, "query:ir-hygiene-stats", "ir-instr-macro-introduced");
+    const auto markers = href(cs, "query:ir-hygiene-stats", "macro-markers");
+    const auto stamped = href(cs, "query:ir-hygiene-stats", "ir-hygiene-stamped-count");
+    const auto propagated = href(cs, "query:ir-hygiene-stats", "lowering-marker-propagated");
+    CHECK(ir_macro > 0 || markers > 0 || stamped > 0 || propagated > 0,
+          "3064 AC2: per-instr MacroIntroduced after lowering");
+    CHECK(href(cs, "query:ir-hygiene-stats", "schema-3064") == 3064, "3064 AC2: schema-3064");
+    CHECK(href(cs, "query:ir-hygiene-stats", "inline-body-macro-hygiene-wired") == 1,
+          "3064 AC2: body hygiene wired");
+}
+
+static void ac3064_3_inline_refuses_macro_body() {
+    std::println("\n--- #3064 AC3: InlinePass refuses MacroIntroduced body without allow ---");
+    auto fn = make_const_return_fn(/*fn_marker=*/0, /*instr_marker=*/1);
+    CHECK(InlinePass::body_has_macro_introduced(fn), "3064 AC3: body helper sees instr marker");
+    CHECK(!InlinePass::is_trivial_inlinable_for_test(fn),
+          "3064 AC3: User fn + MacroIntroduced body refused");
+    CHECK(!InlinePass::is_inlinable_branch_aware_for_test(fn),
+          "3064 AC3: branch-aware refuses body marker");
+    InlinePass allow;
+    allow.set_respect_macro_hygiene(false);
+    CHECK(!allow.get_respect_macro_hygiene(), "3064 AC3: allow-macro opt-in");
+    CHECK(allow.body_has_macro_introduced(fn), "3064 AC3: helper still reports body marker");
+    // Default pass (hygiene on) still refuses; allow is the explicit opt-in
+    // used by (*allow-macro-inline*) / Evaluator::inline_respect_macro_hygiene_.
+}
+
+static void ac3064_4_source_and_linter() {
+    std::println("\n--- #3064 AC4: source-cite + linter ---");
+    const auto pass = read_file("src/compiler/pass_impls.ixx");
+    const auto low = read_file("src/compiler/lowering.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
+    const auto t = read_file("tests/compiler/test_jit_macro_introduced_preserve.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_inline_macro_body_marker_3064.py");
+    const auto build = read_file("build.py");
+    CHECK(pass.find("Issue #3064") != std::string::npos, "3064 AC4: InlinePass cite");
+    CHECK(pass.find("body_has_macro_introduced") != std::string::npos, "3064 AC4: helper");
+    CHECK(low.find("Issue #3064") != std::string::npos, "3064 AC4: lowering cite");
+    CHECK(q.find("schema-3064") != std::string::npos, "3064 AC4: query schema");
+    CHECK(t.find("3064 AC3") != std::string::npos, "3064 AC4: AC3 test");
+    CHECK(!lint.empty() && lint.find("3064") != std::string::npos, "3064 AC4: linter");
+    CHECK(build.find("check_inline_macro_body_marker_3064") != std::string::npos,
+          "3064 AC4: build.py");
+    CHECK(read_file("docs/design/3064-inline-macro-body-marker.md").empty(),
+          "3064 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3064.cpp").empty(),
+          "3064 AC4: no invent test_issue_3064");
+}
+
 int main() {
     ac1_source();
     ac2_schema_keys();
@@ -376,8 +468,14 @@ int main() {
     ac6_non_macro_noop();
     ac7_mutate_requery();
     ac8_unstamp_macro_introduced_2176();
+    std::println("\n=== Issue #3064: per-instruction source_marker + InlinePass body ===");
+    ac3064_1_fn_marker_still_preserved();
+    ac3064_2_instr_marker_after_lowering();
+    ac3064_3_inline_refuses_macro_body();
+    ac3064_4_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("jit MacroIntroduced preserve (#2022) + #2176 unstamp: OK ({} passed)", g_passed);
+    std::println("jit MacroIntroduced preserve (#2022) + #2176 unstamp + #3064: OK ({} passed)",
+                 g_passed);
     return 0;
 }
