@@ -377,33 +377,28 @@ public:
         return *children_.at(i);
     }
 
-    // Join all live handles. Mirrors join_agents (#2082/#2153): on non-Ok,
-    // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
-    // per-handle reservation release. Release is idempotent (#2009).
-    // Issue #2782: Scheduler dead → release reservations only (no fiber join).
+    // Join all live handles. Mirrors join_agents (#2082/#2153/#3050):
+    // on non-Ok, cancel + secondary drain (default 2s, JoinPolicy.drain_ms)
+    // before per-handle reservation release. Release is idempotent (#2009).
+    // Issue #3050: returned JoinResult is the batch aggregate; per-handle
+    // Reclaimed vs Done cleanup / must_wait_reclaimed is decided inside
+    // join_agents (authoritative flags live on AgentHandle; Aura
+    // orch:scope-resolve reads them). Issue #2782: Scheduler dead →
+    // release reservations only (no fiber join).
     // Issue #3051: C++ join_all does **not** auto-inject a wait deadline
     // (Soft / JoinPolicy default stays #3012). Aura orch:scope-join-all
     // applies kProductionWaitReclaimedMsDefault per must_wait handle.
+    // Issue #3052: optional AgentFailurePolicy.on_join_fail after the
+    // batch join (default ReportOnly — zero behaviour change).
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
-        ScopeEnterGuard g(this, "join_all");
-        if (handles_.empty()) {
-            serve::JoinResult r;
-            r.status = serve::JoinStatus::Invalid;
-            return r;
-        }
-        if (!sched_) {
-            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
-                1, std::memory_order_relaxed);
-            release_handles_no_join_();
-            serve::JoinResult r;
-            r.status = serve::JoinStatus::Invalid;
-            return r;
-        }
-        return join_agents(std::span<AgentHandle>(handles_), timeout_ms);
+        return join_all(JoinPolicy{.primary_ms = timeout_ms, .drain_ms = kDefaultJoinDrainMs});
     }
 
     // Issue #2153: full JoinPolicy (primary + drain_ms).
-    [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy) {
+    // Issue #3052: fail.on_join_fail after per-handle local status
+    // is stamped (RestartN / Throttle / Cancel / ReportOnly).
+    [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy,
+                                             const AgentFailurePolicy& fail = {}) {
         ScopeEnterGuard g(this, "join_all(policy)");
         if (handles_.empty()) {
             serve::JoinResult r;
@@ -418,7 +413,9 @@ public:
             r.status = serve::JoinStatus::Invalid;
             return r;
         }
-        return join_agents(std::span<AgentHandle>(handles_), policy);
+        auto jr = join_agents(std::span<AgentHandle>(handles_), policy);
+        apply_on_join_fail_unlocked_(fail);
+        return jr;
     }
 
     // Best-effort cancel request on all live fibers. Bounded cost; does
@@ -1028,6 +1025,54 @@ private:
                                                : (path + "/" + std::to_string(i));
             // Child walk under child's enter: merge into same snap.
             children_[i]->merge_directory_under_guard_(snap, filter, child_path);
+        }
+    }
+
+    // Issue #3052: honor AgentFailurePolicy::on_join_fail after
+    // join_agents stamped last_join_status. Caller holds ScopeEnterGuard.
+    // Reclaimed + deferred / still-running is never restart fuel (#2661).
+    void apply_on_join_fail_unlocked_(const AgentFailurePolicy& policy) noexcept {
+        const auto n = handles_.size();
+        for (std::size_t i = 0; i < n; ++i) {
+            auto& h = handles_[i];
+            const bool reclaimed_live = h.reclaimed_deferred_cleanup ||
+                                        (h.fiber && h.fiber->is_reclaimed() && !h.fiber->is_done());
+            if (reclaimed_live)
+                continue; // AC2
+            const auto st = h.last_join_status;
+            if (st != serve::JoinStatus::Timeout && st != serve::JoinStatus::Cancelled)
+                continue;
+            g_orch_module_stats.agent_join_fail_total.fetch_add(1, std::memory_order_relaxed);
+            if (policy.on_join_fail == AgentFailureAction::ReportOnly)
+                continue;
+            if (policy.on_join_fail == AgentFailureAction::Cancel)
+                continue; // already cancelled by drain
+            if (policy.on_join_fail == AgentFailureAction::Throttle) {
+                stop_keepalive_helper(h);
+                continue;
+            }
+            if (policy.on_join_fail != AgentFailureAction::RestartN)
+                continue;
+            if (i >= restart_counts_.size() || i >= specs_.size())
+                continue;
+            const bool within = restart_counts_[i] < policy.max_restarts;
+            if (!within) {
+                g_orch_module_stats.agent_restart_exhausted_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                continue;
+            }
+            if (!sched_) {
+                g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                continue;
+            }
+            if (policy.restart_backoff_ms > 0)
+                fiber_sleep_ms(policy.restart_backoff_ms);
+            handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
+            if (i < consecutive_stall_counts_.size())
+                consecutive_stall_counts_[i] = 0;
+            ++restart_counts_[i];
+            g_orch_module_stats.agent_restart_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
 

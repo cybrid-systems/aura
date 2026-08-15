@@ -2147,6 +2147,20 @@ def cmd_lint():
             "Issue #2971 GeneralObjectPin create+densify linter failed — run python3 scripts/coverage/checks/check_general_object_pin_create_densify_2971.py"
         )
         return r
+    # Issue #3053: allocate / pool+flat residual on required pin cover.
+    # Extends #2971 inventory via allocate_raw_impl; value-only still
+    # not cover (#3017). Extends test_moving_densify_fail_closed
+    # (#81967); no docs/design/ (#1655).
+    gopalloc_script = COVERAGE_CHECKS / "check_general_object_pin_allocate_3053.py"
+    if not gopalloc_script.exists():
+        fail(f"missing {gopalloc_script}")
+        return 1
+    r = run([sys.executable, str(gopalloc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3053 GeneralObjectPin allocate residual linter failed — run python3 scripts/coverage/checks/check_general_object_pin_allocate_3053.py"
+        )
+        return r
     # Issue #2973: production hard pre-densify external-root completeness
     # (block BEFORE address movement). Extends test_moving_densify_fail_closed
     # (#81967); no docs/design/ (#1655).
@@ -2335,6 +2349,20 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3049 per-tenant quota linter failed — run python3 scripts/coverage/checks/check_quota_per_tenant_3049.py"
+        )
+        return r
+    # Issue #3052: AgentFailurePolicy::on_join_fail wired in
+    # AgentScope::join_all (RestartN / Throttle / Cancel / ReportOnly).
+    # Extends test_agent_failure_policy.cpp + test_failure_policy_bridge.cpp
+    # (#81967); no docs/design/ (#1655).
+    jfp_script = COVERAGE_CHECKS / "check_join_fail_policy_3052.py"
+    if not jfp_script.exists():
+        fail(f"missing {jfp_script}")
+        return 1
+    r = run([sys.executable, str(jfp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3052 join_all on_join_fail linter failed — run python3 scripts/coverage/checks/check_join_fail_policy_3052.py"
         )
         return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
@@ -8157,6 +8185,33 @@ def cmd_general_object_pin_create_densify_2971():
     """
     print(f"{B}=== general-object-pin create densify (#2971) ==={N}")
     return cmd_general_object_pin_create_densify_2971_coverage()
+
+
+def cmd_general_object_pin_allocate_3053_coverage():
+    """Issue #3053: allocate / pool+flat residual on required pin cover (static)."""
+    print(f"{B}=== general-object-pin allocate residual coverage (#3053) ==={N}")
+    script = COVERAGE_CHECKS / "check_general_object_pin_allocate_3053.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("general-object-pin allocate residual (#3053) coverage contract rows failed")
+        return 1
+    ok("general-object-pin allocate residual (#3053) coverage clean")
+    return 0
+
+
+def cmd_general_object_pin_allocate_3053():
+    """Issue #3053: allocate paths join required pin / slot / EXEMPT cover.
+
+    try_allocate / allocate_checked / create share allocate_raw_impl
+    auto-wire for small-pool densify-tracked pointers. Value-only
+    register_external_root_for_densify stays non-covering. Soft is one
+    required-active load. No second registry; adopt-site floor stays 7.
+    """
+    print(f"{B}=== general-object-pin allocate residual (#3053) ==={N}")
+    return cmd_general_object_pin_allocate_3053_coverage()
 
 
 def cmd_moving_pre_densify_completeness_2973_coverage():
@@ -15754,6 +15809,8 @@ def main():
         "moving-known-roots-sticky-recovery-2935-coverage": cmd_moving_known_roots_sticky_recovery_2935_coverage,
         "general-object-pin-create-densify-2971": cmd_general_object_pin_create_densify_2971,
         "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
+        "general-object-pin-allocate-3053": cmd_general_object_pin_allocate_3053,
+        "general-object-pin-allocate-3053-coverage": cmd_general_object_pin_allocate_3053_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
