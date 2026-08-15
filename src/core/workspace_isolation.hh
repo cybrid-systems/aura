@@ -372,6 +372,12 @@ struct WorkspaceIsolationPolicy {
                 record_audit(target, ref_tenant, false, false, false, op, required_effects);
                 return true;
             }
+            // Issue #2056 / resolve_stamped AC4: under Strict with a non-zero
+            // principal, an unstamped (tenant 0) ref is denied — the ref
+            // carries no provenance to validate against the principal.
+            if (strict && ref_tenant == 0 && cur != 0) {
+                allowed = false;
+            }
             // Same tenant or unscoped target → ok (still check ref provenance).
             if (target == 0 || cur == target) {
                 // fall through to provenance
@@ -392,7 +398,10 @@ struct WorkspaceIsolationPolicy {
 
             // Provenance: ref stamped for another tenant — need grant
             // current → ref_tenant (or same as target path already covered).
-            if (allowed && ref_tenant != 0 && cur != 0 && ref_tenant != cur) {
+            // Evaluate even if the target path already denied (cap_deny): a
+            // cross-tenant resolve of a foreign-stamped ref is both a
+            // capability deny AND a provenance deny — record both reasons.
+            if (ref_tenant != 0 && cur != 0 && ref_tenant != cur) {
                 const auto held = cross_grant_bits(cur, ref_tenant);
                 if (held == 0) {
                     allowed = false;

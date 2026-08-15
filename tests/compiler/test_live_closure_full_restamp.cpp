@@ -432,10 +432,13 @@ static void ac2602_source_and_schema() {
 
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
-    CHECK(href_aot_stats(cs, "schema-2602") == 2602, "AC5: schema-2602 on query:aot-stats");
-    CHECK(href_aot_stats(cs, "issue-2602") == 2602, "AC5: issue-2602 on query:aot-stats");
-    CHECK(href_aot_stats(cs, "live-closure-sync-remount-wired") == 1,
-          "AC5: sync-remount-wired sentinel");
+    // #2602 keys live on query:aot-incremental-reemit-stats (the sync
+    // remount surface, same kv block as schema-2542) — NOT query:aot-stats
+    // (which only carries the #452 hot-update counters).
+    CHECK(href(cs, "schema-2602") == 2602,
+          "AC5: schema-2602 on query:aot-incremental-reemit-stats");
+    CHECK(href(cs, "issue-2602") == 2602, "AC5: issue-2602 on query:aot-incremental-reemit-stats");
+    CHECK(href(cs, "live-closure-sync-remount-wired") == 1, "AC5: sync-remount-wired sentinel");
     // Compatibility: prior schemas preserved.
     CHECK(href(cs, "schema-2542") == 2542, "AC5: schema-2542 retained");
     CHECK(href(cs, "schema-2503") == 2503, "AC5: schema-2503 retained");

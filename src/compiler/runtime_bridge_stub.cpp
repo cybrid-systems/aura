@@ -75,7 +75,14 @@ aura_set_top_cell_getter(std::int64_t (* /*fn*/)(void*, std::int64_t), void* /*u
 
 // aura_get_aot_metrics / aura_set_aot_metrics live in runtime_ssot.cpp.
 
-extern "C" __attribute__((weak)) void aura_set_aot_defuse_version(std::uint64_t /*v*/) {}
+// Issue #2544 note: do NOT stub aura_set_aot_defuse_version here. Same class
+// as aura_set_aot_metrics (comment above): an empty weak stub in
+// libaura_test_objects.so preempts the strong definition in the JIT lib, so
+// tests that set host defuse (e.g. exhausted-min-dirty reload paths) write
+// into a no-op stub and the reload defuse check observes zero drift. Light
+// JIT tests resolve this from libaura_jit_light_test_objects.so (weak stub
+// in aura_jit_bridge_stub.cpp); full JIT tests get the strong definition
+// from aura_jit_bridge.cpp.
 
 extern "C" __attribute__((weak)) void aura_set_current_bridge_epoch(std::uint64_t /*v*/) {}
 
@@ -84,12 +91,19 @@ extern "C" __attribute__((weak)) void aura_set_current_bridge_epoch(std::uint64_
 
 // epoch-invariant note_* / must_deopt / v_read live in runtime_ssot.cpp.
 
-extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
+extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
     return 0;
 }
 
-
 // aura_aot_count_live_generation_behind_slots lives in runtime_ssot.cpp.
+extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
+    // Weak stub for light-link fallback. The real bridge (JIT lib) reports
+    // success + advances the exhausted-min-dirty success counter; the stub
+    // returns 0 and never runs the host emit callback. Tests wired for the
+    // real bridge detect the stub via a probe and skip success-streak
+    // assertions (attempt is still verified).
+    return 0;
+}
 
 extern "C" __attribute__((weak)) void* aura_aot_get_reemit_owner_eval(void) {
     return nullptr;

@@ -259,10 +259,13 @@ static void ac_s4_single_helper_used_by_boundary_and_query(CompilerService& cs) 
 
     // The query:stable-ref-stats-hash extension must reflect the same
     // stamp captured by current_layout_stamp().
-    CHECK(href_int(cs, "layout-stamp-schema") == 2170,
-          "AC_S4: query reports layout-stamp-schema == 2170");
-    CHECK(href_int(cs, "layout-stamp-issue") == 2170,
-          "AC_S4: query reports layout-stamp-issue == 2170");
+    // #2170 lineage: schema value advanced with later refinements
+    // (#2255 shape_version fence, #2432 IR SoA generation fence,
+    // #2519 8-field operator==) — kLayoutStampSchema is now 2432.
+    CHECK(href_int(cs, "layout-stamp-schema") == 2432,
+          "AC_S4: query reports layout-stamp-schema == 2432");
+    CHECK(href_int(cs, "layout-stamp-issue") == 2432,
+          "AC_S4: query reports layout-stamp-issue == 2432");
     CHECK(href_int(cs, "layout-stamp-active") == 1,
           "AC_S4: query reports layout-stamp-active == 1");
     // The query must surface the publish counter so dashboards can
@@ -315,11 +318,18 @@ void ac2250_fiber_resume_fence() {
     // AC2: hard compare + bump + force dual-check (in steal refresh)
     CHECK(fiber_mut.find("layout_stamp_resume_mismatch_total") != std::string::npos,
           "AC2: mismatch counter bump site");
-    CHECK(fiber_mut.find("scan_live_closures_for_linear_captures(true, false)") !=
-              std::string::npos,
+    CHECK(fiber_mut.find("scan_live_closures_for_linear_captures(true, std::false_type{})") !=
+                  std::string::npos ||
+              fiber_mut.find("scan_live_closures_for_linear_captures(true, false)") !=
+                  std::string::npos,
           "AC2: force dual-check call");
-    CHECK(fiber_mut.find("resume_arena_id() != cur.arena_id") != std::string::npos,
-          "AC2: hard compare fence in steal path");
+    // #2432: hard compare is the unified 8-field helper —
+    // layout_stamp_from_fiber_resume(*fiber) vs current_layout_stamp()
+    // via is_fully_fresh (replaced the old per-field
+    // `resume_arena_id() != cur.arena_id` inline compare).
+    CHECK(fiber_mut.find("layout_stamp_from_fiber_resume") != std::string::npos &&
+              fiber_mut.find("is_fully_fresh(cur)") != std::string::npos,
+          "AC2: hard compare fence in steal path (unified 8-field helper)");
     CHECK(fiber_mut.find("clear_resume_layout_stamp") != std::string::npos,
           "AC2: clear after consumption (one-shot)");
     // AC3: zero-cost when stamps match (compare is relaxed load + integer
