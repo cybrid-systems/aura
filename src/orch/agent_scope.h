@@ -385,6 +385,9 @@ public:
     // join_agents (authoritative flags live on AgentHandle; Aura
     // orch:scope-resolve reads them). Issue #2782: Scheduler dead →
     // release reservations only (no fiber join).
+    // Issue #3051: C++ join_all does **not** auto-inject a wait deadline
+    // (Soft / JoinPolicy default stays #3012). Aura orch:scope-join-all
+    // applies kProductionWaitReclaimedMsDefault per must_wait handle.
     // Issue #3052: optional AgentFailurePolicy.on_join_fail after the
     // batch join (default ReportOnly — zero behaviour change).
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
