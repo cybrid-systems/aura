@@ -45,6 +45,7 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.core.type;
@@ -54,6 +55,7 @@ namespace {
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::Evaluator;
 using aura::compiler::TypeChecker;
 namespace typed_audit = aura::compiler::typed_audit;
 using aura::compiler::kOccurrenceCommitFaceEmptyAfterFence;
@@ -62,6 +64,7 @@ using aura::compiler::solve_delta_occurrence;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+using aura::compiler::typed_audit::kNestedOccurrenceProvisionalIssue;
 using aura::compiler::typed_audit::kOccurrenceCommitSnapshotIssue;
 using aura::compiler::typed_audit::kOccurrencePersistAuditAtomicIssue;
 using aura::compiler::typed_audit::note_occurrence_commit_snapshot_written;
@@ -838,6 +841,197 @@ static void ac3004_5_source_and_linter() {
           "AC5: no invent test_issue_3004");
 }
 
+// ── Issue #3082: mid/nested MutationBoundary occurrence is provisional ──
+// AC1 Nested/mid success never appends the durable persist log
+// AC2 While nested is open (and after nested success) query is in-flight
+// AC3 Outermost success still persist + grant (#2938 / #3004)
+// AC4 Soft empty / no nested → zero extra persist / no sticky inflight
+// AC5 Existing persist+rehydrate tests stay; this suite + linter
+
+static void ac3082_1_nested_success_never_persists() {
+    std::println("\n--- #3082 AC1: nested/mid success never durable-persist ---");
+    CHECK(kNestedOccurrenceProvisionalIssue == 3082, "AC1: issue stamp 3082");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto persist_call = mb.find("aura_outermost_success_persist_occurrence(ev_");
+    const auto outermost_ok = mb.find("if (outermost && success)");
+    CHECK(persist_call != std::string::npos && outermost_ok != std::string::npos &&
+              outermost_ok < persist_call,
+          "AC1: persist helper only under outermost && success");
+    CHECK(mb.find("maybe_persist_occurrence_snapshot") != std::string::npos,
+          "AC1: persist still goes through maybe_persist");
+    // Nested dtor path marks inflight and does not append.
+    CHECK(mb.find("Issue #3082") != std::string::npos, "AC1: dtor cites #3082");
+    CHECK(mb.find("note_type_export_inflight") != std::string::npos,
+          "AC1: nested path stamps inflight");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    reset_occurrence_commit_snapshot_for_test();
+    const auto w0 = occurrence_commit_snapshot_written_total_v_read();
+    {
+        CompilerService svc;
+        CHECK(svc.eval("(+ 1 1)").has_value(), "AC1: warm");
+        bool outer_ok = true;
+        Evaluator::MutationBoundaryGuard outer(svc.evaluator(), &outer_ok);
+        {
+            bool inner_ok = true;
+            Evaluator::MutationBoundaryGuard inner(svc.evaluator(), &inner_ok);
+            CHECK(inner_ok, "AC1: nested enter ok");
+        }
+        CHECK(occurrence_commit_snapshot_written_total_v_read() == w0,
+              "AC1: nested success wrote 0 commit snapshots");
+        (void)outer_ok;
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3082_2_nested_query_inflight() {
+    std::println("\n--- #3082 AC2: nested open / nested success → query in-flight ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "AC2: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    {
+        bool outer_ok = true;
+        Evaluator::MutationBoundaryGuard outer(svc.evaluator(), &outer_ok);
+        {
+            bool inner_ok = true;
+            Evaluator::MutationBoundaryGuard inner(svc.evaluator(), &inner_ok);
+            CHECK(svc.evaluator().mutation_boundary_depth_slot_value() >= 2, "AC2: nested depth");
+            CHECK(!svc.evaluator().type_export_authoritative(),
+                  "AC2: nested open not authoritative");
+            CHECK(svc.evaluator().type_export_inflight(), "AC2: nested open in-flight");
+            (void)svc.eval("(typecheck-current)");
+            CHECK(!svc.evaluator().type_export_authoritative(),
+                  "AC2: typecheck mid-nested does not grant");
+            CHECK(svc.evaluator().type_export_inflight(), "AC2: still in-flight after typecheck");
+            auto git = svc.eval("(get-inferred-type 0)");
+            CHECK(git.has_value(), "AC2: get-inferred-type returned");
+            (void)inner_ok;
+        }
+        CHECK(!svc.evaluator().type_export_authoritative(),
+              "AC2: after nested success still not authoritative");
+        CHECK(svc.evaluator().type_export_inflight(), "AC2: after nested success still in-flight");
+        (void)svc.eval("(typecheck-current)");
+        CHECK(!svc.evaluator().type_export_authoritative(),
+              "AC2: typecheck after nested still refuses grant");
+        CHECK(svc.evaluator().type_export_inflight(),
+              "AC2: inflight sticky until outermost persist");
+        (void)outer_ok;
+    }
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(prim.find("in-flight") != std::string::npos &&
+              prim.find("copy_infer_type_export_authority") != std::string::npos,
+          "AC2: query + typecheck copy refuse mid-nested grant");
+}
+
+static void ac3082_3_outermost_persist_unchanged() {
+    std::println("\n--- #3082 AC3: outermost success persist + grant unchanged ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto persist_pos = mb.find("maybe_persist_occurrence_snapshot");
+    const auto stamp_pos = mb.find("build_type_linear_commit_proof_from_live",
+                                   persist_pos != std::string::npos ? persist_pos : 0);
+    const auto ens_pos = mb.find("ensure_occurrence_commit_or_recover",
+                                 stamp_pos != std::string::npos ? stamp_pos : 0);
+    const auto grant_pos =
+        mb.find("grant_type_export_authority", ens_pos != std::string::npos ? ens_pos : 0);
+    CHECK(persist_pos != std::string::npos && stamp_pos != std::string::npos &&
+              ens_pos != std::string::npos && grant_pos != std::string::npos &&
+              persist_pos < stamp_pos && stamp_pos < ens_pos && ens_pos < grant_pos,
+          "AC3: persist → stamp → ensure → grant still sole outermost path");
+    CHECK(mb.find("aura_outermost_success_persist_occurrence") != std::string::npos,
+          "AC3: persist helper retained");
+}
+
+static void ac3082_4_soft_no_nested_zero_extra() {
+    std::println("\n--- #3082 AC4: Soft empty / no nested → zero extra persist ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    reset_occurrence_commit_snapshot_for_test();
+    reset_occurrence_provisional_discard_for_test();
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 1, 1);
+    CHECK(u.cs.append_occurrence_snapshot(1) == 0, "AC4: Soft persist off");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "AC4: no durable snapshot");
+    CHECK(occurrence_commit_snapshot_written_total_v_read() == 0, "AC4: commit snapshot quiet");
+    CHECK(occurrence_provisional_discard_total_v_read() == 0, "AC4: discard quiet");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "AC4: warm");
+    (void)svc.eval("(typecheck-current)");
+    {
+        bool ok = true;
+        Evaluator::MutationBoundaryGuard only(svc.evaluator(), &ok);
+        CHECK(svc.evaluator().mutation_boundary_depth_slot_value() == 1, "AC4: outermost only");
+        // No nested enter — do not force inflight on depth==1.
+        (void)ok;
+    }
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev.find("copy_infer_type_export_authority") != std::string::npos,
+          "AC4: Soft no-nested uses copy helper (inflight false → grant)");
+}
+
+static void ac3082_5_nested_fail_inflight_outer_abort_discards() {
+    std::println("\n--- #3082 AC5: nested fail inflight; outermost abort still discards ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "AC5: warm");
+    (void)svc.eval("(typecheck-current)");
+    {
+        bool outer_ok = true;
+        Evaluator::MutationBoundaryGuard outer(svc.evaluator(), &outer_ok);
+        {
+            bool inner_ok = true;
+            Evaluator::MutationBoundaryGuard inner(svc.evaluator(), &inner_ok);
+            inner_ok = false;
+        }
+        CHECK(!svc.evaluator().type_export_authoritative(), "AC5: nested fail not authoritative");
+        CHECK(svc.evaluator().type_export_inflight(), "AC5: nested fail stays in-flight");
+        CHECK(outer_ok, "AC5: nested fail does not flip outer success");
+    }
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("outermost && !success") != std::string::npos, "AC5: outer abort discard kept");
+    CHECK(mb.find("discard_provisional_occurrence_snapshot") != std::string::npos,
+          "AC5: discard still outermost-fail");
+    CHECK(mb.find("Do not discard live goals here") != std::string::npos,
+          "AC5: nested fail does not wipe outer goals");
+}
+
+static void ac3082_6_schema_and_linter() {
+    std::println("\n--- #3082 AC6: schema + linter + no invent ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "AC6: warm");
+    CHECK(href(cs, "schema-3082") == 3082, "AC6: schema-3082");
+    CHECK(href(cs, "issue-3082") == 3082, "AC6: issue-3082");
+    CHECK(href(cs, "nested-occurrence-provisional-wired") == 1, "AC6: wired");
+    CHECK(href(cs, "schema-3004") == 3004, "AC6: #3004 lineage");
+    CHECK(href(cs, "schema-2938") == 2938, "AC6: #2938 lineage");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_nested_occurrence_provisional_3082.py");
+    const auto build = read_file("build.py");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(t.find("ac3082_1_nested_success_never_persists") != std::string::npos, "AC6: AC1");
+    CHECK(t.find("ac3082_2_nested_query_inflight") != std::string::npos, "AC6: AC2");
+    CHECK(t.find("ac3082_3_outermost_persist_unchanged") != std::string::npos, "AC6: AC3");
+    CHECK(t.find("ac3082_4_soft_no_nested_zero_extra") != std::string::npos, "AC6: AC4");
+    CHECK(t.find("ac3082_5_nested_fail_inflight_outer_abort_discards") != std::string::npos,
+          "AC6: AC5");
+    CHECK(tma.find("kNestedOccurrenceProvisionalIssue = 3082") != std::string::npos,
+          "AC6: issue constant");
+    CHECK(!lint.empty() && lint.find("Issue #3082") != std::string::npos, "AC6: linter");
+    CHECK(build.find("check_nested_occurrence_provisional_3082") != std::string::npos,
+          "AC6: build.py");
+    CHECK(read_file("docs/design/3082-nested-occurrence-provisional.md").empty(),
+          "AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3082.cpp").empty(),
+          "AC6: no invent test_issue_3082");
+}
+
 // ── Issue #2981: steal/densify rehydrate miss binds TypeLinearCommitProof ──
 
 static void ac2981_1_prod_miss_rejects_proof() {
@@ -1422,6 +1616,13 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3004_3_discard_provisional_on_fail();
     ac3004_4_schema_and_lineage();
     ac3004_5_source_and_linter();
+    std::println("\n=== #3082 mid/nested MutationBoundary occurrence provisional ===");
+    ac3082_1_nested_success_never_persists();
+    ac3082_2_nested_query_inflight();
+    ac3082_3_outermost_persist_unchanged();
+    ac3082_4_soft_no_nested_zero_extra();
+    ac3082_5_nested_fail_inflight_outer_abort_discards();
+    ac3082_6_schema_and_linter();
     std::println("\n=== #3032 rehydrate-miss invalidates linear_fast_path + deopt ===");
     ac3032_1_prod_miss_invalidates_fast_path();
     ac3032_2_soft_observe_only();
