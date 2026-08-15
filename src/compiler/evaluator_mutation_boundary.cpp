@@ -1834,6 +1834,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         // process-origin join key).
         session_mid_at_enter_ = typed_audit::resolve_audit_mutation_id();
         typed_audit::note_boundary_audit_mid(session_mid_at_enter_);
+        // Issue #3048: publish session mid to fiber-local + hold snapshot
+        // so steal-complete / force-cancel can revoke without Guard stack.
+        aura::serve::set_current_fiber_session_mid(session_mid_at_enter_);
+        aura::compiler::g_mutation_hold_live_session_mid.store(session_mid_at_enter_,
+                                                               std::memory_order_release);
     }
     // Issue #2215: RenderFastExit eligible when outermost Guard is entered
     // under render hotpath (RenderHotEntryGuard / enter_render_hotpath).
@@ -2139,6 +2144,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     if (is_outermost_ && session_mid_at_enter_ != 0) {
         using ::aura::core::capability::g_capability_registry;
         (void)g_capability_registry().revoke_session_grants_for_mid(session_mid_at_enter_);
+        // Issue #3048: drop fiber-local / hold snapshot after #2944 revoke
+        // so a later steal of this fiber cannot re-fire on a dead mid.
+        // Second revoke (if steal already ran) is a no-op (AC3).
+        aura::serve::clear_current_fiber_session_mid();
+        if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+            session_mid_at_enter_) {
+            aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
+        }
     }
     // Issue #2847: region type/occurrence commit bind. When this Guard
     // admitted a non-zero cone/ImpactScope mask, any OccurrenceGoal

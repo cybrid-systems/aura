@@ -29,6 +29,7 @@ module;
 #include "core/flatast_restamp.hh"            // Issue #3019: unified restamp counters
 #include "core/security_event_wal.hh" // Issue #2839: IsolationDeny SE on fiber principal mismatch
 #include "core/workspace_epoch.hh"    // Issue #2839: Mutation epoch mid for SE
+#include "core/capability_model.hh"   // Issue #3048: session grant steal/abort revoke
 #include <algorithm>                  // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
@@ -60,6 +61,8 @@ extern int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcep
 // Issue #2726: read-only diagnostic peek for tests + observability.
 // Returns 1 if the flag is currently set on the holder, 0 otherwise.
 extern int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
+// Issue #3048: holder session-mid lookup for cross-fiber force-degrade.
+extern std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept;
 }
 
 namespace aura::compiler {
@@ -1278,9 +1281,23 @@ Evaluator* Evaluator::get_query_evaluator() noexcept {
 
 // Issue #2347: MultiFiberMailbox Strict path may force outermost mutation
 // mark-failed when blocking recv rejects exceed the Guard window threshold.
+// Issue #3048: mark_outermost_mutation_failed also revokes session grants
+// (abort path independent of Guard dtor).
 extern "C" void aura_evaluator_mark_outermost_mutation_failed() noexcept {
     if (auto* ev = Evaluator::get_query_evaluator())
         ev->mark_outermost_mutation_failed();
+}
+
+void Evaluator::mark_outermost_mutation_failed() noexcept {
+    if (outermost_mutation_success_flag_)
+        *outermost_mutation_success_flag_ = false;
+    // Issue #3048: abort / force-cancel path — revoke session grants
+    // bound to this fiber's captured outermost mid even if Guard dtor
+    // never runs. Second call (Guard dtor #2944) is a no-op (AC3).
+    const auto mid = aura::serve::current_fiber_session_mid();
+    if (mid != 0)
+        (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(mid,
+                                                                                /*steal=*/false);
 }
 
 // Issue #2932: hold-budget overtime forced outermost fail-closed at a
@@ -1396,6 +1413,19 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
         aura_fiber_request_hold_budget_cancel(fiber_id) != 0) {
         g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total.fetch_add(
             1, std::memory_order_relaxed);
+    }
+    // Issue #3048: revoke holder session grants at force-degrade so a
+    // body that never reaches Guard dtor / safepoint cannot leave
+    // session_bound residual. Fiber-local first; hold snapshot fallback
+    // if the holder has already left the registry. Soft/empty live
+    // residual is a zero-cost early-out inside the hook (AC4).
+    {
+        auto mid = aura_fiber_session_mid(fiber_id);
+        if (mid == 0)
+            mid = g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
+        if (mid != 0)
+            (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(
+                mid, /*steal=*/false);
     }
 }
 
@@ -3171,6 +3201,17 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         1, std::memory_order_relaxed);
 
     auto* fiber = static_cast<aura::serve::Fiber*>(fiber_ptr);
+    // Issue #3048: revoke session grants bound to this fiber's captured
+    // outermost mid independent of Guard lifetime (steal may cancel /
+    // Done the fiber before dtor). Zero cost when mid==0 or no live
+    // session grants (registry early-out, AC4). Double-revoke with
+    // later Guard dtor is a no-op (AC3).
+    if (fiber) {
+        const auto mid = fiber->session_mid();
+        if (mid != 0)
+            (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(mid,
+                                                                                    /*steal=*/true);
+    }
     void* prev_eval_id = nullptr;
     if (fiber) {
         // (1) mutation_stack_storage_ handoff: fiber already carries the

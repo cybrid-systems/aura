@@ -97,6 +97,9 @@ namespace aura::compiler {
 inline std::atomic<std::uint64_t> g_mutation_hold_live_fiber_id{0};
 inline std::atomic<std::uint64_t> g_mutation_hold_live_start_ns{0};
 inline std::atomic<std::uint32_t> g_mutation_hold_live_depth{0};
+// Issue #3048: hold-snapshot session mid so force-degrade can revoke
+// session grants if the holder fiber is already gone from the registry.
+inline std::atomic<std::uint64_t> g_mutation_hold_live_session_mid{0};
 inline std::atomic<std::uint64_t> g_mutation_hold_live_update_total{0};
 inline std::atomic<std::uint64_t> g_mutation_hold_live_clear_total{0};
 inline std::atomic<std::uint64_t> g_mutation_hold_live_over_budget_observe_total{0};
@@ -149,6 +152,7 @@ inline void mutation_hold_live_note_exit(std::uint64_t fiber_id) noexcept {
             expected, 0, std::memory_order_acq_rel, std::memory_order_relaxed)) {
         g_mutation_hold_live_start_ns.store(0, std::memory_order_release);
         g_mutation_hold_live_depth.store(0, std::memory_order_relaxed);
+        g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
         g_mutation_hold_live_clear_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
@@ -158,6 +162,7 @@ struct MutationHoldLiveSnapshot {
     std::uint64_t start_ns = 0;
     std::uint64_t duration_us = 0;
     std::uint32_t depth = 0;
+    std::uint64_t session_mid = 0; // #3048
     bool held = false;
 };
 
@@ -167,6 +172,7 @@ struct MutationHoldLiveSnapshot {
     s.fiber_id = g_mutation_hold_live_fiber_id.load(std::memory_order_acquire);
     s.start_ns = g_mutation_hold_live_start_ns.load(std::memory_order_acquire);
     s.depth = g_mutation_hold_live_depth.load(std::memory_order_relaxed);
+    s.session_mid = g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
     if (s.fiber_id != 0 && s.start_ns != 0) {
         s.held = true;
         const auto now = mutation_hold_steady_ns_now();
@@ -184,6 +190,7 @@ inline void mutation_hold_live_reset_for_test() noexcept {
     g_mutation_hold_live_fiber_id.store(0, std::memory_order_relaxed);
     g_mutation_hold_live_start_ns.store(0, std::memory_order_relaxed);
     g_mutation_hold_live_depth.store(0, std::memory_order_relaxed);
+    g_mutation_hold_live_session_mid.store(0, std::memory_order_relaxed);
 }
 
 // Issue #2701: Mutation hold-budget timeout → force degrade / reject new
