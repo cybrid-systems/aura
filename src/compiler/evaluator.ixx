@@ -3643,6 +3643,22 @@ public:
         type_export_authoritative_ = false;
         type_export_inflight_ = true;
     }
+    // Issue #3082: typecheck / Soft infer must not promote a mid/nested
+    // MutationBoundary occurrence to query:type authority. Nested enter
+    // and !outermost exit stamp inflight; this helper refuses to grant
+    // over that until outermost persist force-grants (#2938 / #3004).
+    // Soft + no nested: inflight is false and depth<=1 → same grant/clear
+    // as today (one extra bool + slot load on typecheck, not on query).
+    void copy_infer_type_export_authority(bool infer_authoritative) noexcept {
+        if (type_export_inflight_ || mutation_boundary_depth_slot_value() > 1) {
+            note_type_export_inflight();
+            return;
+        }
+        if (infer_authoritative)
+            grant_type_export_authority();
+        else
+            clear_type_export_authority();
+    }
     // Issue #2308: opaque handle to the live commit TypeChecker (null
     // when no commit CS is currently live). Query primitives cast it
     // to TypeChecker* and call constraint_system() to build a

@@ -205,6 +205,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Soft: persist is off; grant still marks the post-audit surface
     // so Soft observe matches #3003 SOLVED infer. Production grant
     // is the sole moment persist + linear proof + health are durable.
+    // Issue #3082: nested/mid Guards never call this helper — they
+    // stamp inflight and leave grant to this outermost success path.
     ev->grant_type_export_authority();
 }
 
@@ -1832,6 +1834,11 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     int prev = ++(*slot);
     bool outermost = (prev == 1);
     is_outermost_ = outermost;
+    // Issue #3082: mid/nested enter marks occurrence provisional so
+    // query:type cannot observe live goals as committed while depth>1.
+    // Outermost enter is unchanged (Soft observe / persist-on-success).
+    if (!outermost)
+        ev_->note_type_export_inflight();
     // Issue #2944: capture Mutation epoch mid for session-grant revoke on
     // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
     if (outermost) {
@@ -3936,6 +3943,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 aura::compiler::typed_audit::note_occurrence_provisional_discard(dropped);
         }
         ev_->clear_type_export_authority();
+    } else if (!outermost) {
+        // Issue #3082: nested/mid success or fail never persist and never
+        // grant. Occurrence stays provisional; query:type is in-flight
+        // until the outermost Guard freezes the snapshot (#2938 helper).
+        // Do not discard live goals here — that would wipe outermost-still-
+        // open work; outermost && !success remains the sole discard (#3004).
+        ev_->note_type_export_inflight();
     }
     // Issue #1255: on Guard exit, if hygiene drift was seen,
     // force DefUseIndex sync before releasing the boundary.

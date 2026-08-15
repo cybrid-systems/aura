@@ -1358,6 +1358,13 @@ inline void reset_occurrence_provisional_discard_for_test() noexcept {
     g_occurrence_provisional_discard_goals_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3082: mid/nested MutationBoundary occurrence is provisional.
+// Nested success never writes the durable persist log; query:type stays
+// in-flight until outermost persist force-grants. Additive wired flag
+// only — no new incrementing counters (#3081 no-metrics shape).
+inline constexpr int kNestedOccurrenceProvisionalIssue = 3082;
+inline std::atomic<std::uint32_t> g_nested_occurrence_provisional_wired{1};
+
 // Issue #2995: last OccurrenceCommitHealth snapshot + ensure counters.
 // Soft + empty / no faces: evaluate is pure loads (these stay at reset).
 // ensure_* only fetch_adds when production needs_recover.

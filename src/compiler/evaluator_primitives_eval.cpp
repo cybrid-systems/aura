@@ -802,10 +802,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
         // Issue #3081: copy infer authority so query:type / query-type-of
         // never surface a half-solved TIMEOUT cone as truth.
-        if (tc.last_type_export_authoritative())
-            ev.grant_type_export_authority();
-        else
-            ev.clear_type_export_authority();
+        // Issue #3082: do not grant_type_export_authority over mid/nested
+        // provisional inflight (copy_infer refuses; persist still grants).
+        ev.copy_infer_type_export_authority(tc.last_type_export_authoritative());
 
         // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
         // and clears per-node dirty flags. No need for post-pass cache sync.
@@ -886,10 +885,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             tc.infer_flat_partial_with_dirty_txn(*ev.workspace_flat_, *ev.workspace_pool_, rec,
                                                  diag);
         // Issue #3081: copy partial-infer authority (Soft TIMEOUT → false).
-        if (tc.last_type_export_authoritative())
-            ev.grant_type_export_authority();
-        else
-            ev.clear_type_export_authority();
+        // Issue #3082: do not grant_type_export_authority over mid/nested
+        // provisional inflight (copy_infer refuses; persist still grants).
+        ev.copy_infer_type_export_authority(tc.last_type_export_authoritative());
         std::string out = "re-inferred: " + std::to_string(re_inferred) + "\n";
         if (!diag.diagnostics().empty()) {
             out += "diagnostics:\n";

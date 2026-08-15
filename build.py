@@ -1098,6 +1098,19 @@ def cmd_lint():
             "Issue #3081 Soft TIMEOUT export non-authoritative linter failed — run python3 scripts/coverage/checks/check_soft_timeout_export_non_authoritative_3081.py"
         )
         return r
+    # Issue #3082: mid/nested MutationBoundary occurrence is
+    # provisional — no durable persist; query:type in-flight until
+    # outermost commit. Extends persist-rehydrate (#81967).
+    nop3082_script = COVERAGE_CHECKS / "check_nested_occurrence_provisional_3082.py"
+    if not nop3082_script.exists():
+        fail(f"missing {nop3082_script}")
+        return 1
+    r = run([sys.executable, str(nop3082_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3082 nested occurrence provisional linter failed — run python3 scripts/coverage/checks/check_nested_occurrence_provisional_3082.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12455,6 +12468,31 @@ def cmd_soft_timeout_export_non_authoritative_3081():
     return cmd_soft_timeout_export_non_authoritative_3081_coverage()
 
 
+def cmd_nested_occurrence_provisional_3082_coverage():
+    """Issue #3082: mid/nested MutationBoundary occurrence is provisional (static)."""
+    print(f"{B}=== nested occurrence provisional coverage (#3082) ==={N}")
+    script = COVERAGE_CHECKS / "check_nested_occurrence_provisional_3082.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("nested occurrence provisional (#3082) coverage contract rows failed")
+        return 1
+    ok("nested occurrence provisional (#3082) coverage clean")
+    return 0
+
+
+def cmd_nested_occurrence_provisional_3082():
+    """Issue #3082: mid/nested MutationBoundary marks occurrence provisional.
+
+    Nested success never durable-persists. query:type stays in-flight
+    until outermost persist. Soft empty / no nested: zero extra persist.
+    """
+    print(f"{B}=== nested occurrence provisional (#3082) ==={N}")
+    return cmd_nested_occurrence_provisional_3082_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16853,6 +16891,8 @@ def main():
         "soft-observe-not-hard-3076-coverage": cmd_soft_observe_not_hard_3076_coverage,
         "soft-timeout-export-non-authoritative-3081": cmd_soft_timeout_export_non_authoritative_3081,
         "soft-timeout-export-non-authoritative-3081-coverage": cmd_soft_timeout_export_non_authoritative_3081_coverage,
+        "nested-occurrence-provisional-3082": cmd_nested_occurrence_provisional_3082,
+        "nested-occurrence-provisional-3082-coverage": cmd_nested_occurrence_provisional_3082_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

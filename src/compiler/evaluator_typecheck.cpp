@@ -307,10 +307,14 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Soft: keep #3003 observe authority after SOLVED infer.
             // Issue #3081: Soft TIMEOUT / CONFLICT copies false — query:type
             // must not read a half-solved cone as authority.
+            // Issue #3082: Soft grant is refused while nested/mid is
+            // provisional (inflight sticky until outermost persist).
+            // Soft no-nested still writes type_export_authoritative_ via
+            // copy_infer (#3003 observe / #3081 TIMEOUT copy).
             if (aura::compiler::typed_audit::production_defaults_active())
                 note_type_export_inflight();
             else
-                type_export_authoritative_ = tc.last_type_export_authoritative();
+                copy_infer_type_export_authority(tc.last_type_export_authoritative());
             // Issue #537: mirror per-call TypeChecker narrowing stats
             // into lifetime CompilerMetrics (same as CompilerService
             // typecheck / incremental_infer paths).

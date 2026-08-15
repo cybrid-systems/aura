@@ -829,6 +829,17 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           aura::compiler::typed_audit::kOccurrencePersistAuditAtomicIssue);
                 insert_kv("issue-3004",
                           aura::compiler::typed_audit::kOccurrencePersistAuditAtomicIssue);
+                // Issue #3082: nested/mid MutationBoundary occurrence
+                // stays provisional (no durable persist; query in-flight).
+                insert_kv(
+                    "nested-occurrence-provisional-wired",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::g_nested_occurrence_provisional_wired.load(
+                            std::memory_order_relaxed)));
+                insert_kv("schema-3082",
+                          aura::compiler::typed_audit::kNestedOccurrenceProvisionalIssue);
+                insert_kv("issue-3082",
+                          aura::compiler::typed_audit::kNestedOccurrenceProvisionalIssue);
                 // Issue #2995: unified OccurrenceCommitHealth
                 // (additive).
                 insert_kv("occurrence-commit-health-faces",
