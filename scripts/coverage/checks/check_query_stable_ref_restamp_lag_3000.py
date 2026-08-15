@@ -70,7 +70,7 @@ def main() -> int:
     must("allow_query_stable_ref_export", "AC1", ev)
     must("node_generation_is_post_mutate", "AC1", astx)
     must("restamp_last_budget_exceeded", "AC1", sec)
-    must("production_defaults_active()", "AC1", sec)
+    must("should_hard_reject_soft_sibling", "AC1", sec)  # #3076 Hard-sibling SSOT
     must("allow_query_stable_ref_export", "AC1 children-stable", qws)
     must("allow_query_stable_ref_export", "AC1 parent-stable", qws)
     must("query:stable-ref", "AC1 stable-ref prim", qws)
