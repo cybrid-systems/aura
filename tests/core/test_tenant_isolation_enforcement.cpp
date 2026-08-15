@@ -10,6 +10,7 @@
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh"
 #include "core/capability_model.hh"
+#include "core/resource_quota.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 
@@ -1923,6 +1924,111 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_3048.cpp");
         CHECK(!invent.good(), "3048: no test_issue_3048.cpp");
+    }
+
+    // ── #3049: per-tenant ResourceQuota (DoS isolation) ──
+    {
+        std::println("\n--- #3049 AC1/AC2: tenant A exhaust does not deny tenant B ---");
+        using aura::core::resource_quota::Dimension;
+        using aura::core::resource_quota::process_resource_quota;
+        using aura::core::resource_quota::reset_process_resource_quota_for_test;
+        using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+        reset_process_resource_quota_for_test();
+        set_quota_per_tenant_enabled_for_test(true);
+        auto& pq = process_resource_quota();
+        pq.set_limit(Dimension::Fibers, 4); // process ceiling
+        pq.set_tenant_limit(1, Dimension::Fibers, 2);
+        pq.set_tenant_limit(2, Dimension::Fibers, 2);
+        CHECK(!pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/1).has_value(),
+              "3049: A first fiber ok");
+        CHECK(!pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/1).has_value(),
+              "3049: A second fiber ok");
+        auto a3 = pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/1);
+        CHECK(a3.has_value(), "3049: A third fiber denied (tenant budget)");
+        if (a3) {
+            CHECK(a3->message.find("quota-exceeded:tenant=1:dim=fibers") != std::string::npos,
+                  "3049 AC5: Agent-readable tenant deny reason");
+        }
+        CHECK(!pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/2).has_value(),
+              "3049 AC2: B still admits after A exhaust");
+        CHECK(!pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/2).has_value(),
+              "3049 AC2: B second fiber ok");
+        auto b3 = pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/2);
+        CHECK(b3.has_value(), "3049: B third denied by tenant budget");
+        // Process ceiling: A=2 + B=2 == 4; extra from either tenant fails globally.
+        auto ceil = pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/2);
+        CHECK(ceil.has_value(), "3049: process ceiling still binds");
+        CHECK(pq.quota_reject_by_tenant_total.load() >= 2, "3049 AC4: tenant reject counter");
+        pq.release(Dimension::Fibers, 2, 1);
+        pq.release(Dimension::Fibers, 2, 2);
+        CHECK(pq.used(Dimension::Fibers) == 0, "3049: process used restored");
+        CHECK(pq.tenant_used(1, Dimension::Fibers) == 0, "3049: A used restored");
+        // Mutations dimension: same tenant keying (AC1 orch/scheduler dims).
+        pq.set_limit(Dimension::Mutations, 4);
+        pq.set_tenant_limit(1, Dimension::Mutations, 1);
+        pq.set_tenant_limit(2, Dimension::Mutations, 1);
+        CHECK(!pq.check_and_consume(Dimension::Mutations, 1, 1).has_value(),
+              "3049 AC1: A mutation consume");
+        CHECK(pq.check_and_consume(Dimension::Mutations, 1, 1).has_value(),
+              "3049 AC1: A mutation budget exhausted");
+        CHECK(!pq.check_and_consume(Dimension::Mutations, 1, 2).has_value(),
+              "3049 AC1: B mutation still admits");
+        pq.release(Dimension::Mutations, 1, 1);
+        pq.release(Dimension::Mutations, 1, 2);
+        reset_process_resource_quota_for_test();
+    }
+    {
+        std::println("\n--- #3049 AC3: Soft/off path stays process-global ---");
+        using aura::core::resource_quota::Dimension;
+        using aura::core::resource_quota::process_resource_quota;
+        using aura::core::resource_quota::quota_per_tenant_enabled;
+        using aura::core::resource_quota::reset_process_resource_quota_for_test;
+        using aura::core::resource_quota::set_quota_per_tenant_enabled_for_test;
+        reset_process_resource_quota_for_test();
+        set_quota_per_tenant_enabled_for_test(false);
+        CHECK(!quota_per_tenant_enabled(), "3049 AC3: per-tenant off");
+        auto& pq = process_resource_quota();
+        pq.set_limit(Dimension::Fibers, 1);
+        pq.set_tenant_limit(1, Dimension::Fibers, 1);
+        pq.set_tenant_limit(2, Dimension::Fibers, 1);
+        CHECK(!pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/1).has_value(),
+              "3049 AC3: A consumes process slot");
+        auto b = pq.check_and_consume(Dimension::Fibers, 1, /*tenant=*/2);
+        CHECK(b.has_value(), "3049 AC3: B denied by process-global limit (no tenant map)");
+        if (b) {
+            CHECK(b->message.find("quota-exceeded:tenant=") == std::string::npos,
+                  "3049 AC3: deny reason is process-global, not tenant");
+        }
+        CHECK(pq.quota_reject_by_tenant_total.load() == 0, "3049 AC3: no tenant reject counter");
+        pq.release(Dimension::Fibers, 1, 1);
+        reset_process_resource_quota_for_test();
+    }
+    {
+        std::println("\n--- #3049 AC4/AC6: posture + source-cite + no invent ---");
+        const auto rq = read_file("src/core/resource_quota.hh");
+        const auto sched = read_file("src/serve/scheduler.cpp");
+        const auto orch = read_file("src/orch/agent_spawn.h");
+        const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        const auto build = read_file("build.py");
+        CHECK(rq.find("quota_per_tenant_enabled") != std::string::npos,
+              "3049: quota enable helper");
+        CHECK(rq.find("check_and_consume_tenant") != std::string::npos ||
+                  rq.find("TenantId tenant") != std::string::npos,
+              "3049: tenant-keyed consume");
+        CHECK(rq.find("quota-exceeded:tenant=") != std::string::npos, "3049 AC5: deny reason");
+        CHECK(sched.find("check_and_consume_fiber(spawn_tenant)") != std::string::npos,
+              "3049 AC6: scheduler spawn keys tenant");
+        CHECK(orch.find("check_orchestration_fibers") != std::string::npos,
+              "3049 AC6: orch admission cite");
+        CHECK(obs.find("schema-3049") != std::string::npos, "3049 AC4: schema-3049");
+        CHECK(obs.find("quota-reject-by-tenant-total") != std::string::npos,
+              "3049 AC4: reject-by-tenant key");
+        CHECK(build.find("check_quota_per_tenant_3049") != std::string::npos,
+              "3049 AC6: build.py wires linter");
+        std::ifstream invent("tests/core/test_issue_3049.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3049.cpp");
+        CHECK(!invent.good(), "3049: no test_issue_3049.cpp");
     }
 
     reset_all();

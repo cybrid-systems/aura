@@ -11064,6 +11064,18 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2155", 2155);
             insert_kv("issue-2155", 2155);
             insert_kv("spawn-quota-no-leak-wired", 1);
+            // Issue #3049: per-tenant ResourceQuota (additive keys; schema stays 1634).
+            insert_kv("schema-3049", 3049);
+            insert_kv("issue-3049", 3049);
+            insert_kv("quota-per-tenant-wired", 1);
+            insert_kv("quota-per-tenant-enabled",
+                      aura::core::resource_quota::quota_per_tenant_enabled() ? 1 : 0);
+            insert_kv("quota-reject-by-tenant-total",
+                      static_cast<std::int64_t>(
+                          pq.quota_reject_by_tenant_total.load(std::memory_order_relaxed)));
+            insert_kv("quota-last-reject-tenant",
+                      static_cast<std::int64_t>(
+                          pq.quota_last_reject_tenant.load(std::memory_order_relaxed)));
             insert_kv("issue", 1634);  // primary lineage id (1628|1618|1600…)
             insert_kv("schema", 1634); // keep stable; Agents use schema-1880 for #1880 fields
             auto hidx = g_hash_tables.size();

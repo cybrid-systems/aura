@@ -250,8 +250,9 @@ inline ParallelOrchStats g_parallel_orch_stats{};
 // Returns nullopt when OK; QuotaError with ResourceQuotaExceeded semantics when not.
 [[nodiscard]] inline std::optional<aura::core::resource_quota::QuotaError>
 check_orchestration_fiber_quota(std::uint64_t estimated_fibers) noexcept {
+    auto tenant = aura::core::resource_quota::current_quota_tenant();
     return aura::core::resource_quota::process_resource_quota().check_orchestration_fibers(
-        estimated_fibers);
+        estimated_fibers, tenant);
 }
 
 inline void snapshot_global(std::uint64_t& batches, std::uint64_t& spawned, std::uint64_t& joined,
