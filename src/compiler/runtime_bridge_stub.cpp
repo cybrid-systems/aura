@@ -34,15 +34,10 @@ aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_ma
     return 0;
 }
 
-// Issue #1368: aura_set_aot_metrics — service.ixx / evaluator.ixx wire the
-// CompilerMetrics pointer at startup/teardown. Strong definition lives in
-// aura_jit_bridge.cpp (full JIT) / aura_jit_bridge_stub.cpp (light JIT);
-// light-link tests (aura_issue_test_link_light) resolve this from
-// libaura_jit_light_test_objects.so (strong). Do NOT stub it here: an empty
-// weak stub in libaura_test_objects.so preempts the strong definition, so
-// tests that wire metrics via aura_set_aot_metrics write into a no-op stub
-// and counter assertions observe zero motion (same class as
-// aura_aot_bump_func_table_epoch — e6f8e7dd missed this one).
+// Issue #1368: aura_set_aot_metrics lives in runtime_ssot.cpp
+// (libaura_tl_arena.so) so this DSO resolves it at load time. A weak
+// stub here would preempt the SSOT pointer and zero-out counter
+// assertions (same class as aura_aot_bump_func_table_epoch).
 
 // Issue #1522: batch-deopt target registration. service.ixx registers the
 // AuraJIT* at boot; strong def lives in aura_jit_bridge.cpp. Weak stub so
@@ -78,39 +73,23 @@ aura_set_lock_hooks(void (* /*lock_read*/)(void*), void (* /*unlock_read*/)(void
 extern "C" __attribute__((weak)) void
 aura_set_top_cell_getter(std::int64_t (* /*fn*/)(void*, std::int64_t), void* /*user_data*/) {}
 
-extern "C" __attribute__((weak)) void* aura_get_aot_metrics(void) {
-    return nullptr;
-}
+// aura_get_aot_metrics / aura_set_aot_metrics live in runtime_ssot.cpp.
 
 extern "C" __attribute__((weak)) void aura_set_aot_defuse_version(std::uint64_t /*v*/) {}
 
 extern "C" __attribute__((weak)) void aura_set_current_bridge_epoch(std::uint64_t /*v*/) {}
 
-extern "C" __attribute__((weak)) void aura_set_epoch_invariant_mode(int /*mode*/) {}
-extern "C" __attribute__((weak)) int aura_epoch_invariant_mode(void) {
-    return 0;
-}
+// aura_set_epoch_invariant_mode / aura_epoch_invariant_mode live in
+// runtime_ssot.cpp (libaura_tl_arena.so).
 
-extern "C" __attribute__((weak)) void
-aura_epoch_invariant_note_closure_must_deopt(std::uint64_t /*n*/) noexcept {}
-extern "C" __attribute__((weak)) void
-aura_epoch_invariant_note_slot_stale(std::uint64_t /*n*/) noexcept {}
-extern "C" __attribute__((weak)) void
-aura_epoch_invariant_note_walk(std::uint64_t /*violations*/) noexcept {}
-
-extern "C" __attribute__((weak)) std::size_t
-aura_epoch_invariant_must_deopt_stale_live_closures(void) {
-    return 0;
-}
+// epoch-invariant note_* / must_deopt / v_read live in runtime_ssot.cpp.
 
 extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
     return 0;
 }
 
 
-extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
-    return 0;
-}
+// aura_aot_count_live_generation_behind_slots lives in runtime_ssot.cpp.
 
 extern "C" __attribute__((weak)) void* aura_aot_get_reemit_owner_eval(void) {
     return nullptr;
@@ -121,10 +100,7 @@ extern "C" __attribute__((weak)) void* aura_aot_get_register_owner_eval(void) {
 extern "C" __attribute__((weak)) void aura_aot_set_reemit_owner_eval(void* /*eval_ptr*/) {}
 extern "C" __attribute__((weak)) void aura_aot_set_register_owner_eval(void* /*eval_ptr*/) {}
 
-extern "C" __attribute__((weak)) std::size_t
-aura_aot_invalidate_all_stale_slots_for_eval(void* /*eval_ptr*/) {
-    return 0;
-}
+// aura_aot_invalidate_all_stale_slots_for_eval lives in runtime_ssot.cpp.
 
 extern "C" __attribute__((weak)) void aura_invalidate_all_closure_caches(void) {}
 

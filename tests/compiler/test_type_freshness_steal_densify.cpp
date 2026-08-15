@@ -183,7 +183,8 @@ static void ac6_source_and_schema() {
     const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto lint =
         read_file("scripts/coverage/checks/check_type_freshness_steal_densify_2552.py");
     const auto cmake = read_file("CMakeLists.txt");

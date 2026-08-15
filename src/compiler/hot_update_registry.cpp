@@ -7,6 +7,7 @@
 #include "compiler/aura_jit_bridge.h"
 #include "compiler/lock_order_audit.h"      // Issue #2316: lock-order audit wire
 #include "compiler/observability_metrics.h" // CompilerMetrics for #2604 auto-drain bumps
+#include "compiler/runtime_shared.h"        // storm C ABI register
 
 #include <chrono>
 #include <cstdlib> // Issue #2236: std::getenv for AURA_STORM_ISOLATION resolver
@@ -2298,11 +2299,20 @@ extern "C" std::uint64_t aura_hot_update_hard_deopt_storm_threshold(void) {
     return aura::compiler::hot_update_registry().hard_deopt_storm_threshold();
 }
 
-// Issue #2094: StormLevel facade accessor (C ABI). Returns the
-// combined bitmask of shape-storm + global-deopt-storm detectors.
-extern "C" std::uint8_t aura_hot_update_current_storm_level(void) {
+// Issue #2094: StormLevel C ABI lives in runtime_ssot.cpp. Register
+// the real registry accessors so SSOT forwards after this DSO loads.
+namespace {
+std::uint8_t storm_level_thunk() {
     return static_cast<std::uint8_t>(aura::compiler::hot_update_registry().current_storm_level());
 }
+void set_shape_storm_thunk(int active) {
+    aura::compiler::hot_update_registry().set_shape_storm_active(active != 0);
+}
+struct StormCAbiReg {
+    StormCAbiReg() { aura_register_storm_c_abi(&storm_level_thunk, &set_shape_storm_thunk); }
+};
+[[maybe_unused]] StormCAbiReg g_storm_c_abi_reg;
+} // namespace
 
 // Issue #2236: StormIsolation mode setter / getter (C ABI). Default
 // value is Global (=0) — preserves today's process-wide deopt-storm
@@ -2366,11 +2376,8 @@ extern "C" void aura_hot_update_registry_reset_region_for_test(void) noexcept {
     aura::compiler::hot_update_registry().reset_region_storm_windows_for_test();
 }
 
-// Issue #2094: setter for ShapeProfiler (or tests) to publish its
-// deopt_storm_active state without importing shape_profiler.h.
-extern "C" void aura_hot_update_set_shape_storm_active(int active) {
-    aura::compiler::hot_update_registry().set_shape_storm_active(active != 0);
-}
+// aura_hot_update_set_shape_storm_active lives in runtime_ssot.cpp
+// and forwards to set_shape_storm_thunk (registered above).
 
 extern "C" void aura_hot_update_on_reemit_throttled(void) {
     aura::compiler::hot_update_registry().on_reemit_throttled();

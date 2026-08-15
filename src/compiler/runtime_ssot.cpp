@@ -14,6 +14,7 @@
 
 #include "runtime_shared.h"
 
+#include <atomic>
 #include <cstdlib>
 #include <vector>
 
@@ -48,6 +49,178 @@ extern "C" void aura_set_current_fiber_id_fn(aura_fiber_id_fn_t fn) {
 }
 extern "C" aura_fiber_id_fn_t aura_get_current_fiber_id_fn() {
     return g_current_fiber_id_fn;
+}
+
+// ── AOT metrics pointer (Issue #1368) ──
+// Same load-order class as aura_set_current_fiber_id_fn. Strong
+// definition used to live only in aura_jit_bridge.cpp / the light
+// stub; libaura_test_objects.so then failed:
+//   undefined symbol: aura_set_aot_metrics
+static aura::compiler::CompilerMetrics* g_aot_metrics = nullptr;
+static std::atomic<std::uint64_t> g_aot_metrics_lazy_init_total{0};
+static std::atomic<std::uint64_t> g_aot_metrics_explicit_sets{0};
+
+extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m) {
+    g_aot_metrics = m;
+    if (m)
+        g_aot_metrics_explicit_sets.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" void aura_ensure_aot_metrics(void* metrics) {
+    if (!metrics)
+        return;
+    if (g_aot_metrics == nullptr) {
+        g_aot_metrics = static_cast<aura::compiler::CompilerMetrics*>(metrics);
+        g_aot_metrics_lazy_init_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+extern "C" void* aura_get_aot_metrics(void) {
+    return g_aot_metrics;
+}
+
+extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
+    return g_aot_metrics_lazy_init_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_aot_metrics_explicit_sets_total(void) {
+    return g_aot_metrics_explicit_sets.load(std::memory_order_relaxed);
+}
+
+// ── StormLevel C ABI (Issue #2094) ──
+// Fallback bitmask when no JIT registry has registered yet (Shape=bit0).
+static std::uint8_t (*g_storm_get)(void) = nullptr;
+static void (*g_storm_set_shape)(int) = nullptr;
+static std::atomic<std::uint8_t> g_storm_fallback{0};
+
+extern "C" void aura_register_storm_c_abi(std::uint8_t (*get)(void), void (*set_shape)(int)) {
+    g_storm_get = get;
+    g_storm_set_shape = set_shape;
+}
+
+extern "C" std::uint8_t aura_hot_update_current_storm_level(void) {
+    if (g_storm_get)
+        return g_storm_get();
+    return g_storm_fallback.load(std::memory_order_relaxed);
+}
+
+extern "C" void aura_hot_update_set_shape_storm_active(int active) {
+    if (g_storm_set_shape) {
+        g_storm_set_shape(active);
+        return;
+    }
+    if (active)
+        g_storm_fallback.fetch_or(1, std::memory_order_relaxed);
+    else
+        g_storm_fallback.fetch_and(static_cast<std::uint8_t>(~1u), std::memory_order_relaxed);
+}
+
+// ── AOT slot / per-eval map C ABI ──
+// Full JIT registers the real slot table. Light stub leaves these
+// null so count/inject stay no-op unless the full bridge is loaded.
+static std::size_t (*g_aot_count_behind)(void) = nullptr;
+static void (*g_aot_inject)(std::int64_t) = nullptr;
+static void (*g_aot_clear_slot)(std::int64_t) = nullptr;
+static std::size_t (*g_aot_invalidate)(void*) = nullptr;
+static std::uint64_t (*g_aot_map_size)(void) = nullptr;
+
+extern "C" void aura_register_aot_slot_c_abi(std::size_t (*count_behind)(void),
+                                             void (*inject)(std::int64_t),
+                                             void (*clear_slot)(std::int64_t),
+                                             std::size_t (*invalidate)(void*),
+                                             std::uint64_t (*map_size)(void)) {
+    g_aot_count_behind = count_behind;
+    g_aot_inject = inject;
+    g_aot_clear_slot = clear_slot;
+    g_aot_invalidate = invalidate;
+    g_aot_map_size = map_size;
+}
+
+extern "C" std::size_t aura_aot_count_live_generation_behind_slots(void) {
+    return g_aot_count_behind ? g_aot_count_behind() : 0;
+}
+
+extern "C" void aura_aot_inject_live_stale_slot_for_test(std::int64_t func_id) {
+    if (g_aot_inject)
+        g_aot_inject(func_id);
+}
+
+extern "C" void aura_aot_clear_slot_for_test(std::int64_t func_id) {
+    if (g_aot_clear_slot)
+        g_aot_clear_slot(func_id);
+}
+
+extern "C" std::size_t aura_aot_invalidate_all_stale_slots_for_eval(void* eval_ptr) {
+    return g_aot_invalidate ? g_aot_invalidate(eval_ptr) : 0;
+}
+
+extern "C" std::uint64_t aura_aot_state_map_size(void) {
+    return g_aot_map_size ? g_aot_map_size() : 0;
+}
+
+// ── Epoch-invariant mode (Issue #2304 / #2501) ──
+// Weak stubs in libaura_test_objects.so used to no-op set/get, so
+// test_epoch_invariant_* never left mode=0. SSOT here so the setter
+// is always live; the full JIT walk reads this same value.
+static std::atomic<int> g_epoch_invariant_mode{0};
+
+extern "C" void aura_set_epoch_invariant_mode(int mode) {
+    if (mode < 0)
+        mode = 0;
+    if (mode > 2)
+        mode = 2;
+    g_epoch_invariant_mode.store(mode, std::memory_order_relaxed);
+}
+
+extern "C" int aura_epoch_invariant_mode(void) {
+    return g_epoch_invariant_mode.load(std::memory_order_relaxed);
+}
+
+static std::atomic<std::uint64_t> g_epoch_invariant_violation_total{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_walks_total{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_slot_stale_total{0};
+static std::atomic<std::uint64_t> g_epoch_invariant_closure_must_deopt_total{0};
+
+extern "C" void aura_epoch_invariant_note_walk(std::uint64_t violations) noexcept {
+    g_epoch_invariant_walks_total.fetch_add(1, std::memory_order_relaxed);
+    if (violations > 0)
+        g_epoch_invariant_violation_total.fetch_add(violations, std::memory_order_relaxed);
+}
+
+extern "C" void aura_epoch_invariant_note_slot_stale(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_slot_stale_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+extern "C" void aura_epoch_invariant_note_closure_must_deopt(std::uint64_t n) noexcept {
+    if (n > 0)
+        g_epoch_invariant_closure_must_deopt_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_violation_total_v_read(void) {
+    return g_epoch_invariant_violation_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_walks_total_v_read(void) {
+    return g_epoch_invariant_walks_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_slot_stale_total_v_read(void) {
+    return g_epoch_invariant_slot_stale_total.load(std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_epoch_invariant_closure_must_deopt_total_v_read(void) {
+    return g_epoch_invariant_closure_must_deopt_total.load(std::memory_order_relaxed);
+}
+
+static std::size_t (*g_must_deopt_stale)(void) = nullptr;
+
+extern "C" void aura_register_epoch_must_deopt_fn(std::size_t (*fn)(void)) {
+    g_must_deopt_stale = fn;
+}
+
+extern "C" std::size_t aura_epoch_invariant_must_deopt_stale_live_closures(void) {
+    return g_must_deopt_stale ? g_must_deopt_stale() : 0;
 }
 
 // Issue #1998 / B-024: C accessor so tests need not name std::vector.
