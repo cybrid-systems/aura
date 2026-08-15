@@ -3280,6 +3280,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
 
             auto jr = aura::orch::join_agent(*hp, policy);
+            // Issue #3051: language surface only — production + Reclaimed
+            // + must_wait_reclaimed + no :wait-reclaimed-ms → one 50ms
+            // wait_reclaimed_body. Explicit override wins (no double-wait).
+            // C++ join_agent Soft default is unchanged (#3012 AC4).
+            jr.wait_us += aura::orch::maybe_auto_wait_reclaimed_production(
+                *hp, policy.wait_reclaimed_ms.has_value());
             const char* st = "ok";
             switch (jr.status) {
                 case aura::serve::JoinStatus::Ok:
@@ -3380,6 +3386,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("schema-3012", make_int(3012));
                 kv.emplace_back("issue-3012", make_int(3012));
                 kv.emplace_back("must-wait-reclaimed-wired", make_int(1));
+                // Issue #3051: after optional auto-wait, wait-reclaimed /
+                // wait-timeout / held flags above are authoritative.
+                kv.emplace_back("schema-3051", make_int(3051));
+                kv.emplace_back("issue-3051", make_int(3051));
+                kv.emplace_back("join-auto-wait-reclaimed-wired", make_int(1));
             }
             // Issue #3014: body try_acquire reject — keys only on reject
             // (zero extra hash keys on success / Soft ok path).
@@ -3835,6 +3846,21 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 }
             }
             const auto jr = scope->join_all(policy);
+            // Issue #3051: per-handle auto short-wait on the language
+            // surface only (C++ join_all does not inject). Must run
+            // before drop so handles_ are still live.
+            const bool caller_passed_wait = policy.wait_reclaimed_ms.has_value();
+            std::uint64_t auto_wait_us = 0;
+            bool any_wait = false;
+            bool any_wait_timeout = false;
+            for (auto& hp : scope->handles_mut()) {
+                auto_wait_us +=
+                    aura::orch::maybe_auto_wait_reclaimed_production(hp, caller_passed_wait);
+                if (hp.wait_reclaimed_used)
+                    any_wait = true;
+                if (hp.wait_reclaimed_timeout)
+                    any_wait_timeout = true;
+            }
             // ~AgentScope semantics: after join_all, scope holds no live
             // handles (drop the per-Evaluator storage slot so the next
             // scope-spawn creates a fresh scope with empty handles_).
@@ -3865,11 +3891,18 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(jr.status == aura::serve::JoinStatus::Ok)},
                 {"status", make_string(sidx)},
-                {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us))},
+                {"wait-us", make_int(static_cast<std::int64_t>(jr.wait_us + auto_wait_us))},
                 {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
                 {"schema", make_int(2588)},
                 {"schema-2083", make_int(2083)},
                 {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
+                // Issue #3051: per-handle auto-wait flags (authoritative
+                // vs aggregate status). Soft / explicit wait stay 0.
+                {"wait-reclaimed", make_bool(any_wait)},
+                {"wait-timeout", make_bool(any_wait_timeout)},
+                {"schema-3051", make_int(3051)},
+                {"issue-3051", make_int(3051)},
+                {"join-auto-wait-reclaimed-wired", make_int(1)},
             };
             return build_orch_hash(kv);
         });
@@ -5522,6 +5555,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("must-wait-reclaimed-wired", 1);
             insert_kv("production-wait-reclaimed-ms-default",
                       static_cast<std::int64_t>(aura::orch::kProductionWaitReclaimedMsDefault));
+            // Issue #3051: Aura auto short-wait reuses wait_reclaimed_*
+            // (no new process-global metric key).
+            insert_kv("schema-3051", 3051);
+            insert_kv("issue-3051", 3051);
+            insert_kv("join-auto-wait-reclaimed-wired", 1);
             // Issue #2397: reclaimed vs body-still-running (additive; #2227 keys preserved).
             // Prefer Fiber process-truth gauges when available so serve-only and
             // orch-linked binaries agree; orch mirrors track the same transitions.

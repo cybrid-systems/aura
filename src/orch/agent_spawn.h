@@ -324,7 +324,10 @@ struct JoinPolicy {
 
 // Issue #3012: documented mild deadline hosts should pass when the
 // Reclaimed hash carries must-wait-reclaimed=1. Not auto-injected
-// (keeps join Soft/nullopt zero-cost; #2661 body-stack stays).
+// into C++ JoinPolicy (keeps Soft/nullopt zero-cost; #2661 body-stack
+// stays). Issue #3051: Aura orch:agent-join / orch:scope-join-all apply
+// this deadline once when must_wait_reclaimed && the caller did not
+// pass :wait-reclaimed-ms.
 inline constexpr std::uint64_t kProductionWaitReclaimedMsDefault = 50;
 
 // Same probe mailbox / runtime ABI already use (strong def in
@@ -2054,6 +2057,24 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
     }
     out.status = serve::JoinStatus::Ok;
     return out;
+}
+
+// Issue #3051: Aura language surface only. After join_agent / join_all
+// returns with must_wait_reclaimed and the caller did not pass
+// :wait-reclaimed-ms, run one short wait_reclaimed_body using
+// kProductionWaitReclaimedMsDefault (50ms). Soft / explicit wait /
+// must_wait=false: no-op (zero extra wait / counter). Does **not**
+// change C++ JoinPolicy default (#3012 AC4). Reuses wait_reclaimed_*
+// counters (#2924). Returns folded wait_us (0 on no-op).
+[[nodiscard]] inline std::uint64_t
+maybe_auto_wait_reclaimed_production(AgentHandle& h,
+                                     bool caller_passed_wait_reclaimed_ms) noexcept {
+    if (caller_passed_wait_reclaimed_ms || !h.must_wait_reclaimed)
+        return 0;
+    auto wr = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault);
+    h.wait_reclaimed_used = true;
+    h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+    return wr.wait_us;
 }
 
 // Stop keepalive helper (if any). Sets helper_stop so the fiber-native helper
