@@ -80,6 +80,13 @@ inline constexpr std::uint64_t kGeneralObjectPinAdoptSiteCount = 7;
 // EXEMPT (not create-point observe). Sibling of #3017. Soft extra
 // cost is one required-pref load — zero extra pin. No second registry.
 inline constexpr int kFfiOpaquePinOrRemapIssue = 3022;
+// Issue #3053: allocate_raw / try_allocate / allocate_checked (and
+// pool+flat creates that share those paths) must join the same
+// pin / slot / EXEMPT pre-move triad as ASTArena::create. Value-only
+// register_external_root_for_densify remains non-covering. Soft is
+// one required-pref load. No second pin registry; do not bump
+// kGeneralObjectPinAdoptSiteCount (new sites roll in via auto_wire).
+inline constexpr int kGeneralObjectPinAllocateResidualIssue = 3053;
 
 // ── Object class × required protocol inventory (#2298 AC5 / #2363) ────
 // | Class                         | Protocol                          |

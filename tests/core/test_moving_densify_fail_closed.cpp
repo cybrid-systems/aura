@@ -1690,6 +1690,125 @@ static void ac3017_6_linter_and_no_design() {
           "AC6: no new invent test file per #81967");
 }
 
+// ── Issue #3053: allocate / pool+flat residual on required pin cover ──
+static void ac3053_1_allocate_path_auto_wires_and_blocks() {
+    std::println("\n--- #3053 AC1: try_allocate / allocate_checked join pre-move gate ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    const auto wire0 = aura::core::lifetime::general_object_pin_auto_wire_total_v_read();
+    const auto block0 =
+        aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
+    ASTArena arena(64 * 1024);
+    void* raw = arena.try_allocate(16);
+    CHECK(raw != nullptr, "AC1: try_allocate succeeded");
+    auto checked = arena.allocate_checked(16);
+    CHECK(checked.has_value() && *checked != nullptr, "AC1: allocate_checked succeeded");
+    CHECK(arena.intermediate_create_auto_wire_count() >= 2,
+          "AC1: allocate paths auto-wired under required");
+    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 2,
+          "AC1: auto_wire_total rose on allocate");
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    CHECK(p0, "AC1: create still works");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "AC1: no address movement");
+    CHECK(!r.pin_contract_held, "AC1: pin_contract_held=false");
+    CHECK(r.moving_blocked_precondition, "AC1: pre-move block");
+    CHECK(aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read() >=
+              block0 + 1,
+          "AC1: pre-move block counter");
+}
+
+static void ac3053_2_value_only_still_not_cover() {
+    std::println("\n--- #3053 AC2: value-only register is not cover ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    ASTArena arena(64 * 1024);
+    void* raw = arena.try_allocate(16);
+    CHECK(raw, "AC2: allocate");
+    arena.register_external_root_for_densify(raw); // value-only — not slot
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(!r.pin_contract_held, "AC2: value-only does not cover");
+    CHECK(r.moving_blocked_precondition, "AC2: still blocked");
+}
+
+static void ac3053_3_soft_allocate_zero_cost() {
+    std::println("\n--- #3053 AC3: Soft allocate is a single required-active load ---");
+    RequiredPinGuard off(0);
+    const auto wire0 = aura::core::lifetime::general_object_pin_auto_wire_total_v_read();
+    ASTArena arena(64 * 1024);
+    void* raw = arena.try_allocate(16);
+    CHECK(raw, "AC3: Soft allocate ok");
+    CHECK(arena.intermediate_create_auto_wire_count() == 0, "AC3: no inventory on Soft");
+    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() == wire0,
+          "AC3: auto_wire_total unchanged");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("maybe_note_allocate_intermediate_") != std::string::npos,
+          "AC3: allocate helper present");
+    CHECK(arena_src.find("general_object_pin_required_active()") != std::string::npos,
+          "AC3: Soft skip is required_active load");
+}
+
+static void ac3053_4_mutate_densify_allocate_soak() {
+    std::println("\n--- #3053 AC5: mutate×densify soak with synthetic allocate ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    void* extra = arena.try_allocate(16);
+    CHECK(extra, "AC5: synthetic allocate");
+    const auto blocked = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(blocked.objects_moved == 0, "AC5: unpinned allocate blocks even if creates slotted");
+    CHECK(!blocked.pin_contract_held, "AC5: pin_contract_held=false");
+    arena.register_external_root_slot_for_densify(&extra);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC5: slotted allocate allows densify");
+        CHECK(static_cast<Pod16*>(s0)->a == 1, "AC5: payload intact after move");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC5: no-move payloads intact");
+    }
+}
+
+static void ac3053_5_source_cite_no_invent() {
+    std::println("\n--- #3053 AC4/AC6: source-cite + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto gate = read_file("tests/core/test_general_object_pin_coverage_gate.cpp");
+    const auto build = read_file("build.py");
+    CHECK(lp.find("kGeneralObjectPinAllocateResidualIssue = 3053") != std::string::npos,
+          "AC6: lifetime_pin stamp");
+    CHECK(arena.find("Issue #3053") != std::string::npos, "AC6: arena cites #3053");
+    CHECK(arena.find("maybe_note_allocate_intermediate_") != std::string::npos,
+          "AC6: allocate helper");
+    CHECK(t.find("ac3053_1_allocate_path_auto_wires_and_blocks") != std::string::npos,
+          "AC6: AC1 test");
+    CHECK(gate.find("#3053") != std::string::npos || gate.find("3053") != std::string::npos,
+          "AC6: coverage-gate suite cites #3053");
+    CHECK(build.find("check_general_object_pin_allocate_3053") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3053-pin-allocate-residual.md").empty(),
+          "AC6: no docs/design/3053-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3053.cpp").empty(),
+          "AC6: no test_issue_3053.cpp per #81967");
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "AC4: inventory floor unchanged");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -1705,6 +1824,8 @@ int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2837: external-root slot remap + sticky densify-off "
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3017: value-only / un-slotted incomplete-remap residual "
+                 "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #3053: allocate / pool+flat residual on required pin cover "
                  "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
@@ -1781,6 +1902,12 @@ int run_test_moving_densify_fail_closed() {
     ac3017_4_sticky_recover_after_inject();
     ac3017_5_soft_zero_cost();
     ac3017_6_linter_and_no_design();
+    // Issue #3053: allocate / pool+flat residual (extends this suite).
+    ac3053_1_allocate_path_auto_wires_and_blocks();
+    ac3053_2_value_only_still_not_cover();
+    ac3053_3_soft_allocate_zero_cost();
+    ac3053_4_mutate_densify_allocate_soak();
+    ac3053_5_source_cite_no_invent();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
