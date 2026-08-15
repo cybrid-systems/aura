@@ -1273,8 +1273,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
                    bool ok = true;
                    // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-                   auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                       ev, /*pending=*/1, &ok);
+                   auto guard_r =
+                       aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
                    if (!guard_r) {
                        return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
                    }
@@ -1360,8 +1360,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
             if (!guard_r) {
                 return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
             }
@@ -1491,8 +1490,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:record-patch", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
         }
@@ -1539,8 +1537,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // defuse_version_ + rollback. ok = false on every error path.
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
             if (!guard_r) {
                 return mev("resource-quota-exceeded", guard_r.error().message);
             }
@@ -2050,8 +2047,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
             if (!guard_r) {
                 return mev("resource-quota-exceeded", guard_r.error().message);
             }
@@ -2554,8 +2550,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "mutate:rollback-macro-introduced", [&ev, mev, safe_str](const auto& a) -> EvalValue {
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
             if (!guard_r) {
                 return mev("resource-quota-exceeded", guard_r.error().message);
             }
@@ -2803,8 +2798,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #1556: typed try_acquire so mutation quota rejects as
         // resource-quota-exceeded (Agents can back-off) instead of silent
         // unlimited legacy Guard ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
@@ -3386,15 +3380,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // panic recovery (separately). The two mechanisms are
     // complementary, not redundant.
     add_mutate("mutate:set-body", [&ev, mev, safe_str](const auto& a) -> EvalValue {
-        // Issue #1964 cycle 4: bookkeep through unified mutate_dispatch
-        // (metrics only until full routing lands in cycle 4-followup).
-        (void)mutate_dispatch(MutateKind::SetBody, /*target=*/"", /*body=*/"");
         // Issue #2555: unified TransactionGuard (MBG try_acquire + panic).
         // Replaces dual MutationBoundaryGuard + scaffold TransactionGuard.
+        // Issue #3074: live mutate_dispatch metrics (TG is the approved
+        // Guard entry; dispatch notes SetBody applied/rejected).
         aura::core::TransactionGuard tg(Evaluator::transaction_guard_host(ev), /*pending=*/1);
         if (tg.result() != aura::core::TransactionGuardResult::Acquired) {
+            mutate_dispatch_note(MutateKind::SetBody, MutateDispatchResult::Rejected);
             return mev("resource-quota-exceeded", "mutation quota exceeded");
         }
+        mutate_dispatch_note(MutateKind::SetBody, MutateDispatchResult::Applied);
         bool& ok = *tg.success_flag();
         if (ev.workspace_read_only_) {
             tg.mark_failed();
@@ -3714,8 +3709,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:remove-node", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
@@ -3802,8 +3796,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:insert-child", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-            ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok,
+                                                                   /*fine_rollback=*/true);
         if (!guard_r) {
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
@@ -3955,8 +3949,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         [resolve_mutate_node_arg, &ev, mev, safe_str](const auto& a) -> EvalValue {
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
             if (!guard_r) {
                 return mev("resource-quota-exceeded", guard_r.error().message);
             }
@@ -4041,8 +4034,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:replace-pattern", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
@@ -4595,8 +4587,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:replace-subtree", [&ev, mev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
@@ -5123,8 +5114,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         bool guard_ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-            ev, /*pending=*/1, &guard_ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &guard_ok);
         if (!guard_r) {
             return mev("resource-quota-exceeded", guard_r.error().message);
         }
@@ -5451,8 +5441,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:splice", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
         }
@@ -5592,8 +5581,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:wrap", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
         }
@@ -5772,8 +5760,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         "mutate:refactor/extract", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-            auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-                ev, /*pending=*/1, &ok);
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
             if (!guard_r) {
                 return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
             }
@@ -6070,8 +6057,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         using namespace aura::ast;
         bool ok = true;
         // Issue #2124 / #2961: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-            ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok,
+                                                                   /*fine_rollback=*/true);
         if (!guard_r) {
             return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
         }
@@ -6224,8 +6211,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         using namespace aura::ast;
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(
-            ev, /*pending=*/1, &ok, /*fine_rollback=*/true);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok,
+                                                                   /*fine_rollback=*/true);
         if (!guard_r) {
             return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
         }
@@ -6540,10 +6527,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         using aura::ast::SymId;
         using aura::ast::NULL_NODE;
         // local merr removed (last one); all calls now use centralized make_merr
-        // Issue #1904 / #2124: MutationBoundaryGuard::try_acquire owns lock + bump.
+        // Issue #1904 / #2124 / #3074: mutate_dispatch_try_acquire owns lock + bump.
         bool ok = true;
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r)
             return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
         auto guard = std::move(*guard_r);
@@ -6890,8 +6876,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return make_bool(false);
         }
@@ -6964,8 +6949,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     add_mutate("mutate:sv-weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r) {
             return make_bool(false);
         }
@@ -7056,8 +7040,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Guard commits with ok=true (no actual mutation occurred),
         // and we return #f so the Agent sees the failure.
         bool ok = true;
-        auto guard_r =
-            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
         if (!guard_r)
             return mev("resource-quota-exceeded", guard_r.error().message);
         auto guard = std::move(*guard_r);
@@ -8207,6 +8190,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             insert_kv("cycle-2d-design-note", 1);
             insert_kv("cycle-3-transaction-guard-api", 1);
             insert_kv("cycle-4-mutate-dispatch-api", 1);
+            insert_kv("schema-3074", 3074);
+            insert_kv("issue-3074", 3074);
+            insert_kv("mutate-dispatch-sole-guard-wired",
+                      static_cast<std::int64_t>(
+                          g_mutate_dispatch_sole_guard_wired.load(std::memory_order_relaxed)));
+            insert_kv("mutate-dispatch-rejected-total",
+                      static_cast<std::int64_t>(dm.rejected_total.load(std::memory_order_relaxed)));
             insert_kv("mutation-epoch",
                       static_cast<std::int64_t>(aura::core::current_mutation_epoch()));
             insert_kv("bridge-epoch",

@@ -1046,6 +1046,18 @@ def cmd_lint():
             "Issue #3073 production soak readiness linter failed — run python3 scripts/coverage/checks/check_chaos_production_readiness_3073.py"
         )
         return r
+    # Issue #3074: structural mutate:* Guard acquire is mutate_dispatch
+    # only (cycle-4 stub closed). Residual direct try_acquire == 0.
+    mdsg3074_script = COVERAGE_CHECKS / "check_mutate_dispatch_sole_guard_3074.py"
+    if not mdsg3074_script.exists():
+        fail(f"missing {mdsg3074_script}")
+        return 1
+    r = run([sys.executable, str(mdsg3074_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3074 mutate_dispatch sole-guard linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12307,6 +12319,30 @@ def cmd_chaos_production_readiness_3073():
     return cmd_chaos_production_readiness_3073_coverage()
 
 
+def cmd_mutate_dispatch_sole_guard_3074_coverage():
+    """Issue #3074: mutate_dispatch sole Guard acquire (static)."""
+    print(f"{B}=== mutate_dispatch sole-guard coverage (#3074) ==={N}")
+    script = COVERAGE_CHECKS / "check_mutate_dispatch_sole_guard_3074.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutate_dispatch sole-guard (#3074) coverage contract rows failed")
+        return 1
+    ok("mutate_dispatch sole-guard (#3074) coverage clean")
+    return 0
+
+
+def cmd_mutate_dispatch_sole_guard_3074():
+    """Issue #3074: structural mutate:* acquire only via mutate_dispatch.
+
+    Soft: existing try_acquire Soft path. GUARD_EXEMPT unchanged.
+    """
+    print(f"{B}=== mutate_dispatch sole-guard (#3074) ==={N}")
+    return cmd_mutate_dispatch_sole_guard_3074_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16697,6 +16733,8 @@ def main():
         "hold-budget-inbody-window-3071-coverage": cmd_hold_budget_inbody_window_3071_coverage,
         "chaos-production-readiness-3073": cmd_chaos_production_readiness_3073,
         "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
+        "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
+        "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
