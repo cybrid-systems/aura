@@ -258,6 +258,12 @@ struct CapabilityEffectMetrics {
     // Issue #3029: grant_macro_self_evo denied under Restricted/Strict
     // without TenantAdmin. Appended at struct END (never insert mid-struct).
     std::atomic<std::uint64_t> capability_macro_self_evo_grant_deny_total{0};
+    // Issue #3048: session-grant revoke via steal-complete vs force-cancel /
+    // mark_outermost_failed (distinct from #2944 session-mid-exit). Appended
+    // at struct END (never insert mid-struct: stale module BMIs writing at
+    // wrong offsets corrupt neighboring heap — see #2906).
+    std::atomic<std::uint64_t> capability_session_revoke_steal_total{0};
+    std::atomic<std::uint64_t> capability_session_revoke_abort_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -556,13 +562,18 @@ struct CapabilityRegistry {
     // MutationBoundaryGuard dtor (success or fail). Zero cost when
     // capability_live_session_grants == 0 (AC3 Soft happy path).
     // Returns number of grants revoked. Dual-writes audit reason
-    // "session-mid-exit" per revoke.
-    std::size_t revoke_session_grants_for_mid(std::uint64_t mid) {
+    // (default "session-mid-exit"). Issue #3048: steal/abort hooks
+    // pass "session-mid-steal-exit" / "session-mid-abort-exit";
+    // second call after first is a no-op (already revoked / not live).
+    std::size_t revoke_session_grants_for_mid(std::uint64_t mid,
+                                              const char* reason = "session-mid-exit") {
         if (mid == 0)
             return 0;
         auto& met = g_capability_effect_metrics();
         if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
-            return 0; // AC3: zero extra work when no session grants
+            return 0; // AC3 / #3048 AC4: zero extra work when no session grants
+        if (!reason || reason[0] == '\0')
+            reason = "session-mid-exit";
         std::lock_guard<std::mutex> lock(mtx);
         std::size_t n = 0;
         auto ep = ::aura::core::current_mutation_epoch();
@@ -590,7 +601,7 @@ struct CapabilityRegistry {
                     met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
                 // SE dual-write reason for Agent audit trail.
                 record_audit(Effect::None, Effect::None, tenant, audit_prov,
-                             /*denied=*/false, "session-mid-exit", "session-mid-exit");
+                             /*denied=*/false, reason, reason);
             }
         }
         return n;
@@ -1002,6 +1013,29 @@ inline CapabilityRegistry& g_capability_registry() noexcept {
     return r;
 }
 
+// Issue #3048: single steal / force-cancel / non-Guard abort entry.
+// Reuses revoke_session_grants_for_mid (no second revoke policy).
+// steal=true → SE "session-mid-steal-exit"; else "session-mid-abort-exit".
+// Zero cost when session_mid==0 or capability_live_session_grants==0 (AC4).
+// Second call is a no-op after the first (AC3, grants already revoked).
+inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session_mid,
+                                                           bool steal) noexcept {
+    if (session_mid == 0)
+        return 0;
+    auto& met = g_capability_effect_metrics();
+    if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+        return 0; // AC4: Soft / empty live residual — no lock
+    const char* reason = steal ? "session-mid-steal-exit" : "session-mid-abort-exit";
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(session_mid, reason);
+    if (n > 0) {
+        if (steal)
+            met.capability_session_revoke_steal_total.fetch_add(n, std::memory_order_relaxed);
+        else
+            met.capability_session_revoke_abort_total.fetch_add(n, std::memory_order_relaxed);
+    }
+    return n;
+}
+
 // AC1: check_and_record_effect — core enforcement entry.
 // Returns true if allowed. Always records audit + metrics.
 //
@@ -1174,6 +1208,9 @@ inline void reset_capability_effects_for_test() noexcept {
     m.capability_grant_foreign_tenant_deny_total.store(0, std::memory_order_relaxed);
     // Issue #3029: grant_macro_self_evo TenantAdmin fence deny counter.
     m.capability_macro_self_evo_grant_deny_total.store(0, std::memory_order_relaxed);
+    // Issue #3048: steal / abort session-revoke breakdown.
+    m.capability_session_revoke_steal_total.store(0, std::memory_order_relaxed);
+    m.capability_session_revoke_abort_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1230,6 +1267,10 @@ struct CapabilityEffectStatsSnapshot {
     std::uint64_t capability_grant_foreign_tenant_deny = 0;
     // Issue #3029: grant_macro_self_evo TenantAdmin fence deny.
     std::uint64_t capability_macro_self_evo_grant_deny = 0;
+    // Issue #3048: steal / abort session-revoke breakdown (additive to
+    // capability_session_revoke; Agent-readable vs normal session-mid-exit).
+    std::uint64_t capability_session_revoke_steal = 0;
+    std::uint64_t capability_session_revoke_abort = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1303,6 +1344,11 @@ struct CapabilityEffectStatsSnapshot {
         // Issue #3029: grant_macro_self_evo TenantAdmin fence.
         s.capability_macro_self_evo_grant_deny =
             m.capability_macro_self_evo_grant_deny_total.load(std::memory_order_acquire);
+        // Issue #3048: steal / abort session-revoke breakdown.
+        s.capability_session_revoke_steal =
+            m.capability_session_revoke_steal_total.load(std::memory_order_acquire);
+        s.capability_session_revoke_abort =
+            m.capability_session_revoke_abort_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&

@@ -799,6 +799,10 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
 // Issue #2944: mutation-session grant — mid-bound + session_bound=true.
 // Outermost MutationBoundary exit revokes matching session grants
 // (capability_session_revoke_total + SE reason session-mid-exit).
+// Issue #3048: steal-complete / force-cancel / mark_outermost_failed
+// also revoke via revoke_session_grants_on_steal_or_abort (SE reason
+// session-mid-steal-exit / session-mid-abort-exit) when Guard dtor
+// does not run.
 // High-risk production force (#2882) still applies single_use unless
 // already requested; durable sticky remains grant_effect_durable.
 void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view name,

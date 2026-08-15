@@ -2031,10 +2031,11 @@ public:
     // Issue #2347: mailbox Strict path may force outermost mutation
     // success_flag=false when blocking recv rejects exceed the Guard window
     // threshold (Policy A stays non-blocking; Agents cannot ship while spinning).
-    void mark_outermost_mutation_failed() noexcept {
-        if (outermost_mutation_success_flag_)
-            *outermost_mutation_success_flag_ = false;
-    }
+    // Issue #3048: also revokes fiber-local session grants (abort path
+    // independent of Guard dtor). Defined out-of-line so the hook can
+    // see Fiber TLS + capability_model without pulling serve/fiber.h
+    // into this module interface.
+    void mark_outermost_mutation_failed() noexcept;
     // Issue #1907: reflect/EDSL bridge accessors backing the
     // (engine:metrics "query:reflect-schema") + (mutate:validate-reflected)
     // primitives + the post-mutation auto_validate + hygiene gate hook
@@ -6435,9 +6436,11 @@ public:
                               std::string_view reason = {}) noexcept;
     // Issue #2944: mutation-session grant — mid-bound + session_bound=true.
     // Auto-revoked on outermost MutationBoundary exit for that mid
-    // (success or fail). High-risk production force still applies
-    // single_use unless caller passes single_use=true already; durable
-    // sticky path remains grant_effect_durable (not session).
+    // (success or fail). Issue #3048: also revoked on steal-complete /
+    // force-cancel / mark_outermost_failed when Guard dtor does not run.
+    // High-risk production force still applies single_use unless caller
+    // passes single_use=true already; durable sticky path remains
+    // grant_effect_durable (not session).
     void grant_effect_session(std::uint64_t tenant_id, std::string_view name,
                               std::uint16_t effect_bits, std::uint64_t provenance_mutation_id,
                               bool single_use = false) noexcept;
@@ -14444,6 +14447,9 @@ public:
         // Issue #2944: Mutation epoch mid at outermost enter — used to
         // revoke session_bound grants on exit (success or fail). Nested
         // guards leave 0 (no session revoke until outermost for that mid).
+        // Issue #3048: also published to Fiber::session_mid_ + hold
+        // snapshot so steal-complete / force-cancel can revoke without
+        // this Guard object.
         std::uint64_t session_mid_at_enter_ = 0;
         // Issue #2121: RegionExclusive vs GlobalExclusive lock mode.
         bool region_mode_ = false;
