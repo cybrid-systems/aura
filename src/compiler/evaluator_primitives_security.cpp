@@ -472,6 +472,19 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"zero-tolerance-wired", make_int(1)},
                 {"schema-2836", make_int(2836)},
                 {"issue-2836", make_int(2836)},
+                // Issue #3054: joinable SE on refuse (ring + WAL). Soft
+                // emit-total stays 0 (no resolve-time SE).
+                {"refuse-se-total",
+                 make_int(static_cast<std::int64_t>(
+                     g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.load(
+                         std::memory_order_relaxed)))},
+                {"last-refuse-se-seq",
+                 make_int(static_cast<std::int64_t>(
+                     g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.load(
+                         std::memory_order_relaxed)))},
+                {"mid-fallback-refuse-se-wired", make_int(1)},
+                {"schema-3054", make_int(3054)},
+                {"issue-3054", make_int(3054)},
             };
             return build_hash(kv);
         });
@@ -4485,15 +4498,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return result;
         });
 
-    // Issue #2054: (query:security-audit [limit] [tenant] [fiber] [since-seq] [mutation-id])
-    // Single Agent-facing forensic surface joining SecurityEvent +
-    // TypedMutationAudit trail by mutation_id. Positional filters
-    // (same style as query:mutation-audit-log):
+    // Issue #2054: (query:security-audit [limit] [tenant] [fiber] [since-seq] [mutation-id]
+    // [reason]) Single Agent-facing forensic surface joining SecurityEvent + TypedMutationAudit
+    // trail by mutation_id. Positional filters (same style as query:mutation-audit-log):
     //   limit       — max rows (default 10, cap = ring size)
     //   tenant      — match tenant_id when arg present (int)
     //   fiber       — match fiber_id when arg present (int; 0 matches 0)
     //   since-seq   — only events with e.seq >= since-seq (int > 0)
     //   mutation-id — match mutation_id when arg present and != 0
+    //   reason      — #3054: string contains-match on e.reason
+    //                 (e.g. "mid-fallback-refused")
     // Each line includes typed_kind/typed_outcome when the TypedMutation
     // trail still holds a correlated event (newest match).
     ObservabilityPrims::register_stats_impl(
@@ -4522,6 +4536,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto since_seq = filt_since ? static_cast<std::uint64_t>(as_int(a[3])) : 0;
             const bool filt_mid = a.size() >= 5 && is_int(a[4]) && as_int(a[4]) != 0;
             const auto want_mid = filt_mid ? static_cast<std::uint64_t>(as_int(a[4])) : 0;
+            // Issue #3054: optional reason contains-filter (string).
+            const bool filt_reason = a.size() >= 6 && is_string(a[5]);
+            std::string_view want_reason{};
+            if (filt_reason) {
+                const auto sidx = as_string_idx(a[5]);
+                if (sidx < ev.string_heap_.size())
+                    want_reason = ev.string_heap_[sidx];
+            }
 
             auto kind_name = [](SecurityEventKind k) -> const char* {
                 switch (k) {
@@ -4589,6 +4611,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 if (filt_since && e.seq < since_seq)
                     continue;
                 if (filt_mid && e.mutation_id != want_mid)
+                    continue;
+                if (filt_reason &&
+                    std::string_view(e.reason).find(want_reason) == std::string_view::npos)
                     continue;
 
                 const char* typed_kind = "-";

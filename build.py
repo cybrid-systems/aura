@@ -2081,6 +2081,19 @@ def cmd_lint():
             "Issue #2836 mid-fallback zero-tolerance linter failed — run python3 scripts/coverage/checks/check_mid_fallback_zero_tolerance_2836.py"
         )
         return r
+    # Issue #3054: production mid-fallback refuse emits one joinable SE
+    # (ring + WAL). Soft stays observe-only. Extends
+    # test_audit_mid_fallback_slo (#81967); no docs/design/ (#1655).
+    mfrs_script = COVERAGE_CHECKS / "check_mid_fallback_refuse_se_3054.py"
+    if not mfrs_script.exists():
+        fail(f"missing {mfrs_script}")
+        return 1
+    r = run([sys.executable, str(mfrs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3054 mid-fallback refuse SE linter failed — run python3 scripts/coverage/checks/check_mid_fallback_refuse_se_3054.py"
+        )
+        return r
     # Issue #2837: Moving densify external-root slot remap + sticky densify-off.
     # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
     mer_script = COVERAGE_CHECKS / "check_moving_external_root_remap_2837.py"
@@ -8212,6 +8225,32 @@ def cmd_general_object_pin_allocate_3053():
     """
     print(f"{B}=== general-object-pin allocate residual (#3053) ==={N}")
     return cmd_general_object_pin_allocate_3053_coverage()
+
+
+def cmd_mid_fallback_refuse_se_3054_coverage():
+    """Issue #3054: mid-fallback refuse joinable SecurityEvent (static)."""
+    print(f"{B}=== mid-fallback refuse SE coverage (#3054) ==={N}")
+    script = COVERAGE_CHECKS / "check_mid_fallback_refuse_se_3054.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mid-fallback refuse SE (#3054) coverage contract rows failed")
+        return 1
+    ok("mid-fallback refuse SE (#3054) coverage clean")
+    return 0
+
+
+def cmd_mid_fallback_refuse_se_3054():
+    """Issue #3054: production mid-fallback refuse emits one joinable SE.
+
+    resolve_audit_mutation_id hard refuse dual-writes InvariantFail with
+    reason mid-fallback-refused via emit_security_event_durable. TLS
+    single-shot under the same boundary. Soft emits nothing.
+    """
+    print(f"{B}=== mid-fallback refuse SE (#3054) ==={N}")
+    return cmd_mid_fallback_refuse_se_3054_coverage()
 
 
 def cmd_moving_pre_densify_completeness_2973_coverage():
@@ -15811,6 +15850,8 @@ def main():
         "general-object-pin-create-densify-2971-coverage": cmd_general_object_pin_create_densify_2971_coverage,
         "general-object-pin-allocate-3053": cmd_general_object_pin_allocate_3053,
         "general-object-pin-allocate-3053-coverage": cmd_general_object_pin_allocate_3053_coverage,
+        "mid-fallback-refuse-se-3054": cmd_mid_fallback_refuse_se_3054,
+        "mid-fallback-refuse-se-3054-coverage": cmd_mid_fallback_refuse_se_3054_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
