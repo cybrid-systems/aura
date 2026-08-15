@@ -1042,6 +1042,15 @@ public:
     [[nodiscard]] std::uint64_t assigned_tenant_id() const noexcept {
         return assigned_tenant_id_.load(std::memory_order_acquire);
     }
+    // Issue #3049: tenant charged at fiber-quota reserve so on_fiber_done
+    // releases the same key. Distinct from assigned_tenant_id_ (capability
+    // principal) because spawn consumes quota before orch stamps principal.
+    void set_quota_tenant_id(std::uint64_t t) noexcept {
+        quota_tenant_id_.store(t, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t quota_tenant_id() const noexcept {
+        return quota_tenant_id_.load(std::memory_order_acquire);
+    }
     // Issue #3048: outermost mutation-session mid captured at Guard enter
     // so steal-complete / force-cancel can revoke session_bound grants
     // without depending on the Guard stack. Nested Guards do not overwrite
@@ -1286,6 +1295,8 @@ private:
     // resume hook skips TenantScope installation in that case (unit
     // / Soft path stays unchanged per AC5).
     std::atomic<std::uint64_t> assigned_tenant_id_{0};
+    // Issue #3049: tenant id charged against ResourceQuota at spawn.
+    std::atomic<std::uint64_t> quota_tenant_id_{0};
     // Issue #3048: fiber-local outermost session mid (see set_session_mid).
     std::atomic<std::uint64_t> session_mid_{0};
     // Issue #2491: process-wide counter for TenantScope install

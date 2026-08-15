@@ -1064,6 +1064,8 @@ struct AgentHandle {
     std::uint64_t retry_after_ms = 0; // suggested backoff (0 if unknown)
     // Issue #1880: memory reserved at spawn (released on join / scope exit).
     std::uint64_t reserved_memory_bytes = 0;
+    // Issue #3049: tenant key used for the arena reserve (0 = process-global).
+    std::uint64_t reserved_quota_tenant = 0;
     // Issue #2008 / #2159: keepalive / liveness (null / 0 when disabled — zero cost).
     std::uint32_t keepalive_interval_ms = 0;
     std::shared_ptr<AgentLiveness> liveness; // shared body ↔ helper ↔ supervisor
@@ -1122,6 +1124,7 @@ struct AgentHandle {
         , quota_limit(o.quota_limit)
         , retry_after_ms(o.retry_after_ms)
         , reserved_memory_bytes(o.reserved_memory_bytes)
+        , reserved_quota_tenant(o.reserved_quota_tenant)
         , keepalive_interval_ms(o.keepalive_interval_ms)
         , liveness(std::move(o.liveness))
         , keepalive_active(o.keepalive_active)
@@ -1146,6 +1149,7 @@ struct AgentHandle {
         o.quota_limit = 0;
         o.retry_after_ms = 0;
         o.reserved_memory_bytes = 0; // prevent double-release
+        o.reserved_quota_tenant = 0;
         o.keepalive_interval_ms = 0;
         o.keepalive_active = false;
         o.keepalive_helper = nullptr;
@@ -1179,6 +1183,7 @@ struct AgentHandle {
             quota_limit = o.quota_limit;
             retry_after_ms = o.retry_after_ms;
             reserved_memory_bytes = o.reserved_memory_bytes;
+            reserved_quota_tenant = o.reserved_quota_tenant;
             keepalive_interval_ms = o.keepalive_interval_ms;
             liveness = std::move(o.liveness);
             keepalive_active = o.keepalive_active;
@@ -1203,6 +1208,7 @@ struct AgentHandle {
             o.quota_limit = 0;
             o.retry_after_ms = 0;
             o.reserved_memory_bytes = 0;
+            o.reserved_quota_tenant = 0;
             o.keepalive_interval_ms = 0;
             o.keepalive_active = false;
             o.keepalive_helper = nullptr;
@@ -1240,8 +1246,9 @@ struct AgentHandle {
         if (reserved_memory_bytes == 0)
             return;
         aura::core::resource_quota::process_resource_quota().release_agent_arena(
-            reserved_memory_bytes);
+            reserved_memory_bytes, reserved_quota_tenant);
         reserved_memory_bytes = 0;
+        reserved_quota_tenant = 0;
     }
 
     // Issue #3012: dtor / move-assign finish after Reclaimed. Defined
@@ -1501,8 +1508,9 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         return;
     if (h.reserved_memory_bytes != 0) {
         aura::core::resource_quota::process_resource_quota().release_agent_arena(
-            h.reserved_memory_bytes);
+            h.reserved_memory_bytes, h.reserved_quota_tenant);
         h.reserved_memory_bytes = 0;
+        h.reserved_quota_tenant = 0;
         g_orch_module_stats.spawn_quota_reject_leak_detect_total.fetch_add(
             1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_reject_no_leak.store(0, std::memory_order_relaxed);
@@ -1532,7 +1540,11 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // Issue #1880 / #2159: fiber capacity preflight (check only; Scheduler::spawn
     // also consumes). Mailbox keepalive needs body + helper fiber (#2159).
     const std::uint64_t fiber_preflight = want_keepalive ? 2u : 1u;
-    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight)) {
+    // Issue #3049: orch admission keys by TLS / parent fiber tenant.
+    auto orch_tenant = aura::core::resource_quota::current_quota_tenant();
+    if (orch_tenant == 0 && serve::g_current_fiber)
+        orch_tenant = serve::g_current_fiber->assigned_tenant_id();
+    if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight, orch_tenant)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
@@ -1553,7 +1565,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
 
     // Issue #1880: arena + mailbox high-water memory reservation.
     const auto mem_cost = estimate_agent_memory_bytes(spec.mailbox_high_water, spec.attach_mailbox);
-    if (auto merr = pq.try_consume_agent_arena(mem_cost)) {
+    if (auto merr = pq.try_consume_agent_arena(mem_cost, orch_tenant)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
@@ -1570,6 +1582,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         return h;
     }
     h.reserved_memory_bytes = mem_cost;
+    h.reserved_quota_tenant = orch_tenant;
 
     // Issue #2228: mailbox-backpressure admission preflight. When
     // attach_mailbox is requested AND the process-wide BP event count
@@ -1756,8 +1769,9 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber
         // ResourceQuota after arena was already reserved — must release
         // before return so agent_arena_usage_bytes does not leak under storms.
-        pq.release_agent_arena(mem_cost);
+        pq.release_agent_arena(mem_cost, orch_tenant);
         h.reserved_memory_bytes = 0;
+        h.reserved_quota_tenant = 0;
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
