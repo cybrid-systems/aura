@@ -69,6 +69,9 @@ namespace aura::compiler {
 
 // Sentinel epoch passed to epoch listeners when a deopt storm trips (#2014).
 inline constexpr std::uint64_t kHotUpdateDeoptStormEpoch = ~std::uint64_t{0};
+// Issue #3059: single production reemit facade (cascade / BoundaryExit /
+// reload / exhausted min-dirty / residual pipeline).
+inline constexpr int kHotUpdateDecideAndReemitIssue = 3059;
 
 class HotUpdateRegistry {
 public:
@@ -87,6 +90,22 @@ public:
     void on_emit_region_mask_set(std::uint64_t mask) noexcept;
     void on_stable_func_id_preserve(bool preserved) noexcept;
     void on_reemit_pipeline_call(std::uint64_t candidates, std::uint64_t successes) noexcept;
+    // Issue #3059: production reemit entry. Storm / boundary / owner /
+    // region / provider-not-wired gates stay inside aura_reemit_aot_for_dirty
+    // (low-level C ABI used only from this facade + explicit raw tests).
+    // On n>0, last_reemit_success coverage matches the Registry pipeline
+    // (note_reemit_success_coverage + only_covered). n==0: no extra stamp.
+    enum class ReemitReason : std::uint8_t {
+        Cascade = 0,
+        BoundaryExit = 1,
+        ReloadRecovery = 2,
+        ExhaustedMinDirty = 3,
+        StormClear = 4,
+        ResidualPipeline = 5,
+        CoverageVerify = 6,
+    };
+    [[nodiscard]] std::uint64_t decide_and_reemit(std::uint64_t defuse_version,
+                                                  ReemitReason reason) noexcept;
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
     // Issue #2502: after force-JIT demotion, auto re-promote when a

@@ -2657,6 +2657,19 @@ def cmd_lint():
             "Issue #3058 unified restamp query-visible linter failed — run python3 scripts/coverage/checks/check_unified_restamp_query_visible_3058.py"
         )
         return r
+    # Issue #3059: unify production reemit through decide_and_reemit.
+    # Extends test_hot_update_cascade_dirty_reemit (#81967);
+    # no docs/design/ (#1655).
+    hu3059_script = COVERAGE_CHECKS / "check_hot_update_decide_and_reemit_3059.py"
+    if not hu3059_script.exists():
+        fail(f"missing {hu3059_script}")
+        return 1
+    r = run([sys.executable, str(hu3059_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3059 decide_and_reemit linter failed — run python3 scripts/coverage/checks/check_hot_update_decide_and_reemit_3059.py"
+        )
+        return r
     # Issue #3020: domain query:* hash builders fail-soft on insert miss.
     # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
     # no docs/design/ (#1655).
@@ -8485,6 +8498,31 @@ def cmd_unified_restamp_query_visible_3058():
     """
     print(f"{B}=== unified restamp query-visible (#3058) ==={N}")
     return cmd_unified_restamp_query_visible_3058_coverage()
+
+
+def cmd_hot_update_decide_and_reemit_3059_coverage():
+    """Issue #3059: decide_and_reemit production facade (static)."""
+    print(f"{B}=== hot-update decide_and_reemit coverage (#3059) ==={N}")
+    script = COVERAGE_CHECKS / "check_hot_update_decide_and_reemit_3059.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hot-update decide_and_reemit (#3059) coverage contract rows failed")
+        return 1
+    ok("hot-update decide_and_reemit (#3059) coverage clean")
+    return 0
+
+
+def cmd_hot_update_decide_and_reemit_3059():
+    """Issue #3059: unify production reemit through decide_and_reemit.
+
+    Cascade / BoundaryExit / reload / exhausted min-dirty / residual
+    pipeline share one Registry facade. Soft / unwired stays zero-cost.
+    """
+    print(f"{B}=== hot-update decide_and_reemit (#3059) ==={N}")
+    return cmd_hot_update_decide_and_reemit_3059_coverage()
 
 
 def cmd_query_hash_overflow_3020_coverage():
@@ -16024,6 +16062,8 @@ def main():
         "unified-restamp-3019-coverage": cmd_unified_restamp_3019_coverage,
         "unified-restamp-query-visible-3058": cmd_unified_restamp_query_visible_3058,
         "unified-restamp-query-visible-3058-coverage": cmd_unified_restamp_query_visible_3058_coverage,
+        "hot-update-decide-and-reemit-3059": cmd_hot_update_decide_and_reemit_3059,
+        "hot-update-decide-and-reemit-3059-coverage": cmd_hot_update_decide_and_reemit_3059_coverage,
         "query-hash-overflow-3020": cmd_query_hash_overflow_3020,
         "query-hash-overflow-3020-coverage": cmd_query_hash_overflow_3020_coverage,
         "envframe-closure-apply-protocol-3021": cmd_envframe_closure_apply_protocol_3021,

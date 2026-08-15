@@ -180,9 +180,12 @@ def main() -> int:
         eval_cpp = EVAL.read_text(encoding="utf-8", errors="replace")
         if "aura_bump_reemit_auto_drain_on_boundary_exit_total" in eval_cpp:
             block_idx = eval_cpp.find("aura_bump_reemit_auto_drain_on_boundary_exit_total")
-            surrounding_after = eval_cpp[block_idx : block_idx + 1500]
-            if "aura_reemit_aot_for_dirty" not in surrounding_after:
-                failures.append("AC1: auto-drain must call aura_reemit_aot_for_dirty (region-filtered reemit pass)")
+            surrounding_after = eval_cpp[block_idx : block_idx + 2500]
+            if "aura_reemit_aot_for_dirty" not in surrounding_after and "decide_and_reemit" not in surrounding_after:
+                failures.append(
+                    "AC1: auto-drain must call decide_and_reemit or aura_reemit_aot_for_dirty "
+                    "(region-filtered reemit pass; #3059 facade)"
+                )
 
     # AC2: same auto pass when only last_region_mask_from_dirty set.
     # Source-cite: the auto-drain block must check

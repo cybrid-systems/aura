@@ -1398,6 +1398,8 @@ static void ac3025_3_service_cascade_unchanged() {
           "3025 AC3: service_dirty ReemitEvalOwnerGuard");
     CHECK(dirty.find("aura_aot_set_reemit_owner_eval") != std::string::npos,
           "3025 AC3: cascade stamps reemit owner");
+    CHECK(dirty.find("decide_and_reemit") != std::string::npos,
+          "3025 AC3: cascade uses decide_and_reemit facade (#3059)");
     CHECK(dirty.find("aura_reemit_aot_for_dirty") != std::string::npos,
           "3025 AC3: cascade still calls C ABI");
 }
