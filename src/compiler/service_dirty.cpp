@@ -619,6 +619,8 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     // Issue #2110: hybrid NodeId cascade after string BFS (precise body
     // marks; nested free-var targeting remains authority for nested bits).
     (void)hybrid_node_cascade_(name, cascade_dependents);
+    // Issue #3067: drain stale-reject queue after soft cascade too.
+    drain_deferred_hybrid_cascade_();
 
     // Issue #2043: close linear+GC window under mutate_mtx_ before return
     // so concurrent apply / fiber steal cannot observe half-updated
@@ -915,6 +917,9 @@ void CompilerService::invalidate_function(const std::string& name) {
     // Issue #2110: hybrid cascade before JIT erase (body-only marks for
     // dependents still in ir_cache_v2_).
     (void)hybrid_node_cascade_(name, dependents);
+    // Issue #3067: end of cascade window — drain stale record_dependency
+    // rejects so NodeId graph does not lag the string graph.
+    drain_deferred_hybrid_cascade_();
     // Invalidate JIT cache for affected functions.
     // Issue #491 + #1378: erase jit_cache_ AND jit_.invalidate in
     // the SAME jit_cache_mtx_ scope so a concurrent shared reader

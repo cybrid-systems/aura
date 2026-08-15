@@ -1144,6 +1144,15 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                 {"dep-graph-block-mirror-wired", make_int(1)},
                 {"schema-2187", make_int(2187)},
                 {"issue-2187", make_int(2187)},
+                // Issue #3067: stale-reject deferred hybrid cascade.
+                {"hybrid-deferred-cascade-total",
+                 make_int(m ? load_u64(m, m->hybrid_deferred_cascade_total) : 0)},
+                {"hybrid-deferred-cascade-wired",
+                 make_int(m ? static_cast<std::int64_t>(
+                                  m->hybrid_deferred_cascade_wired.load(std::memory_order_relaxed))
+                            : 1)},
+                {"schema-3067", make_int(3067)},
+                {"issue-3067", make_int(3067)},
                 {"dep-graph-hygiene-propagate",
                  make_int(m ? load_u64(m, m->dep_graph_hygiene_propagate) : 0)},
                 {"hot-swap-versioned-mangle",

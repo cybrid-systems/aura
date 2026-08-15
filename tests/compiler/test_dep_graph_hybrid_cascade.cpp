@@ -18,14 +18,18 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/transparent_string_hash.hh" // aura::core::TransparentStringHash
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
+#include <vector>
 
 import std;
 import aura.compiler.service;
@@ -350,6 +354,102 @@ void ac2247_dual_dep_graph_parity_gate() {
           "consistent after rebuild (AC1 recovery)");
 }
 
+// Issue #3067: stale-reject must schedule deferred hybrid cascade.
+static void ac3067_1_fork_restored_after_drain() {
+    std::println("\n--- #3067 AC1: dual-graph fork restored after drain ---");
+    CompilerService cs;
+    cs.public_record_dependency("A", "B");
+    CHECK(cs.public_dep_graph_has_edge("A", "B"), "3067 AC1: string A→B");
+    CHECK(cs.public_node_dep_has_mirror_edge("A", "B"), "3067 AC1: NodeId B→A");
+    cs.public_drop_node_dep_mirror_edge("A", "B");
+    CHECK(!cs.public_node_dep_has_mirror_edge("A", "B"), "3067 AC1: injected NodeId miss");
+    CHECK(cs.public_dep_graph_has_edge("A", "B"), "3067 AC1: string edge still present");
+    CHECK(!cs.public_graphs_consistent(), "3067 AC1: fork is inconsistent");
+    const auto def0 = cs.public_hybrid_deferred_cascade_total();
+    cs.public_note_stale_dep_reject("A", "B");
+    cs.public_drain_deferred_hybrid_cascade();
+    CHECK(cs.public_node_dep_has_mirror_edge("A", "B"), "3067 AC1: NodeId restored");
+    CHECK(cs.public_graphs_consistent(), "3067 AC1: consistent after drain");
+    CHECK(cs.public_hybrid_deferred_cascade_total() > def0, "3067 AC1: deferred cascade ran");
+}
+
+static void ac3067_2_production_consistent() {
+    std::println("\n--- #3067 AC2: production drain graphs_consistent ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    CompilerService cs;
+    cs.public_record_dependency("caller", "callee");
+    cs.public_drop_node_dep_mirror_edge("caller", "callee");
+    cs.public_note_stale_dep_reject("caller", "callee");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3067 AC2: production relower drain consistent");
+    CHECK(cs.public_node_dep_has_mirror_edge("caller", "callee"),
+          "3067 AC2: NodeId edge after relower");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3067_3_clean_path_zero_extra() {
+    std::println("\n--- #3067 AC3: clean single-fiber zero extra cascade ---");
+    CompilerService cs;
+    const auto def0 = cs.public_hybrid_deferred_cascade_total();
+    const auto rej0 = cs.public_dep_graph_edge_reject_stale_total();
+    cs.public_record_dependency("X", "Y");
+    cs.public_record_dependency("X", "Y"); // dedup
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_hybrid_deferred_cascade_total() == def0,
+          "3067 AC3: no deferred cascade on clean path");
+    CHECK(cs.public_dep_graph_edge_reject_stale_total() == rej0,
+          "3067 AC3: no stale reject on clean path");
+    CHECK(cs.public_graphs_consistent(), "3067 AC3: still consistent");
+}
+
+static void ac3067_4_soak_and_linter() {
+    std::println("\n--- #3067 AC4: concurrent record soak + linter ---");
+    CompilerService cs;
+    cs.public_record_dependency("root", "leaf");
+    std::atomic<int> stop{0};
+    std::thread bumper([&] {
+        for (int i = 0; i < 200 && !stop.load(std::memory_order_relaxed); ++i)
+            cs.public_bump_dep_graph_generation();
+    });
+    std::thread writer([&] {
+        for (int i = 0; i < 200; ++i)
+            cs.public_record_dependency(std::format("c{}", i % 4), "leaf");
+    });
+    writer.join();
+    stop.store(1, std::memory_order_relaxed);
+    bumper.join();
+    cs.public_drain_deferred_hybrid_cascade();
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3067 AC4: consistent after soak drain");
+
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_hybrid_deferred_cascade_3067.py");
+    const auto build = read_file("build.py");
+    CHECK(svc.find("Issue #3067") != std::string::npos, "3067 AC4: service cite");
+    CHECK(svc.find("drain_deferred_hybrid_cascade_") != std::string::npos, "3067 AC4: drain");
+    CHECK(dirty.find("Issue #3067") != std::string::npos, "3067 AC4: invalidate drain");
+    CHECK(t.find("ac3067_1_fork_restored_after_drain") != std::string::npos, "3067 AC4: AC1");
+    CHECK(t.find("ac3067_2_production_consistent") != std::string::npos, "3067 AC4: AC2");
+    CHECK(t.find("ac3067_3_clean_path_zero_extra") != std::string::npos, "3067 AC4: AC3");
+    CHECK(!lint.empty() && lint.find("Issue #3067") != std::string::npos, "3067 AC4: linter");
+    CHECK(build.find("check_hybrid_deferred_cascade_3067") != std::string::npos,
+          "3067 AC4: build.py gate");
+    CHECK(build.find("cmd_hybrid_deferred_cascade_3067") != std::string::npos,
+          "3067 AC4: build.py cmd");
+    CHECK(read_file("tests/compiler/test_issue_3067.cpp").empty(),
+          "3067 AC4: no test_issue_3067.cpp");
+    CompilerService qcs;
+    CHECK(href(qcs, "schema-3067") == 3067, "3067 AC4: live schema-3067");
+    CHECK(href(qcs, "hybrid-deferred-cascade-wired") == 1, "3067 AC4: wired");
+    CHECK(href(qcs, "hybrid-deferred-cascade-total") >= 0, "3067 AC4: total queryable");
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -363,6 +463,10 @@ int run_test_dep_graph_hybrid_cascade() {
     ac2187_metrics_schema();
     ac2187_lock_order_and_source();
     ac2247_dual_dep_graph_parity_gate();
+    ac3067_1_fork_restored_after_drain();
+    ac3067_2_production_consistent();
+    ac3067_3_clean_path_zero_extra();
+    ac3067_4_soak_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

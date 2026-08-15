@@ -6711,6 +6711,9 @@ public:
     // (or skipped-as-clean). Full-fallback count is already on
     // relower_full_called_count.
     std::size_t relower_dirty_defines_from_workspace() {
+        // Issue #3067: restore NodeId cascade for stale-rejected edges
+        // before partial peel (string-only callers would under-mark).
+        drain_deferred_hybrid_cascade_();
         auto* ws_flat = evaluator_.workspace_flat();
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool)
@@ -10653,6 +10656,11 @@ private:
     // cascade erase/rebuild runs; record_dependency rejects edges stamped
     // against a stale generation (concurrent fiber/GC/mutate window).
     std::atomic<std::uint64_t> dep_graph_generation_{0};
+    // Issue #3067: stale record_dependency rejects queued for hybrid
+    // cascade drain (relower / end of invalidate). Armed only when a
+    // reject actually happened (clean path: zero extra).
+    std::vector<std::pair<std::string, std::string>> deferred_hybrid_edges_{};
+    std::atomic<std::uint32_t> deferred_hybrid_armed_{0};
 
     // Issue #2110: dense slot for encode_fn_node (under dep_graph_mtx_).
     [[nodiscard]] std::uint32_t ensure_dep_fn_slot_(const std::string& name) {
@@ -10701,13 +10709,26 @@ private:
         const auto gen_after = dep_graph_generation_.load(std::memory_order_acquire);
         if (epoch_before != epoch_after || gen_before != gen_after) {
             metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3067: do not leave NodeId cascade permanently lagging
+            // the string graph — queue (caller, callee) for deferred hybrid
+            // drain at next relower / end of cascade window.
+            deferred_hybrid_edges_.emplace_back(caller, callee);
+            deferred_hybrid_armed_.store(1, std::memory_order_release);
             return;
         }
         auto& caller_entry = dep_graph_[caller];
         if (std::find(caller_entry.calls.begin(), caller_entry.calls.end(), callee) !=
             caller_entry.calls.end()) {
             metrics_.dep_graph_record_dedup_total.fetch_add(1, std::memory_order_relaxed);
-            return; // already recorded — skip duplicate
+            // Issue #3067: string dedup must still restore a missing NodeId
+            // fn mirror (graphs_consistent is fn-level). Do not remirror
+            // the default body-block edge — that would hide #2187 counter
+            // growth on explicit record_block_dependency.
+            const auto caller_slot = ensure_dep_fn_slot_(caller);
+            const auto callee_slot = ensure_dep_fn_slot_(callee);
+            node_dep_graph_.add_edge(aura::compiler::dirty::encode_fn_node(callee_slot),
+                                     aura::compiler::dirty::encode_fn_node(caller_slot));
+            return;
         }
         caller_entry.calls.push_back(callee);
         dep_graph_[callee].called_by.push_back(caller);
@@ -10718,21 +10739,7 @@ private:
         // entry block (func_idx=1 when multi-fn convention, else 0; block 0).
         // Precise call-site block can be refined via record_block_dependency.
         {
-            const auto caller_slot = ensure_dep_fn_slot_(caller);
-            const auto callee_slot = ensure_dep_fn_slot_(callee);
-            const auto from = aura::compiler::dirty::encode_fn_node(callee_slot);
-            const auto to = aura::compiler::dirty::encode_fn_node(caller_slot);
-            const auto edges_before = node_dep_graph_.edge_count();
-            node_dep_graph_.add_edge(from, to);
-            if (node_dep_graph_.edge_count() > edges_before)
-                metrics_.dep_graph_node_mirror_edges_total.fetch_add(1, std::memory_order_relaxed);
-            // Block-level edge (callee fn → caller body block 0).
-            // Prefer body_idx=1 when caller IR has multi-fn (entry+body).
-            std::uint16_t body_fi = 0;
-            auto cit = ir_cache_v2_.find(caller);
-            if (cit != ir_cache_v2_.end() && cit->second.irs.size() >= 2)
-                body_fi = 1;
-            mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, body_fi, /*block_idx=*/0);
+            mirror_fn_dep_edge_unlocked_(caller, callee);
         }
         // Issue #2247: dual-write parity gate (chokepoint for all 4
         // gate points in issue body: store_define_v2 / invalidate_bridge /
@@ -10788,11 +10795,75 @@ private:
         const auto gen_after = dep_graph_generation_.load(std::memory_order_acquire);
         if (epoch_before != epoch_after || gen_before != gen_after) {
             metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
+            deferred_hybrid_edges_.emplace_back(caller, callee);
+            deferred_hybrid_armed_.store(1, std::memory_order_release);
             return;
         }
         const auto caller_slot = ensure_dep_fn_slot_(caller);
         const auto callee_slot = ensure_dep_fn_slot_(callee);
         mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, caller_func_idx, call_block_idx);
+    }
+
+    // Issue #3067: NodeId fn + body-block 0 mirror. Caller holds exclusive
+    // dep_graph_mtx_. Idempotent (DepGraph::add_edge dedups).
+    void mirror_fn_dep_edge_unlocked_(const std::string& caller, const std::string& callee) {
+        const auto caller_slot = ensure_dep_fn_slot_(caller);
+        const auto callee_slot = ensure_dep_fn_slot_(callee);
+        const auto from = aura::compiler::dirty::encode_fn_node(callee_slot);
+        const auto to = aura::compiler::dirty::encode_fn_node(caller_slot);
+        const auto edges_before = node_dep_graph_.edge_count();
+        node_dep_graph_.add_edge(from, to);
+        if (node_dep_graph_.edge_count() > edges_before)
+            metrics_.dep_graph_node_mirror_edges_total.fetch_add(1, std::memory_order_relaxed);
+        std::uint16_t body_fi = 0;
+        auto cit = ir_cache_v2_.find(caller);
+        if (cit != ir_cache_v2_.end() && cit->second.irs.size() >= 2)
+            body_fi = 1;
+        mirror_block_dep_edge_unlocked_(callee_slot, caller_slot, body_fi, /*block_idx=*/0);
+    }
+
+    // Issue #3067: drain stale-reject queue. Re-record edges (restores
+    // NodeId even on string dedup) then hybrid_node_cascade_ so callers
+    // are dirty. Quiet when no reject armed (zero extra).
+    void drain_deferred_hybrid_cascade_() {
+        if (deferred_hybrid_armed_.load(std::memory_order_acquire) == 0)
+            return;
+        std::vector<std::pair<std::string, std::string>> pending;
+        {
+            lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                                   lock_order::Level::DepGraph);
+            sync_lock_order_metrics_();
+            if (deferred_hybrid_edges_.empty()) {
+                deferred_hybrid_armed_.store(0, std::memory_order_release);
+                return;
+            }
+            pending.swap(deferred_hybrid_edges_);
+            deferred_hybrid_armed_.store(0, std::memory_order_release);
+        }
+        std::unordered_map<std::string, std::vector<std::string>, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            by_callee;
+        for (auto& [caller, callee] : pending) {
+            record_dependency(caller, callee);
+            by_callee[callee].push_back(caller);
+        }
+        for (auto& [callee, callers] : by_callee) {
+            std::sort(callers.begin(), callers.end());
+            callers.erase(std::unique(callers.begin(), callers.end()), callers.end());
+            (void)hybrid_node_cascade_(callee, callers);
+            metrics_.hybrid_deferred_cascade_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                                   lock_order::Level::DepGraph);
+            sync_lock_order_metrics_();
+            if (!aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                          dep_name_to_slot_)) {
+                aura::compiler::dirty::rebuild_node_dep_graph_from_string(
+                    node_dep_graph_, dep_graph_, dep_name_to_slot_);
+                metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
     }
 
     // Issue #2187: unlocked helper — caller holds exclusive dep_graph_mtx_.
@@ -11515,6 +11586,47 @@ public:
     // Issue #1376: test hook — route through locked record_dependency.
     void public_record_dependency(const std::string& caller, const std::string& callee) {
         record_dependency(caller, callee);
+    }
+
+    // Issue #3067: test hooks — inject stale reject, drain, fork NodeId, parity.
+    void public_note_stale_dep_reject(const std::string& caller, const std::string& callee) {
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        deferred_hybrid_edges_.emplace_back(caller, callee);
+        deferred_hybrid_armed_.store(1, std::memory_order_release);
+        metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    void public_drain_deferred_hybrid_cascade() { drain_deferred_hybrid_cascade_(); }
+    void public_drop_node_dep_mirror_edge(const std::string& caller, const std::string& callee) {
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        auto cit = dep_name_to_slot_.find(callee);
+        auto ait = dep_name_to_slot_.find(caller);
+        if (cit == dep_name_to_slot_.end() || ait == dep_name_to_slot_.end())
+            return;
+        const auto from = aura::compiler::dirty::encode_fn_node(cit->second);
+        const auto to = aura::compiler::dirty::encode_fn_node(ait->second);
+        auto it = node_dep_graph_.adj.find(from);
+        if (it == node_dep_graph_.adj.end())
+            return;
+        auto& tos = it->second;
+        tos.erase(std::remove(tos.begin(), tos.end(), to), tos.end());
+    }
+    void public_bump_dep_graph_generation() {
+        dep_graph_generation_.fetch_add(1, std::memory_order_release);
+        metrics_.dep_graph_generation_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool public_graphs_consistent() const noexcept {
+        lock_order::OrderedSharedLock<std::shared_mutex> r(dep_graph_mtx_,
+                                                           lock_order::Level::DepGraph);
+        return aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                        dep_name_to_slot_);
+    }
+    [[nodiscard]] std::uint64_t public_hybrid_deferred_cascade_total() const noexcept {
+        return metrics_.hybrid_deferred_cascade_total.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t public_dep_graph_edge_reject_stale_total() const noexcept {
+        return metrics_.dep_graph_edge_reject_stale_total.load(std::memory_order_relaxed);
     }
 
     // Issue #2187: test hook — block-level DepGraph edge.
