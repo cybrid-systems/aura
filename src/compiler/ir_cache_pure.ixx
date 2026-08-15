@@ -72,6 +72,11 @@ struct CacheEntryVersionStamp {
     std::uint64_t defuse_version = 0;
     // Issue #2111: SoA generation fence at lower/store time.
     std::uint64_t soa_generation = 0;
+    // Issue #3069: last abort-force generation this entry has observed.
+    // Not a restamp domain — restamp_cache_entry leaves it alone so
+    // stamp_version(0,0,0,0) on abort keeps the seen-gen. is_stamped()
+    // ignores it (zero stamps after abort still mean "needs relower").
+    std::uint64_t abort_force_generation = 0;
     [[nodiscard]] bool is_stamped() const noexcept {
         return mutation_count != 0 || bridge_epoch != 0 || defuse_version != 0 ||
                soa_generation != 0;
@@ -96,6 +101,7 @@ inline constexpr std::uint32_t kRelowerMutationDrift = 1u << 2;
 inline constexpr std::uint32_t kRelowerBridgeEpoch = 1u << 3;
 inline constexpr std::uint32_t kRelowerDefuseVersion = 1u << 4;
 inline constexpr std::uint32_t kRelowerSoaGeneration = 1u << 5; // Issue #2111
+inline constexpr std::uint32_t kRelowerAbortForce = 1u << 6;    // Issue #3069
 
 // ── should_relower ────────────────────────────────────────
 // Issue #126 / #2033: pure decision function extracted from
@@ -111,13 +117,14 @@ inline constexpr std::uint32_t kRelowerSoaGeneration = 1u << 5; // Issue #2111
 //
 // Pure: same inputs → same output. reasons_out optional bitmask.
 // current_soa_generation: live SoA fence (0 = skip generation check).
-[[nodiscard]] inline bool should_relower(std::size_t source_hash, std::size_t cached_source_hash,
-                                         bool dirty, const CacheEntryVersionStamp& stamp,
-                                         std::uint64_t current_mutation_count,
-                                         std::uint64_t current_bridge_epoch,
-                                         std::uint64_t current_defuse_version = 0,
-                                         std::uint32_t* reasons_out = nullptr,
-                                         std::uint64_t current_soa_generation = 0) noexcept {
+// current_abort_force_generation: live abort-force gen (0 = skip; Soft
+// never-aborted path is zero-cost beyond the caller not passing it).
+[[nodiscard]] inline bool
+should_relower(std::size_t source_hash, std::size_t cached_source_hash, bool dirty,
+               const CacheEntryVersionStamp& stamp, std::uint64_t current_mutation_count,
+               std::uint64_t current_bridge_epoch, std::uint64_t current_defuse_version = 0,
+               std::uint32_t* reasons_out = nullptr, std::uint64_t current_soa_generation = 0,
+               std::uint64_t current_abort_force_generation = 0) noexcept {
     std::uint32_t reasons = 0;
     if (dirty)
         reasons |= kRelowerDirty;
@@ -136,6 +143,12 @@ inline constexpr std::uint32_t kRelowerSoaGeneration = 1u << 5; // Issue #2111
     // even when dirty==false and hashes match (silent-stale under compact).
     if (current_soa_generation != 0 && stamp.soa_generation < current_soa_generation)
         reasons |= kRelowerSoaGeneration;
+    // Issue #3069: abort-force generation fence. An entry that has not
+    // yet observed the live abort gen cannot be a clean hit (mid-loop
+    // window, or a post-abort store that forgot to ack).
+    if (current_abort_force_generation != 0 &&
+        stamp.abort_force_generation < current_abort_force_generation)
+        reasons |= kRelowerAbortForce;
     if (reasons_out)
         *reasons_out = reasons;
     return reasons != 0;

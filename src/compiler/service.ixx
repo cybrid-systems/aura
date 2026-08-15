@@ -22,6 +22,7 @@ module;
 #include <string>
 #include <string_view>
 #include <system_error>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -4824,6 +4825,13 @@ public:
     std::unordered_map<std::string, IRCacheEntry, aura::core::TransparentStringHash,
                        std::equal_to<>>
         ir_cache_v2_;
+    // Issue #3069: abort-force generation fence. Bumped (release) *before*
+    // walking ir_cache_v2_ so concurrent lookup_define_v2 can observe
+    // abort-in-progress without reading a half-forced entry. 0 = never
+    // aborted (Soft/Off lookup pays one acquire of 0).
+    std::atomic<std::uint64_t> abort_force_generation_{0};
+    std::atomic<std::uint8_t> abort_force_in_progress_{0};
+    std::atomic<std::uint8_t> abort_force_hold_{0}; // test-only mid-loop window
     // Issue #959 / #1042: hard cap for long-running --serve.
     // Evicts dirty-first, then oldest last_used (LRU).
     static constexpr std::size_t kIRCacheV2MaxEntries = 2048;
@@ -4884,10 +4892,16 @@ public:
         const auto cur_bridge = bridge_epoch();
         const auto cur_defuse = evaluator_.defuse_version();
         const auto cur_soa_gen = it->second.live_soa_generation();
+        // Issue #3069: abort-in-progress fence. One acquire of 0 when
+        // never aborted. Mid-loop: return 1 without reading a half-forced
+        // entry (in_progress is published before the walk).
+        const auto abort_gen0 = abort_force_generation_.load(std::memory_order_acquire);
+        if (abort_gen0 != 0 && abort_force_in_progress_.load(std::memory_order_acquire) != 0)
+            return 1;
         std::uint32_t reasons = 0;
         const bool need = should_relower(source_hash, it->second.source_hash, it->second.dirty,
                                          it->second.version_stamp_, cur_mut, cur_bridge, cur_defuse,
-                                         &reasons, cur_soa_gen) ||
+                                         &reasons, cur_soa_gen, abort_gen0) ||
                           it->second.dirty_block_count() > 0;
         if (need) {
             metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
@@ -4915,6 +4929,12 @@ public:
             }
             return 1;
         }
+        // Issue #3069: abort may have started after the first check.
+        const auto abort_gen1 = abort_force_generation_.load(std::memory_order_acquire);
+        if (abort_gen1 != 0 && (abort_force_in_progress_.load(std::memory_order_acquire) != 0 ||
+                                abort_gen0 != abort_gen1 ||
+                                it->second.version_stamp_.abort_force_generation < abort_gen1))
+            return 1;
         // Issue #1915: clean hit with matching source_hash — no re-lower.
         metrics_.invalidate_early_exit_clean_total.fetch_add(1, std::memory_order_relaxed);
         return 0; // hit
@@ -5220,6 +5240,10 @@ public:
         const auto defuse = evaluator_.defuse_version();
         const auto soa = entry.live_soa_generation();
         entry.stamp_version(mut, bridge, defuse, soa);
+        // Issue #3069: success-path restamp acks the live abort-force gen
+        // so a post-abort store is a clean hit (not stuck behind the fence).
+        entry.version_stamp_.abort_force_generation =
+            abort_force_generation_.load(std::memory_order_acquire);
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -5231,6 +5255,14 @@ public:
     // (abort path only — non-abort path stays zero-cost). Also rebuild
     // source_to_ir_map so ImpactScope cannot under-invalidate.
     void force_ir_cache_dirty_after_abort() {
+        // Issue #3069: publish the fence *before* the walk so a concurrent
+        // lookup cannot observe a half-forced entry as a clean hit.
+        abort_force_in_progress_.store(1, std::memory_order_release);
+        const auto gen = abort_force_generation_.fetch_add(1, std::memory_order_release) + 1;
+        if (abort_force_hold_.load(std::memory_order_acquire) != 0) {
+            while (abort_force_hold_.load(std::memory_order_acquire) != 0)
+                std::this_thread::yield();
+        }
         std::size_t forced = 0;
         for (auto& [name, entry] : ir_cache_v2_) {
             (void)name;
@@ -5239,6 +5271,9 @@ public:
             // Zero stamps → should_relower forced true on every domain
             // (mutation/bridge/defuse/soa) regardless of live counters.
             entry.stamp_version(0, 0, 0, 0);
+            // Ack this abort gen last so a lookup that sees seen==gen
+            // also sees dirty + zero stamps (in_progress covers mid-loop).
+            entry.version_stamp_.abort_force_generation = gen;
             // finish_cascade_soa_dirty_sync_ handles empty/absent SoA
             // (force_soa_instruction_dirty_sync is a no-op on empty module).
             finish_cascade_soa_dirty_sync_(entry);
@@ -5250,6 +5285,7 @@ public:
         if (forced > 0)
             metrics_.abort_ir_cache_force_dirty_total.fetch_add(static_cast<std::uint64_t>(forced),
                                                                 std::memory_order_relaxed);
+        abort_force_in_progress_.store(0, std::memory_order_release);
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any
@@ -11632,6 +11668,24 @@ public:
     // Issue #1495: test/agent entry for partial re-lower of dirty defines.
     std::size_t public_relower_dirty_defines_from_workspace() {
         return relower_dirty_defines_from_workspace();
+    }
+
+    // Issue #3069: abort-force fence test hooks.
+    void public_force_ir_cache_dirty_after_abort() { force_ir_cache_dirty_after_abort(); }
+    void public_set_abort_force_hold(bool on) {
+        abort_force_hold_.store(on ? 1 : 0, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t public_abort_force_generation() const noexcept {
+        return abort_force_generation_.load(std::memory_order_acquire);
+    }
+    [[nodiscard]] bool public_abort_force_in_progress() const noexcept {
+        return abort_force_in_progress_.load(std::memory_order_acquire) != 0;
+    }
+    [[nodiscard]] bool public_source_to_ir_map_consistent(const std::string& name) const {
+        auto it = ir_cache_v2_.find(name);
+        if (it == ir_cache_v2_.end())
+            return true;
+        return source_to_ir_map_is_consistent(it->second.irs, it->second.source_to_ir_map);
     }
 
     // Issue #1378: test accessors for cascade ordering / epoch accounting.
