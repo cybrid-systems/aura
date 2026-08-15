@@ -381,6 +381,9 @@ public:
     // cancel + secondary drain (default 2s, JoinPolicy.drain_ms) before
     // per-handle reservation release. Release is idempotent (#2009).
     // Issue #2782: Scheduler dead → release reservations only (no fiber join).
+    // Issue #3051: C++ join_all does **not** auto-inject a wait deadline
+    // (Soft / JoinPolicy default stays #3012). Aura orch:scope-join-all
+    // applies kProductionWaitReclaimedMsDefault per must_wait handle.
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
         ScopeEnterGuard g(this, "join_all");
         if (handles_.empty()) {
