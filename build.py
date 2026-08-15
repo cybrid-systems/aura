@@ -1006,6 +1006,19 @@ def cmd_lint():
             "Issue #3070 storm-exit hysteresis linter failed — run python3 scripts/coverage/checks/check_storm_exit_hysteresis_peer_soft_stale_3070.py"
         )
         return r
+    # Issue #3071: in-body non-poll window after hold-budget cancel.
+    # Scheduler idle poll re-arms force-safepoint (no unlock); additive
+    # schema-3071. Extends hold-starvation / chaos residual_zero (#81967).
+    hbi3071_script = COVERAGE_CHECKS / "check_hold_budget_inbody_window_3071.py"
+    if not hbi3071_script.exists():
+        fail(f"missing {hbi3071_script}")
+        return 1
+    r = run([sys.executable, str(hbi3071_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3071 hold-budget in-body window linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_window_3071.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12219,6 +12232,30 @@ def cmd_storm_exit_hysteresis_peer_soft_stale_3070():
     return cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage()
 
 
+def cmd_hold_budget_inbody_window_3071_coverage():
+    """Issue #3071: in-body cancel window watchdog (static)."""
+    print(f"{B}=== hold-budget in-body window coverage (#3071) ==={N}")
+    script = COVERAGE_CHECKS / "check_hold_budget_inbody_window_3071.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hold-budget in-body window (#3071) coverage contract rows failed")
+        return 1
+    ok("hold-budget in-body window (#3071) coverage clean")
+    return 0
+
+
+def cmd_hold_budget_inbody_window_3071():
+    """Issue #3071: in-body non-poll window after hold-budget cancel.
+
+    Soft/Off: observe only. Production: re-arm force-safepoint (no unlock).
+    """
+    print(f"{B}=== hold-budget in-body window (#3071) ==={N}")
+    return cmd_hold_budget_inbody_window_3071_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16579,6 +16616,8 @@ def main():
         "abort-force-generation-fence-3069-coverage": cmd_abort_force_generation_fence_3069_coverage,
         "storm-exit-hysteresis-peer-soft-stale-3070": cmd_storm_exit_hysteresis_peer_soft_stale_3070,
         "storm-exit-hysteresis-peer-soft-stale-3070-coverage": cmd_storm_exit_hysteresis_peer_soft_stale_3070_coverage,
+        "hold-budget-inbody-window-3071": cmd_hold_budget_inbody_window_3071,
+        "hold-budget-inbody-window-3071-coverage": cmd_hold_budget_inbody_window_3071_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

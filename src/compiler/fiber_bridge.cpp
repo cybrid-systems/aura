@@ -87,6 +87,14 @@ aura_evaluator_try_hold_budget_fail_closed_at_safepoint() noexcept {
     return 0;
 }
 
+// Issue #3071: in-body window watchdog weak no-op (strong in fiber.cpp).
+extern "C" __attribute__((weak)) int aura_hold_budget_poll_inbody_window(void) noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_hold_budget_cancel_armed(void) noexcept {
+    return 0;
+}
+
 // Issue #2721: per-victim evaluator_id getter weak stub (returns
 // nullptr — steal_safety.cpp already handles nullptr by skipping the
 // GC defer check). Strong def lives in src/serve/fiber.cpp.

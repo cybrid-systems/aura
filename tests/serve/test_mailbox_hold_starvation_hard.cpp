@@ -1449,6 +1449,282 @@ static void ac3035_6_no_docs_design() {
           "AC6: no docs/design/3035-* per #1655");
 }
 
+// ── Issue #3071 AC1: production watchdog after cancel arm + elapsed > bound.
+static void ac3071_1_production_inbody_window() {
+    std::println("\n--- #3071 AC1: production in-body window watchdog ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto fh = read_file("src/serve/fiber.h");
+    const auto sc = read_file("src/serve/scheduler.cpp");
+    CHECK(mhb.find("Issue #3071") != std::string::npos, "AC1: mhb cites #3071");
+    CHECK(mhb.find("kMutationHoldBudgetInbodyWindowIssue = 3071") != std::string::npos,
+          "AC1: issue stamp 3071");
+    CHECK(fc.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+          "AC1: poll implemented");
+    CHECK(fc.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "AC1: escalate via existing force-degrade");
+    CHECK(fh.find("aura_hold_budget_poll_inbody_window") != std::string::npos, "AC1: ABI declared");
+    CHECK(sc.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+          "AC1: scheduler idle poll");
+    CHECK(sc.find("aura_hold_budget_cancel_armed") != std::string::npos,
+          "AC1: scheduler shrinks wait when armed");
+
+    using aura::compiler::Evaluator;
+    using aura::serve::Fiber;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1); // 1 ms
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC1: reject_enabled under production");
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+    const auto ex0 = aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read();
+    const auto forced0 = aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ready{0};
+    std::atomic<int> go_edge{0};
+    std::atomic<int> ran{0};
+    std::atomic<int> still_held_after_poll{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "AC1: outermost Guard");
+            aura::gc_hooks::arm_mutation_hold_defer();
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "AC1: fiber current");
+            f->request_hold_budget_cancel();
+            ready.store(1, std::memory_order_release);
+            for (int i = 0; i < 400 && go_edge.load(std::memory_order_acquire) == 0; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            // Cooperative edge after host poll re-armed force-safepoint.
+            Fiber::check_gc_safepoint();
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ready.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    CHECK(ready.load() == 1, "AC1: holder entered Guard + armed cancel");
+    std::this_thread::sleep_for(std::chrono::milliseconds(5)); // past 1 ms bound
+    const int polled = aura::serve::aura_hold_budget_poll_inbody_window();
+    still_held_after_poll.store(aura::compiler::mutation_hold_live_snapshot().held ? 1 : 0,
+                                std::memory_order_relaxed);
+    CHECK(polled == 1, "AC1: production poll returns 1 after bound");
+    CHECK(aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read() > ex0,
+          "AC1: inbody-window-exceeded advanced");
+    CHECK(still_held_after_poll.load() == 1,
+          "AC1: holder still outermost-held after poll (no unlock)");
+    go_edge.store(1, std::memory_order_release);
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC1: fiber reached safepoint after poll");
+    CHECK(ok_flag.load() == 0, "AC1: outermost success forced false at safepoint/dtor");
+    CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() > forced0,
+          "AC1: fail-closed advanced after cooperative edge");
+    CHECK(aura::gc_hooks::defer_reasons_snapshot() == 0, "AC1: residual defer drained");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3071 AC2: no preemptive workspace_mtx_ unlock; Soft observe only.
+static void ac3071_2_no_unlock_soft_observe() {
+    std::println("\n--- #3071 AC2: no preemptive unlock + Soft observe ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(fc.find("no workspace_mtx_ unlock") != std::string::npos ||
+              fc.find("no unlock") != std::string::npos,
+          "AC2: poll documents no preemptive unlock");
+    CHECK(fc.find("workspace_mtx_.unlock") == std::string::npos,
+          "AC2: poll does not unlock workspace_mtx_");
+
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::setenv("AURA_SANDBOX", "off", 1);
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+          "AC2: reject_enabled false under Soft");
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    const auto ex0 = aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read();
+    const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{0};
+    std::atomic<int> ready{0};
+    std::atomic<int> go{0};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            auto* f = aura::serve::g_current_fiber;
+            if (f)
+                f->request_hold_budget_cancel();
+            ready.store(1, std::memory_order_release);
+            for (int i = 0; i < 400 && go.load(std::memory_order_acquire) == 0; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ready.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    const int polled = aura::serve::aura_hold_budget_poll_inbody_window();
+    CHECK(polled == 0, "AC2: Soft poll returns 0 (observe only)");
+    CHECK(aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read() > ex0,
+          "AC2: exceeded metric advanced under Soft");
+    CHECK(aura::compiler::mutation_hold_live_snapshot().held, "AC2: holder still held (no unlock)");
+    CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == unlock0,
+          "AC2: forced-unlock not advanced");
+    go.store(1, std::memory_order_release);
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC2: Soft fiber ran");
+    CHECK(ok_flag.load() == 1, "AC2: Soft does not force-fail");
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3071 AC3: nested never independently force; happy path cheap.
+static void ac3071_3_nested_and_happy() {
+    std::println("\n--- #3071 AC3: nested outermost-only + happy path ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    CHECK(emb.find("is_outermost_") != std::string::npos, "AC3: dtor consume outermost-only");
+    CHECK(fc.find("mutation_hold_live_snapshot") != std::string::npos,
+          "AC3: poll uses outermost live snapshot");
+    CHECK(fc.find("armed_ns == 0") != std::string::npos, "AC3: happy path one acquire");
+
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    const auto ex0 = aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read();
+    CHECK(aura::serve::aura_hold_budget_cancel_armed() == 0, "AC3: not armed on happy path");
+    CHECK(aura::serve::aura_hold_budget_poll_inbody_window() == 0, "AC3: poll no-ops when unarmed");
+    CHECK(aura::compiler::mutation_hold_budget_inbody_window_exceeded_total_v_read() == ex0,
+          "AC3: exceeded unchanged on happy path");
+
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> nested_pending{0};
+    std::atomic<int> ready{0};
+    std::atomic<int> go{0};
+    std::atomic<int> ran{0};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+            bool inner_ok = true;
+            Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &inner_ok);
+            CHECK(!inner.is_outermost(), "AC3: inner is not outermost");
+            auto* f = aura::serve::g_current_fiber;
+            if (f)
+                f->request_hold_budget_cancel();
+            ready.store(1, std::memory_order_release);
+            for (int i = 0; i < 400 && go.load(std::memory_order_acquire) == 0; ++i)
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            nested_pending.store((f && f->peek_hold_budget_cancel()) ? 1 : 0,
+                                 std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        }
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ready.load(std::memory_order_acquire) == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    (void)aura::serve::aura_hold_budget_poll_inbody_window();
+    CHECK(aura::compiler::mutation_hold_live_snapshot().held,
+          "AC3: nested hold still live after poll (no independent force)");
+    go.store(1, std::memory_order_release);
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "AC3: nested fiber ran");
+    CHECK(nested_pending.load() == 1, "AC3: inner did not consume cancel");
+    ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+    aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3071 AC4: additive query keys.
+static void ac3071_4_query_keys() {
+    std::println("\n--- #3071 AC4: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(source_has_key(q, "mutation-hold-budget-inbody-window-exceeded-total"),
+          "AC4: inbody-window-exceeded-total key");
+    CHECK(source_has_key(q, "hold-budget-inbody-window-exceeded-total"),
+          "AC4: AC example alias key");
+    CHECK(source_has_key(q, "mutation-hold-budget-inbody-window-wired"), "AC4: wired key");
+    CHECK(source_has_key(q, "schema-3071"), "AC4: schema-3071");
+    CHECK(source_has_key(q, "issue-3071"), "AC4: issue-3071");
+    CHECK(source_has_key(q, "schema-3035"), "AC4: schema-3035 preserved");
+    CHECK(source_has_key(q, "schema-2999"), "AC4: schema-2999 preserved");
+    CHECK(source_has_key(q, "schema-2932"), "AC4: schema-2932 preserved");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-unlock-total"),
+          "AC4: #3035 unlock total preserved");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-total"),
+          "AC4: #2932 fail-closed preserved");
+    CHECK(source_has_key(q, "mutation-hold-budget-forced-fail-closed-dtor-consume-total"),
+          "AC4: #2999 dtor-consume preserved");
+}
+
+// ── Issue #3071 AC5: source-cite + coverage linter.
+static void ac3071_5_source_and_linter() {
+    std::println("\n--- #3071 AC5: source-cite + linter ---");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_hold_budget_inbody_window_3071.py");
+    CHECK(mhb.find("Issue #3071") != std::string::npos, "AC5: mhb cites #3071");
+    CHECK(fc.find("Issue #3071") != std::string::npos, "AC5: fiber.cpp cites #3071");
+    CHECK(source_has_key(q, "hold-budget-inbody-window-exceeded-total"), "AC5: query key");
+    CHECK(t.find("ac3071_1_production_inbody_window") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3071_2_no_unlock_soft_observe") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac3071_3_nested_and_happy") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac3071_4_query_keys") != std::string::npos, "AC5: AC4 test");
+    CHECK(chaos.find("ac3071_residual_inbody_window_cite") != std::string::npos,
+          "AC5: chaos residual cite");
+    CHECK(build.find("check_hold_budget_inbody_window_3071") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("3071") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/serve/test_issue_3071.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
+// ── Issue #3071 AC6: no docs/design/3071-*.
+static void ac3071_6_no_docs_design() {
+    std::println("\n--- #3071 AC6: no docs/design/3071-* per #1655 ---");
+    CHECK(read_file("docs/design/3071-hold-budget-inbody-window.md").empty(),
+          "AC6: no docs/design/3071-* per #1655");
+}
+
 // ── Issue #2754 AC1: equal keys + cone-/mask-disjoint ImpactScope →
 // concurrent admit (bump cone-admit counter). Key-disjoint fast path
 // preserved (#2724). regions_disjoint 4-arg + regions_cone_disjoint
@@ -2185,6 +2461,14 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3035_4_query_keys();
     ac3035_5_source_and_linter();
     ac3035_6_no_docs_design();
+    std::println("\n=== Issue #3071: in-body non-poll window after hold-budget cancel "
+                 "(#3035 residual) ===");
+    ac3071_1_production_inbody_window();
+    ac3071_2_no_unlock_soft_observe();
+    ac3071_3_nested_and_happy();
+    ac3071_4_query_keys();
+    ac3071_5_source_and_linter();
+    ac3071_6_no_docs_design();
     std::println(
         "\n=== Issue #2754: region concurrent cone/ImpactScope mask-AND (#2724 residual) ===");
     ac2754_1_cone_disjoint_concurrent_admit();

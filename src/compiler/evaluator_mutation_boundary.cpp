@@ -2094,8 +2094,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // #2999 is the *exit* half: once this dtor runs with cancel armed,
     // it cannot commit success — even if check_gc_safepoint never ran
     // in this body. Remaining in-body window (body that never exits)
-    // still relies on #2932 force-safepoint to enter dtor; do not
-    // invent preemptive unlock while the body is still running.
+    // still relies on #2932 force-safepoint to enter dtor. Issue #3071
+    // bounds that window: scheduler idle poll re-arms force-safepoint
+    // (no preemptive unlock while the body is still running).
     //
     // AC3 — only outermost Guards observe/clear the flag. Nested
     // guards fall through; is_outermost_ is ctor-captured (#2120).
