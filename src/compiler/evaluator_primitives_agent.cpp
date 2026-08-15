@@ -5382,6 +5382,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2229", 2229);
             insert_kv("issue-2229", 2229);
             insert_kv("agent-failure-policy-wired", 1);
+            // Issue #3052: join_all on_join_fail (Timeout/Cancelled).
+            // Additive — #2229 restart keys preserved.
+            insert_kv("agent-join-fail-total",
+                      static_cast<std::int64_t>(
+                          os.agent_join_fail_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3052", 3052);
+            insert_kv("issue-3052", 3052);
+            insert_kv("join-fail-policy-wired", 1);
             // Issue #2887: BP-storm producer degrade under AgentScope::watch_all
             // (on_backpressure). Additive — #2228/#2535 admit reject keys
             // and #2229 restart keys preserved (AC5).

@@ -2337,6 +2337,20 @@ def cmd_lint():
             "Issue #3049 per-tenant quota linter failed — run python3 scripts/coverage/checks/check_quota_per_tenant_3049.py"
         )
         return r
+    # Issue #3052: AgentFailurePolicy::on_join_fail wired in
+    # AgentScope::join_all (RestartN / Throttle / Cancel / ReportOnly).
+    # Extends test_agent_failure_policy.cpp + test_failure_policy_bridge.cpp
+    # (#81967); no docs/design/ (#1655).
+    jfp_script = COVERAGE_CHECKS / "check_join_fail_policy_3052.py"
+    if not jfp_script.exists():
+        fail(f"missing {jfp_script}")
+        return 1
+    r = run([sys.executable, str(jfp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3052 join_all on_join_fail linter failed — run python3 scripts/coverage/checks/check_join_fail_policy_3052.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.

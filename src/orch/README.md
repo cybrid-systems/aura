@@ -258,10 +258,10 @@ Rules (per Issue #2229 AC2-AC3):
    agents (long-lived). Short-lived batch work still uses
    `serve::parallel_orch::parallel_intend` with the #2007
    `FailurePolicy` family.
-3. `on_join_fail` is `ReportOnly` by default — the #2227 hard-reclaim
-   path already drives the fiber lifecycle after a non-Ok join; a
-   separate restart hook on `join_fail` is out of scope for #2229
-   (documented in `AgentFailurePolicy::on_join_fail`).
+3. `on_join_fail` is `ReportOnly` by default (zero behaviour change).
+   Issue #3052 wires `AgentScope::join_all(JoinPolicy, AgentFailurePolicy)`:
+   Timeout / Cancelled honor RestartN / Throttle / Cancel; Reclaimed +
+   still-running / deferred is never restart fuel (#2661).
 4. Optional Phase C (`CircuitBreaker` mirror of #2007) is deferred
    — the `consecutive_stall_limit` cap is the simpler version of
    the same idea and ships in #2229.
@@ -337,12 +337,13 @@ scope.watch_all(/*stall_ms=*/100, pol);
 |----------------------|-------------------------|
 | `FailFast` | `on_stall = Cancel` |
 | `CollectAll` | `on_stall = ReportOnly` |
-| `RetryN` | `on_stall = RestartN`, `max_restarts` from arg / `pp.max_retries` |
+| `RetryN` | `on_stall = RestartN` **and** `on_join_fail = RestartN`, `max_restarts` from arg / `pp.max_retries` |
 | `CircuitBreaker` | `on_stall = Cancel`, `consecutive_stall_limit` from arg / `pp.consecutive_fail_limit` |
 
 Semantic boundary:
 1. **Batch** policies govern body-error admit/retry under `parallel_intend`.
-2. **Agent** policies govern stall response under `AgentScope::watch_all`.
+2. **Agent** policies govern stall response under `AgentScope::watch_all`
+   and join-fail response under `AgentScope::join_all` (#3052).
 3. **RestartN** is only meaningful for long-lived agents with keepalive;
    `max_restarts = 0` disables re-spawn (cap at zero).
 4. **Not calling the bridge leaves #2007 / #2229 defaults unchanged** (AC3).
