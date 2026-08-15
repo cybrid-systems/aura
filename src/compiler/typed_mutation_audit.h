@@ -1169,6 +1169,12 @@ inline std::atomic<std::uint64_t> g_rehydrate_success_bind_total{0};
 inline std::atomic<std::uint64_t> g_rehydrate_success_bound_goals{0};
 inline std::atomic<std::uint64_t> g_rehydrate_success_bound_fp{0};
 inline std::atomic<std::uint32_t> g_rehydrate_miss_invalidate_wired{1};
+// Issue #3063: steal/densify SUCCESS advances the same invalidate_gen
+// before restamp so in-flight IR Move cannot elide on a pre-restamp
+// green proof. Reuses g_rehydrate_miss_invalidate_gen (no second model).
+inline constexpr int kStealDensifySuccessInvalidateIssue = 3063;
+inline std::atomic<std::uint64_t> g_steal_densify_success_invalidate_total{0};
+inline std::atomic<std::uint32_t> g_steal_densify_success_invalidate_wired{1};
 
 [[nodiscard]] inline std::uint64_t rehydrate_miss_invalidate_gen_v_read() noexcept {
     return g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed);
@@ -1185,6 +1191,9 @@ inline std::atomic<std::uint32_t> g_rehydrate_miss_invalidate_wired{1};
 [[nodiscard]] inline std::uint64_t rehydrate_success_bind_total_v_read() noexcept {
     return g_rehydrate_success_bind_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t steal_densify_success_invalidate_total_v_read() noexcept {
+    return g_steal_densify_success_invalidate_total.load(std::memory_order_relaxed);
+}
 inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     g_rehydrate_miss_invalidate_gen.store(0, std::memory_order_relaxed);
     g_rehydrate_miss_green_bind_gen.store(0, std::memory_order_relaxed);
@@ -1194,6 +1203,7 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     g_rehydrate_success_bind_total.store(0, std::memory_order_relaxed);
     g_rehydrate_success_bound_goals.store(0, std::memory_order_relaxed);
     g_rehydrate_success_bound_fp.store(0, std::memory_order_relaxed);
+    g_steal_densify_success_invalidate_total.store(0, std::memory_order_relaxed);
 }
 
 // Purpose: drop green linear_fast_path after densify/steal rehydrate miss
@@ -1211,9 +1221,27 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     }
     g_rehydrate_miss_invalidate_total.fetch_add(1, std::memory_order_relaxed);
     g_rehydrate_miss_force_deopt_total.fetch_add(1, std::memory_order_relaxed);
-    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_relaxed);
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    return true;
+}
+
+// Purpose: drop green linear_fast_path before steal/densify restamp
+// Pre: production/Full steal or densify is about to restamp
+// Post: invalidate_gen advanced (release) so linear_fast_path_ok is false
+//       until a later green face bind; Soft/Off: no extra atomics
+// Safety Class: P0 under production/Full (half-green Move/Drop residual)
+// Issue: #3063 / #3032
+// AI-Native Rationale: Agents join restamp → gen bump → deopt → next stamp
+[[nodiscard]] inline bool invalidate_fast_path_before_steal_densify_restamp() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard)
+        return false;
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_steal_densify_success_invalidate_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 
@@ -1552,8 +1580,10 @@ inline void reset_linear_fast_path_dirty_revalidate_for_test() noexcept {
     if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
             std::memory_order_relaxed) > 0)
         return false;
-    // Issue #3032: rehydrate-miss invalidate gen must match last green bind.
-    if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed) !=
+    // Issue #3032 / #3063: invalidate gen (steal/densify miss *or* success
+    // restamp) must match last green bind. Acquire pairs with release
+    // fetch_add so an in-flight IR Move cannot elide after gen advances.
+    if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
         g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed))
         return false;
     return true;

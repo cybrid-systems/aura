@@ -169,6 +169,8 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // never elides under a false predicate (#3006). Heap double-move
     // checks still run at the op site. Inverse on MutationBoundary exit:
     // !ok forces dirty-root revalidate (#2964 / #3006).
+    // Issue #3063: steal/densify restamp advances invalidate_gen first so
+    // this try_skip cannot stay true across a concurrent success restamp.
     if ((op == LinearOpKind::Move || op == LinearOpKind::Drop) &&
         aura::compiler::typed_audit::linear_ir_fastpath_try_skip()) {
         return true;

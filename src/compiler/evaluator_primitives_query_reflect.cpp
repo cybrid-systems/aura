@@ -549,6 +549,20 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                               std::memory_order_relaxed)));
             insert_kv("schema-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
             insert_kv("issue-3032", aura::compiler::typed_audit::kRehydrateMissInvalidateIssue);
+            // Issue #3063: steal/densify success invalidate-before-restamp.
+            insert_kv(
+                "steal-densify-success-invalidate-total",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::steal_densify_success_invalidate_total_v_read()));
+            insert_kv(
+                "steal-densify-success-invalidate-wired",
+                static_cast<std::int64_t>(
+                    aura::compiler::typed_audit::g_steal_densify_success_invalidate_wired.load(
+                        std::memory_order_relaxed)));
+            insert_kv("schema-3063",
+                      aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue);
+            insert_kv("issue-3063",
+                      aura::compiler::typed_audit::kStealDensifySuccessInvalidateIssue);
 
             return query_hash_finish(ht, string_heap, overflowed);
         });

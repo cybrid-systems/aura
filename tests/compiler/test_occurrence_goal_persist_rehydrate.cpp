@@ -1123,6 +1123,94 @@ static void ac3032_6_source_and_linter() {
           "3032 AC6: no invent test_issue_3032");
 }
 
+// ── Issue #3063: steal/densify SUCCESS invalidate-before-restamp ──
+
+static void ac3063_1_prod_success_blocks_elide() {
+    std::println("\n--- #3063 AC1: production success invalidate → !elide ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::reset_linear_ir_fastpath_counters_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    typed_audit::stamp_type_linear_commit_proof(30631);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3063 AC1: green before restamp");
+    CHECK(typed_audit::linear_ir_fastpath_try_skip(), "3063 AC1: skip before");
+    const auto inv0 = typed_audit::steal_densify_success_invalidate_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3063 AC1: production invalidate");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0 + 1,
+          "3063 AC1: same invalidate_gen advanced");
+    CHECK(typed_audit::steal_densify_success_invalidate_total_v_read() == inv0 + 1,
+          "3063 AC1: success invalidate total");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3063 AC1: !ok after gen advance");
+    CHECK(!typed_audit::linear_ir_fastpath_try_skip(), "3063 AC1: Move/Drop cannot skip");
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3063 AC1: green after rebind");
+    apply_dev_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3063_2_soft_zero_extra() {
+    std::println("\n--- #3063 AC2: Soft zero extra atomics ---");
+    apply_dev_audit_defaults();
+    typed_audit::set_strategy(typed_audit::AuditStrategy::Sampled);
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    const auto inv0 = typed_audit::steal_densify_success_invalidate_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(!typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3063 AC2: Soft returns false");
+    CHECK(typed_audit::steal_densify_success_invalidate_total_v_read() == inv0,
+          "3063 AC2: no new counter");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0, "3063 AC2: no gen bump");
+}
+
+static void ac3063_3_schema() {
+    std::println("\n--- #3063 AC3: schema-3063 + SSOT ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3063 AC3: warm");
+    CHECK(href(svc, "schema-3063") == 3063, "3063 AC3: schema-3063");
+    CHECK(href(svc, "issue-3063") == 3063, "3063 AC3: issue-3063");
+    CHECK(href(svc, "steal-densify-success-invalidate-wired") == 1, "3063 AC3: wired");
+    CHECK(href(svc, "steal-densify-success-invalidate-total") >= 0, "3063 AC3: total");
+    CHECK(href(svc, "schema-3032") == 3032, "3063 AC3: schema-3032 preserved");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+          "3063 AC3: helper");
+    CHECK(tma.find("linear_fast_path_ok") != std::string::npos, "3063 AC3: SSOT predicate");
+}
+
+static void ac3063_4_source_and_linter() {
+    std::println("\n--- #3063 AC4: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("Issue #3063") != std::string::npos, "3063 AC4: tma cite");
+    CHECK(tma.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+          "3063 AC4: helper");
+    CHECK(efm.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+          "3063 AC4: restamp site");
+    CHECK(ir.find("Issue #3063") != std::string::npos, "3063 AC4: IR cite");
+    CHECK(t.find("ac3063_1_prod_success_blocks_elide") != std::string::npos, "3063 AC4: AC1");
+    CHECK(!lint.empty() && lint.find("3063") != std::string::npos, "3063 AC4: linter");
+    CHECK(build.find("check_half_green_ir_steal_densify_3063") != std::string::npos,
+          "3063 AC4: build.py");
+    CHECK(read_file("docs/design/3063-half-green-ir-steal-densify.md").empty(),
+          "3063 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3063.cpp").empty(),
+          "3063 AC4: no invent test_issue_3063");
+}
+
 // ── Issue #2995: unified OccurrenceCommitHealth + single-shot ensure ──
 
 static void ac2995_1_soft_empty_pure_loads() {
@@ -1341,6 +1429,11 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3032_4_success_bind();
     ac3032_5_schema();
     ac3032_6_source_and_linter();
+    std::println("\n=== #3063 steal/densify success invalidate-before-restamp ===");
+    ac3063_1_prod_success_blocks_elide();
+    ac3063_2_soft_zero_extra();
+    ac3063_3_schema();
+    ac3063_4_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

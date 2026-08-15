@@ -1164,6 +1164,17 @@ static void ac3032_health_schema() {
     CHECK(href(cs, "overflow") == -1, "3032: health query not overflowed");
 }
 
+static void ac3063_health_schema() {
+    std::println("\n--- #3063 AC: type-linear-commit-health success-invalidate keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3063") == 3063, "3063: schema-3063 on health");
+    CHECK(href(cs, "issue-3063") == 3063, "3063: issue-3063");
+    CHECK(href(cs, "steal-densify-success-invalidate-wired") == 1, "3063: wired");
+    CHECK(href(cs, "steal-densify-success-invalidate-total") >= 0, "3063: total");
+    CHECK(href(cs, "schema-3032") == 3032, "3063: schema-3032 preserved");
+    CHECK(href(cs, "overflow") == -1, "3063: health query not overflowed");
+}
+
 static void ac2995_3_recover_fail_keeps_reject() {
     std::println("\n--- #2995 AC3: recover fail → existing force_reason, no silent green ---");
     apply_production_audit_defaults();
@@ -1284,6 +1295,7 @@ int run_test_type_linear_commit_health() {
     ac3031_health_schema();
     std::println("\n=== Issue #3032: rehydrate-miss invalidate on type-linear-commit-health ===");
     ac3032_health_schema();
+    ac3063_health_schema();
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
                  "#2995 + #3030 + #3031 + #3032: {} "
                  "passed, {} "

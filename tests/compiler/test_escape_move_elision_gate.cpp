@@ -1140,6 +1140,39 @@ static void ac3032_hermetic_invalidate() {
     clear_type_linear_commit_proof_for_test();
 }
 
+static void ac3063_hermetic_success_invalidate() {
+    std::println("\n--- #3063 AC: hermetic steal/densify success blocks skip ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(30630);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "3063: green ok");
+    CHECK(linear_ir_fastpath_try_skip(), "3063: skip before");
+    CHECK(invalidate_fast_path_before_steal_densify_restamp(), "3063: hard success invalidate");
+    CHECK(!linear_fast_path_ok(), "3063: !ok after success invalidate");
+    CHECK(!linear_ir_fastpath_try_skip(), "3063: cannot skip after restamp gen");
+    {
+        CompilerService cs;
+        CHECK(href(cs, "schema-3063") == 3063, "3063: schema-3063 on escape-postmutate");
+        CHECK(href(cs, "steal-densify-success-invalidate-wired") == 1, "3063: wired");
+    }
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_type_linear_commit_proof_for_test();
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1190,6 +1223,8 @@ int run_test_escape_move_elision_gate() {
     ac3030_6_linter_no_design();
     std::println("\n=== Issue #3032: rehydrate-miss invalidates linear_fast_path ===");
     ac3032_hermetic_invalidate();
+    std::println("\n=== Issue #3063: steal/densify success invalidate-before-restamp ===");
+    ac3063_hermetic_success_invalidate();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
