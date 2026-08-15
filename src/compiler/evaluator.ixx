@@ -7859,11 +7859,13 @@ public:
     // Unified sweep: restamp_pinned_stable_refs + site counters.
     // Force-calls validate_or_refresh semantics via refresh_if_stale.
     std::size_t auto_restamp_pinned_stable_refs_at(StableRefRefreshSite site) noexcept;
-    // Issue #3019: single restamp entry after Boundary success / abort
-    // restore / steal complete / densify. Order is documented and
-    // fixed: node gen → StableNodeRef → LifetimePin. Soft steal/densify
-    // with no wrap pending and no budget pressure skips the extra
-    // node/pin walks (stable-only, same as pre-#3019).
+    // Issue #3019 / Issue #3058: single restamp entry after Boundary
+    // success / abort restore / steal complete / densify (including
+    // steal-adjacent probe_and_repin). Order is documented and fixed:
+    // node gen → StableNodeRef → LifetimePin. Soft steal/densify with
+    // no wrap pending and no budget pressure skips the extra node/pin
+    // walks (stable-only, same as pre-#3019). Over-budget torn is
+    // visible on every query:*-stable surface (Issue #3058).
     enum class UnifiedRestampSite : std::uint8_t {
         BoundarySuccess = 0,
         AbortRestore = 1,

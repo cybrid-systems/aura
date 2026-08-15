@@ -503,6 +503,101 @@ static void ac3041_4_schema_and_linter() {
           "AC5: no docs/design/3041-*");
 }
 
+// ── Issue #3058: unified restamp + query:*-stable over-budget visibility ──
+static void ac3058_1_unified_entry_no_steal_split() {
+    std::println("\n--- #3058 AC1: steal-adjacent restamp uses unified entry ---");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(ev.find("Issue #3058") != std::string::npos, "AC1: Evaluator cites #3058");
+    CHECK(fm.find("probe_and_repin_linear_on_steal") != std::string::npos,
+          "AC1: steal-adjacent helper present");
+    CHECK(fm.find("unified_restamp_after_boundary(UnifiedRestampSite::StealComplete)") !=
+              std::string::npos,
+          "AC1: probe_and_repin uses unified StealComplete");
+    const auto probe = fm.find("void Evaluator::probe_and_repin_linear_on_steal");
+    CHECK(probe != std::string::npos, "AC1: probe impl");
+    const auto probe_body = probe == std::string::npos ? std::string{} : fm.substr(probe, 700);
+    CHECK(probe_body.find("restamp_pinned_stable_refs()") == std::string::npos,
+          "AC1: no restamp_pinned-only residual on steal probe");
+    CHECK(mb.find("UnifiedRestampSite::BoundarySuccess") != std::string::npos &&
+              mb.find("UnifiedRestampSite::AbortRestore") != std::string::npos,
+          "AC1: boundary/abort still unified");
+    CHECK(fm.find("UnifiedRestampSite::Densify") != std::string::npos,
+          "AC1: densify still unified");
+}
+
+static void ac3058_2_over_budget_query_stable_visible() {
+    std::println("\n--- #3058 AC2: over-budget query:*-stable torn visible ---");
+    const auto asr = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    CHECK(restamp.find("kUnifiedRestampQueryVisibleIssue = 3058") != std::string::npos,
+          "AC2: stamp");
+    CHECK(asr.find("allow_query_stable_ref_export") != std::string::npos,
+          "AC2: query:as-stable-ref gated");
+    CHECK(asr.find("Issue #3058") != std::string::npos, "AC2: as-stable-ref cites #3058");
+    CHECK(qws.find("query:ensure-ref: restamp budget exceeded") != std::string::npos,
+          "AC2: query:ensure-ref restamp-lag");
+    CHECK(qws.find("schema-3058") != std::string::npos, "AC2: ensure-ref hash torn schema");
+    CHECK(qws.find("restamp-generation-torn") != std::string::npos, "AC2: ensure-ref reports torn");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    clear_restamp_budget_nodes_override_for_test();
+    FlatAST flat;
+    for (int i = 0; i < 16; ++i)
+        (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    set_restamp_budget_nodes_for_process(1);
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_last_budget_exceeded(), "AC2: last-exceeded after over-budget");
+    CHECK(flat.restamp_generation_torn(), "AC2: generation torn after over-budget");
+    clear_restamp_budget_nodes_override_for_test();
+}
+
+static void ac3058_3_soft_under_budget_unchanged() {
+    std::println("\n--- #3058 AC3: Soft / under-budget path unchanged ---");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fm.find("skipped_extra = true") != std::string::npos, "AC3: Soft skip retained");
+    CHECK(fm.find("!production && !wrap_pending && !last_budget") != std::string::npos,
+          "AC3: Soft skip gate retained");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    clear_restamp_budget_nodes_override_for_test();
+    FlatAST flat;
+    (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    flat.restamp_all_node_generations();
+    CHECK(!flat.restamp_last_budget_exceeded(), "AC3: under-budget not exceeded");
+    CHECK(!flat.restamp_generation_torn(), "AC3: under-budget not torn");
+}
+
+static void ac3058_4_additive_schema() {
+    std::println("\n--- #3058 AC4: additive schema only ---");
+    const auto review = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto qmid = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+    CHECK(review.find("schema-3058") != std::string::npos, "AC4: generation-stats schema-3058");
+    CHECK(review.find("query-stable-ref-over-budget-visible-wired") != std::string::npos,
+          "AC4: wired");
+    CHECK(q.find("schema-3058") != std::string::npos, "AC4: stable-ref-stats-hash schema-3058");
+    CHECK(qmid.find("schema-3058") != std::string::npos, "AC4: children-stable-stats schema-3058");
+    CHECK(review.find("schema-3000") != std::string::npos, "AC4: restamp-lag keys preserved");
+    CHECK(review.find("schema-3037") != std::string::npos, "AC4: torn keys preserved");
+    CHECK(review.find("schema-3019") != std::string::npos, "AC4: unified keys preserved");
+}
+
+static void ac3058_5_canary_linter() {
+    std::println("\n--- #3058 AC5: canary + linter + no invent ---");
+    const auto t = read_file("tests/core/test_restamp_sla_observability.cpp");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3058_1_unified_entry_no_steal_split") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3058_2_over_budget_query_stable_visible") != std::string::npos,
+          "AC5: AC2 test");
+    CHECK(build.find("check_unified_restamp_query_visible_3058") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("tests/core/test_issue_3058.cpp").empty(), "AC5: no test_issue_3058.cpp");
+    CHECK(read_file("docs/design/3058-unified-restamp-query.md").empty(),
+          "AC5: no docs/design/3058-* per #1655");
+}
+
 } // namespace
 
 int run_test_restamp_sla_observability() {
@@ -529,7 +624,13 @@ int run_test_restamp_sla_observability() {
     ac3041_2_lazy_align_still_runs();
     ac3041_3_soft_unlimited_zero_extra();
     ac3041_4_schema_and_linter();
-    std::println("\n=== #2528+#2934+#3019+#3041: see per-AC results above ===");
+    std::println("\n=== Issue #3058: unified restamp + query:*-stable torn visible ===");
+    ac3058_1_unified_entry_no_steal_split();
+    ac3058_2_over_budget_query_stable_visible();
+    ac3058_3_soft_under_budget_unchanged();
+    ac3058_4_additive_schema();
+    ac3058_5_canary_linter();
+    std::println("\n=== #2528+#2934+#3019+#3041+#3058: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 

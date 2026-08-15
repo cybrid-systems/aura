@@ -689,6 +689,13 @@ void register_workspace_query_primitives(
             return mev("bad-arg", "usage: (query:ensure-ref node-id|stable-ref)");
         }
 
+        // Issue #3058: over-budget torn — do not stamp-green a
+        // pre-restamp gen. Production reject (same restamp-lag face
+        // as query:stable-ref). Soft: allow returns true + hash
+        // still reports restamp-generation-torn.
+        if (!ev.allow_query_stable_ref_export(held.id))
+            return mev("restamp-lag", "query:ensure-ref: restamp budget exceeded; "
+                                      "generation torn for export (Issue #3058 / #3037)");
         const bool was_valid = held.is_valid_in(flat);
         auto exported = ev.export_held_ref(held);
         // Build result hash via FlatHashTable (same pattern as obs stats).
@@ -728,6 +735,9 @@ void register_workspace_query_primitives(
             insert_kv("schema-2404", 2404);
             insert_kv("issue-2404", 2404);
             insert_kv("stable-ref-export-wired", 1);
+            insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
+            insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+            insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -743,6 +753,9 @@ void register_workspace_query_primitives(
         insert_kv("schema-2404", 2404);
         insert_kv("issue-2404", 2404);
         insert_kv("stable-ref-export-wired", 1);
+        insert_kv("restamp-generation-torn", flat.restamp_generation_torn() ? 1 : 0);
+        insert_kv("schema-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
+        insert_kv("issue-3058", aura::ast::kUnifiedRestampQueryVisibleIssue);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);

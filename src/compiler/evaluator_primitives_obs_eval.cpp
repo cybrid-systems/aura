@@ -6260,6 +6260,9 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 {"schema-3019", make_int(aura::ast::kUnifiedRestampIssue)},
                 {"issue-3019", make_int(aura::ast::kUnifiedRestampIssue)},
                 {"unified-restamp-wired", make_int(1)},
+                {"schema-3058", make_int(aura::ast::kUnifiedRestampQueryVisibleIssue)},
+                {"issue-3058", make_int(aura::ast::kUnifiedRestampQueryVisibleIssue)},
+                {"query-stable-ref-over-budget-visible-wired", make_int(1)},
                 {"restamp-budget-query-epoch-stale-total",
                  make_int(static_cast<std::int64_t>(
                      aura::core::g_restamp_budget_query_epoch_stale_total().load(

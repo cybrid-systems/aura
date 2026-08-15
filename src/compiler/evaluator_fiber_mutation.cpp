@@ -3862,9 +3862,11 @@ std::size_t Evaluator::refresh_stale_frames_after_steal(std::uint64_t hint_env_i
 void Evaluator::probe_and_repin_linear_on_steal() noexcept {
     probe_linear_ownership_on_fiber_steal();
     (void)re_pin_cow_children_from_snapshot();
-    // restamp already runs inside probe_linear for pins; keep explicit
-    // restamp for atomic-batch registry coverage on dual-path steal.
-    (void)restamp_pinned_stable_refs();
+    // Issue #3058: steal-adjacent restamp uses the same unified entry
+    // (StealComplete). restamp_pinned_stable_refs-only was a residual
+    // path split vs abort / boundary / densify. Atomic-batch stables
+    // still restamp inside the triad.
+    (void)unified_restamp_after_boundary(UnifiedRestampSite::StealComplete);
 }
 
 // Issue #1612: MacroIntroduced-specific marker + provenance refresh.
