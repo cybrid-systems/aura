@@ -204,7 +204,54 @@ int run_test_replace_subtree_new_body_hygiene() {
         }
     }
 
-    std::println("\n=== #2797 replace-subtree new-body hygiene: {} passed, {} failed ===", g_passed,
+    // ── Issue #3061: :allow-macro? unlocks replace-subtree *target* ──
+    {
+        std::println("\n--- #3061 AC1: :allow-macro? #t replaces MacroIntroduced target ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda () (+ 1 2)))\")").has_value(),
+              "3061 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3061 AC1: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto target = find_replace_target(*ws);
+        CHECK(target != NULL_NODE, "3061 AC1: target");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", target)).has_value(),
+              "3061 AC1: stamp");
+        auto denied = cs.eval(std::format("(mutate:replace-subtree {} \"99\")", target));
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+              "3061 AC1: default still hygiene");
+        auto allowed =
+            cs.eval(std::format("(mutate:replace-subtree {} \"99\" :allow-macro? #t)", target));
+        CHECK(allowed.has_value(), "3061 AC1: allow returns");
+        CHECK(merr_kind(cs, *allowed) != "hygiene", "3061 AC1: not hygiene");
+    }
+    {
+        std::println("\n--- #3061 AC2: global allow-macro-mutate unlocks target ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda () 1))\")").has_value(), "3061 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3061 AC2: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto target = find_replace_target(*ws);
+        CHECK(target != NULL_NODE, "3061 AC2: target");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", target)).has_value(),
+              "3061 AC2: stamp");
+        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "3061 AC2: global on");
+        auto r = cs.eval(std::format("(mutate:replace-subtree {} \"2\")", target));
+        CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene", "3061 AC2: global unlocks");
+        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "3061 AC2: global off");
+    }
+    {
+        std::println("\n--- #3061 AC5: source + linter ---");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        CHECK(mut.find("Issue #3061") != std::string::npos, "3061 AC5: mutate cites #3061");
+        CHECK(mut.find("\"replace-subtree\"") != std::string::npos &&
+                  mut.find("reject_structural_macro_hygiene") != std::string::npos,
+              "3061 AC5: target uses shared helper");
+        CHECK(read_file("docs/design/3061-move-replace-allow-macro.md").empty(),
+              "3061 AC5: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3061.cpp").empty(), "3061 AC5: no invent test");
+    }
+
+    std::println("\n=== #2797+#3061 replace-subtree hygiene: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }
