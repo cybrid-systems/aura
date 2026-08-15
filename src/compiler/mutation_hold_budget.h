@@ -442,6 +442,11 @@ inline void clear_mutation_hold_budget_forced_unlock_for_test() noexcept {
 inline std::atomic<std::uint64_t> g_mutation_hold_budget_inbody_window_exceeded_total{0};
 inline std::atomic<std::uint32_t> g_mutation_hold_budget_inbody_window_wired{1};
 inline constexpr int kMutationHoldBudgetInbodyWindowIssue = 3071;
+// Issue #3073: production soak readiness gate (residual-zero ×
+// hold-after-cancel max). Wired sentinel only — no extra hot-path work.
+// Soak abort lives in the chaos harness; Agents read schema-3073.
+inline constexpr int kChaosProductionReadinessIssue = 3073;
+inline std::atomic<std::uint32_t> g_chaos_production_readiness_gate_wired{1};
 inline std::atomic<std::uint64_t> g_hold_budget_cancel_armed_ns{0};
 inline std::atomic<std::uint64_t> g_hold_budget_cancel_armed_fiber{0};
 // First production escalate per arm (force_degrade once; later polls

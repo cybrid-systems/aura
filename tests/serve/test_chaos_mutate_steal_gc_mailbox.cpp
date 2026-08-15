@@ -393,6 +393,10 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     const auto force_deopt0 = Fiber::steal_snapshot_mismatch_force_deopt_total();
     const auto resume_hard0 = aura::serve::resume_hard_fail_total_v_read();
     const auto resume_fence0 = Fiber::resume_fence_fail_total();
+    // Issue #3073: LifetimeProof + EnvFrame residuals were not in the
+    // #2755 four-arm set; production readiness binds them too.
+    const auto res_envframe0 = aura::serve::steal_safety_residual_envframe_lag_total_v_read();
+    const auto res_life0 = aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
 
@@ -427,6 +431,9 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
     // workers stuck in wait_for_resume — classic hang class from #2202).
     // Issue #2513: also tick orphan reaper so reclaim residual paths run.
     int host_ticks = 0;
+    // Issue #3073: max observed hold-after-cancel during the soak
+    // (existing relaxed loads; zero work when cancel is not armed).
+    std::uint64_t max_hold_after_cancel_us = 0;
     // Watchdog: smoke +15s; soak/full/prod scale with duration (min +60s);
     // #2554 PR gate uses short slack (+20s) for CI resource limits.
     const auto watchdog_slack =
@@ -445,6 +452,16 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
             // Issue #3071: host-side poll of the in-body cancel window
             // (scheduler run() also polls; this covers soak host ticks).
             (void)aura::serve::aura_hold_budget_poll_inbody_window();
+            if (aura::serve::aura_hold_budget_cancel_armed()) {
+                const auto armed_ns =
+                    aura::compiler::g_hold_budget_cancel_armed_ns.load(std::memory_order_acquire);
+                const auto now = aura::compiler::mutation_hold_steady_ns_now();
+                if (armed_ns != 0 && now > armed_ns) {
+                    const auto h = (now - armed_ns) / 1000ULL;
+                    if (h > max_hold_after_cancel_us)
+                        max_hold_after_cancel_us = h;
+                }
+            }
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
@@ -713,6 +730,38 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
             armed_ns != 0 && snap.held) {
             CHECK(hold_after_us <= bound,
                   "#3071: max hold-after-cancel exceeds inbody bound (holder still live)");
+        }
+        if (hold_after_us > max_hold_after_cancel_us)
+            max_hold_after_cancel_us = hold_after_us;
+    }
+
+    // Issue #3073: single production soak readiness gate — product of
+    // steal residual-zero (including LifetimeProof + EnvFrame, which
+    // #2755 four-arm set omitted) and hold-after-cancel max ≤ #3071
+    // bound. Soft / unit: print only (prod_ready_gate requires
+    // residual_zero_gate + production_defaults_active). Zero extra
+    // work on the quiet path (existing relaxed loads).
+    {
+        const auto res_envframe1 = aura::serve::steal_safety_residual_envframe_lag_total_v_read();
+        const auto res_life1 =
+            aura::serve::steal_safety_residual_lifetime_proof_reject_total_v_read();
+        const auto d_envframe = res_envframe1 - res_envframe0;
+        const auto d_life = res_life1 - res_life0;
+        const auto bound = aura::compiler::mutation_hold_inbody_window_bound_us();
+        const auto snap = aura::compiler::mutation_hold_live_snapshot();
+        const bool armed = aura::serve::aura_hold_budget_cancel_armed() != 0;
+        const bool prod_ready_gate = (residual_zero_gate || prod_gate) &&
+                                     aura::compiler::typed_audit::production_defaults_active();
+        std::println("  #3073 production readiness: envframe={} life={} max_hold_after_us={} "
+                     "bound={} held={} armed={} (gate={})",
+                     d_envframe, d_life, max_hold_after_cancel_us, bound, snap.held ? 1 : 0,
+                     armed ? 1 : 0, prod_ready_gate ? 1 : 0);
+        if (prod_ready_gate) {
+            CHECK(d_envframe == 0, "#3073: residual_envframe_lag delta == 0");
+            CHECK(d_life == 0, "#3073: residual_lifetime_proof_reject delta == 0");
+            if (bound > 0 && (armed || snap.held))
+                CHECK(max_hold_after_cancel_us <= bound,
+                      "#3073: max hold-after-cancel exceeds bound");
         }
     }
 
@@ -1879,6 +1928,75 @@ static void ac3071_residual_inbody_window_cite() {
     CHECK(read_file("tests/serve/test_issue_3071.cpp").empty(), "#3071: no invent test file");
 }
 
+// Issue #3073: production soak readiness gate — residual-zero (incl.
+// LifetimeProof + EnvFrame) × hold-after-cancel max. Soft/unit no abort.
+static void ac3073_1_production_soak_binds_residual_and_hold() {
+    std::println("\n--- #3073 AC1: production soak binds residual-zero + hold max ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(chaos.find("Issue #3073") != std::string::npos, "AC1: harness cites #3073");
+    CHECK(chaos.find("prod_ready_gate") != std::string::npos,
+          "AC1: named production readiness gate");
+    CHECK(chaos.find("steal_safety_residual_envframe_lag_total_v_read") != std::string::npos,
+          "AC1: EnvFrame residual sampled");
+    CHECK(chaos.find("steal_safety_residual_lifetime_proof_reject_total_v_read") !=
+              std::string::npos,
+          "AC1: LifetimeProof residual sampled");
+    CHECK(chaos.find("max_hold_after_cancel_us") != std::string::npos,
+          "AC1: max hold-after-cancel tracked");
+    CHECK(chaos.find("#3073: residual_envframe_lag delta == 0") != std::string::npos,
+          "AC1: EnvFrame fail-closed");
+    CHECK(chaos.find("#3073: residual_lifetime_proof_reject delta == 0") != std::string::npos,
+          "AC1: LifetimeProof fail-closed");
+    CHECK(chaos.find("#3073: max hold-after-cancel exceeds bound") != std::string::npos,
+          "AC1: hold-after-cancel max fail-closed");
+    CHECK(chaos.find("#2755: residual_boundary_unsafe delta == 0") != std::string::npos,
+          "AC1: #2755 four-arm residual-zero preserved");
+}
+
+static void ac3073_2_soft_unit_no_abort() {
+    std::println("\n--- #3073 AC2: Soft / unit default no abort ---");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    CHECK(chaos.find("prod_ready_gate") != std::string::npos, "AC2: gate named");
+    CHECK(chaos.find("production_defaults_active()") != std::string::npos,
+          "AC2: production_defaults required for abort");
+    CHECK(chaos.find("Soft / unit: print only") != std::string::npos ||
+              chaos.find("print only") != std::string::npos,
+          "AC2: Soft/unit print-only documented");
+}
+
+static void ac3073_3_reuse_counters_additive() {
+    std::println("\n--- #3073 AC3: reuse existing counters; additive schema ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(mhb.find("kChaosProductionReadinessIssue = 3073") != std::string::npos,
+          "AC3: issue stamp");
+    CHECK(q.find("schema-3073") != std::string::npos, "AC3: schema-3073");
+    CHECK(q.find("issue-3073") != std::string::npos, "AC3: issue-3073");
+    CHECK(q.find("production-readiness-soak-") != std::string::npos &&
+              q.find("gate-wired") != std::string::npos,
+          "AC3: wired key");
+    CHECK(q.find("schema-3071") != std::string::npos, "AC3: schema-3071 preserved");
+    CHECK(q.find("schema-3035") != std::string::npos, "AC3: schema-3035 preserved");
+}
+
+static void ac3073_4_source_linter_gate() {
+    std::println("\n--- #3073 AC4/AC5/AC6: linter + no invent + no docs/design ---");
+    const auto t = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_chaos_production_readiness_3073.py");
+    CHECK(t.find("ac3073_1_production_soak_binds_residual_and_hold") != std::string::npos,
+          "AC5: AC1 test");
+    CHECK(t.find("ac3073_2_soft_unit_no_abort") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac3073_3_reuse_counters_additive") != std::string::npos, "AC5: AC3 test");
+    CHECK(build.find("check_chaos_production_readiness_3073") != std::string::npos,
+          "AC4: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("3073") != std::string::npos, "AC5: linter present");
+    CHECK(read_file("tests/serve/test_issue_3073.cpp").empty(),
+          "AC5: no invent test file per #81967");
+    CHECK(read_file("docs/design/3073-production-readiness-soak.md").empty(),
+          "AC6: no docs/design/3073-* per #1655");
+}
+
 static void ac3036_mailbox_residual_prod_fail_closed_cite() {
     std::println("\n--- #3036: soak forces production_defaults (mailbox residual fail-closed) ---");
     const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
@@ -1913,6 +2031,10 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac3002_mailbox_hold_slo_soak_cite();
         ac3036_mailbox_residual_prod_fail_closed_cite();
         ac3071_residual_inbody_window_cite();
+        ac3073_1_production_soak_binds_residual_and_hold();
+        ac3073_2_soft_unit_no_abort();
+        ac3073_3_reuse_counters_additive();
+        ac3073_4_source_linter_gate();
         std::println("\n=== Results (release blocker only): {} passed, {} failed ===", g_passed,
                      g_failed);
         return g_failed ? 1 : 0;
@@ -1925,6 +2047,10 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2999_residual_dtor_consume_cite();
         ac3002_mailbox_hold_slo_soak_cite();
         ac3071_residual_inbody_window_cite();
+        ac3073_1_production_soak_binds_residual_and_hold();
+        ac3073_2_soft_unit_no_abort();
+        ac3073_3_reuse_counters_additive();
+        ac3073_4_source_linter_gate();
         std::println("\n=== Results (PR gate only): {} passed, {} failed ===", g_passed, g_failed);
         return g_failed ? 1 : 0;
     }
@@ -1954,6 +2080,11 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac3002_mailbox_hold_slo_soak_cite();
     ac3036_mailbox_residual_prod_fail_closed_cite();
     ac3071_residual_inbody_window_cite();
+    std::println("\n=== Issue #3073: production soak readiness gate ===");
+    ac3073_1_production_soak_binds_residual_and_hold();
+    ac3073_2_soft_unit_no_abort();
+    ac3073_3_reuse_counters_additive();
+    ac3073_4_source_linter_gate();
 
     // Issue #2856: production chaos gate (release blocker) — multi-fiber
     // mutate × densify × steal × mailbox composition under production
