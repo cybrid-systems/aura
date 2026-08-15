@@ -4,6 +4,7 @@
 module;
 
 #include "core/transparent_string_hash.hh" // #2247 dual-graph string maps
+#include "compiler/typed_mutation_audit.h" // Issue #3065: Production/Full cone persist gate
 
 export module aura.compiler.dirty_propagation;
 
@@ -44,6 +45,11 @@ inline std::atomic<std::uint64_t> type_ir_cone_union_samples{0};
 // Issue #3045: match / exhaustiveness sites forced into the type∪IR cone
 // when Agent under-marked a Variant / constructor / match-arm.
 inline std::atomic<std::uint64_t> adt_exhaust_undermark_force_total{0};
+// Issue #3065: DeadCoercion elim / residual CastOp nodes forced into the
+// type∪IR cone so a remutate of the same site re-enters typecheck.
+inline constexpr int kDeadCoercionElimConeIssue = 3065;
+inline std::atomic<std::uint64_t> dead_coercion_elim_cone_force_total{0};
+inline std::atomic<std::uint32_t> dead_coercion_elim_cone_wired{1};
 
 // Issue #2106: optional sink → CompilerMetrics::cascade_skip_subtree_total.
 // Set by CompilerService ctor (or tests); null when no service is live.
@@ -643,6 +649,84 @@ inline std::size_t force_adt_exhaust_sites_into_cone(std::span<const NodeId> mat
     }
     if (n)
         adt_exhaust_undermark_force_total.fetch_add(n, std::memory_order_relaxed);
+    return n;
+}
+
+// Issue #3065: after DeadCoercion elim (AST identity / IR CastOp) persist
+// the eliminated NodeIds into the type∪IR dirty cone so a remutate of the
+// same site re-enters typecheck (AC1). Unions into last_type_cone_ast —
+// does not wipe a post-infer cone (unlike a bare
+// mirror_type_affected_to_cascade of only the elim span). Soft / quiet
+// (empty span, or neither production nor Full) → 0 extra, no new bits
+// (AC2). Samples type_ir_union_cone metrics so the enlarged cone is
+// visible (AC3).
+inline std::size_t force_dead_coercion_elim_into_cone(std::span<const NodeId> elim_ast) {
+    if (elim_ast.empty())
+        return 0; // Quiet: no elim → zero extra
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    if (!production_defaults_active() && get_strategy() != AuditStrategy::Full)
+        return 0; // Soft: observe-only, no permanent dirty bits
+    std::unordered_set<NodeId> seen(t_last_type_cone_ast.begin(), t_last_type_cone_ast.end());
+    std::size_t added = 0;
+    for (NodeId nid : elim_ast) {
+        if (nid == 0)
+            continue;
+        if (!seen.insert(nid).second)
+            continue;
+        t_last_type_cone_ast.push_back(nid);
+        const NodeId dep = encode_ast_dep_node(nid);
+        note_pipeline_cascade_root(dep);
+        g_global_dirty.mark(dep);
+        ++added;
+    }
+    if (added == 0)
+        return 0;
+    type_dirty_cone_mirrored_total.fetch_add(added, std::memory_order_relaxed);
+    dead_coercion_elim_cone_force_total.fetch_add(added, std::memory_order_relaxed);
+    std::size_t ir_n = 0;
+    for (NodeId d : g_global_dirty.dirty_nodes()) {
+        if (!is_ast_dep_node(d))
+            ++ir_n;
+    }
+    type_ir_cone_union_size_sum.fetch_add(t_last_type_cone_ast.size() + ir_n,
+                                          std::memory_order_relaxed);
+    type_ir_cone_union_samples.fetch_add(1, std::memory_order_relaxed);
+    return added;
+}
+
+// Issue #3065: residual CastOp with no source_ast_node_id — persist the
+// containing IR block encodings so type_ir_union_cone_nonempty is true
+// for the next remutate (same dirty-column path as a type change).
+// Soft / empty → 0.
+inline std::size_t force_residual_castop_blocks_into_cone(std::span<const NodeId> encoded_blocks) {
+    if (encoded_blocks.empty())
+        return 0;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    if (!production_defaults_active() && get_strategy() != AuditStrategy::Full)
+        return 0;
+    std::size_t n = 0;
+    for (NodeId enc : encoded_blocks) {
+        if (enc == 0)
+            continue;
+        g_global_dirty.mark(enc);
+        note_pipeline_cascade_root(enc);
+        ++n;
+    }
+    if (n == 0)
+        return 0;
+    dead_coercion_elim_cone_force_total.fetch_add(n, std::memory_order_relaxed);
+    std::size_t ir_n = 0;
+    for (NodeId d : g_global_dirty.dirty_nodes()) {
+        if (!is_ast_dep_node(d))
+            ++ir_n;
+    }
+    type_ir_cone_union_size_sum.fetch_add(t_last_type_cone_ast.size() + ir_n,
+                                          std::memory_order_relaxed);
+    type_ir_cone_union_samples.fetch_add(1, std::memory_order_relaxed);
     return n;
 }
 

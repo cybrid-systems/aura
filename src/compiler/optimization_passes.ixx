@@ -135,6 +135,32 @@ inline std::size_t sweep_production_hot_residual_castops(aura::ir::IRFunction& f
     // density-policy keep + force-JIT/relower; leftover==0 is Quiet.
     (void)aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
         count_all_castops(f));
+    // Issue #3065: residual CastOp takes the same dirty-column path as a
+    // type change — remirror source AST nodes (or containing IR blocks)
+    // so the next remutate re-enters typecheck. Quiet leftover==0.
+    {
+        std::vector<aura::compiler::dirty::NodeId> leftover_ast;
+        std::vector<aura::compiler::dirty::NodeId> leftover_blocks;
+        leftover_ast.reserve(4);
+        for (std::size_t bi = 0; bi < f.blocks.size(); ++bi) {
+            bool any_cast = false;
+            bool block_has_ast = false;
+            for (const auto& instr : f.blocks[bi].instructions) {
+                if (instr.opcode != aura::ir::IROpcode::CastOp)
+                    continue;
+                any_cast = true;
+                if (instr.source_ast_node_id != 0) {
+                    leftover_ast.push_back(instr.source_ast_node_id);
+                    block_has_ast = true;
+                }
+            }
+            if (any_cast && !block_has_ast)
+                leftover_blocks.push_back(
+                    aura::compiler::dirty::encode_block_node(0, static_cast<std::uint16_t>(bi)));
+        }
+        (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(leftover_ast);
+        (void)aura::compiler::dirty::force_residual_castop_blocks_into_cone(leftover_blocks);
+    }
     return count_identity_castops(f);
 }
 

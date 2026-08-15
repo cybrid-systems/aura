@@ -46,6 +46,7 @@ module;
 export module aura.compiler.coercion_map;
 
 import aura.core.ast;
+import aura.compiler.dirty_propagation; // Issue #3065: remirror elim'd nodes into type cone
 
 namespace aura::compiler {
 
@@ -1014,6 +1015,14 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
     auto& s = stats_out ? *stats_out : local_stats;
     s = {};
 
+    // Issue #3065: persist AST-elided sites into the type∪IR cone under
+    // production/Full so a remutate of the same node re-enters typecheck.
+    // Soft/quiet: do not collect (zero extra dirty bits).
+    const bool persist_elim_cone = aura::compiler::typed_audit::production_defaults_active() ||
+                                   aura::compiler::typed_audit::get_strategy() ==
+                                       aura::compiler::typed_audit::AuditStrategy::Full;
+    std::vector<aura::compiler::dirty::NodeId> elim_ast;
+
     for (const auto& e_in : map.entries()) {
         CoercionEntry e = e_in;
 
@@ -1042,6 +1051,11 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                 dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
                                                         e.narrow_evidence, e.type_tag);
             }
+            if (persist_elim_cone) {
+                elim_ast.push_back(e.original_child);
+                if (e.parent_id != 0)
+                    elim_ast.push_back(e.parent_id);
+            }
             continue;
         }
 
@@ -1062,6 +1076,11 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
                                              static_cast<std::uint32_t>(e.parent_id));
                 dce_deopt::stamp_elided_cast_deopt_meta(site, e.source_mutation_id,
                                                         e.narrow_evidence, e.type_tag);
+            }
+            if (persist_elim_cone) {
+                elim_ast.push_back(e.original_child);
+                if (e.parent_id != 0)
+                    elim_ast.push_back(e.parent_id);
             }
             continue;
         }
@@ -1194,6 +1213,10 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         ++s.applied;
         ++s.kept;
     }
+    // Issue #3065: remirror elim'd nodes after the walk (union into last
+    // type cone). Soft/empty → helper is a no-op.
+    if (!elim_ast.empty())
+        (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(elim_ast);
     return s.applied;
 }
 
