@@ -19,6 +19,7 @@
 #include "core/sandbox.hh"
 #include "core/transparent_string_hash.hh"
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <fstream>
@@ -33,6 +34,7 @@ import std;
 import aura.core.ast;
 import aura.compiler.macro_expansion;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.value;
 
 namespace {
@@ -42,6 +44,7 @@ using aura::ast::NULL_NODE;
 using aura::ast::StringPool;
 using aura::ast::SyntaxMarker;
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::macro_exp::effective_hygiene_depth_limit;
 using aura::compiler::macro_exp::effective_hygiene_pass_cap;
@@ -405,6 +408,141 @@ static void ac3029_pass_reason() {
     reset_all();
 }
 
+// Two-pass macro chain: (d 3) → (e 3) → (* 3 2). One pass leaves a macro call.
+static void fill_two_pass_macros(FlatAST& flat, StringPool& pool) {
+    auto y = pool.intern("y");
+    auto d = pool.intern("d");
+    auto e = pool.intern("e");
+    auto star = pool.intern("*");
+    auto yvar = flat.add_variable(y);
+    auto evar = flat.add_variable(e);
+    auto star_v = flat.add_variable(star);
+    auto two = flat.add_literal(2);
+    std::array<aura::ast::NodeId, 2> e_args{yvar, two};
+    auto e_body = flat.add_call(star_v, e_args);
+    (void)flat.add_macrodef(e, {y}, e_body, false, true);
+    std::array<aura::ast::NodeId, 1> d_args{yvar};
+    auto d_body = flat.add_call(evar, d_args);
+    (void)flat.add_macrodef(d, {y}, d_body, false, true);
+    auto three = flat.add_literal(3);
+    auto dcall = flat.add_variable(d);
+    std::array<aura::ast::NodeId, 1> call_args{three};
+    flat.root = flat.add_call(dcall, call_args);
+}
+
+static std::vector<std::uint32_t> tree_fp(const FlatAST& flat, aura::ast::NodeId root) {
+    std::vector<std::uint32_t> fp;
+    std::vector<aura::ast::NodeId> st;
+    st.push_back(root);
+    while (!st.empty()) {
+        auto id = st.back();
+        st.pop_back();
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        auto v = flat.get(id);
+        fp.push_back(static_cast<std::uint32_t>(v.tag));
+        fp.push_back(v.sym_id);
+        std::vector<aura::ast::NodeId> kids(v.children.begin(), v.children.end());
+        for (auto it = kids.rbegin(); it != kids.rend(); ++it)
+            st.push_back(*it);
+    }
+    return fp;
+}
+
+static void grant_self_evo_production() {
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    set_mode(SandboxMode::Restricted);
+    g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
+                                  make_grant_provenance(0, true, 0, 0));
+    MacroSelfEvoPolicy pol;
+    pol.max_expansion_passes = 32;
+    pol.max_depth = 256;
+    pol.allow_rest_hygiene = true;
+    pol.allow_concurrent_fiber = true;
+    g_capability_registry().grant_macro_self_evo(0, pol);
+}
+
+static void ac3062_no_boundary_refuse_partial() {
+    std::println("\n--- #3062 AC1: no-boundary production refuse half-expand ---");
+    reset_all();
+    grant_self_evo_production();
+    CHECK(set_hygiene_pass_cap(1), "3062 AC1 pass cap=1");
+    StringPool pool;
+    FlatAST flat;
+    fill_two_pass_macros(flat, pool);
+    const auto orig = flat.root;
+    const auto fp0 = tree_fp(flat, orig);
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    auto out = macro_expand_all(flat, pool, orig, 8);
+    const auto* rs = aura_macro_hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-pass-limit",
+          "3062 AC1 last reason hygiene-pass-limit");
+    CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3062 AC1 reason enum 3");
+    CHECK(out == orig, "3062 AC1 no-boundary returns original_root");
+    CHECK(tree_fp(flat, out) == fp0, "3062 AC1 tree identical to pre-expand");
+    reset_all();
+}
+
+static void ac3062_boundary_restore() {
+    std::println("\n--- #3062 AC2: MutationBoundary restore to original_root ---");
+    reset_all();
+    grant_self_evo_production();
+    CHECK(set_hygiene_pass_cap(1), "3062 AC2 pass cap=1");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "3062 AC2 set-code");
+    auto& ev = cs.evaluator();
+    StringPool pool;
+    FlatAST flat;
+    fill_two_pass_macros(flat, pool);
+    const auto orig = flat.root;
+    const auto fp0 = tree_fp(flat, orig);
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    bool ok = true;
+    {
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(gr.has_value(), "3062 AC2 Guard acquired");
+        auto out = macro_expand_all(flat, pool, orig, 8);
+        CHECK(out == orig, "3062 AC2 boundary returns original_root");
+        CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3062 AC2 reason 3");
+        CHECK(tree_fp(flat, out) == fp0, "3062 AC2 tree identical after restore");
+    }
+    reset_all();
+}
+
+static void ac3062_soft_off_half_expand() {
+    std::println("\n--- #3062 AC3: Soft/Off still half-expands (zero-cost) ---");
+    reset_all();
+    CHECK(set_hygiene_pass_cap(1), "3062 AC3 pass cap=1");
+    StringPool pool;
+    FlatAST flat;
+    fill_two_pass_macros(flat, pool);
+    const auto orig = flat.root;
+    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    auto out = macro_expand_all(flat, pool, orig, 8);
+    CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3062 AC3 reason 3");
+    CHECK(out != orig, "3062 AC3 Soft/Off still half-expands");
+    reset_all();
+}
+
+static void ac3062_source_wiring() {
+    std::println("\n--- #3062 AC4: source wiring + counters remain accurate ---");
+    const auto cpp = read_file("src/compiler/macro_expansion.cpp");
+    const auto fib = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(cpp.find("Issue #3062") != std::string::npos, "3062 AC4 cpp cite");
+    CHECK(cpp.find("install_macro_expand_checkpoint") != std::string::npos,
+          "3062 AC4 install helper");
+    CHECK(cpp.find("production_surface") != std::string::npos, "3062 AC4 production gate");
+    CHECK(cpp.find("NameMapCheckpoint") != std::string::npos, "3062 AC4 NameMapCheckpoint cite");
+    CHECK(fib.find("aura_evaluator_try_save_macro_expand_checkpoint") != std::string::npos,
+          "3062 AC4 save ABI");
+    CHECK(fib.find("aura_evaluator_commit_macro_expand_checkpoint") != std::string::npos,
+          "3062 AC4 commit ABI");
+    CHECK(cpp.find("aura_evaluator_try_restore_macro_expand_checkpoint") != std::string::npos,
+          "3062 AC4 restore still wired");
+    CHECK(cpp.find("hygiene-pass-limit") != std::string::npos, "3062 AC5 reason string");
+    reset_all();
+}
+
 static void ac3029_query_and_linter() {
     std::println("\n--- #3029 AC: query keys + linter ---");
     CompilerService cs;
@@ -438,6 +576,11 @@ int run_test_macro_hygiene_limits() {
     ac3029_ceiling_reason();
     ac3029_pass_reason();
     ac3029_query_and_linter();
+    std::println("\n=== Issue #3062: no-boundary pass-limit refuse-partial ===");
+    ac3062_no_boundary_refuse_partial();
+    ac3062_boundary_restore();
+    ac3062_soft_off_half_expand();
+    ac3062_source_wiring();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

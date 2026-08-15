@@ -1058,7 +1058,6 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         : 0);
             insert_kv("export-ref-mandate", 1);
             insert_kv("resolve-stamped-gate", 1);
->>>>>>> 698176757 (fix(test): green pre-existing FAIL members in test_aot_jit_stamp_batch after llvm_jit link)
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

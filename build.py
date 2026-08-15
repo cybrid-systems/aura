@@ -1679,6 +1679,18 @@ def cmd_lint():
             "Issue #3029 grant fence / limit-reason linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_grant_fence_3029.py"
         )
         return r
+    # Issue #3062: macro_expand_all pass-limit refuse-partial without boundary.
+    # Extends test_macro_hygiene_limits (#81967); no docs/design.
+    menb_script = COVERAGE_CHECKS / "check_macro_expand_noboundary_limit_3062.py"
+    if not menb_script.exists():
+        fail(f"missing {menb_script}")
+        return 1
+    r = run([sys.executable, str(menb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3062 no-boundary expand limit linter failed — run python3 scripts/coverage/checks/check_macro_expand_noboundary_limit_3062.py"
+        )
+        return r
     # Issue #3030: abort/restore clears TypeLinearCommitProof + linear_fast_path
     # face. Extends test_escape_move_elision_gate + test_type_linear_commit_health
     # (#81967); no docs/design.
@@ -12609,6 +12621,30 @@ def cmd_move_replace_allow_macro_3061():
     return cmd_move_replace_allow_macro_3061_coverage()
 
 
+def cmd_macro_expand_noboundary_limit_3062_coverage():
+    """Issue #3062: no-boundary expand pass-limit refuse-partial (static)."""
+    print(f"{B}=== no-boundary expand limit coverage (#3062) ==={N}")
+    script = COVERAGE_CHECKS / "check_macro_expand_noboundary_limit_3062.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("no-boundary expand limit (#3062) coverage contract rows failed")
+        return 1
+    ok("no-boundary expand limit (#3062) coverage clean")
+    return 0
+
+
+def cmd_macro_expand_noboundary_limit_3062():
+    """Issue #3062: production expand limit refuses half-tree without boundary.
+
+    Soft/Off remains zero-cost. Reuses panic-checkpoint save/restore.
+    """
+    print(f"{B}=== no-boundary expand limit (#3062) ==={N}")
+    return cmd_macro_expand_noboundary_limit_3062_coverage()
+
+
 def cmd_tls_depth_same_flat_clone_3028_coverage():
     """Issue #3028: TLS depth not authority; same-FlatAST clone reject (static)."""
     print(f"{B}=== TLS depth / same-FlatAST clone coverage (#3028) ==={N}")
@@ -16214,6 +16250,8 @@ def main():
         "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
         "move-replace-allow-macro-3061": cmd_move_replace_allow_macro_3061,
         "move-replace-allow-macro-3061-coverage": cmd_move_replace_allow_macro_3061_coverage,
+        "macro-expand-noboundary-limit-3062": cmd_macro_expand_noboundary_limit_3062,
+        "macro-expand-noboundary-limit-3062-coverage": cmd_macro_expand_noboundary_limit_3062_coverage,
         "tls-depth-same-flat-clone-3028": cmd_tls_depth_same_flat_clone_3028,
         "tls-depth-same-flat-clone-3028-coverage": cmd_tls_depth_same_flat_clone_3028_coverage,
         "macro-self-evo-grant-fence-3029": cmd_macro_self_evo_grant_fence_3029,
