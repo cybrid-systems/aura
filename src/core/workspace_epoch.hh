@@ -214,9 +214,11 @@ inline void bump_mutation_and_bridge_epochs(std::uint64_t delta = 1) noexcept {
 //   2. Run query under normal shared lock (blocks while Guard is open).
 //   3. Compare last-mutation-epoch / last-generation to post-mutate
 //      values; equal ⇒ result matches that commit.
-//   4. Optional strict: set_query_epoch_strict(true) or
-//      AURA_QUERY_EPOCH_STRICT=1 — if epoch advances during the query
-//      body, the primitive returns query-epoch-stale error.
+//   4. Strict: apply_production_audit_defaults (Issue #3075) turns
+//      g_query_epoch_strict on; Soft/apply_dev leaves it off. Operators
+//      may also set_query_epoch_strict(true) or AURA_QUERY_EPOCH_STRICT=1.
+//      If epoch advances during the query body (or restamp-budget force
+//      stale, #3041), the primitive returns query-epoch-stale.
 
 struct QueryEpoch {
     std::uint64_t mutation_epoch = kWorkspaceEpochUnset;
@@ -256,6 +258,11 @@ inline std::atomic<std::uint32_t>& g_last_query_workspace_id() noexcept {
     static std::atomic<std::uint32_t> v{0};
     return v;
 }
+// Issue #3075: static default is false (Soft / sandbox=off). Production
+// defaults flip this via set_query_epoch_strict(true) — query_epoch_strict()
+// stays one acquire (do NOT OR production_defaults_active; extra load on
+// the Soft happy path).
+inline constexpr int kQueryEpochProductionStrictIssue = 3075;
 inline std::atomic<bool>& g_query_epoch_strict() noexcept {
     static std::atomic<bool> v{false};
     return v;
@@ -290,6 +297,8 @@ inline void set_query_epoch_strict(bool on) noexcept {
     g_query_epoch_strict().store(on, std::memory_order_release);
 }
 
+// One acquire. Issue #3075: production policy is applied at
+// apply_production / apply_dev, not re-read here.
 [[nodiscard]] inline bool query_epoch_strict() noexcept {
     return g_query_epoch_strict().load(std::memory_order_acquire);
 }

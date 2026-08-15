@@ -1058,6 +1058,20 @@ def cmd_lint():
             "Issue #3074 mutate_dispatch sole-guard linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py"
         )
         return r
+    # Issue #3075: production_defaults arms QueryEpoch strict so
+    # Agents cannot re-query green after mutate / restamp-lag.
+    # Soft/dev stays off (no extra acquire). Extends query-epoch
+    # / restamp-budget canaries (#81967).
+    qeps3075_script = COVERAGE_CHECKS / "check_query_epoch_production_strict_3075.py"
+    if not qeps3075_script.exists():
+        fail(f"missing {qeps3075_script}")
+        return 1
+    r = run([sys.executable, str(qeps3075_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3075 production QueryEpoch strict linter failed — run python3 scripts/coverage/checks/check_query_epoch_production_strict_3075.py"
+        )
+        return r
     # Issue #2765: Guard success-path reflect auto_validate /
     # hygiene_validate closed-loop (#488/#596/#1611 residual). Wires
     # post_mutation_reflect_validate on outermost success + Soft metric /
@@ -12343,6 +12357,30 @@ def cmd_mutate_dispatch_sole_guard_3074():
     return cmd_mutate_dispatch_sole_guard_3074_coverage()
 
 
+def cmd_query_epoch_production_strict_3075_coverage():
+    """Issue #3075: production defaults arm QueryEpoch strict (static)."""
+    print(f"{B}=== query-epoch production strict coverage (#3075) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_epoch_production_strict_3075.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-epoch production strict (#3075) coverage contract rows failed")
+        return 1
+    ok("query-epoch production strict (#3075) coverage clean")
+    return 0
+
+
+def cmd_query_epoch_production_strict_3075():
+    """Issue #3075: production_defaults → QueryEpoch strict on.
+
+    Soft/dev remains off. Restamp-budget force already shipped (#3041).
+    """
+    print(f"{B}=== query-epoch production strict (#3075) ==={N}")
+    return cmd_query_epoch_production_strict_3075_coverage()
+
+
 def cmd_solver_budget_2900_coverage():
     """Issue #2900: SolverBudget Agent-controlled delta TIMEOUT policy.
 
@@ -16735,6 +16773,8 @@ def main():
         "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
         "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
+        "query-epoch-production-strict-3075": cmd_query_epoch_production_strict_3075,
+        "query-epoch-production-strict-3075-coverage": cmd_query_epoch_production_strict_3075_coverage,
         "aot-slot-owner-consistency-2692": cmd_aot_slot_owner_consistency_2692_coverage,
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,

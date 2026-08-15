@@ -806,11 +806,14 @@ inline void clear_mid_fallback_refuse_se_tls() noexcept {
 // the cold-start static default; this call additionally arms production
 // hard-face flags (production_defaults_active). Dev/test keep Sampled/ratio=4
 // via apply_dev_audit_defaults / reset_for_test.
+// Issue #3075: production also arms QueryEpoch strict so Agents cannot
+// re-query green after mutate/restamp-lag without query-epoch-stale.
 inline void apply_production_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Full);
     set_sample_ratio(1);
     g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
+    aura::core::set_query_epoch_strict(true);
     clear_mid_fallback_refuse_se_tls();
 }
 
@@ -819,11 +822,13 @@ inline void apply_production_audit_defaults() noexcept {
 // dev restore should also call reset_coercion_provenance_miss_policy_for_test
 // or apply_production_security_defaults with AURA_SANDBOX=off.
 // Issue #2818: marks dev_audit_opt_in so Sampled under-sample is intentional.
+// Issue #3075: Soft/dev leaves QueryEpoch strict off (zero extra finish load).
 inline void apply_dev_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Sampled);
     set_sample_ratio(4);
     g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
+    aura::core::set_query_epoch_strict(false);
     clear_mid_fallback_refuse_se_tls();
 }
 

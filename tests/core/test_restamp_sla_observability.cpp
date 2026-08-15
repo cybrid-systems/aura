@@ -598,6 +598,79 @@ static void ac3058_5_canary_linter() {
           "AC5: no docs/design/3058-* per #1655");
 }
 
+// ── Issue #3075: production_defaults + restamp-lag → finish_query_epoch stale ──
+static void ac3075_1_production_strict_finish_stale() {
+    std::println("\n--- #3075 AC1/AC2: production strict + budget force → finish stale ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::capture_query_epoch;
+    using aura::core::finish_query_epoch;
+    using aura::core::force_query_epoch_stale_from_restamp_budget;
+    using aura::core::query_epoch_strict;
+    using aura::core::reset_query_epoch_metrics_for_test;
+    reset_query_epoch_metrics_for_test();
+    apply_dev_audit_defaults();
+    CHECK(!query_epoch_strict(), "AC1: Soft/dev strict off");
+    apply_production_audit_defaults();
+    CHECK(query_epoch_strict(), "AC1: production_defaults turns QueryEpoch strict on");
+    FlatAST flat;
+    for (int i = 0; i < 8; ++i)
+        (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    auto e = capture_query_epoch(flat.generation(), 0);
+    CHECK(finish_query_epoch(e, e.generation), "AC2: fresh finish under production");
+    force_query_epoch_stale_from_restamp_budget();
+    CHECK(!finish_query_epoch(e, e.generation),
+          "AC2: restamp-budget force under production → query-epoch-stale");
+    apply_dev_audit_defaults();
+    reset_query_epoch_metrics_for_test();
+}
+
+static void ac3075_3_soft_unlimited_no_extra() {
+    std::println("\n--- #3075 AC3: Soft / unlimited no extra QueryEpoch stores ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::core::g_query_epoch_forced_stale;
+    using aura::core::g_restamp_budget_query_epoch_stale_total;
+    using aura::core::query_epoch_strict;
+    using aura::core::reset_query_epoch_metrics_for_test;
+    clear_restamp_budget_nodes_override_for_test();
+    reset_query_epoch_metrics_for_test();
+    apply_dev_audit_defaults();
+    CHECK(!query_epoch_strict(), "AC3: Soft strict off");
+    const auto qe0 = g_restamp_budget_query_epoch_stale_total().load();
+    const auto forced0 = g_query_epoch_forced_stale().load();
+    FlatAST flat;
+    (void)flat.add_node(aura::ast::NodeTag::LiteralInt, aura::ast::SyntaxMarker::User);
+    flat.restamp_all_node_generations();
+    CHECK(flat.restamp_budget_nodes() == 0, "AC3: unlimited");
+    CHECK(!flat.restamp_last_budget_exceeded(), "AC3: no last-exceeded");
+    CHECK(g_restamp_budget_query_epoch_stale_total().load() == qe0,
+          "AC3: unlimited does not bump QueryEpoch stale counter");
+    CHECK(g_query_epoch_forced_stale().load() == forced0, "AC3: unlimited does not force stale");
+    CHECK(!query_epoch_strict(), "AC3: restamp does not flip strict");
+}
+
+static void ac3075_4_schema_and_linter() {
+    std::println("\n--- #3075 AC4/AC5: additive schema + linter ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto audit = read_file("src/compiler/typed_mutation_audit.h");
+    const auto hh = read_file("src/core/workspace_epoch.hh");
+    const auto build = read_file("build.py");
+    CHECK(qws.find("schema-3075") != std::string::npos, "AC4: query-epoch-stats schema-3075");
+    CHECK(qws.find("schema-3041") != std::string::npos, "AC4: 3041 preserved");
+    CHECK(qws.find("schema-2933") != std::string::npos, "AC4: 2933 preserved");
+    CHECK(qws.find("schema-2192") != std::string::npos, "AC4: 2192 preserved");
+    CHECK(audit.find("Issue #3075") != std::string::npos, "AC4: apply_production cites #3075");
+    CHECK(hh.find("kQueryEpochProductionStrictIssue = 3075") != std::string::npos, "AC4: stamp");
+    CHECK(hh.find("do NOT OR production_defaults_active") != std::string::npos,
+          "AC3: no extra production_defaults load in query_epoch_strict");
+    CHECK(build.find("check_query_epoch_production_strict_3075") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("tests/core/test_issue_3075.cpp").empty(), "AC5: no invent test file");
+    CHECK(read_file("docs/design/3075-query-epoch-production-strict.md").empty(),
+          "AC5: no docs/design/3075-*");
+}
+
 } // namespace
 
 int run_test_restamp_sla_observability() {
@@ -630,7 +703,11 @@ int run_test_restamp_sla_observability() {
     ac3058_3_soft_under_budget_unchanged();
     ac3058_4_additive_schema();
     ac3058_5_canary_linter();
-    std::println("\n=== #2528+#2934+#3019+#3041+#3058: see per-AC results above ===");
+    std::println("\n=== Issue #3075: production QueryEpoch strict default ===");
+    ac3075_1_production_strict_finish_stale();
+    ac3075_3_soft_unlimited_no_extra();
+    ac3075_4_schema_and_linter();
+    std::println("\n=== #2528+#2934+#3019+#3041+#3058+#3075: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }
 
