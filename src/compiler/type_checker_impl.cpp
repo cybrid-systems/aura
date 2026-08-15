@@ -516,6 +516,40 @@ std::size_t ConstraintSystem::force_adt_exhaust_undermark_from_match_nodes(
     return n;
 }
 
+// Issue #3083: complete seed from mutated ADT types. Listed match
+// nodes may omit siblings of the same type; this inserts every goal
+// whose adt_type_id is in the set and notes each type into
+// pending_full_solve. Empty types / empty table → 0 (AC4).
+std::size_t ConstraintSystem::seed_adt_matches_for_dirty_types(
+    const std::vector<std::uint32_t>& adt_type_ids) noexcept {
+    if (adt_type_ids.empty())
+        return 0;
+    std::unordered_set<std::uint32_t> types;
+    types.reserve(adt_type_ids.size() * 2 + 2);
+    for (auto t : adt_type_ids) {
+        if (t != 0)
+            types.insert(t);
+    }
+    if (types.empty())
+        return 0;
+    for (auto t : types)
+        note_adt_exhaust_dirty_type(t);
+    if (adt_match_goals_.empty())
+        return 0;
+    std::size_t n = 0;
+    for (const auto& g : adt_match_goals_) {
+        if (g.match_node == 0 || !types.contains(g.adt_type_id))
+            continue;
+        if (adt_reverify_roots_.insert(g.match_node).second)
+            ++n;
+    }
+    if (n > 0 && metrics_) {
+        auto* m = static_cast<CompilerMetrics*>(metrics_);
+        m->adt_exhaust_complete_seed_total.fetch_add(n, std::memory_order_relaxed);
+    }
+    return n;
+}
+
 // Issue #2564: TLS pending match reverify roots filled by static ADT
 // invalidate path (no CS* required). Absorbed into CS on partial/delta.
 namespace {
@@ -8893,6 +8927,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     // #3045: constructor / arm-only under-mark still walks ancestors
     // so containing match sites enter the cone (dirty_propagation +
     // evaluator_typecheck + mutate_type_gate Hard).
+    // #3083: complete seed every match of a mutated ADT type so an
+    // incomplete call-site list cannot silently under-seed.
     {
         std::vector<NodeId> undermark_seeds;
         undermark_seeds.reserve(affected.size() + 2);
@@ -10373,6 +10409,25 @@ namespace {
         }
     }
 
+    // Issue #3083: every match whose subject ADT type is in the
+    // mutated set. Empty types → no walk (AC4).
+    static void collect_match_sites_for_adt_types(const FlatAST& flat,
+                                                  const std::unordered_set<std::uint32_t>& types,
+                                                  std::vector<NodeId>& match_lets) {
+        if (types.empty())
+            return;
+        std::unordered_set<NodeId> seen(match_lets.begin(), match_lets.end());
+        for (NodeId id = 0; id < flat.size(); ++id) {
+            if (!flat.has_match_info(id))
+                continue;
+            const auto* mi = flat.get_match_info(id);
+            if (!mi || mi->subject_type_id == 0 || !types.contains(mi->subject_type_id))
+                continue;
+            if (seen.insert(id).second)
+                match_lets.push_back(id);
+        }
+    }
+
     static void collect_adt_nodes_in_subtrees(const FlatAST& flat, const StringPool& pool,
                                               const std::vector<NodeId>& roots,
                                               std::vector<NodeId>& define_types,
@@ -10488,8 +10543,9 @@ void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const String
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
 }
 
-// Issue #3045: under-mark force. Walk ancestors of dirty constructor /
-// match-arm nodes; refresh DefineType ctor lists; seed match sites into
+// Issue #3045 / #3083: under-mark force. Walk ancestors of dirty
+// constructor / match-arm nodes; refresh DefineType ctor lists;
+// complete-seed every match of the mutated ADT types; seed sites into
 // reverify roots + dirty::force_adt_exhaust_sites_into_cone. Empty dirty
 // or no ADT ancestor → 0 (Quiet). Soft does not reject (observe via
 // existing #3005 counters); Production reject stays in infer_flat_partial
@@ -10508,6 +10564,48 @@ std::size_t force_adt_exhaust_undermark_into_cone(FlatAST& flat, const StringPoo
     if (!define_types.empty())
         refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, define_types,
                                                              metrics);
+    // Issue #3083: complete seed — ancestor walk can miss sibling
+    // matches of the same ADT. Collect mutated type ids from
+    // DefineType + listed match_info, then every match of those
+    // types. No types → skip the workspace walk (AC4).
+    {
+        std::unordered_set<std::uint32_t> dirty_types;
+        for (auto id : define_types) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (flat.get(id).tag != NodeTag::DefineType)
+                continue;
+            auto type_name = std::string(pool.resolve(flat.get(id).sym_id));
+            auto tid = reg.lookup_type(type_name);
+            if (tid.valid())
+                dirty_types.insert(tid.index);
+        }
+        for (auto id : match_lets) {
+            if (id == NULL_NODE || id >= flat.size())
+                continue;
+            if (const auto* mi = flat.get_match_info(id)) {
+                if (mi->subject_type_id > 0)
+                    dirty_types.insert(mi->subject_type_id);
+            }
+        }
+        if (cs) {
+            for (const auto& g : cs->adt_match_goals_for_test()) {
+                if (g.adt_type_id == 0 || g.match_node == 0)
+                    continue;
+                for (auto id : match_lets) {
+                    if (static_cast<std::uint32_t>(id) == g.match_node)
+                        dirty_types.insert(g.adt_type_id);
+                }
+            }
+        }
+        if (!dirty_types.empty()) {
+            collect_match_sites_for_adt_types(flat, dirty_types, match_lets);
+            if (cs) {
+                std::vector<std::uint32_t> type_vec(dirty_types.begin(), dirty_types.end());
+                (void)cs->seed_adt_matches_for_dirty_types(type_vec);
+            }
+        }
+    }
     std::vector<std::uint32_t> forced;
     forced.reserve(match_lets.size());
     for (auto id : match_lets)
