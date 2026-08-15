@@ -37,6 +37,7 @@
 
 #include "core/mutation_audit_wal.hh" // resolve_mutation_audit_wal_dir fallthrough
 #include "core/security_event.hh"
+#include "core/wal_append_fail_slo.h" // #3056 shared append-fail SLO
 
 namespace aura::core::security_event_wal {
 
@@ -259,12 +260,22 @@ struct SecurityEventWal {
             rotate_unlocked();
         if (!fp)
             return false;
+        // Issue #3056: inject + fwrite miss share one fail path. WAL-off
+        // never reaches here (AC1: `!enabled || !fp` above).
+        if (::aura::core::wal_slo::consume_wal_inject_append_fail()) {
+            g_security_event_wal_metrics().security_event_wal_append_fail_total.fetch_add(
+                1, std::memory_order_relaxed);
+            ::aura::core::wal_slo::note_wal_append_fail();
+            return false;
+        }
         const auto n = std::fwrite(&rec, 1, sizeof(rec), fp);
         if (n != sizeof(rec)) {
             g_security_event_wal_metrics().security_event_wal_append_fail_total.fetch_add(
                 1, std::memory_order_relaxed);
+            ::aura::core::wal_slo::note_wal_append_fail();
             return false;
         }
+        ::aura::core::wal_slo::note_wal_append_ok();
         current_bytes += sizeof(rec);
         last_seq_persisted = rec.seq;
         ++unflushed;
@@ -319,6 +330,7 @@ struct SecurityEventWal {
         m.security_event_wal_bytes_written.store(0, std::memory_order_relaxed);
         m.security_event_wal_enabled.store(0, std::memory_order_relaxed);
         m.security_event_wal_segments.store(0, std::memory_order_relaxed);
+        ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
         current_bytes = 0;

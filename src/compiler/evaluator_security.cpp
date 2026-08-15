@@ -151,6 +151,8 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     slot.epoch = current_bridge_epoch();
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     // #1567: WAL append (optional; no-op when disabled)
+    // Issue #3056: append stays fail-open — disk error does not abort
+    // the mutation commit (AC3). Posture arm is observe-only.
     if (g_mutation_audit_wal().is_enabled()) {
         const auto rec = make_record(slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed,
                                      slot.epoch_delta, slot.target_node, slot.op, slot.effect_bits,
@@ -289,6 +291,7 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
                 slot.seq, slot.timestamp_ms, slot.fiber_id, slot.nodes_changed, slot.epoch_delta,
                 slot.target_node, slot.op, slot.effect_bits, slot.tenant_id,
                 slot.provenance_mutation_id, slot.epoch, slot.effect_denied);
+            // Issue #3056: fail-open (AC3) — same as emit_mutation_audit.
             (void)g_mutation_audit_wal().append(rec);
         }
     }

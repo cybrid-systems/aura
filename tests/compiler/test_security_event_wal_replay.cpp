@@ -28,15 +28,18 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/mutation_audit_wal.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/security_event_wal.hh"
+#include "core/wal_append_fail_slo.h"
 
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
@@ -50,10 +53,14 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
+using aura::core::audit_wal::AuditWalRecord;
 using aura::core::audit_wal::g_mutation_audit_wal;
 using aura::core::audit_wal::reset_audit_wal_for_test;
+using aura::core::audit_wal::snapshot_audit_wal_stats;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
@@ -92,7 +99,20 @@ void reset_all() {
     reset_audit_wal_for_test();
     reset_security_event_wal_for_test();
     reset_security_event_ring_for_test();
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    apply_dev_audit_defaults();
     set_mode(SandboxMode::Off);
+}
+
+std::string read_repo_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 std::uint64_t now_ms() noexcept {
@@ -283,6 +303,142 @@ int run_test_security_event_wal_replay() {
         CHECK(!ev.security_event_wal_enabled(),
               "AC5: disable_mutation_audit_wal also disables side-car");
         fs::remove_all(dir);
+    }
+
+    // ── Issue #3056: production WAL append_fail arms posture ──
+    {
+        using aura::core::wal_slo::decide_wal_append_fail_slo;
+        using aura::core::wal_slo::g_wal_append_fail_slo_counters;
+        using aura::core::wal_slo::kWalAppendFailSloIssue;
+        using aura::core::wal_slo::WalAppendFailSloInput;
+
+        std::println("\n--- #3056 AC1: WAL off / Soft does not arm ---");
+        reset_all();
+        CHECK(href_posture(cs, "wal-append-fail-slo-wired") == 1, "3056 AC1: wired");
+        CHECK(href_posture(cs, "schema-3056") == kWalAppendFailSloIssue, "3056 AC1: schema");
+        CHECK(href_posture(cs, "wal-append-fail-breach") == 0, "3056 AC1: no breach WAL-off");
+        g_wal_append_fail_slo_counters.inject_fail_remaining.store(1, std::memory_order_relaxed);
+        const auto off_ret = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, 1, 1, 1, 0, "test:3056-off", "off", true, 0, 0);
+        CHECK(!off_ret, "3056 AC1: persist short-circuits when WAL off");
+        CHECK(g_wal_append_fail_slo_counters.inject_fail_remaining.load(
+                  std::memory_order_relaxed) == 1,
+              "3056 AC1: inject not consumed on WAL-off path");
+        CHECK(snapshot_security_event_wal_stats().append_fail == 0,
+              "3056 AC1: no append_fail bump when WAL off");
+        CHECK(href_posture(cs, "wal-append-fail-breach") == 0,
+              "3056 AC1: still no breach after off persist");
+
+        {
+            const auto dir_soft = fresh_wal_dir("3056-ac1-soft");
+            CHECK(ev.enable_security_event_wal(dir_soft.string()),
+                  "3056 AC1: enable SE WAL (Soft)");
+            g_wal_append_fail_slo_counters.inject_fail_remaining.store(1,
+                                                                       std::memory_order_relaxed);
+            const auto soft_fail = aura::core::security_event_wal::persist_security_event(
+                SecurityEventKind::EffectDeny, 1, 2, 1, 0, "test:3056-soft", "soft", true, 0, 0);
+            CHECK(!soft_fail, "3056 AC1: Soft inject still returns false");
+            CHECK(snapshot_security_event_wal_stats().append_fail >= 1,
+                  "3056 AC1: Soft still bumps append-fail");
+            CHECK(href_posture(cs, "wal-append-fail-breach") == 0,
+                  "3056 AC1: Soft observe-only (no arm)");
+            ev.disable_security_event_wal();
+            fs::remove_all(dir_soft);
+        }
+
+        std::println("\n--- #3056 AC2: production + inject fail → breach ---");
+        reset_all();
+        apply_production_audit_defaults();
+        const auto dir_ac2 = fresh_wal_dir("3056-ac2");
+        CHECK(ev.enable_security_event_wal(dir_ac2.string()), "3056 AC2: enable SE WAL");
+        g_wal_append_fail_slo_counters.inject_fail_remaining.store(1, std::memory_order_relaxed);
+        const auto fail_ret = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, 7, 77, 1, 0, "test:3056-ac2", "inject", true, 0, 0);
+        CHECK(!fail_ret, "3056 AC2: inject fail returns false");
+        CHECK(snapshot_security_event_wal_stats().append_fail >= 1,
+              "3056 AC2: SE append-fail counter bumped");
+        CHECK(g_wal_append_fail_slo_counters.combined_fail_total.load(std::memory_order_relaxed) >=
+                  1,
+              "3056 AC2: combined fail");
+        CHECK(href_posture(cs, "wal-append-fail-breach") == 1,
+              "3056 AC2: posture breach key armed");
+        CHECK(g_wal_append_fail_slo_counters.last_would_arm_degraded.load(
+                  std::memory_order_relaxed) == 1,
+              "3056 AC2: would_arm_degraded");
+        CHECK(g_wal_append_fail_slo_counters.arm_degraded_total.load(std::memory_order_relaxed) >=
+                  1,
+              "3056 AC2: arm_degraded_total");
+
+        std::println("\n--- #3056 AC3: mutation commit stays fail-open ---");
+        CHECK(ev.security_event_wal_enabled(), "3056 AC3: WAL still enabled after fail");
+        const auto ok_ret = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectAllow, 7, 78, 1, 0, "test:3056-ac3", "recover", false, 0, 0);
+        CHECK(ok_ret, "3056 AC3: later persist succeeds (fail-open)");
+        const auto sec_src = read_repo_file("src/compiler/evaluator_security.cpp");
+        CHECK(sec_src.find("(void)g_mutation_audit_wal().append") != std::string::npos,
+              "3056 AC3: mutation append still discarded (fail-open)");
+        CHECK(sec_src.find("Issue #3056") != std::string::npos, "3056 AC3: security.cpp cites");
+
+        ev.disable_security_event_wal();
+        fs::remove_all(dir_ac2);
+
+        std::println("\n--- #3056 AC4: additive schema, no rename ---");
+        reset_all();
+        CHECK(href_posture(cs, "wal-append-fail-total") >= 0 ||
+                  href_posture(cs, "schema-2534") == 2534,
+              "3056 AC4: existing posture surface still live");
+        const auto wal_src = read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(wal_src.find("insert_kv(\"append-fail\"") != std::string::npos,
+              "3056 AC4: audit-wal-stats append-fail kept");
+        CHECK(wal_src.find("wal-append-fail-breach") != std::string::npos,
+              "3056 AC4: additive breach key");
+        CHECK(wal_src.find("schema-3056") != std::string::npos, "3056 AC4: schema-3056");
+
+        std::println("\n--- #3056 AC5: both WALs feed one decide ---");
+        reset_all();
+        apply_production_audit_defaults();
+        const auto dir_ac5 = fresh_wal_dir("3056-ac5");
+        CHECK(ev.enable_mutation_audit_wal(dir_ac5.string()), "3056 AC5: enable mutation WAL");
+        g_wal_append_fail_slo_counters.inject_fail_remaining.store(1, std::memory_order_relaxed);
+        AuditWalRecord rec{};
+        rec.seq = 1;
+        CHECK(!g_mutation_audit_wal().append(rec), "3056 AC5: mutation inject fail");
+        CHECK(snapshot_audit_wal_stats().append_fail >= 1, "3056 AC5: mutation append-fail");
+        CHECK(href_posture(cs, "wal-append-fail-breach") == 1,
+              "3056 AC5: mutation fail arms same key");
+        ev.disable_mutation_audit_wal();
+        fs::remove_all(dir_ac5);
+
+        WalAppendFailSloInput pin;
+        pin.fail_total = 1;
+        pin.persisted_total = 0;
+        pin.consecutive = 1;
+        pin.wal_enabled = true;
+        pin.production_defaults = true;
+        pin.soft_mode = false;
+        const auto d1 = decide_wal_append_fail_slo(pin);
+        const auto d2 = decide_wal_append_fail_slo(pin);
+        CHECK(d1.would_arm_degraded == d2.would_arm_degraded && d1.breached == d2.breached,
+              "3056 AC5: decide is pure");
+        CHECK(d1.force_reason == "wal-append-fail-breach", "3056 AC5: force_reason");
+
+        std::println("\n--- #3056 AC6: source-cite + no invent ---");
+        const auto slo = read_repo_file("src/core/wal_append_fail_slo.h");
+        const auto se_wal = read_repo_file("src/core/security_event_wal.hh");
+        const auto mut_wal = read_repo_file("src/core/mutation_audit_wal.hh");
+        const auto build = read_repo_file("build.py");
+        CHECK(slo.find("kWalAppendFailSloIssue = 3056") != std::string::npos, "3056 AC6: stamp");
+        CHECK(se_wal.find("note_wal_append_fail") != std::string::npos, "3056 AC6: SE WAL notes");
+        CHECK(mut_wal.find("note_wal_append_fail") != std::string::npos,
+              "3056 AC6: mutation WAL notes");
+        CHECK(build.find("check_wal_append_fail_slo_3056") != std::string::npos,
+              "3056 AC6: build.py wires linter");
+        CHECK(read_repo_file("docs/design/3056-wal-append-fail-slo.md").empty(),
+              "3056 AC6: no docs/design/3056-* per #1655");
+        CHECK(read_repo_file("tests/compiler/test_issue_3056.cpp").empty(),
+              "3056 AC6: no test_issue_3056.cpp per #81967");
+
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
