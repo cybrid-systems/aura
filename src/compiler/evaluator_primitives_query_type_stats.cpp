@@ -3967,6 +3967,18 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           static_cast<std::int64_t>(
                               aura::compiler::castop_density::g_hot_residual_nonidentity_wired.load(
                                   std::memory_order_relaxed)));
+                // Issue #3065: DeadCoercion elim / residual CastOp remirror
+                // into the type∪IR dirty cone (additive; lineage #2556/#3007/#3046).
+                insert_kv("schema-3065", 3065);
+                insert_kv("issue-3065", 3065);
+                insert_kv("dead-coercion-elim-cone-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::dirty::dead_coercion_elim_cone_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("dead-coercion-elim-cone-force-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::dirty::dead_coercion_elim_cone_force_total.load(
+                                  std::memory_order_relaxed)));
             }
             // Issue #2562: dual-require drop observability (layered dead-coercion
             // + dual gate for Agent pre-check / insert integrity).

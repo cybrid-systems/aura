@@ -8,6 +8,8 @@
 //   AC4: Soft empty cone → skips bump, no dirty-mask walk of clean-only path
 //   AC5: Source-cite + schema-2556 + #2025/#2282 layered keys preserved
 // Issue #3007: Production hot-fn residual identity CastOp sweep.
+// Issue #3065: post-DeadCoercion remirror of elim'd / residual CastOp
+//              nodes into the type∪IR dirty cone (production/Full).
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -23,13 +25,19 @@
 import std;
 import aura.compiler.dirty_propagation;
 import aura.compiler.optimization_passes;
+import aura.compiler.coercion_map;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.compiler.ir;
+import aura.core.ast;
 
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
+using aura::compiler::dirty::force_dead_coercion_elim_into_cone;
+using aura::compiler::dirty::kDeadCoercionElimConeIssue;
+using aura::compiler::dirty::last_type_cone_ast;
 using aura::compiler::dirty::type_ir_union_cone_nonempty;
 using aura::compiler::dirty::type_ir_union_cone_size;
 using aura::compiler::opt_registry::count_identity_castops;
@@ -370,6 +378,198 @@ static void ac3046_nonidentity_density_cite() {
     CHECK(href(cs, "hot-residual-nonidentity-total") >= 0, "3046: leftover queryable");
 }
 
+static bool cone_contains(aura::compiler::dirty::NodeId nid) {
+    for (auto n : last_type_cone_ast()) {
+        if (n == nid)
+            return true;
+    }
+    return false;
+}
+
+// ── Issue #3065: remirror elim'd / residual CastOp into type cone ──
+static void ac3065_1_production_elim_reenters_cone() {
+    std::println("\n--- #3065 AC1: Production elim re-enters typecheck cone ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    // Helper: remutate of elim'd node 77 is in last type cone.
+    constexpr aura::compiler::dirty::NodeId kElim = 77;
+    const auto force0 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
+    const auto union0 = type_ir_union_cone_size();
+    const aura::compiler::dirty::NodeId one[] = {kElim};
+    CHECK(force_dead_coercion_elim_into_cone(one) >= 1, "3065 AC1: helper remirrors");
+    CHECK(cone_contains(kElim), "3065 AC1: elim'd node in last type cone");
+    CHECK(type_ir_union_cone_nonempty(), "3065 AC1: cone nonempty for remutate typecheck");
+    CHECK(type_ir_union_cone_size() >= union0 + 1, "3065 AC1: union cone enlarged");
+    CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) > force0,
+          "3065 AC1: force-total bumped");
+
+    // AST identity elision (apply_coercion_map) remirrors original_child.
+    // Pad so the literal is a non-zero NodeId (0 is NULL_NODE / skipped).
+    aura::ast::FlatAST flat;
+    (void)flat.add_literal(0);
+    (void)flat.add_literal(1);
+    auto lit = flat.add_literal(3);
+    CHECK(lit != 0, "3065 AC1: literal NodeId nonzero");
+    flat.set_type(lit, 1);
+    aura::compiler::CoercionMap map;
+    map.add(aura::ast::NULL_NODE, 0, lit, 1, 1, 0, 0);
+    aura::compiler::DeadCoercionAstStats st;
+    CHECK(aura::compiler::apply_coercion_map(flat, map, &st) == 0, "3065 AC1: identity elided");
+    CHECK(st.eliminated >= 1, "3065 AC1: AST elim counted");
+    CHECK(cone_contains(static_cast<aura::compiler::dirty::NodeId>(lit)),
+          "3065 AC1: AST-elided node in cone");
+
+    // IR DCE of identity CastOp with source_ast_node_id remirrors.
+    constexpr aura::compiler::dirty::NodeId kIr = 88;
+    IRFunction fn;
+    fn.name = "dce_cone";
+    fn.local_count = 2;
+    fn.entry_block = 0;
+    BasicBlock b;
+    b.id = 0;
+    b.instructions = {
+        IRInstruction{.opcode = IROpcode::ConstI64,
+                      .operands = {0, 1, 0, 0},
+                      .source_ast_node_id = 0,
+                      .type_id = 1},
+        IRInstruction{.opcode = IROpcode::CastOp,
+                      .operands = {1, 0, 0, 0},
+                      .source_ast_node_id = kIr,
+                      .type_id = 1},
+        IRInstruction{.opcode = IROpcode::Return, .operands = {1, 0, 0, 0}},
+    };
+    fn.blocks.push_back(std::move(b));
+    DeadCoercionPass dce;
+    dce.run(fn);
+    CHECK(dce.eliminated_count() >= 1, "3065 AC1: IR identity elided");
+    CHECK(cone_contains(kIr), "3065 AC1: IR-elided AST node in cone");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3065_2_soft_no_permanent_bits() {
+    std::println("\n--- #3065 AC2: Soft/quiet no new permanent dirty bits ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    constexpr aura::compiler::dirty::NodeId kSoft = 99;
+    const auto force0 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
+    const auto union0 = type_ir_union_cone_size();
+    const bool had = cone_contains(kSoft);
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    CHECK(force_dead_coercion_elim_into_cone(one) == 0, "3065 AC2: Soft helper no-op");
+    CHECK(cone_contains(kSoft) == had, "3065 AC2: Soft does not persist node");
+    CHECK(type_ir_union_cone_size() == union0, "3065 AC2: Soft union size unchanged");
+    CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) == force0,
+          "3065 AC2: Soft force-total unchanged");
+
+    // Quiet: empty span.
+    CHECK(force_dead_coercion_elim_into_cone({}) == 0, "3065 AC2: quiet empty span");
+
+    // Soft apply_coercion_map identity does not remirror.
+    aura::ast::FlatAST flat;
+    auto lit = flat.add_literal(4);
+    flat.set_type(lit, 1);
+    aura::compiler::CoercionMap map;
+    map.add(aura::ast::NULL_NODE, 0, lit, 1, 1, 0, 0);
+    const bool had_lit = cone_contains(static_cast<aura::compiler::dirty::NodeId>(lit));
+    const auto union1 = type_ir_union_cone_size();
+    const auto force1 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
+    (void)aura::compiler::apply_coercion_map(flat, map);
+    CHECK(cone_contains(static_cast<aura::compiler::dirty::NodeId>(lit)) == had_lit,
+          "3065 AC2: Soft AST elim does not add cone bits");
+    CHECK(type_ir_union_cone_size() == union1, "3065 AC2: Soft apply union unchanged");
+    CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) == force1,
+          "3065 AC2: Soft apply force-total unchanged");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3065_3_schema_and_union_metrics() {
+    std::println("\n--- #3065 AC3: schema-3065 + union cone metrics ---");
+    CHECK(kDeadCoercionElimConeIssue == 3065, "3065 AC3: issue constant");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(dirty.find("Issue #3065") != std::string::npos, "3065 AC3: dirty cites Issue #3065");
+    CHECK(dirty.find("force_dead_coercion_elim_into_cone") != std::string::npos,
+          "3065 AC3: remirror helper");
+    CHECK(dirty.find("force_residual_castop_blocks_into_cone") != std::string::npos,
+          "3065 AC3: residual block helper");
+    CHECK(cm.find("Issue #3065") != std::string::npos, "3065 AC3: apply_coercion_map cites");
+    CHECK(opt.find("Issue #3065") != std::string::npos, "3065 AC3: residual sweep cites");
+    CHECK(q.find("schema-3065") != std::string::npos, "3065 AC3: schema-3065");
+    CHECK(q.find("dead-coercion-elim-cone-force-total") != std::string::npos,
+          "3065 AC3: force-total key");
+    CHECK(q.find("schema-2556") != std::string::npos, "3065 AC3: lineage #2556");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3065") == 3065, "3065 AC3: live schema-3065");
+    CHECK(href(cs, "issue-3065") == 3065, "3065 AC3: live issue-3065");
+    CHECK(href(cs, "dead-coercion-elim-cone-wired") == 1, "3065 AC3: wired");
+    CHECK(href(cs, "dead-coercion-elim-cone-force-total") >= 0, "3065 AC3: force queryable");
+    CHECK(href(cs, "schema-2556") == 2556, "3065 AC3: schema-2556 preserved");
+    CHECK(href(cs, "schema-3007") == 3007, "3065 AC3: schema-3007 preserved");
+}
+
+static void ac3065_4_residual_and_linter() {
+    std::println("\n--- #3065 AC4: residual CastOp cone + linter ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    // Non-identity leftover CastOp (src type 1, dest type 2) with AST id.
+    constexpr aura::compiler::dirty::NodeId kRes = 101;
+    IRFunction fn;
+    fn.name = "residual_cone";
+    fn.local_count = 2;
+    fn.entry_block = 0;
+    BasicBlock b;
+    b.id = 0;
+    b.instructions = {
+        IRInstruction{.opcode = IROpcode::ConstI64,
+                      .operands = {0, 1, 0, 0},
+                      .source_ast_node_id = 0,
+                      .type_id = 1},
+        IRInstruction{.opcode = IROpcode::CastOp,
+                      .operands = {1, 0, 1, 0},
+                      .source_ast_node_id = kRes,
+                      .type_id = 2},
+        IRInstruction{.opcode = IROpcode::Return, .operands = {1, 0, 0, 0}},
+    };
+    fn.blocks.push_back(std::move(b));
+    CHECK(count_identity_castops(fn) == 0, "3065 AC4: leftover is non-identity");
+    (void)sweep_production_hot_residual_castops(fn, nullptr);
+    CHECK(cone_contains(kRes), "3065 AC4: residual CastOp remirrored into cone");
+    CHECK(type_ir_union_cone_nonempty(), "3065 AC4: remutate cone nonempty");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_dead_coercion_elim_cone_3065.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3065_1_production_elim_reenters_cone") != std::string::npos, "3065 AC4: AC1");
+    CHECK(t.find("ac3065_2_soft_no_permanent_bits") != std::string::npos, "3065 AC4: AC2");
+    CHECK(t.find("ac3065_3_schema_and_union_metrics") != std::string::npos, "3065 AC4: AC3");
+    CHECK(!lint.empty() && lint.find("Issue #3065") != std::string::npos, "3065 AC4: linter");
+    CHECK(build.find("check_dead_coercion_elim_cone_3065") != std::string::npos,
+          "3065 AC4: build.py gate");
+    CHECK(build.find("cmd_dead_coercion_elim_cone_3065") != std::string::npos,
+          "3065 AC4: build.py cmd");
+    CHECK(read_file("tests/compiler/test_issue_3065.cpp").empty(),
+          "3065 AC4: no test_issue_3065.cpp");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -384,7 +584,11 @@ int run_test_dead_coercion_dirty_cone() {
     ac3007_3_schema_and_source();
     ac3007_4_linter_no_design();
     ac3046_nonidentity_density_cite();
-    std::println("\n=== #2556/#3007/#3046: {} passed, {} failed ===", g_passed, g_failed);
+    ac3065_1_production_elim_reenters_cone();
+    ac3065_2_soft_no_permanent_bits();
+    ac3065_3_schema_and_union_metrics();
+    ac3065_4_residual_and_linter();
+    std::println("\n=== #2556/#3007/#3046/#3065: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -26,6 +26,7 @@ module;
 #include "compiler/jit_typed_mutation_stats.h"
 #include "compiler/dce_elided_deopt_meta.h" // Issue #2611: elided CastOp deopt meta stamp
 #include "compiler/castop_typed_meta.h"     // Issue #2624 Phase A: CastOp src/dst typed meta
+#include "compiler/typed_mutation_audit.h"  // Issue #3065: Production/Full elim-cone persist
 
 export module aura.compiler.pass_impls;
 import std;
@@ -1270,6 +1271,7 @@ public:
     void run_function(aura::ir::IRFunction& func, std::span<const std::uint8_t> dirty_blocks = {}) {
         if (keep_for_debug_)
             return;
+        begin_elim_cone_collect();
         const bool dirty_only = !dirty_blocks.empty() && dirty_blocks.size() == func.blocks.size();
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
             auto& block = func.blocks[bi];
@@ -1280,6 +1282,7 @@ public:
             }
             run_on_block(block, static_cast<std::uint32_t>(bi));
         }
+        flush_elim_cone();
     }
 
     // Issue #538: per-block entry for incremental passes.
@@ -1287,6 +1290,9 @@ public:
     bool run_on_block(aura::ir::BasicBlock& block, std::uint32_t block_index = 0) {
         if (keep_for_debug_)
             return false;
+        const bool top_collect = !cone_collect_active_;
+        if (top_collect)
+            begin_elim_cone_collect();
         bool any_change = false;
         bool changed;
         do {
@@ -1320,6 +1326,8 @@ public:
                 auto& instr = block.instructions[i];
                 if (instr.opcode != aura::ir::IROpcode::CastOp)
                     continue;
+                // Issue #3065: capture AST id before replacing CastOp with Local.
+                const auto elim_ast_nid = instr.source_ast_node_id;
                 auto& ops = instr.operands;
                 auto target_tag = ops[2];
 
@@ -1360,6 +1368,7 @@ public:
                         };
                         ++eliminated_;
                         ++narrow_evidence_hits_;
+                        note_elim_ast(elim_ast_nid);
                         changed = true;
                     };
                     if (auto* src = find_source(ops[1])) {
@@ -1400,6 +1409,7 @@ public:
                             };
                             ++eliminated_;
                             ++type_prop_hits_;
+                            note_elim_ast(elim_ast_nid);
                             changed = true;
                             continue;
                         }
@@ -1419,6 +1429,7 @@ public:
                             };
                             ++eliminated_;
                             ++type_prop_hits_;
+                            note_elim_ast(elim_ast_nid);
                             aura::compiler::castop_meta::castop_typed_meta_identity_elide_total
                                 .fetch_add(1, std::memory_order_relaxed);
                             changed = true;
@@ -1438,6 +1449,7 @@ public:
                             instr.narrow_evidence = src->narrow_evidence;
                         ++eliminated_;
                         ++nested_hits_;
+                        note_elim_ast(elim_ast_nid);
                         changed = true;
                         continue;
                     }
@@ -1505,6 +1517,7 @@ public:
                             };
                             ++eliminated_;
                             ++dynamic_hits_;
+                            note_elim_ast(elim_ast_nid);
                             changed = true;
                             continue;
                         }
@@ -1514,6 +1527,8 @@ public:
             if (changed)
                 any_change = true;
         } while (changed);
+        if (top_collect)
+            flush_elim_cone();
         return any_change;
     }
 
@@ -1526,6 +1541,7 @@ public:
     void run(IRModuleV2& mod, bool dirty_blocks_only = true) {
         if (keep_for_debug_)
             return;
+        begin_elim_cone_collect();
         aura::compiler::ir_soa_migration::record_consumer_pass();
         auto t0 = std::chrono::steady_clock::now();
         for (auto& func : mod.functions) {
@@ -1555,6 +1571,7 @@ public:
         auto t1 = std::chrono::steady_clock::now();
         elapsed_us_ += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
+        flush_elim_cone();
     }
 
     // Issue #2143: SoaDirtyAwarePass entry — always dirty-only fold.
@@ -1599,6 +1616,28 @@ public:
     static constexpr bool kPureWrap = true;
 
 private:
+    // Issue #3065: persist elim'd AST NodeIds into the type∪IR dirty cone
+    // under production/Full. Soft: atomic-load gate only, no vector growth.
+    void begin_elim_cone_collect() noexcept {
+        using aura::compiler::typed_audit::AuditStrategy;
+        using aura::compiler::typed_audit::get_strategy;
+        using aura::compiler::typed_audit::production_defaults_active;
+        persist_elim_cone_ = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        elim_ast_nodes_.clear();
+        cone_collect_active_ = true;
+    }
+    void note_elim_ast(std::uint32_t ast_nid) noexcept {
+        if (!persist_elim_cone_ || ast_nid == 0)
+            return;
+        elim_ast_nodes_.push_back(ast_nid);
+    }
+    void flush_elim_cone() {
+        if (!elim_ast_nodes_.empty())
+            (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(elim_ast_nodes_);
+        elim_ast_nodes_.clear();
+        cone_collect_active_ = false;
+    }
+
     // Issue #2431: pure columnar DCE — same 6 elision rules as run_on_block,
     // operating only on SoA columns (no temporary IRInstruction vector).
     bool run_columnar_block(IRFunctionSoA& func, BasicBlockSoA& block) {
@@ -1644,6 +1683,8 @@ private:
                 func.type_ids_[i] = tid;
                 func.narrow_evidence_[i] = evidence;
                 ++eliminated_;
+                if (i < func.source_node_ids_.size())
+                    note_elim_ast(func.source_node_ids_[i]);
                 changed = true;
             };
 
@@ -1732,6 +1773,8 @@ private:
                             func.narrow_evidence_[i] = func.narrow_evidence_[si];
                         ++eliminated_;
                         ++nested_hits_;
+                        if (i < func.source_node_ids_.size())
+                            note_elim_ast(func.source_node_ids_[i]);
                         changed = true;
                         continue;
                     }
@@ -1784,6 +1827,10 @@ private:
     std::uint64_t pipeline_epoch_ = 0;
     // Issue #2133: optional (block, inst) dirty peel.
     InstructionDirtyPred instruction_dirty_pred_;
+    // Issue #3065: elim'd AST NodeIds buffered for cone remirror.
+    std::vector<std::uint32_t> elim_ast_nodes_{};
+    bool persist_elim_cone_ = false;
+    bool cone_collect_active_ = false;
 };
 
 static_assert(JITFriendlyPass<DeadCoercionEliminationPass>,

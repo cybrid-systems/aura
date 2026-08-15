@@ -1210,7 +1210,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_current_source_roundtrip.cpp` (—) [domain_suite, theme_compiler] — AC1: dual-workspace bare vs :workspace
 - `tests/compiler/test_dce_elided_deopt_meta.cpp` (—) [domain_suite, theme_compiler] — AC1: Elide CastOp with narrow_evidence under production → forced deopt
 - `tests/compiler/test_dead_coercion_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_dead_coercion_batch.cpp
-- `tests/compiler/test_dead_coercion_dirty_cone.cpp` (—) [domain_suite, theme_compiler] — AC1: Partial cone → DCE only dirty blocks; cone-skips > 0 on multi-block fn
+- `tests/compiler/test_dead_coercion_dirty_cone.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Partial cone → DCE only dirty blocks; cone-skips > 0 on multi-block fn
 - `tests/core/test_defines_referencing_sym.cpp` (—) [domain_suite, theme_core] — AC1: well-formed unique-name case still finds referencing Defines
 - `tests/core/test_densify_pin_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_densify_pin_batch.cpp — thematic multi-TU batch
 - `tests/core/test_dep_graph_concurrent.cpp` (—) [domain_suite, theme_core] — test_dep_graph_concurrent.cpp — Issue #1376:
