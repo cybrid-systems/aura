@@ -759,6 +759,93 @@ static void ac2844_4_source_and_linter() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #3072: static sole-enqueue proof (scan all src/ steal bindings).
+static void ac3072_1_linter_rejects_naked_push() {
+    std::println("\n--- #3072 AC1: linter rejects naked stolen-fiber enqueue ---");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py");
+    CHECK(lint.find("Issue #3072") != std::string::npos, "AC1: linter cites #3072");
+    CHECK(lint.find("classify_stolen_enqueues") != std::string::npos,
+          "AC1: executable classifier (not grep-only)");
+    CHECK(lint.find("naked steal→push") != std::string::npos ||
+              lint.find("naked steal") != std::string::npos,
+          "AC1: synthetic naked-push self-test");
+    CHECK(lint.find("renamed steal") != std::string::npos, "AC1: renamed steal-result self-test");
+    CHECK(lint.find("this->enqueue(stolen)") != std::string::npos,
+          "AC1: thief enqueue bypass self-test");
+    CHECK(lint.find("_iter_src_tUs") != std::string::npos || lint.find("src/") != std::string::npos,
+          "AC1: scans production src/ TUs");
+}
+
+static void ac3072_2_existing_path_green() {
+    std::println("\n--- #3072 AC2: existing try_steal_from → Ok → push stays green ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(wc.find("steal_safety_transaction(stolen)") != std::string::npos,
+          "AC2: transaction still the sole gate");
+    CHECK(wc.find("local_queue_.push(stolen)") != std::string::npos, "AC2: sole stolen push");
+    CHECK(wc.find("Issue #3072") != std::string::npos, "AC2: worker cites #3072");
+    CHECK(wc.find("victim->enqueue(stolen)") != std::string::npos,
+          "AC2: return-to-victim is not a thief Ready enqueue");
+    CHECK(wc.find("local_queue_.push(fiber)") != std::string::npos,
+          "AC2: owner/yield requeue uses non-steal binding");
+    const auto txn_pos = wc.find("steal_safety_transaction(stolen)");
+    const auto ok_pos = wc.find("StealSafetyDecision::Ok");
+    const auto push_pos = wc.find("local_queue_.push(stolen)");
+    CHECK(txn_pos != std::string::npos && ok_pos != std::string::npos &&
+              push_pos != std::string::npos && txn_pos < ok_pos && ok_pos < push_pos,
+          "AC2: transaction → Ok → push(stolen) order");
+}
+
+static void ac3072_3_soft_unchanged() {
+    std::println("\n--- #3072 AC3: Soft / sandbox paths unchanged ---");
+    const auto wc = read_file("src/serve/worker.cpp");
+    CHECK(wc.find("is_steal_snapshot_soft_mode") != std::string::npos,
+          "AC3: Soft helper still consulted");
+    CHECK(wc.find("steal_snapshot_soft_production_locked") != std::string::npos,
+          "AC3: production lock helper preserved");
+}
+
+static void ac3072_4_query_keys() {
+    std::println("\n--- #3072 AC4: additive query keys ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    CHECK(q.find("schema-3072") != std::string::npos, "AC4: schema-3072");
+    CHECK(q.find("issue-3072") != std::string::npos, "AC4: issue-3072");
+    CHECK(q.find("steal-enqueue-sole-gate-wired") != std::string::npos, "AC4: wired key");
+    CHECK(q.find("steal-enqueue-vs-ok-delta") != std::string::npos, "AC4: enqueue-vs-ok delta");
+    CHECK(q.find("schema-2929") != std::string::npos, "AC4: schema-2929 preserved");
+    CHECK(q.find("schema-2699") != std::string::npos, "AC4: schema-2699 preserved");
+    CHECK(q.find("steal-safety-transaction-ok-total") != std::string::npos,
+          "AC4: ok-total preserved");
+    CHECK(hdr.find("kStealEnqueueSoleGateIssue = 3072") != std::string::npos, "AC4: issue stamp");
+    CHECK(hdr.find("g_steal_safety_transaction_ok_total") != std::string::npos,
+          "AC4: #2699 ok counter preserved");
+    CHECK(hdr.find("g_steal_safety_residual_boundary_unsafe_total") != std::string::npos,
+          "AC4: #2721 residual preserved");
+    CHECK(hdr.find("kStealSafetyInvariantTableIssue = 2929") != std::string::npos,
+          "AC4: #2929 table preserved");
+}
+
+static void ac3072_5_source_and_linter() {
+    std::println("\n--- #3072 AC5/AC6: source-cite + linter + no docs/design ---");
+    const auto t = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py");
+    CHECK(t.find("ac3072_1_linter_rejects_naked_push") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3072_2_existing_path_green") != std::string::npos, "AC5: AC2 test");
+    CHECK(t.find("ac3072_3_soft_unchanged") != std::string::npos, "AC5: AC3 test");
+    CHECK(t.find("ac3072_4_query_keys") != std::string::npos, "AC5: AC4 test");
+    CHECK(t.find("ac2844_1_sole_enqueue_gate") != std::string::npos, "AC5: #2844 preserved");
+    CHECK(t.find("ac2929_1_invariant_table_and_counters") != std::string::npos,
+          "AC5: #2929 preserved");
+    CHECK(!lint.empty() && lint.find("3072") != std::string::npos, "AC5: linter present");
+    CHECK(build.find("check_steal_enqueue_sole_gate_3072") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3072-steal-enqueue-sole-gate.md").empty(),
+          "AC6: no docs/design/3072-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_3072.cpp").empty(),
+          "AC5: no invent test file per #81967");
+}
+
 // ── Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ───────
 // AC1: durable per-Fiber evaluator_id set on Guard enter.
 // AC2: cleared on Guard exit / cancel so stale steals cannot see a previous evaluator.
@@ -1927,6 +2014,12 @@ int run_test_steal_complete_restamp_txn() {
     ac2844_2_no_soft_enqueue_after_sample();
     ac2844_3_counters_preserved();
     ac2844_4_source_and_linter();
+    std::println("\n=== Issue #3072: stolen-fiber enqueue sole-gate static proof ===");
+    ac3072_1_linter_rejects_naked_push();
+    ac3072_2_existing_path_green();
+    ac3072_3_soft_unchanged();
+    ac3072_4_query_keys();
+    ac3072_5_source_and_linter();
     std::println("\n=== Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ===");
     ac2727_1_evaluator_id_set_on_guard_enter();
     ac2727_2_evaluator_id_cleared_on_guard_exit();
@@ -1971,7 +2064,7 @@ int run_test_steal_complete_restamp_txn() {
     if (g_failed)
         return 1;
     std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038: OK ({} passed)",
+                 "#3072 + #2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038: OK ({} passed)",
                  g_passed);
     return 0;
 }

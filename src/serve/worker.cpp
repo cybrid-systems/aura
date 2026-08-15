@@ -426,9 +426,13 @@ bool WorkerThread::try_steal_from(WorkerThread* victim) {
             }
             // Issue #2844: sole enqueue of a stolen fiber — dominated by
             // StealSafetyDecision::Ok from steal_safety_transaction above.
-            // Coverage linter fails if another push(stolen) appears without
-            // this Ok dominance.
-            local_queue_.push(stolen); // #2844 sole stolen-fiber enqueue
+            // Issue #3072: static coverage linter
+            // (check_steal_enqueue_sole_gate_3072.py) proves every
+            // stolen-fiber Ready enqueue in src/ is this push. Owner
+            // enqueue / post-yield requeue use a non-steal binding
+            // (fiber). victim->enqueue(stolen) returns the candidate
+            // to the victim — not a thief Ready enqueue.
+            local_queue_.push(stolen); // #2844 sole stolen-fiber enqueue (#3072 scans all TUs)
             return true;
         }
 
