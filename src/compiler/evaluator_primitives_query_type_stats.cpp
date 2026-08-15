@@ -709,6 +709,16 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("adt-exhaust-undermark-cone-wired", 1);
                 insert_kv("schema-3045", 3045);
                 insert_kv("issue-3045", 3045);
+                // Issue #3083: complete seed for every match of a
+                // mutated ADT type (no silent under-seed).
+                const std::int64_t complete_seed =
+                    m ? static_cast<std::int64_t>(
+                            m->adt_exhaust_complete_seed_total.load(std::memory_order_relaxed))
+                      : 0;
+                insert_kv("adt-exhaust-complete-seed-total", complete_seed);
+                insert_kv("adt-exhaust-complete-seed-wired", 1);
+                insert_kv("schema-3083", 3083);
+                insert_kv("issue-3083", 3083);
             }
             // Issue #2552: joint steal/densify OccurrenceGoal +
             // type_dep fence.

@@ -815,6 +815,19 @@ def cmd_lint():
             "Issue #3045 ADT exhaust under-mark cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_undermark_cone_3045.py"
         )
         return r
+    # Issue #3083: complete seed every match of a mutated ADT type.
+    # Production still hard-rejects residual under-mark. Extends
+    # test_adt_match_goal_table (#81967); no docs/design/.
+    aecs3083_script = COVERAGE_CHECKS / "check_adt_exhaust_complete_seed_3083.py"
+    if not aecs3083_script.exists():
+        fail(f"missing {aecs3083_script}")
+        return 1
+    r = run([sys.executable, str(aecs3083_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3083 ADT exhaust complete-seed linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_complete_seed_3083.py"
+        )
+        return r
     # Issue #2754: region concurrent cone / ImpactScope mask-AND
     # disjointness (#2724 residual). Equal keys + proven cone masks
     # (mask AND == 0) → concurrent admit; true overlap still rejects.
@@ -12002,6 +12015,31 @@ def cmd_adt_exhaust_undermark_cone_3045_coverage():
     return 0
 
 
+def cmd_adt_exhaust_complete_seed_3083_coverage():
+    """Issue #3083: ADT exhaust complete seed after mutate (static)."""
+    print(f"{B}=== ADT exhaust complete seed coverage (#3083) ==={N}")
+    script = COVERAGE_CHECKS / "check_adt_exhaust_complete_seed_3083.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ADT exhaust complete seed (#3083) coverage contract rows failed")
+        return 1
+    ok("ADT exhaust complete seed (#3083) coverage clean")
+    return 0
+
+
+def cmd_adt_exhaust_complete_seed_3083():
+    """Issue #3083: every match of a mutated ADT type enters the cone.
+
+    Incomplete call-site lists are completed. Production still
+    hard-rejects residual under-mark. Soft observe-only. Empty → 0.
+    """
+    print(f"{B}=== ADT exhaust complete seed (#3083) ==={N}")
+    return cmd_adt_exhaust_complete_seed_3083_coverage()
+
+
 def cmd_linear_ir_fastpath_2899_coverage():
     """Issue #2899: proven Move/Drop IR fast-path after TypeLinear proof.
 
@@ -16833,6 +16871,8 @@ def main():
         "solve-delta-timeout-fail-closed-3003": cmd_solve_delta_timeout_fail_closed_3003_coverage,
         "adt-exhaust-dirty-cone-3005": cmd_adt_exhaust_dirty_cone_3005_coverage,
         "adt-exhaust-undermark-cone-3045": cmd_adt_exhaust_undermark_cone_3045_coverage,
+        "adt-exhaust-complete-seed-3083": cmd_adt_exhaust_complete_seed_3083,
+        "adt-exhaust-complete-seed-3083-coverage": cmd_adt_exhaust_complete_seed_3083_coverage,
         "steal-decision-per-fiber-2954": cmd_steal_decision_per_fiber_2954_coverage,
         "steal-residual-rearm-resample-3038": cmd_steal_residual_rearm_resample_3038,
         "steal-residual-rearm-resample-3038-coverage": cmd_steal_residual_rearm_resample_3038_coverage,

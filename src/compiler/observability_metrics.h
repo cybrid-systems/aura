@@ -1435,6 +1435,9 @@ struct CompilerMetrics {
     // Issue #3045: match sites forced into the cone on under-mark
     // (constructor / arm dirty, match site itself not marked).
     std::atomic<std::uint64_t> adt_exhaust_undermark_force_total{0};
+    // Issue #3083: extra match sites completed from mutated ADT types
+    // (sibling matches not listed at the call site).
+    std::atomic<std::uint64_t> adt_exhaust_complete_seed_total{0};
     // Issue #2564: ADT match exhaustiveness goal table + delta reverify roots.
     // adt_goal_table_size is a live snapshot key (queried from CS); counters:
     std::atomic<std::uint64_t> adt_goal_note_total{0};

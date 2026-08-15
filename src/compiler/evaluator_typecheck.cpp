@@ -459,6 +459,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 // a single arm; refresh constructors + force containing
                 // match sites into dirty_propagation so this walk (and
                 // mutate_type_gate Hard) sees the non-exhaustive residual.
+                // Issue #3083: complete seed so every match of a mutated
+                // ADT type enters the cone (no silent under-seed).
                 // Quiet: no mutation seeds → force is a no-op.
                 {
                     std::vector<aura::ast::NodeId> seeds;

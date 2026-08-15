@@ -454,6 +454,12 @@ inline constexpr int kAdtExhaustDirtyConeIssue = 3005;
 // Quiet (no ADT ancestor) is zero extra.
 inline constexpr int kAdtExhaustUndermarkConeIssue = 3045;
 
+// Issue #3083: residual of #3045 — after ADT / pattern mutate, every
+// match whose subject ADT type is in the mutated set must enter the
+// reverify cone (no silent under-seed). Production still hard-rejects
+// residual under-mark (#3005); Soft observe-only; empty types → 0.
+export inline constexpr int kAdtExhaustCompleteSeedIssue = 3083;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
@@ -1147,6 +1153,11 @@ public:
     // Empty input → 0 (Quiet).
     [[nodiscard]] std::size_t
     force_adt_exhaust_undermark_from_match_nodes(const std::vector<std::uint32_t>& nodes) noexcept;
+    // Issue #3083: complete seed — every goal whose adt_type_id is in
+    // the mutated set enters reverify + pending_full_solve. Empty
+    // types / empty table → 0 (AC4).
+    [[nodiscard]] std::size_t
+    seed_adt_matches_for_dirty_types(const std::vector<std::uint32_t>& adt_type_ids) noexcept;
     [[nodiscard]] std::size_t adt_match_goals_size() const noexcept {
         return adt_match_goals_.size();
     }
@@ -3453,9 +3464,9 @@ export void refresh_adt_constructors_for_dirty_define_types(
     aura::ast::FlatAST& flat, const aura::ast::StringPool& pool, aura::core::TypeRegistry& reg,
     const std::vector<aura::ast::NodeId>& dirty_nodes, void* metrics = nullptr);
 
-// Issue #3045: walk ancestors of dirty constructor / match-arm nodes,
-// refresh DefineType ctor lists, seed exhaustiveness reverify roots,
-// and mark match sites via dirty::force_adt_exhaust_sites_into_cone.
+// Issue #3045 / #3083: walk ancestors of dirty constructor / match-arm
+// nodes, refresh DefineType ctor lists, complete-seed every match of
+// the mutated ADT types, and mark sites via dirty cone-force.
 // Empty dirty / no ADT ancestor → 0 (Quiet).
 export std::size_t
 force_adt_exhaust_undermark_into_cone(aura::ast::FlatAST& flat, const aura::ast::StringPool& pool,

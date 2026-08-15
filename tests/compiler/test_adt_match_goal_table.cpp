@@ -33,6 +33,7 @@ using aura::compiler::AdtMatchGoal;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::kAdtExhaustCompleteSeedIssue;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
@@ -414,6 +415,128 @@ static void ac3045_5_source_cites() {
           "3045 AC5: mutate_type_gate");
 }
 
+// ── Issue #3083: complete seed after ADT / pattern mutate ──
+// AC1: every match of a mutated ADT type is seeded (no silent under-seed)
+// AC2: Production residual under-mark still TypeError + !authoritative
+// AC3: Soft under-mark observe only
+// AC4: empty types / no ADT → zero extra
+// AC5: schema-3083 + #3045/#3005 lineage; extend this suite; linter
+
+static void ac3083_1_complete_seed_incomplete_list() {
+    std::println("\n--- #3083 AC1: incomplete seed completes sibling matches ---");
+    CHECK(kAdtExhaustCompleteSeedIssue == 3083, "3083 AC1: issue stamp");
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    u.cs.note_adt_match_goal(10, 42, 0xabc);
+    u.cs.note_adt_match_goal(20, 42, 0xdef);
+    u.cs.note_adt_match_goal(30, 99, 1);
+    // Call site lists only match 10 (under-seed).
+    const std::vector<std::uint32_t> incomplete{10};
+    CHECK(u.cs.force_adt_exhaust_undermark_from_match_nodes(incomplete) == 1,
+          "3083 AC1: listed force inserts 10");
+    CHECK(u.cs.adt_reverify_roots_size() == 1, "3083 AC1: under-seeded before complete");
+    const std::vector<std::uint32_t> types{42};
+    const auto extra = u.cs.seed_adt_matches_for_dirty_types(types);
+    CHECK(extra == 1, "3083 AC1: sibling 20 completed");
+    CHECK(u.cs.adt_reverify_roots_size() == 2, "3083 AC1: 10+20 of type 42");
+    CHECK(u.cs.pending_full_solve_roots_size() >= 1, "3083 AC1: note_adt_exhaust_dirty_type");
+    CHECK(u.m.adt_exhaust_complete_seed_total.load() == 1, "3083 AC1: complete-seed counter");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("seed_adt_matches_for_dirty_types") != std::string::npos,
+          "3083 AC1: CS complete seed");
+    CHECK(tci.find("collect_match_sites_for_adt_types") != std::string::npos,
+          "3083 AC1: FlatAST complete collect");
+    CHECK(tci.find("Issue #3083") != std::string::npos, "3083 AC1: force cites #3083");
+    CHECK(tci.find("note_adt_exhaust_dirty_type") != std::string::npos,
+          "3083 AC1: dirty-type seed retained");
+}
+
+static void ac3083_2_production_reject_retained() {
+    std::println("\n--- #3083 AC2: Production residual under-mark still rejects ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(tci.find("last_type_export_authoritative_ = false") != std::string::npos,
+          "3083 AC2: Production authority cleared");
+    CHECK(tci.find("adt_exhaust_production_reject_total") != std::string::npos,
+          "3083 AC2: Production reject counter");
+    CHECK(tci.find("adt_exhaust_dynamic_slide_prevented_total") != std::string::npos,
+          "3083 AC2: no Dynamic slide");
+    CHECK(tci.find("ErrorKind::TypeError") != std::string::npos, "3083 AC2: TypeError");
+    CHECK(ev.find("Issue #3083") != std::string::npos, "3083 AC2: Hard walk cites complete seed");
+    CHECK(ev.find("mutate_type_gate") != std::string::npos, "3083 AC2: Hard gate retained");
+}
+
+static void ac3083_3_soft_observe() {
+    std::println("\n--- #3083 AC3: Soft under-mark observe only ---");
+    UnitCs u;
+    u.cs.note_adt_match_goal(7, 1, 1);
+    u.cs.note_adt_match_goal(8, 1, 2);
+    const std::vector<std::uint32_t> types{1};
+    CHECK(u.cs.seed_adt_matches_for_dirty_types(types) == 2, "3083 AC3: Soft still completes seed");
+    CHECK(u.m.adt_exhaust_production_reject_total.load() == 0,
+          "3083 AC3: no production reject on unit CS");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("adt_exhaust_soft_observe_total") != std::string::npos,
+          "3083 AC3: Soft observe retained");
+    CHECK(tci.find("production_defaults_active()") != std::string::npos,
+          "3083 AC3: Production vs Soft branch retained");
+}
+
+static void ac3083_4_quiet_empty() {
+    std::println("\n--- #3083 AC4: empty types / no ADT → zero extra ---");
+    UnitCs u;
+    const std::vector<std::uint32_t> empty;
+    CHECK(u.cs.seed_adt_matches_for_dirty_types(empty) == 0, "3083 AC4: empty types 0");
+    CHECK(u.cs.adt_reverify_roots_size() == 0, "3083 AC4: no roots");
+    const std::vector<std::uint32_t> zero{0};
+    CHECK(u.cs.seed_adt_matches_for_dirty_types(zero) == 0, "3083 AC4: type 0 ignored");
+    CHECK(u.m.adt_exhaust_complete_seed_total.load() == 0, "3083 AC4: counter quiet");
+    CHECK(u.cs.pending_full_solve_roots_size() == 0, "3083 AC4: no pending");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("Empty types") != std::string::npos ||
+              tci.find("types.empty()") != std::string::npos,
+          "3083 AC4: Quiet path cited");
+}
+
+static void ac3083_5_schema_and_linter() {
+    std::println("\n--- #3083 AC5: schema + linter + no invent ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3083") != std::string::npos, "3083 AC5: schema-3083");
+    CHECK(q.find("adt-exhaust-complete-seed-total") != std::string::npos,
+          "3083 AC5: complete-seed key");
+    CHECK(q.find("schema-3045") != std::string::npos, "3083 AC5: lineage #3045");
+    CHECK(q.find("schema-3005") != std::string::npos, "3083 AC5: lineage #3005");
+    CHECK(read_file("src/compiler/type_checker.ixx").find("kAdtExhaustCompleteSeedIssue = 3083") !=
+              std::string::npos,
+          "3083 AC5: issue stamp");
+    CHECK(
+        read_file("src/compiler/observability_metrics.h").find("adt_exhaust_complete_seed_total") !=
+            std::string::npos,
+        "3083 AC5: metrics field");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3083") == 3083, "3083 AC5: live schema-3083");
+    CHECK(href(cs, "issue-3083") == 3083, "3083 AC5: live issue-3083");
+    CHECK(href(cs, "adt-exhaust-complete-seed-wired") == 1, "3083 AC5: wired");
+    CHECK(href(cs, "adt-exhaust-complete-seed-total") >= 0, "3083 AC5: complete-seed queryable");
+    CHECK(href(cs, "schema-3045") == 3045, "3083 AC5: schema-3045 preserved");
+    CHECK(href(cs, "schema-3005") == 3005, "3083 AC5: schema-3005 preserved");
+    const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_adt_exhaust_complete_seed_3083.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3083_1_complete_seed_incomplete_list") != std::string::npos, "3083 AC5: AC1");
+    CHECK(t.find("ac3083_2_production_reject_retained") != std::string::npos, "3083 AC5: AC2");
+    CHECK(t.find("ac3083_3_soft_observe") != std::string::npos, "3083 AC5: AC3");
+    CHECK(t.find("ac3083_4_quiet_empty") != std::string::npos, "3083 AC5: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #3083") != std::string::npos, "3083 AC5: linter");
+    CHECK(build.find("check_adt_exhaust_complete_seed_3083") != std::string::npos,
+          "3083 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3083.cpp").empty(),
+          "3083 AC5: no invent test_issue_3083");
+    CHECK(read_file("docs/design/3083-adt-exhaust-complete-seed.md").empty(),
+          "3083 AC5: no docs/design/");
+}
+
 static void ac3005_6_linter_no_design() {
     std::println("\n--- #3005 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
@@ -455,7 +578,12 @@ int run_test_adt_match_goal_table() {
     ac3045_3_quiet();
     ac3045_4_schema();
     ac3045_5_source_cites();
-    std::println("\n=== #2564/#3005/#3045: {} passed, {} failed ===", g_passed, g_failed);
+    ac3083_1_complete_seed_incomplete_list();
+    ac3083_2_production_reject_retained();
+    ac3083_3_soft_observe();
+    ac3083_4_quiet_empty();
+    ac3083_5_schema_and_linter();
+    std::println("\n=== #2564/#3005/#3045/#3083: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
