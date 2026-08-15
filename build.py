@@ -1581,6 +1581,19 @@ def cmd_lint():
             "Issue #2801 move-node hygiene linter failed — run python3 scripts/coverage/checks/check_move_node_hygiene_2801.py"
         )
         return r
+    # Issue #3061: move-node / replace-subtree target honor :allow-macro?.
+    # Extends test_move_node_hygiene + test_replace_subtree_new_body_hygiene
+    # (#81967); no docs/design/ (#1655).
+    mr3061_script = COVERAGE_CHECKS / "check_move_replace_allow_macro_3061.py"
+    if not mr3061_script.exists():
+        fail(f"missing {mr3061_script}")
+        return 1
+    r = run([sys.executable, str(mr3061_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3061 move/replace :allow-macro? linter failed — run python3 scripts/coverage/checks/check_move_replace_allow_macro_3061.py"
+        )
+        return r
     # Issue #2802: replace-pattern local ASTArena isolates pattern from temp_arena_.
     # ac2802 in test_atomic_batch_replace_pattern_sibling.
     rps_script = COVERAGE_CHECKS / "check_atomic_batch_replace_pattern_sibling_2802.py"
@@ -12572,6 +12585,30 @@ def cmd_structural_macro_hygiene_3027():
     return cmd_structural_macro_hygiene_3027_coverage()
 
 
+def cmd_move_replace_allow_macro_3061_coverage():
+    """Issue #3061: move-node / replace-subtree :allow-macro? (static)."""
+    print(f"{B}=== move/replace :allow-macro? coverage (#3061) ==={N}")
+    script = COVERAGE_CHECKS / "check_move_replace_allow_macro_3061.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("move/replace :allow-macro? (#3061) coverage contract rows failed")
+        return 1
+    ok("move/replace :allow-macro? (#3061) coverage clean")
+    return 0
+
+
+def cmd_move_replace_allow_macro_3061():
+    """Issue #3061: unify move-node / replace-subtree target on :allow-macro?.
+
+    Default still hygiene-rejects. Soft / non-macro unchanged.
+    """
+    print(f"{B}=== move/replace :allow-macro? (#3061) ==={N}")
+    return cmd_move_replace_allow_macro_3061_coverage()
+
+
 def cmd_tls_depth_same_flat_clone_3028_coverage():
     """Issue #3028: TLS depth not authority; same-FlatAST clone reject (static)."""
     print(f"{B}=== TLS depth / same-FlatAST clone coverage (#3028) ==={N}")
@@ -16175,6 +16212,8 @@ def main():
         "rename-replace-hygiene-restamp-2961": cmd_rename_replace_hygiene_restamp_2961_coverage,
         "structural-macro-hygiene-3027": cmd_structural_macro_hygiene_3027,
         "structural-macro-hygiene-3027-coverage": cmd_structural_macro_hygiene_3027_coverage,
+        "move-replace-allow-macro-3061": cmd_move_replace_allow_macro_3061,
+        "move-replace-allow-macro-3061-coverage": cmd_move_replace_allow_macro_3061_coverage,
         "tls-depth-same-flat-clone-3028": cmd_tls_depth_same_flat_clone_3028,
         "tls-depth-same-flat-clone-3028-coverage": cmd_tls_depth_same_flat_clone_3028_coverage,
         "macro-self-evo-grant-fence-3029": cmd_macro_self_evo_grant_fence_3029,

@@ -243,7 +243,98 @@ int run_test_move_node_hygiene() {
         }
     }
 
-    std::println("\n=== #2801 move-node hygiene: {} passed, {} failed ===", g_passed, g_failed);
+    // ── Issue #3061: :allow-macro? / global unlocks move-node ──
+    {
+        std::println("\n--- #3061 AC1: :allow-macro? #t moves MacroIntroduced ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define a (lambda () 1)) "
+                      "(define b (lambda () 2)))\")")
+                  .has_value(),
+              "3061 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3061 AC1: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto loc = find_first_child(*ws);
+        auto dest = find_alt_parent(*ws, loc.parent, loc.node);
+        CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3061 AC1: loc+dest");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+              "3061 AC1: stamp");
+        const auto rej0 = ws->move_node_hygiene_reject_total();
+        auto denied = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        CHECK(denied.has_value() && merr_kind(cs, *denied) == "hygiene",
+              "3061 AC1: default still hygiene");
+        CHECK(ws->move_node_hygiene_reject_total() > rej0, "3061 AC1: deny metric");
+        CHECK(ws->parent_of(loc.node) == loc.parent, "3061 AC1: parent unchanged");
+        auto allowed =
+            cs.eval(std::format("(mutate:move-node {} {} 0 :allow-macro? #t)", loc.node, dest));
+        CHECK(allowed.has_value(), "3061 AC1: allow returns");
+        CHECK(merr_kind(cs, *allowed) != "hygiene", "3061 AC1: not hygiene");
+        if (is_bool(*allowed) && as_bool(*allowed)) {
+            CHECK(ws->parent_of(loc.node) == dest, "3061 AC1: parent updated");
+            CHECK(ws->is_macro_introduced(loc.node), "3061 AC1: marker preserved");
+        } else {
+            CHECK(true, "3061 AC1: topology may reject; hygiene unlocked");
+        }
+    }
+    {
+        std::println("\n--- #3061 AC2: global allow-macro-mutate unlocks ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define a (lambda () 1)) "
+                      "(define b (lambda () 2)))\")")
+                  .has_value(),
+              "3061 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3061 AC2: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto loc = find_first_child(*ws);
+        auto dest = find_alt_parent(*ws, loc.parent, loc.node);
+        CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3061 AC2: loc+dest");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+              "3061 AC2: stamp");
+        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "3061 AC2: global on");
+        auto r = cs.eval(std::format("(mutate:move-node {} {} 0)", loc.node, dest));
+        CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene", "3061 AC2: global unlocks");
+        if (is_bool(*r) && as_bool(*r))
+            CHECK(ws->is_macro_introduced(loc.node), "3061 AC2: marker preserved");
+        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "3061 AC2: global off");
+    }
+    {
+        std::println("\n--- #3061 AC3: atomic-batch under global allow ---");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(begin (define x (lambda () 3)) "
+                      "(define y (lambda () 4)))\")")
+                  .has_value(),
+              "3061 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3061 AC3: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        auto loc = find_first_child(*ws);
+        auto dest = find_alt_parent(*ws, loc.parent, loc.node);
+        CHECK(loc.node != NULL_NODE && dest != NULL_NODE, "3061 AC3: loc+dest");
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", loc.node)).has_value(),
+              "3061 AC3: stamp");
+        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #t)").has_value(), "3061 AC3: global on");
+        auto r = cs.eval(std::format("(mutate:atomic-batch "
+                                     "(list (list \"mutate:move-node\" {} {} 0)))",
+                                     loc.node, dest));
+        CHECK(r.has_value() && merr_kind(cs, *r) != "hygiene",
+              "3061 AC3: batch not hygiene-blocked");
+        CHECK(cs.eval("(hygiene:set-allow-macro-mutate! #f)").has_value(), "3061 AC3: global off");
+    }
+    {
+        std::println("\n--- #3061 AC5: source + linter + no invent ---");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto build = read_file("build.py");
+        CHECK(mut.find("Issue #3061") != std::string::npos, "3061 AC5: mutate cites #3061");
+        CHECK(mut.find("reject_structural_macro_hygiene") != std::string::npos &&
+                  mut.find("\"move-node\"") != std::string::npos,
+              "3061 AC5: move-node uses shared helper");
+        CHECK(build.find("check_move_replace_allow_macro_3061") != std::string::npos,
+              "3061 AC5: build.py wires linter");
+        CHECK(read_file("docs/design/3061-move-replace-allow-macro.md").empty(),
+              "3061 AC5: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3061.cpp").empty(), "3061 AC5: no invent test");
+    }
+
+    std::println("\n=== #2801+#3061 move-node hygiene: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

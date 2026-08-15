@@ -4623,7 +4623,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
             !ev.workspace_pool_) {
             ok = false;
-            return mev("bad-arg", "usage: (mutate:replace-subtree node-id new-code [summary])");
+            return mev("bad-arg", "usage: (mutate:replace-subtree node-id new-code [summary] "
+                                  "[:allow-macro? #t])");
         }
         auto target = static_cast<NodeId>(as_int(a[0]));
         auto code_idx = as_string_idx(a[1]);
@@ -4637,11 +4638,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return mev("bad-arg", "node-id out of range");
         }
 
-        // ── Hygiene gate (Issue #142 AC) ─────────────────────
-        if (flat.is_macro_introduced(target)) {
+        // Issue #3061 / #142 / #3027: target MacroIntroduced default-reject;
+        // :allow-macro? / global allow-macro-mutate unlocks (parity with
+        // remove-node / set-body). Soft / non-macro: one load.
+        const bool allow_macro_rs = ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        const bool target_was_macro = flat.is_macro_introduced(target);
+        if (auto err = reject_structural_macro_hygiene(ev, flat, target, allow_macro_rs,
+                                                       "replace-subtree", mev)) {
             ok = false;
-            ev.record_hygiene_violation_attempt();
-            return mev("hygiene", "cannot mutate macro-introduced node");
+            return *err;
         }
 
         auto new_code = ev.string_heap_[code_idx];
@@ -4767,10 +4772,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // and break eval / current-source.
 
         // Issue #2797: hygiene on the *new* subtree (not only target).
-        // Target MacroIntroduced is blocked above; installing a
-        // macro-introduced body under a normal parent defeats #142
-        // (same gap as #2792 rebind new_value). :allow-macro? / global
-        // allow-macro-mutate opt out.
+        // Target MacroIntroduced is gated above (#3061 allow-macro);
+        // installing a macro-introduced body under a normal parent
+        // defeats #142 (same gap as #2792 rebind new_value).
+        // :allow-macro? / global allow-macro-mutate opt out.
         {
             const bool allow_macro =
                 ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
@@ -4938,6 +4943,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         flat.mark_dirty_upward(parent_id);
                         flat.add_mutation_subtree(pr.root, parent_id, child_idx, old_source,
                                                   "replace-subtree", summary);
+                        // Issue #3061: allowed MacroIntroduced target →
+                        // propagate marker / restamp on the installed body.
+                        if (allow_macro_rs && target_was_macro)
+                            propagate_macro_introduced_marker(ev, flat, pr.root,
+                                                              parse_no_auto_restamp_opt_out(ev, a));
                     },
                     &threw)) {
                 ok = false;
@@ -6204,9 +6214,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // invalidate ev.defuse_index_" — the actual move is not
     // reversed, but readers know the workspace state changed.
     //
-    // Hygiene (Issue #142 / #2801): MacroIntroduced nodes must not be
-    // moved (hoist into non-macro scope). Same hard gate as
-    // replace-subtree target; lockless batch path rejects too.
+    // Hygiene (Issue #142 / #2801 / #3061): MacroIntroduced default-reject;
+    // :allow-macro? / global allow-macro-mutate unlocks (parity with
+    // other structural prims). Lockless batch honors the global flag.
     add_mutate("mutate:move-node", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
         using namespace aura::ast;
         bool ok = true;
@@ -6225,7 +6235,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]) ||
             !ev.workspace_flat_) {
             ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:move-node node parent pos)");
+            return ev.make_merr("bad-arg",
+                                "usage: (mutate:move-node node parent pos [:allow-macro? #t])");
         }
         auto node = static_cast<NodeId>(as_int(a[0]));
         auto new_parent = static_cast<NodeId>(as_int(a[1]));
@@ -6238,13 +6249,24 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return ev.make_merr("out-of-range", "node or parent ID out of range");
         }
 
-        // Issue #2801 / #142: MacroIntroduced target — hard reject (parity
-        // with replace-subtree). Metric: move_node_hygiene_reject_total.
-        if (flat.is_macro_introduced(node)) {
+        // Issue #3061 / Issue #2801 / #142: MacroIntroduced default-reject;
+        // :allow-macro? / global unlocks. Deny still bumps
+        // move_node_hygiene_reject_total (AC2/AC3 metric).
+        const bool allow_macro_mv = ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+        const bool was_macro_mv = flat.is_macro_introduced(node);
+        if (was_macro_mv && !allow_macro_mv) {
             ok = false;
             flat.note_move_node_hygiene_reject();
-            ev.record_hygiene_violation_attempt();
-            return ev.make_merr("hygiene", "cannot move macro-introduced node");
+        }
+        {
+            const MakeErrorVal mv_mev = [&ev](const std::string& k, const std::string& m) {
+                return ev.make_merr(k, m);
+            };
+            if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_mv,
+                                                           "move-node", mv_mev)) {
+                ok = false;
+                return *err;
+            }
         }
 
         if (node == new_parent) {
@@ -6305,6 +6327,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return ev.make_merr("move-failed",
                                 "insert failed; node reattached (no dangling NULL hole)");
         }
+
+        // Issue #3061: allowed MacroIntroduced move → propagate marker /
+        // restamp so provenance stays coherent after the hop.
+        if (allow_macro_mv && was_macro_mv)
+            propagate_macro_introduced_marker(ev, flat, node, parse_no_auto_restamp_opt_out(ev, a));
 
         flat.add_mutation(node, "move-node", std::to_string(cur_parent), std::to_string(new_parent),
                           summary);

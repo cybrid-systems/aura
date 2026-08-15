@@ -2672,10 +2672,14 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     if (target == aura::ast::NULL_NODE || target >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :replace-subtree: node-id out of range"});
-    if (flat.is_macro_introduced(target))
+    // Issue #3061: batch has no :allow-macro? kwargs — honor the global
+    // allow-macro-mutate flag only. Default still rejects MacroIntroduced.
+    if (flat.is_macro_introduced(target) && !get_allow_macro_mutate()) {
+        record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :replace-subtree: cannot mutate macro-introduced node"});
+    }
     auto new_code = string_heap_[code_idx];
     std::string summary =
         (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])] : "replace-subtree";
@@ -3069,9 +3073,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         new_parent == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :move-node: node or parent out of range"});
-    // Issue #2801: hygiene gate before cycle / detach (cannot move MacroIntroduced).
-    if (flat.is_macro_introduced(node)) {
+    // Issue #2801 / Issue #3061: hygiene gate before cycle / detach.
+    // Batch has no :allow-macro? kwargs — honor the global flag only.
+    if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
         flat.note_move_node_hygiene_reject();
+        record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :move-node: cannot move macro-introduced node"});
