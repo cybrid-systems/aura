@@ -1809,6 +1809,123 @@ static void ac3053_5_source_cite_no_invent() {
           "AC4: inventory floor unchanged");
 }
 
+// ── Issue #3055: post-Moving last_object_remap_ residual ──
+static void ac3055_1_slot_covered_no_canary_holds() {
+    std::println("\n--- #3055 AC1: slot-covered move, no residual canary ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.post_moving_stale_count == 0, "AC1: no stale canary");
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC1: pin_contract_held after remapped slots");
+        CHECK(static_cast<Pod16*>(s0)->a == 1, "AC1: remapped slot payload");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC1: no-move payloads intact");
+    }
+}
+
+static void ac3055_2_unregistered_canary_fail_closed() {
+    std::println("\n--- #3055 AC2/AC6: synthetic non-registered live ptr ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    const auto stale0 = aura::core::densify_consistency::moving_post_moving_stale_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    void* alias = p0; // unregistered known-path residual
+    arena.note_post_moving_live_ptr_canary(alias);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(r.post_moving_stale_count > 0, "AC2: canary still holds densify-old addr");
+        CHECK(!r.pin_contract_held, "AC2: pin_contract_held=false");
+        CHECK(r.moving_incomplete_remap, "AC2: incomplete-remap");
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC2: sticky armed");
+        CHECK(aura::core::densify_consistency::moving_post_moving_stale_total_v_read() > stale0,
+              "AC2: post-moving-stale-total");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC2: no-move payloads intact");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3055_3_soft_no_scan() {
+    std::println("\n--- #3055 AC3: Soft / no-move does not scan ---");
+    RequiredPinGuard off(0);
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    const auto stale0 = aura::core::densify_consistency::moving_post_moving_stale_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    arena.note_post_moving_live_ptr_canary(p0);
+    const auto r = arena.live_compact(LiveCompactMode::Soft);
+    CHECK(r.objects_moved == 0, "AC3: Soft does not relocate");
+    CHECK(r.post_moving_stale_count == 0, "AC3: no stale scan on Soft");
+    CHECK(aura::core::densify_consistency::moving_post_moving_stale_total_v_read() == stale0,
+          "AC3: counter unchanged");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("count_post_moving_stale_known_ptrs_") != std::string::npos,
+          "AC3: named scan helper");
+    CHECK(arena_src.find("moved_live_objects && !last_object_remap_.empty()") != std::string::npos,
+          "AC3: scan gated on move + remap");
+}
+
+static void ac3055_4_no_second_remap() {
+    std::println("\n--- #3055 AC4: slot + pin + RootRemapPass only ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(arena.find("register_external_root_slot_for_densify") != std::string::npos,
+          "AC4: slot remap remains");
+    CHECK(arena.find("invoke_root_remap_callback_") != std::string::npos, "AC4: RootRemapPass");
+    CHECK(arena.find("remap_pins_pointing_to") != std::string::npos, "AC4: pin remap");
+    CHECK(arena.find("note_post_moving_live_ptr_canary") != std::string::npos,
+          "AC4: canary is observe-only");
+    CHECK(ev.find("no second remap") != std::string::npos ||
+              ev.find("not a second remap") != std::string::npos,
+          "AC4: Evaluator documents no second registry");
+}
+
+static void ac3055_5_envframe_hold_depth_unchanged() {
+    std::println("\n--- #3055 AC5: EnvFrame hold-depth + scan_skip_freed ---");
+    const auto efl = read_file("src/core/envframe_lifetime.ixx");
+    CHECK(efl.find("scan_skip_freed") != std::string::npos, "AC5: scan_skip_freed");
+    CHECK(efl.find("hold-depth") != std::string::npos ||
+              efl.find("hold-generation") != std::string::npos,
+          "AC5: hold-depth / hold-generation");
+    CHECK(efl.find("Issue #3055") != std::string::npos, "AC5: envframe cites #3055");
+}
+
+static void ac3055_6_source_cite_no_invent() {
+    std::println("\n--- #3055 AC6: source-cite + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto dc = read_file("src/core/densify_consistency_report.h");
+    const auto health = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto build = read_file("build.py");
+    CHECK(dc.find("kMovingPostMovingStaleIssue = 3055") != std::string::npos, "AC6: stamp");
+    CHECK(arena.find("Issue #3055") != std::string::npos, "AC6: arena cites #3055");
+    CHECK(health.find("schema-3055") != std::string::npos, "AC6: densify-health schema");
+    CHECK(build.find("check_moving_post_moving_stale_3055") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3055-post-moving-stale.md").empty(),
+          "AC6: no docs/design/3055-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3055.cpp").empty(),
+          "AC6: no test_issue_3055.cpp per #81967");
+}
+
 } // namespace
 
 int run_test_moving_densify_fail_closed() {
@@ -1826,6 +1943,8 @@ int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #3017: value-only / un-slotted incomplete-remap residual "
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3053: allocate / pool+flat residual on required pin cover "
+                 "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #3055: post-Moving last_object_remap_ residual "
                  "(extends #2495 test file per #81967) ===");
 
     ac1_source_cite_live_compact_result();
@@ -1908,6 +2027,13 @@ int run_test_moving_densify_fail_closed() {
     ac3053_3_soft_allocate_zero_cost();
     ac3053_4_mutate_densify_allocate_soak();
     ac3053_5_source_cite_no_invent();
+    // Issue #3055: post-Moving last_object_remap_ residual (extends this suite).
+    ac3055_1_slot_covered_no_canary_holds();
+    ac3055_2_unregistered_canary_fail_closed();
+    ac3055_3_soft_no_scan();
+    ac3055_4_no_second_remap();
+    ac3055_5_envframe_hold_depth_unchanged();
+    ac3055_6_source_cite_no_invent();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 

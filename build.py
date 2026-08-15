@@ -2592,6 +2592,19 @@ def cmd_lint():
             "Issue #3017 incomplete-remap residual linter failed — run python3 scripts/coverage/checks/check_moving_incomplete_remap_3017.py"
         )
         return r
+    # Issue #3055: post-Moving last_object_remap_ residual (EnvFrame /
+    # Closure / FFI / JIT known-path stale scan). Extends
+    # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    mpms_script = COVERAGE_CHECKS / "check_moving_post_moving_stale_3055.py"
+    if not mpms_script.exists():
+        fail(f"missing {mpms_script}")
+        return 1
+    r = run([sys.executable, str(mpms_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3055 post-Moving stale linter failed — run python3 scripts/coverage/checks/check_moving_post_moving_stale_3055.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
@@ -8303,6 +8316,32 @@ def cmd_moving_incomplete_remap_3017():
     """
     print(f"{B}=== moving incomplete-remap residual (#3017) ==={N}")
     return cmd_moving_incomplete_remap_3017_coverage()
+
+
+def cmd_moving_post_moving_stale_3055_coverage():
+    """Issue #3055: post-Moving last_object_remap_ residual (static)."""
+    print(f"{B}=== moving post-Moving stale coverage (#3055) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_post_moving_stale_3055.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving post-Moving stale (#3055) coverage contract rows failed")
+        return 1
+    ok("moving post-Moving stale (#3055) coverage clean")
+    return 0
+
+
+def cmd_moving_post_moving_stale_3055():
+    """Issue #3055: post-Moving objects_moved consistency.
+
+    After objects_moved>0, known-path live ptrs still holding a
+    last_object_remap_ key fail-close (incomplete + sticky). Slot + pin
+    + RootRemapPass stay the only remap mechanisms. Soft / no-move skip.
+    """
+    print(f"{B}=== moving post-Moving stale (#3055) ==={N}")
+    return cmd_moving_post_moving_stale_3055_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -15856,6 +15895,8 @@ def main():
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
         "moving-incomplete-remap-3017-coverage": cmd_moving_incomplete_remap_3017_coverage,
+        "moving-post-moving-stale-3055": cmd_moving_post_moving_stale_3055,
+        "moving-post-moving-stale-3055-coverage": cmd_moving_post_moving_stale_3055_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,

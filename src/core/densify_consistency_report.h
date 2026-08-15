@@ -212,6 +212,18 @@ inline constexpr int kMovingIncompleteRemapResidual3017Issue = 3017;
 inline void reset_moving_incomplete_remap_residual_3017_for_test() noexcept {
     g_moving_value_only_not_cover_total.store(0, std::memory_order_relaxed);
 }
+// Issue #3055: post-Moving objects_moved consistency. Bumped when a
+// known-path live ptr (EnvFrame/Closure/FFI/JIT canary) still holds a
+// last_object_remap_ key after slot + pin + RootRemapPass. Soft /
+// no-move never increments (scan not invoked).
+inline std::atomic<std::uint64_t> g_moving_post_moving_stale_total{0};
+inline constexpr int kMovingPostMovingStaleIssue = 3055;
+[[nodiscard]] inline std::uint64_t moving_post_moving_stale_total_v_read() noexcept {
+    return g_moving_post_moving_stale_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_post_moving_stale_for_test() noexcept {
+    g_moving_post_moving_stale_total.store(0, std::memory_order_relaxed);
+}
 inline std::atomic<std::uint8_t> g_last_densify_envframe_fail_code{0};
 inline std::atomic<std::uint8_t> g_last_densify_closure_fail_code{0};
 

@@ -55,6 +55,9 @@ struct EnvFrameLifetimeHost {
     void* ctx = nullptr;
     // Mandatory: scan live closures + skip freed/tombstoned slots +
     // enforce dual-path consistency. Called from guard dtor.
+    // Issue #3055: steal × compact / truncate stay on this hold-depth
+    // + scan_skip_freed path — densify residual is last_object_remap_
+    // stale scan, not a second EnvFrame remap.
     void (*scan_skip_freed)(void* ctx, EnvFrameLifetimeSite site) = nullptr;
     // Optional: snapshot of live EnvFrame count at ctor (for diff in
     // observability). Returns 0 when unset.

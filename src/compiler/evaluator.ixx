@@ -4173,10 +4173,13 @@ public:
     [[nodiscard]] aura::core::densify_consistency::DensifyRemapPairingResult
     force_densify_remap_pairing() noexcept;
 
-    // Issue #2935: auto-register known intermediate + compiler external root
-    // slots into the Moving densify window (extends #2889 inventory). Walks
-    // workspace / mutate-target / current flat+pool, WorkspaceTree layer
-    // flat/pool/parent slots, and RootRemap stable + closure capture slots.
+    // Issue #2935 / #3055: auto-register known intermediate + compiler
+    // external root slots into the Moving densify window (extends #2889
+    // inventory). Walks workspace / mutate-target / current flat+pool,
+    // WorkspaceTree layer flat/pool/parent slots, and RootRemap stable +
+    // closure capture slots. EnvFrame/FFI/JIT residual after objects_moved
+    // is fail-closed via last_object_remap_ stale scan (#3055) — not a second remap
+    // registry.
     // Returns the number of non-null slots registered via
     // ArenaGroup::register_external_root_slot_for_densify_all. Soft / no
     // arena_group → 0 (zero extra work when densify entry never reaches
