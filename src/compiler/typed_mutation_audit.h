@@ -518,6 +518,16 @@ inline void set_sample_ratio(std::uint32_t n) noexcept {
                std::memory_order_relaxed) != 0;
 }
 
+// Issue #3076: Soft-observe faces that have a Hard sibling (restamp-lag /
+// restamp-torn / hygiene-protected / isolation-deny) take the Hard path
+// under production_defaults. Soft / sandbox=off stays observe-only.
+// One relaxed load — same as production_defaults_active(); call only on
+// an already-detected violation (zero extra on the happy path).
+inline constexpr int kSoftObserveNotHardGuaranteeIssue = 3076;
+[[nodiscard]] inline bool should_hard_reject_soft_sibling() noexcept {
+    return production_defaults_active();
+}
+
 // Issue #2345: env override AURA_COMPOSITE_EMPTY_CS_HARD=1 forces hard-reject
 // on expected-partial empty CS even under Sampled/dev (sandbox off).
 // Lazy-init; no exceptions (digit/flag parse matches other AURA_* gates).

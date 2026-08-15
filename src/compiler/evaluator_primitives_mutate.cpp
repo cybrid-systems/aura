@@ -667,6 +667,8 @@ namespace {
     // Same deny face as rename-symbol (#2961): kind "hygiene",
     // "cannot <prim> MacroIntroduced without :allow-macro? #t".
     // Soft / non-macro: one is_macro_introduced load.
+    // Issue #3076: this is the Hard sibling (hygiene-protected) — no
+    // Soft-observe increment on the reject path.
     static std::optional<EvalValue> reject_structural_macro_hygiene(Evaluator& ev,
                                                                     const aura::ast::FlatAST& flat,
                                                                     aura::ast::NodeId id,

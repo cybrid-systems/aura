@@ -1216,7 +1216,8 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
         return true;
     if (ws->node_eagerly_restamped(id))
         return true;
-    if (typed_audit::production_defaults_active()) {
+    // Issue #3076: production Hard sibling — Soft observe must not rise.
+    if (typed_audit::should_hard_reject_soft_sibling()) {
         ::aura::core::provenance::record_query_stable_ref_restamp_lag_prevented();
         ::aura::core::provenance::record_query_stable_ref_restamp_torn_reject();
         return false;

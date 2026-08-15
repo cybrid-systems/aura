@@ -102,6 +102,8 @@ struct ProvenanceEnforcementMetrics {
     // Issue #3037: over-budget restamp generation-torn export face.
     // reject = production query:*-stable deny (never stale gen). Soft
     // observe only. Distinct from #3000 lag counters (additive).
+    // Issue #3076: Soft observe is NOT a Hard guarantee — Agents must
+    // filter via schema-3076 / soft-observe-not-hard-guarantee.
     std::atomic<std::uint64_t> query_stable_ref_restamp_torn_reject_total{0};
     std::atomic<std::uint64_t> query_stable_ref_restamp_torn_soft_observe_total{0};
     std::atomic<std::uint32_t> query_stable_ref_restamp_torn_wired{1};

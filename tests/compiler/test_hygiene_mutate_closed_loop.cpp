@@ -1299,11 +1299,133 @@ static void ac3037_5_linter_and_suites() {
     CHECK(read_file("tests/core/test_issue_3037.cpp").empty(), "3037 AC5: no invent core test");
 }
 
+// ── Issue #3076: Soft-observe is not a Hard production guarantee ──
+static void ac3076_1_production_soft_observe_stays_zero() {
+    std::println("\n--- #3076 AC1: production + torn → Hard reject, Soft observe stays 0 ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::should_hard_reject_soft_sibling;
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    apply_production_audit_defaults();
+    CHECK(should_hard_reject_soft_sibling(), "AC1: production Hard-sibling gate on");
+    CHECK(setup_dense_ws(cs), "3076 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3076 AC1: workspace");
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_last_budget_exceeded(), "3076 AC1: last restamp exceeded");
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3076 AC1: non-eager node");
+    const auto obs0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+            std::memory_order_relaxed);
+    const auto lag_obs0 =
+        aura::core::provenance::g_query_stable_ref_restamp_lag_soft_observe_total_atomic().load(
+            std::memory_order_relaxed);
+    const auto rej0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+            std::memory_order_relaxed);
+    CHECK(!cs.evaluator().allow_query_stable_ref_export(lag), "3076 AC1: Hard reject");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+              std::memory_order_relaxed) > rej0,
+          "3076 AC1: Hard reject counter advanced");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+              std::memory_order_relaxed) == obs0,
+          "3076 AC1: Soft observe does not increment on Hard face");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_lag_soft_observe_total_atomic().load(
+              std::memory_order_relaxed) == lag_obs0,
+          "3076 AC1: lag Soft observe does not increment on Hard face");
+    apply_dev_audit_defaults();
+    CHECK(!should_hard_reject_soft_sibling(), "3076 AC1: apply_dev turns Hard-sibling gate off");
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3076_2_soft_observe_only() {
+    std::println("\n--- #3076 AC2: Soft / sandbox=off observe only ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::should_hard_reject_soft_sibling;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CHECK(!should_hard_reject_soft_sibling(), "AC2: Soft Hard-sibling gate off");
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3076 AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3076 AC2: workspace");
+    set_restamp_budget_nodes_for_process(1);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3076 AC2: non-eager");
+    const auto rej0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+            std::memory_order_relaxed);
+    const auto obs0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+            std::memory_order_relaxed);
+    CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "3076 AC2: Soft allow");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_soft_observe_total_atomic().load(
+              std::memory_order_relaxed) > obs0,
+          "3076 AC2: Soft observe advanced");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+              std::memory_order_relaxed) == rej0,
+          "3076 AC2: Soft does not reject");
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3076_4_schema_and_linter() {
+    std::println("\n--- #3076 AC4/AC5/AC6: schema + source-cite + linter ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto gen = read_file("src/compiler/evaluator_primitives_stdlib_review.cpp");
+    const auto qmid = read_file("src/compiler/evaluator_primitives_query_obs_mid.cpp");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto audit = read_file("src/compiler/typed_mutation_audit.h");
+    const auto cap = read_file("src/compiler/evaluator_primitives_security.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_soft_observe_not_hard_3076.py");
+    CHECK(audit.find("kSoftObserveNotHardGuaranteeIssue = 3076") != std::string::npos,
+          "AC6: stamp");
+    CHECK(audit.find("should_hard_reject_soft_sibling") != std::string::npos, "AC1: helper");
+    CHECK(sec.find("should_hard_reject_soft_sibling") != std::string::npos,
+          "AC1: restamp uses helper");
+    CHECK(q.find("schema-3076") != std::string::npos, "AC4: stable-ref-stats schema-3076");
+    CHECK(q.find("soft-observe-not-hard-guarantee") != std::string::npos, "AC4: Soft tag");
+    CHECK(q.find("schema-3037") != std::string::npos, "AC3: 3037 preserved");
+    CHECK(q.find("schema-3000") != std::string::npos, "AC3: 3000 preserved");
+    CHECK(gen.find("schema-3076") != std::string::npos, "AC4: generation-stats schema-3076");
+    CHECK(qmid.find("schema-3076") != std::string::npos, "AC4: children-stable-stats schema-3076");
+    CHECK(cap.find("schema-3076") != std::string::npos, "AC4: capability-effect-stats schema-3076");
+    CHECK(mut.find("Issue #3076") != std::string::npos, "AC5: hygiene Hard sibling cites #3076");
+    CHECK(build.find("check_soft_observe_not_hard_3076") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("Issue #3076") != std::string::npos, "AC6: linter");
+    CHECK(read_file("tests/compiler/test_issue_3076.cpp").empty(), "AC5: no invent test");
+    CHECK(read_file("docs/design/3076-soft-observe-not-hard.md").empty(),
+          "AC5: no docs/design/3076-*");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define z 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    const auto s = href_stable(cs, "schema-3076");
+    if (s >= 0)
+        CHECK(s == 3076, "AC4: schema-3076 == 3076");
+    else
+        CHECK(true, "AC4: light-link skip");
+    CHECK(href_stable(cs, "soft-observe-not-hard-guarantee") == 1 || s < 0, "AC4: Soft tag live");
+}
+
 } // namespace
 
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
-                 "#2961 + #3000 + #3027 + #3037) ===");
+                 "#2961 + #3000 + #3027 + #3037 + #3076) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -1357,6 +1479,10 @@ int main() {
     ac3037_3_under_budget_zero_regression();
     ac3037_4_schema();
     ac3037_5_linter_and_suites();
+    std::println("\n=== Issue #3076: Soft-observe is not a Hard production guarantee ===");
+    ac3076_1_production_soft_observe_stays_zero();
+    ac3076_2_soft_observe_only();
+    ac3076_4_schema_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

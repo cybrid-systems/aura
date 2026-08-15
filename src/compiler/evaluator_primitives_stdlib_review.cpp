@@ -1430,6 +1430,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                         "issue-3037",
                         make_int(aura::core::provenance::kQueryStableRefRestampTornIssue));
                     kv.emplace_back("query-stable-ref-restamp-torn-wired", make_int(1));
+                    // Issue #3076: Soft-observe counters are not Hard guarantees.
+                    kv.emplace_back("soft-observe-not-hard-guarantee", make_int(1));
+                    kv.emplace_back("schema-3076", make_int(3076));
+                    kv.emplace_back("issue-3076", make_int(3076));
                     // Issue #3019: unified restamp torn-visible (additive).
                     kv.emplace_back("unified-restamp-torn-visible-total",
                                     make_int(static_cast<std::int64_t>(
