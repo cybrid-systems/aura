@@ -2670,6 +2670,19 @@ def cmd_lint():
             "Issue #3059 decide_and_reemit linter failed — run python3 scripts/coverage/checks/check_hot_update_decide_and_reemit_3059.py"
         )
         return r
+    # Issue #3060: production residual budget_skip force-leaves pending
+    # pure-anon. Extends test_anonymous_residual_stable_id_policy (#81967);
+    # no docs/design/ (#1655).
+    pa3060_script = COVERAGE_CHECKS / "check_pure_anon_pressure_force_leave_3060.py"
+    if not pa3060_script.exists():
+        fail(f"missing {pa3060_script}")
+        return 1
+    r = run([sys.executable, str(pa3060_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3060 pure-anon pressure force-leave linter failed — run python3 scripts/coverage/checks/check_pure_anon_pressure_force_leave_3060.py"
+        )
+        return r
     # Issue #3020: domain query:* hash builders fail-soft on insert miss.
     # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
     # no docs/design/ (#1655).
@@ -8673,6 +8686,31 @@ def cmd_pure_anon_bg_overflow_must_deopt_3024():
     """
     print(f"{B}=== production overflow MustDeopt (#3024) ==={N}")
     return cmd_pure_anon_bg_overflow_must_deopt_3024_coverage()
+
+
+def cmd_pure_anon_pressure_force_leave_3060_coverage():
+    """Issue #3060: production residual budget_skip force-leave (static)."""
+    print(f"{B}=== pure-anon pressure force-leave coverage (#3060) ==={N}")
+    script = COVERAGE_CHECKS / "check_pure_anon_pressure_force_leave_3060.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pure-anon pressure force-leave (#3060) coverage contract rows failed")
+        return 1
+    ok("pure-anon pressure force-leave (#3060) coverage clean")
+    return 0
+
+
+def cmd_pure_anon_pressure_force_leave_3060():
+    """Issue #3060: tighten pure-anon native window under HF mutate.
+
+    Production residual budget_skip + pending force-leaves oldest
+    pure-anon via the #3024 helper. Soft / named / steal unchanged.
+    """
+    print(f"{B}=== pure-anon pressure force-leave (#3060) ==={N}")
+    return cmd_pure_anon_pressure_force_leave_3060_coverage()
 
 
 def cmd_reemit_owner_required_prod_multi_3025_coverage():
@@ -16064,6 +16102,8 @@ def main():
         "unified-restamp-query-visible-3058-coverage": cmd_unified_restamp_query_visible_3058_coverage,
         "hot-update-decide-and-reemit-3059": cmd_hot_update_decide_and_reemit_3059,
         "hot-update-decide-and-reemit-3059-coverage": cmd_hot_update_decide_and_reemit_3059_coverage,
+        "pure-anon-pressure-force-leave-3060": cmd_pure_anon_pressure_force_leave_3060,
+        "pure-anon-pressure-force-leave-3060-coverage": cmd_pure_anon_pressure_force_leave_3060_coverage,
         "query-hash-overflow-3020": cmd_query_hash_overflow_3020,
         "query-hash-overflow-3020-coverage": cmd_query_hash_overflow_3020_coverage,
         "envframe-closure-apply-protocol-3021": cmd_envframe_closure_apply_protocol_3021,

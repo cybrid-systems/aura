@@ -1013,6 +1013,148 @@ static void ac3024_5_source_and_linter() {
           "3024 AC5: no invent test per #81967");
 }
 
+// ── Issue #3060: production residual budget_skip force-leaves pending
+//    pure-anon (bounded). Soft / named / steal unchanged. Reuses #3024
+//    overflow-must-deopt counter (no new query keys).
+
+static void ac3060_1_prod_skip_streak_must_deopt() {
+    std::println("\n--- #3060 AC1: production repeated budget_skip → MustDeopt ---");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    aura_test_set_residual_remount_force_skip(1);
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3060 AC1: alloc pure-anon");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_pure_anon_bg_enqueue(cid);
+    CHECK(aura_pure_anon_bg_pending() >= 1, "3060 AC1: pending");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3060 AC1: clear before skip streak");
+
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    for (int i = 0; i < 3; ++i)
+        aura_residual_live_closure_remount_tick(32);
+    prod.store(prev, std::memory_order_relaxed);
+
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() > md0,
+          "3060 AC1: must-deopt counter advanced");
+    CHECK(aura_closure_get_must_deopt(cid) != 0, "3060 AC1: MustDeopt set");
+    CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3060 AC1: bridge_epoch poisoned");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3060 AC1: call leaves native");
+    CHECK(aura_pure_anon_bg_pending() >= 1, "3060 AC1: queue not popped (heal later)");
+    aura_test_set_residual_remount_force_skip(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3060_2_soft_skip_no_force() {
+    std::println("\n--- #3060 AC2: Soft / !production skip is counter-only ---");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(32);
+    aura_test_set_residual_remount_force_skip(1);
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3060 AC2: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_pure_anon_bg_enqueue(cid);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    const auto skip0 = aura_residual_remount_budget_skip_total_v_read();
+    for (int i = 0; i < 4; ++i)
+        aura_residual_live_closure_remount_tick(32);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_residual_remount_budget_skip_total_v_read() > skip0, "3060 AC2: skip still counts");
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() == md0,
+          "3060 AC2: must-deopt counter unchanged");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3060 AC2: MustDeopt not forced");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("if (budget == 0)") != std::string::npos, "3060 AC2: budget=0 path unchanged");
+    aura_test_set_residual_remount_force_skip(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3060_3_named_and_steal_unchanged() {
+    std::println("\n--- #3060 AC3: named walk + steal-complete unchanged ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(rt.find("pure-anon still never enters this named walk") != std::string::npos ||
+              rt.find("Issue #3060: pure-anon") != std::string::npos,
+          "3060 AC3: named walk still excludes sid==0");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "3060 AC3: named remount helper present");
+    const auto pos = steal.find("aura_evaluator_on_steal_complete");
+    CHECK(pos != std::string::npos, "3060 AC3: steal-complete site");
+    const auto win = steal.substr(pos, 8000);
+    CHECK(win.find("aura_pure_anon_bg_remount_drain") == std::string::npos,
+          "3060 AC3: steal does not drain pure-anon");
+    CHECK(win.find("pure_anon_pressure_force_leave_oldest") == std::string::npos,
+          "3060 AC3: steal does not pressure-force");
+    CHECK(win.find("aura_residual_live_closure_remount_tick") == std::string::npos,
+          "3060 AC3: steal does not residual-tick");
+}
+
+static void ac3060_4_soak_bounded_leave() {
+    std::println("\n--- #3060 AC4: soak tiny budget + skip → bounded MustDeopt ---");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_test_reset_residual_remount_state();
+    aura_test_set_residual_remount_budget(1);
+    aura_test_set_residual_remount_force_skip(1);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    std::int64_t cids[8];
+    for (int i = 0; i < 8; ++i) {
+        cids[i] = aura_alloc_closure(/*func_id=*/0);
+        CHECK(cids[i] >= 0, "3060 AC4: alloc");
+        aura_closure_set_must_deopt(cids[i], 0);
+        aura_pure_anon_bg_enqueue(cids[i]);
+    }
+    CHECK(aura_pure_anon_bg_pending() >= 8, "3060 AC4: 8 pending");
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    for (int i = 0; i < 6; ++i)
+        aura_residual_live_closure_remount_tick(1);
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() > md0, "3060 AC4: force rose");
+    int left = 0;
+    for (int i = 0; i < 8; ++i) {
+        if (aura_closure_get_must_deopt(cids[i]) == 0)
+            continue;
+        ++left;
+        CHECK(aura_closure_call(cids[i], nullptr, 0) == 0,
+              "3060 AC4 soak: no generation-behind native");
+    }
+    CHECK(left >= 1, "3060 AC4: bounded batch left native");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_set_residual_remount_force_skip(0);
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3060_5_source_and_linter() {
+    std::println("\n--- #3060 AC5: source-cite + linter + no invent ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pure_anon_pressure_force_leave_3060.py");
+    CHECK(rt.find("Issue #3060") != std::string::npos, "3060 AC5: runtime cites #3060");
+    CHECK(rt.find("pure_anon_pressure_force_leave_oldest") != std::string::npos,
+          "3060 AC5: pressure helper");
+    CHECK(rt.find("kPureAnonBudgetSkipStreakForce") != std::string::npos, "3060 AC5: streak bound");
+    CHECK(rt.find("pure_anon_bg_overflow_force_leave_native") != std::string::npos,
+          "3060 AC5: reuses #3024 helper");
+    CHECK(!lint.empty() && lint.find("Issue #3060") != std::string::npos, "3060 AC5: linter");
+    CHECK(build.find("check_pure_anon_pressure_force_leave_3060") != std::string::npos,
+          "3060 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3060-pure-anon-pressure-force.md").empty(),
+          "3060 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3060.cpp").empty(),
+          "3060 AC5: no invent test per #81967");
+}
+
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
 // Outside reemit-success; clears residual MustDeopt under bounded budget.
 
@@ -1991,6 +2133,12 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3024_3_soak_no_gen_behind_native();
     ac3024_4_query_additive();
     ac3024_5_source_and_linter();
+    std::println("\n=== Issue #3060: production residual budget_skip force-leave ===");
+    ac3060_1_prod_skip_streak_must_deopt();
+    ac3060_2_soft_skip_no_force();
+    ac3060_3_named_and_steal_unchanged();
+    ac3060_4_soak_bounded_leave();
+    ac3060_5_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
     ac2928_2_storm_skip();
@@ -2021,7 +2169,8 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2980_6_source_and_linter();
 
     std::println(
-        "\n=== #2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024: {} "
+        "\n=== "
+        "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#3060: {} "
         "passed, {} failed ===",
         g_passed, g_failed);
     return g_failed ? 1 : 0;
