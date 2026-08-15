@@ -800,6 +800,12 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
 
         auto result =
             tc.infer_flat(*ev.workspace_flat_, *ev.workspace_pool_, ev.workspace_flat_->root, diag);
+        // Issue #3081: copy infer authority so query:type / query-type-of
+        // never surface a half-solved TIMEOUT cone as truth.
+        if (tc.last_type_export_authoritative())
+            ev.grant_type_export_authority();
+        else
+            ev.clear_type_export_authority();
 
         // TypeChecker now writes back normalized types via synthesize_flat + infer_flat,
         // and clears per-node dirty flags. No need for post-pass cache sync.
@@ -879,6 +885,11 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
             tc.infer_flat_partial_with_dirty_txn(*ev.workspace_flat_, *ev.workspace_pool_, rec,
                                                  diag);
+        // Issue #3081: copy partial-infer authority (Soft TIMEOUT → false).
+        if (tc.last_type_export_authoritative())
+            ev.grant_type_export_authority();
+        else
+            ev.clear_type_export_authority();
         std::string out = "re-inferred: " + std::to_string(re_inferred) + "\n";
         if (!diag.diagnostics().empty()) {
             out += "diagnostics:\n";
@@ -913,15 +924,17 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back("out-of-range");
-            return make_string(sidx);
-        }
+        // Issue #3081: authority first — never leak a half-solved type
+        // (or confuse Agents with out-of-range) when export is not truth.
         if (!ev.type_export_authoritative()) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
                                                                 : "not-authoritative");
+            return make_string(sidx);
+        }
+        if (node >= flat.size()) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back("out-of-range");
             return make_string(sidx);
         }
         auto type_idx = flat.type_id(node);
@@ -957,6 +970,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto sym = ev.canonical_pool()->intern(name);
 
         auto& flat = *ev.workspace_flat_;
+        // Issue #3081: authority first (same as get-inferred-type).
+        if (!ev.type_export_authoritative()) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
+                                                                : "not-authoritative");
+            return make_string(sidx);
+        }
         // Find a Define node with the matching symbol.
         for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
             auto v = flat.get(id);

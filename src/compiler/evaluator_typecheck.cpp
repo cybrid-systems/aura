@@ -305,6 +305,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // Issue #3004: Production infer SOLVED is in-flight until
             // outermost persist + Full audit (#2938 helper grants).
             // Soft: keep #3003 observe authority after SOLVED infer.
+            // Issue #3081: Soft TIMEOUT / CONFLICT copies false — query:type
+            // must not read a half-solved cone as authority.
             if (aura::compiler::typed_audit::production_defaults_active())
                 note_type_export_inflight();
             else

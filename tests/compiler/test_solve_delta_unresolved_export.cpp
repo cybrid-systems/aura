@@ -25,23 +25,30 @@ import std;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.compiler.value;
+import aura.core.ast;
 import aura.core.type;
+import aura.diag;
 
 namespace {
 
+using aura::ast::FlatAST;
+using aura::ast::StringPool;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::Constraint;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::InferenceEngine;
 using aura::compiler::kSolverBudgetDefault;
 using aura::compiler::kSolverBudgetIssue;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::SolverBudget;
 using aura::compiler::SolveResult;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeId;
 using aura::core::TypeRegistry;
+using aura::diag::DiagnosticCollector;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -1846,6 +1853,124 @@ static void ac3031_6_source_and_linter() {
           "3031 AC6: no invent test_issue_3031");
 }
 
+// ── Issue #3081: Soft allow_timeout_commit TIMEOUT is not query:type authority ──
+static void ac3081_1_soft_timeout_clears_authority() {
+    std::println("\n--- #3081 AC1: Soft + allow_timeout_commit + TIMEOUT → not authoritative ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    DiagnosticCollector diag;
+    InferenceEngine engine(reg, diag);
+    engine.set_incremental_delta_mode(true, true);
+    SolverBudget b{};
+    b.allow_timeout_commit = true;
+    engine.constraint_system().set_solver_budget(b);
+    // Seed dirty work so solve_delta does not early-return SOLVED
+    // (empty worklist skips the force-timeout hook).
+    auto v = engine.constraint_system().fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    engine.constraint_system().add_delta(std::move(eq));
+    engine.constraint_system().force_next_delta_timeout_for_test(true);
+    CHECK(engine.last_type_export_authoritative(), "3081 AC1: default authoritative");
+
+    FlatAST flat;
+    StringPool pool;
+    const auto nid = flat.add_literal(1);
+    flat.root = nid;
+    (void)engine.infer_flat(flat, pool, nid, /*preserve_cs=*/true);
+    CHECK(engine.last_solve_status() == SolveResult::TIMEOUT, "3081 AC1: infer TIMEOUT");
+    CHECK(!engine.last_type_export_authoritative(),
+          "3081 AC1: Soft TIMEOUT clears last_type_export_authoritative");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3081_2_query_type_not_authoritative() {
+    std::println("\n--- #3081 AC2: query-type-of / get-inferred-type not-authoritative ---");
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3081 AC2: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().clear_type_export_authority();
+    CHECK(!svc.evaluator().type_export_authoritative(), "3081 AC2: Evaluator flag false");
+    // get-inferred-type / query-type-of check authority before type_id.
+    auto git = svc.eval("(get-inferred-type 0)");
+    CHECK(git.has_value(), "3081 AC2: get-inferred-type returned");
+    (void)svc.eval("(query-type-of \"f\")");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(prim.find("query-type-of") != std::string::npos &&
+              prim.find("get-inferred-type") != std::string::npos &&
+              prim.find("not-authoritative") != std::string::npos &&
+              prim.find("Issue #3081") != std::string::npos,
+          "3081 AC2: query surface gates on type_export_authoritative");
+}
+
+static void ac3081_3_production_unchanged() {
+    std::println("\n--- #3081 AC3: production fail-closed unchanged ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("Issue #3081") != std::string::npos, "3081 AC3: infer_flat cites #3081");
+    CHECK(impl.find("delta_timeout_fail_closed_total") != std::string::npos,
+          "3081 AC3: #3003 fail-closed retained");
+    CHECK(impl.find("delta_timeout_reject_total") != std::string::npos,
+          "3081 AC3: #2277 reject retained");
+}
+
+static void ac3081_4_solved_zero_cost() {
+    std::println("\n--- #3081 AC4: SOLVED path does not clear authority ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    TypeRegistry reg;
+    DiagnosticCollector diag;
+    InferenceEngine engine(reg, diag);
+    FlatAST flat;
+    StringPool pool;
+    const auto nid = flat.add_literal(1);
+    flat.root = nid;
+    (void)engine.infer_flat(flat, pool, nid, /*preserve_cs=*/false);
+    CHECK(engine.last_solve_status() == SolveResult::SOLVED, "3081 AC4: SOLVED");
+    CHECK(engine.last_type_export_authoritative(), "3081 AC4: SOLVED stays authoritative");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3081_5_source_and_linter() {
+    std::println("\n--- #3081 AC5: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_soft_timeout_export_non_authoritative_3081.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kSoftTimeoutExportNonAuthoritativeIssue = 3081") != std::string::npos,
+          "3081 AC5: stamp");
+    CHECK(impl.find("last_type_export_authoritative_ = false") != std::string::npos,
+          "3081 AC5: infer_flat clears");
+    CHECK(impl.find("allow_timeout_commit") != std::string::npos, "3081 AC5: #2900 path kept");
+    CHECK(ev.find("type_export_authoritative") != std::string::npos, "3081 AC5: Evaluator flag");
+    CHECK(prim.find("not-authoritative") != std::string::npos, "3081 AC5: query surface");
+    CHECK(prim.find("Issue #3081") != std::string::npos, "3081 AC5: typecheck copies flag");
+    CHECK(t.find("ac3081_1_soft_timeout_clears_authority") != std::string::npos, "3081 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3081") != std::string::npos, "3081 AC5: linter");
+    CHECK(build.find("check_soft_timeout_export_non_authoritative_3081") != std::string::npos,
+          "3081 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3081.cpp").empty(), "3081 AC5: no invent");
+    CHECK(read_file("docs/design/3081-soft-timeout-authority.md").empty(),
+          "3081 AC5: no docs/design/");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -1908,6 +2033,12 @@ int run_test_solve_delta_unresolved_export() {
     ac3031_4_commit_readiness_hermetic();
     ac3031_5_schema();
     ac3031_6_source_and_linter();
+    std::println("\n=== Issue #3081: Soft TIMEOUT export is not query:type authority ===");
+    ac3081_1_soft_timeout_clears_authority();
+    ac3081_2_query_type_not_authoritative();
+    ac3081_3_production_unchanged();
+    ac3081_4_solved_zero_cost();
+    ac3081_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
