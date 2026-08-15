@@ -2308,6 +2308,21 @@ def cmd_lint():
             "Issue #2944 mutation-session grant linter failed — run python3 scripts/coverage/checks/check_mutation_session_grant_2944.py"
         )
         return r
+    # Issue #3048: session-bound grant residual under steal / force-cancel /
+    # mark_outermost_failed (residual of #2944). Extends
+    # test_capability_single_use_consume.cpp +
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655).
+    sgs_script = COVERAGE_CHECKS / "check_session_grant_steal_3048.py"
+    if not sgs_script.exists():
+        fail(f"missing {sgs_script}")
+        return 1
+    r = run([sys.executable, str(sgs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3048 session-grant steal/abort linter failed — run python3 scripts/coverage/checks/check_session_grant_steal_3048.py"
+        )
+        return r
     # Issue #3049: per-tenant ResourceQuota under multi-tenant production
     # (process ceiling still binds). Extends
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/

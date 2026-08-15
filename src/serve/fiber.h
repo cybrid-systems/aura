@@ -1051,6 +1051,17 @@ public:
     [[nodiscard]] std::uint64_t quota_tenant_id() const noexcept {
         return quota_tenant_id_.load(std::memory_order_acquire);
     }
+    // Issue #3048: outermost mutation-session mid captured at Guard enter
+    // so steal-complete / force-cancel can revoke session_bound grants
+    // without depending on the Guard stack. Nested Guards do not overwrite
+    // (outermost stamps once; exit clears). 0 = no live session mid.
+    void set_session_mid(std::uint64_t mid) noexcept {
+        session_mid_.store(mid, std::memory_order_release);
+    }
+    [[nodiscard]] std::uint64_t session_mid() const noexcept {
+        return session_mid_.load(std::memory_order_acquire);
+    }
+    void clear_session_mid() noexcept { session_mid_.store(0, std::memory_order_release); }
     // Issue #2491: process-wide TenantScope mismatch counter (soft observe).
     static void bump_tenant_scope_mismatch() noexcept {
         static_tenant_scope_mismatch_total_.fetch_add(1, std::memory_order_relaxed);
@@ -1286,6 +1297,8 @@ private:
     std::atomic<std::uint64_t> assigned_tenant_id_{0};
     // Issue #3049: tenant id charged against ResourceQuota at spawn.
     std::atomic<std::uint64_t> quota_tenant_id_{0};
+    // Issue #3048: fiber-local outermost session mid (see set_session_mid).
+    std::atomic<std::uint64_t> session_mid_{0};
     // Issue #2491: process-wide counter for TenantScope install
     // mismatch (resume detects current capability_tenant_id_ !=
     // assigned_tenant_id_). Mirrors Fiber::static_*_total() pattern
@@ -1464,6 +1477,18 @@ extern thread_local Fiber* g_current_fiber;
 // No-op when g_current_fiber is null (host thread / test_ir set-code path).
 void publish_current_fiber_mutation_safety(std::size_t depth, bool held,
                                            std::uint64_t defuse_version) noexcept;
+
+// Issue #3048: TLS-safe current-fiber session-mid accessors. Defined
+// out-of-line in fiber.cpp (same TU as g_current_fiber) so the evaluator
+// module does not double-load TLS under UBSAN (same pattern as
+// publish_current_fiber_mutation_safety). No-op / 0 when no current fiber.
+void set_current_fiber_session_mid(std::uint64_t mid) noexcept;
+void clear_current_fiber_session_mid() noexcept;
+[[nodiscard]] std::uint64_t current_fiber_session_mid() noexcept;
+
+// Issue #3048: registry lookup of a fiber's session mid (cross-fiber
+// force-degrade). Returns 0 when the fiber is gone / id==0.
+extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept;
 
 // Issue #2310 / #2346 / #2372: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only
 // mode for unit tests. Production default is fail-closed (force-deopt + full

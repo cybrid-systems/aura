@@ -715,6 +715,16 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-live-session-grants",
                           static_cast<std::int64_t>(snap.capability_live_session_grants));
             }
+            // Issue #3048: session-grant steal / abort residual revoke.
+            {
+                insert_kv("schema-3048", 3048);
+                insert_kv("issue-3048", 3048);
+                insert_kv("session-grant-steal-abort-wired", 1);
+                insert_kv("capability-session-revoke-steal-total",
+                          static_cast<std::int64_t>(snap.capability_session_revoke_steal));
+                insert_kv("capability-session-revoke-abort-total",
+                          static_cast<std::int64_t>(snap.capability_session_revoke_abort));
+            }
             // Issue #2882: production default single-use for high-risk
             // grants (Mutate | MacroSelfEvo | TenantAdmin | Syscall) under
             // Restricted/Strict. Default `grant_effect_capability` surface
