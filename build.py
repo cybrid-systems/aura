@@ -2308,6 +2308,20 @@ def cmd_lint():
             "Issue #2944 mutation-session grant linter failed — run python3 scripts/coverage/checks/check_mutation_session_grant_2944.py"
         )
         return r
+    # Issue #3049: per-tenant ResourceQuota under multi-tenant production
+    # (process ceiling still binds). Extends
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655).
+    qpt_script = COVERAGE_CHECKS / "check_quota_per_tenant_3049.py"
+    if not qpt_script.exists():
+        fail(f"missing {qpt_script}")
+        return 1
+    r = run([sys.executable, str(qpt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3049 per-tenant quota linter failed — run python3 scripts/coverage/checks/check_quota_per_tenant_3049.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
