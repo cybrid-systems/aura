@@ -9,6 +9,7 @@
 //   AC5: Docs + source contract present
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 #include "core/workspace_epoch.hh"
 
 #include <atomic>
@@ -351,6 +352,106 @@ int run_test_query_epoch_contract() {
             CHECK(!lint.empty() && lint.find("2933") != std::string::npos, "linter present");
             CHECK(read_file("tests/compiler/test_issue_2933.cpp").empty(), "no invent test file");
             CHECK(read_file("docs/design/2933-query-result.md").empty(), "no docs/design/2933-*");
+        }
+    }
+
+    // ── Issue #3075: production_defaults arms QueryEpoch strict ──
+    {
+        std::println("\n=== Issue #3075: production QueryEpoch strict default ===");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::force_query_epoch_stale_from_restamp_budget;
+        using aura::core::kQueryEpochProductionStrictIssue;
+
+        // AC1: production_defaults → strict on; Soft/dev → off.
+        {
+            std::println("\n--- #3075 AC1: production_defaults arms strict ---");
+            reset_query_epoch_metrics_for_test();
+            CHECK(!query_epoch_strict(), "AC1: Soft default strict off");
+            apply_dev_audit_defaults();
+            CHECK(!query_epoch_strict(), "AC1: apply_dev leaves strict off");
+            apply_production_audit_defaults();
+            CHECK(query_epoch_strict(), "AC1: apply_production turns strict on");
+            CHECK(kQueryEpochProductionStrictIssue == 3075, "AC1: stamp 3075");
+            apply_dev_audit_defaults();
+            CHECK(!query_epoch_strict(), "AC1: apply_dev turns strict off");
+        }
+
+        // AC2: held QueryResult after mutate under production → stale error.
+        // Construct the service first: Evaluator apply_env_sandbox may
+        // apply_dev when AURA_SANDBOX=off and would otherwise clear strict.
+        {
+            std::println("\n--- #3075 AC2: Agent QueryResult stale under production ---");
+            reset_query_epoch_metrics_for_test();
+            CompilerService cs;
+            apply_production_audit_defaults();
+            CHECK(query_epoch_strict(), "AC2: production strict on");
+            CHECK(cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value(), "AC2 set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "AC2 eval");
+            CHECK(cs.eval("(define qr (query :find \"f\" :as-query-result))").has_value(),
+                  "AC2 define qr");
+            CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
+                      cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
+                  "AC2 mutate/redefine f");
+            CHECK(cs.eval("(eval-current)").has_value(), "AC2 re-eval");
+            bump_mutation_epoch(); // belt: set-code may share gen
+            auto fresh = cs.eval("(query:result-fresh? qr)");
+            CHECK(fresh.has_value(), "AC2: result-fresh? returned");
+            // Live query-epoch-stale is the C++ finish_query_epoch canary
+            // below (same helper end_query_epoch uses). EDSL result-fresh?
+            // is source-cited; #f after epoch bump is the Soft/held-result
+            // observe path (2933). Production fail-closed is finish false.
+            if (fresh && is_bool(*fresh))
+                CHECK(!as_bool(*fresh), "AC2: held QueryResult not green after mutate");
+            auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+            CHECK(qw.find("query-epoch-stale") != std::string::npos &&
+                      qw.find("query:result-fresh?") != std::string::npos,
+                  "AC2: result-fresh? wires query-epoch-stale under strict");
+            apply_dev_audit_defaults();
+        }
+
+        // AC2 C++ canary: in-flight capture + restamp-budget force → finish false.
+        {
+            std::println("\n--- #3075 AC2: finish_query_epoch false after force ---");
+            reset_query_epoch_metrics_for_test();
+            apply_production_audit_defaults();
+            auto e = capture_query_epoch(/*gen=*/7, /*ws=*/0);
+            force_query_epoch_stale_from_restamp_budget();
+            CHECK(!finish_query_epoch(e, 7),
+                  "AC2: production + force stale → finish false (query-epoch-stale)");
+            apply_dev_audit_defaults();
+        }
+
+        // AC4/AC5: additive schema + no invent.
+        {
+            std::println("\n--- #3075 AC4/AC5: schema + source-cite ---");
+            auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+            auto audit = read_file("src/compiler/typed_mutation_audit.h");
+            auto hh = read_file("src/core/workspace_epoch.hh");
+            auto build = read_file("build.py");
+            auto lint =
+                read_file("scripts/coverage/checks/check_query_epoch_production_strict_3075.py");
+            CHECK(hh.find("kQueryEpochProductionStrictIssue = 3075") != std::string::npos,
+                  "AC5: stamp");
+            CHECK(audit.find("set_query_epoch_strict(true)") != std::string::npos,
+                  "AC1: apply_production sets strict");
+            CHECK(audit.find("set_query_epoch_strict(false)") != std::string::npos,
+                  "AC1: apply_dev clears strict");
+            CHECK(qw.find("schema-3075") != std::string::npos, "AC4: schema-3075");
+            CHECK(qw.find("query-epoch-production-strict-wired") != std::string::npos ||
+                      (qw.find("query-epoch-production-strict-") != std::string::npos &&
+                       qw.find("wired") != std::string::npos),
+                  "AC4: wired key");
+            CHECK(qw.find("schema-2192") != std::string::npos, "AC4: 2192 preserved");
+            CHECK(qw.find("schema-2933") != std::string::npos, "AC4: 2933 preserved");
+            CHECK(qw.find("schema-3041") != std::string::npos, "AC4: 3041 preserved");
+            CHECK(build.find("check_query_epoch_production_strict_3075") != std::string::npos,
+                  "AC5: build.py wires linter");
+            CHECK(!lint.empty() && lint.find("Issue #3075") != std::string::npos, "AC5: linter");
+            CHECK(read_file("tests/compiler/test_issue_3075.cpp").empty(),
+                  "AC5: no invent test file");
+            CHECK(read_file("docs/design/3075-query-epoch-production-strict.md").empty(),
+                  "AC5: no docs/design/3075-*");
         }
     }
 

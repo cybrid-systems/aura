@@ -206,12 +206,17 @@ inline void apply_production_security_defaults() noexcept {
                 set_strategy(AuditStrategy::Off);
                 g_typed_mutation_audit_counters.production_defaults_active.store(
                     0, std::memory_order_relaxed);
+                // Issue #3075: audit-off is not a production face.
+                aura::core::set_query_epoch_strict(false);
             } else if (av == "sampled") {
                 // Production Sampled still uses ratio=1 (every event).
                 set_strategy(AuditStrategy::Sampled);
                 set_sample_ratio(1);
                 g_typed_mutation_audit_counters.production_defaults_active.store(
                     1, std::memory_order_relaxed);
+                // Issue #3075: production_defaults_active=1 arms QueryEpoch
+                // strict even when the audit strategy stays Sampled.
+                aura::core::set_query_epoch_strict(true);
             } else {
                 apply_production_audit_defaults(); // full
             }

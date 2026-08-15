@@ -3308,6 +3308,8 @@ void register_workspace_query_primitives(
     // Issue #2192: (engine:metrics "query:query-epoch-stats") /
     // (engine:metrics "query:last-epoch") — QueryEpoch snapshot contract.
     // Issue #2933: additive QueryResult counters on the same surface.
+    // Issue #3075: production_defaults arms QueryEpoch strict
+    // (schema-3075 / query-epoch-production-strict-wired).
     // SlimSurface: register_stats_impl only (no new public add ceiling).
     // Schema 2192 keys: last-mutation-epoch, last-generation, last-bridge-epoch,
     // last-workspace-id, capture-total, mismatch-total, stale-total, strict,
@@ -3410,6 +3412,11 @@ void register_workspace_query_primitives(
         insert_kv("restamp-budget-query-epoch-stale-wired", 1);
         insert_kv("schema-3041", 3041);
         insert_kv("issue-3041", 3041);
+        // Issue #3075: production_defaults arms QueryEpoch strict
+        // (default-policy residual of #3041). Additive only.
+        insert_kv("query-epoch-production-strict-wired", 1);
+        insert_kv("schema-3075", 3075);
+        insert_kv("issue-3075", 3075);
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
         return make_hash(hidx);
