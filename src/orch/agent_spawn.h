@@ -507,6 +507,10 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agent_restart_total{0};
     std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
     std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
+    // Issue #3052: per-handle Timeout/Cancelled seen by join_all
+    // on_join_fail (not Reclaimed-deferred). RestartN still bumps
+    // agent_restart_total. Default ReportOnly → this counter only.
+    std::atomic<std::uint64_t> agent_join_fail_total{0};
     // Issue #2887: BP-storm producer degrade under AgentScope::watch_all
     // (on_backpressure != ReportOnly + scope/process recent ≥ thr).
     // agent_bp_degrade_total: any applied non-ReportOnly action (Cancel /
@@ -1101,6 +1105,11 @@ struct AgentHandle {
     // Hosts must wait or drop the handle (dtor finishes cleanup). Soft /
     // explicit wait stay false (zero-cost).
     bool must_wait_reclaimed = false;
+    // Issue #3052: per-handle status from the last join_agent /
+    // join_agents local derivation (#3050). Default Invalid (never
+    // joined). AgentScope::join_all uses this for on_join_fail so a
+    // mixed batch does not treat Ok siblings as Timeout.
+    serve::JoinStatus last_join_status = serve::JoinStatus::Invalid;
     // Issue #3014: fiber stores true when try_acquire rejects (body
     // skipped). Shared so the write survives handle move / name-table
     // put. Success path never stores (no extra atomic on hot ok).
@@ -1142,6 +1151,7 @@ struct AgentHandle {
         , wait_reclaimed_used(o.wait_reclaimed_used)
         , wait_reclaimed_timeout(o.wait_reclaimed_timeout)
         , must_wait_reclaimed(o.must_wait_reclaimed)
+        , last_join_status(o.last_join_status)
         , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot)) {
         o.id = 0;
         o.fiber = nullptr;
@@ -1165,6 +1175,7 @@ struct AgentHandle {
         o.wait_reclaimed_used = false;
         o.wait_reclaimed_timeout = false;
         o.must_wait_reclaimed = false;
+        o.last_join_status = serve::JoinStatus::Invalid;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1201,6 +1212,7 @@ struct AgentHandle {
             wait_reclaimed_used = o.wait_reclaimed_used;
             wait_reclaimed_timeout = o.wait_reclaimed_timeout;
             must_wait_reclaimed = o.must_wait_reclaimed;
+            last_join_status = o.last_join_status;
             body_acquire_rejected_slot = std::move(o.body_acquire_rejected_slot);
             o.id = 0;
             o.fiber = nullptr;
@@ -1224,6 +1236,7 @@ struct AgentHandle {
             o.wait_reclaimed_used = false;
             o.wait_reclaimed_timeout = false;
             o.must_wait_reclaimed = false;
+            o.last_join_status = serve::JoinStatus::Invalid;
             o.body_acquire_rejected_slot.reset();
         }
         return *this;
@@ -2307,6 +2320,7 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         h.wait_reclaimed_used = true;
         h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
     }
+    h.last_join_status = jr.status; // Issue #3052: per-handle join_fail fuel
     return jr;
 }
 
@@ -2372,38 +2386,42 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
                 orch_post_join_provenance(a.fiber);
         }
     }
-    // Issue #1880: release per-handle memory reservations.
-    // Issue #2661: route through the unified post-join cleanup helper —
-    // Reclaimed path drops only global tables (mailbox attach pointer
-    // via Fiber::release_orphan_roots) and bumps the deferred-cleanup
-    // metric; never frees body-stack owned objects. Ok / Timeout /
-    // Cancelled path runs the full detach + reservation release as
-    // before (idempotent with ~AgentHandle). Batch join shares the
-    // single jr status — if any fiber in the batch is Reclaimed,
-    // every agent takes the deferred path (matches #2009 invariant).
-    for (auto& a : agents)
-        complete_agent_join_cleanup(a, jr);
-    // Issue #2970: optional auto-wait after batch Reclaimed — same contract
-    // as join_agent: wait_reclaimed_ms nullopt = off (AC1 zero cost); body
-    // exit → Done-path cleanup once; timeout keeps Reclaimed + no early
-    // free (#2661). Folds wait_us into the batch join result; flags on
-    // each handle surface wait-reclaimed / wait-timeout on the Aura hash.
-    // Issue #3012: production + unset wait → must_wait_reclaimed on each
-    // handle (fail-closed Aura flag). No extra wait / counter bump.
-    if (jr.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
-        production_reclaimed_must_wait()) {
-        for (auto& a : agents)
+    // Issue #3050: per-handle cleanup after batch Fiber::join(span).
+    // The returned `jr` stays the aggregate (AC2 — first non-Ok / worst
+    // case). Each handle derives a local status from fiber reclaim/done
+    // so a single Reclaimed sibling cannot pin every reservation.
+    // #2661: still-running reclaimed bodies keep the deferred path
+    // (no body-stack free). Soft / unset wait: no extra wait (AC3).
+    for (auto& a : agents) {
+        serve::JoinResult local = jr;
+        if (a.fiber && a.fiber->is_reclaimed()) {
+            local.status = serve::JoinStatus::Reclaimed;
+        } else if (a.fiber && a.fiber->is_done()) {
+            local.status = serve::JoinStatus::Ok;
+        } else if (jr.status == serve::JoinStatus::Reclaimed) {
+            // Sibling was Reclaimed; this body is still live but not
+            // reclaimed — after cancel+drain use Timeout (Done-path).
+            local.status = serve::JoinStatus::Timeout;
+        }
+        if (local.status == serve::JoinStatus::Ok && a.fiber && jr.status != serve::JoinStatus::Ok)
+            orch_post_join_provenance(a.fiber);
+        complete_agent_join_cleanup(a, local);
+        // Issue #2970 / #3012: wait / must-wait only on THIS handle's
+        // Reclaimed status — not the batch aggregate.
+        a.wait_reclaimed_used = false;
+        a.wait_reclaimed_timeout = false;
+        a.must_wait_reclaimed = false;
+        if (local.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
+            production_reclaimed_must_wait()) {
             a.must_wait_reclaimed = true;
-    }
-    if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
-        for (auto& a : agents) {
-            a.wait_reclaimed_used = false;
-            a.wait_reclaimed_timeout = false;
+        }
+        if (local.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
             auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);
             jr.wait_us += wr.wait_us;
             a.wait_reclaimed_used = true;
             a.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
         }
+        a.last_join_status = local.status; // Issue #3052: per-handle (not batch jr)
     }
     return jr;
 }
@@ -2941,10 +2959,10 @@ struct AgentFailurePolicy {
     // same out-of-the-box semantics.
     AgentFailureAction on_stall = AgentFailureAction::Cancel;
     // Response to a non-Ok join (Timeout / Cancelled) on the
-    // scope level. AC4: documented scope (currently ReportOnly
-    // only — the residual-reclaim path from #2227 handles the
-    // fiber lifecycle; a separate restart hook on join_fail is
-    // out of scope for #2229).
+    // scope level. Default ReportOnly (AC3 / #2229). Issue #3052
+    // wires this from AgentScope::join_all: RestartN re-spawns
+    // under stored specs_ (same cap as on_stall); Reclaimed +
+    // still-running / deferred is never restart fuel (#2661).
     AgentFailureAction on_join_fail = AgentFailureAction::ReportOnly;
     // Issue #2887: response when scope-local (or process) mailbox BP
     // recent ≥ bp_threshold during watch_all. Default ReportOnly —
@@ -2995,10 +3013,13 @@ namespace agent_scope_compat {
 //   - Calling this bridge does not change default AgentFailurePolicy
 //     or ParallelPolicy behaviour for callers that never use it (AC3).
 //
-// Mapping table (AC2):
-//   FailFast        → on_stall=Cancel
+// Mapping table (AC2 / #3052 AC4):
+//   FailFast        → on_stall=Cancel (on_join_fail stays ReportOnly)
 //   CollectAll      → on_stall=ReportOnly
-//   RetryN          → on_stall=RestartN, max_restarts from arg
+//   RetryN          → on_stall=RestartN AND on_join_fail=RestartN,
+//                     max_restarts from arg (retry-on-batch-fail
+//                     projects onto scope join). Does not overwrite
+//                     an already-constructed AgentFailurePolicy.
 //   CircuitBreaker  → on_stall=Cancel, consecutive_stall_limit aligned
 //
 // Optional language sugar (orch:supervise-batch / apply after
@@ -3020,6 +3041,7 @@ to_agent_policy(serve::parallel_orch::FailurePolicy p, std::uint32_t max_restart
             break;
         case FP::RetryN:
             out.on_stall = AgentFailureAction::RestartN;
+            out.on_join_fail = AgentFailureAction::RestartN; // #3052 AC4
             out.max_restarts = max_restarts;
             out.restart_backoff_ms = restart_backoff_ms;
             break;

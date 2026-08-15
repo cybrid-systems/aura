@@ -546,6 +546,18 @@ static void ac2891_3_no_void_cast_linter() {
     CHECK(!invent.good(), "2891 AC3: no test_issue_2891.cpp (per #81967)");
 }
 
+static void ac3053_coverage_gate_cite() {
+    std::println("\n--- #3053: allocate residual cites pin/slot/EXEMPT triad ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(lp.find("kGeneralObjectPinAllocateResidualIssue = 3053") != std::string::npos,
+          "3053: stamp");
+    CHECK(arena.find("maybe_note_allocate_intermediate_") != std::string::npos,
+          "3053: allocate auto-wire helper");
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "3053 AC4: inventory floor not hand-bumped");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
@@ -555,6 +567,8 @@ int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2709: GeneralObjectPin mandatory coverage beyond inventory-of-7 "
                  "(extends #2496 test file per #81967) ===");
     std::println("=== Issue #2840: densify fail-closed on required pin breach "
+                 "(extends #2496 test file per #81967) ===");
+    std::println("=== Issue #3053: allocate residual cites pin/slot/EXEMPT triad "
                  "(extends #2496 test file per #81967) ===");
     // contiguous form for check_general_object_pin_auto_wire_2597.py:
     // production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)
@@ -588,6 +602,7 @@ int run_test_general_object_pin_coverage_gate() {
     // Issue #2892 (refine #2436): post-compact lifecycle single entry +
     // additive ran_total counter (extends suite per #81967).
     ac2892_1_ran_counter_cite();
+    ac3053_coverage_gate_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

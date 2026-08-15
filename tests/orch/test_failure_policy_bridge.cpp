@@ -115,6 +115,8 @@ int run_test_failure_policy_bridge() {
             auto p = to_agent_policy(FailurePolicy::RetryN, /*max_restarts=*/5,
                                      /*consecutive_stall_limit=*/3, /*restart_backoff_ms=*/10);
             CHECK(p.on_stall == AgentFailureAction::RestartN, "AC2: RetryN → RestartN");
+            CHECK(p.on_join_fail == AgentFailureAction::RestartN,
+                  "3052 AC4: RetryN → on_join_fail RestartN");
             CHECK(p.max_restarts == 5, "AC2: RetryN max_restarts=5");
             CHECK(p.restart_backoff_ms == 10, "AC2: RetryN backoff threaded");
         }
@@ -395,8 +397,40 @@ int run_test_failure_policy_bridge() {
     // Issue #2974: multi-stage workflow (per #81967 extend-in-place).
     ac2974_run_added_tests();
 
-    std::println("\n=== #2539 + #2756 + #2852 + #2843 + #2974 results: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
+    {
+        std::println("\n--- #3052 AC4: bridge RetryN → on_join_fail; no silent override ---");
+        auto p = to_agent_policy(FailurePolicy::RetryN, /*max_restarts=*/3);
+        CHECK(p.on_join_fail == AgentFailureAction::RestartN,
+              "3052 AC4: to_agent_policy(RetryN) sets on_join_fail");
+        CHECK(p.on_stall == AgentFailureAction::RestartN, "3052 AC4: on_stall still RestartN");
+        auto w = compose_workflow_policy(FailurePolicy::RetryN, ResidualReclaimPreference::Report,
+                                         /*max_retries=*/2);
+        CHECK(w.agent_policy.on_join_fail == AgentFailureAction::RestartN,
+              "3052 AC4: compose RetryN sets on_join_fail");
+        w.agent_policy.on_join_fail = AgentFailureAction::ReportOnly; // explicit
+        CHECK(to_agent_policy(w).on_join_fail == AgentFailureAction::ReportOnly,
+              "3052 AC4: explicit AgentFailurePolicy not overwritten");
+        auto ff = to_agent_policy(FailurePolicy::FailFast);
+        CHECK(ff.on_join_fail == AgentFailureAction::ReportOnly,
+              "3052 AC4: FailFast does not set on_join_fail");
+        auto header = read_file("src/orch/agent_spawn.h");
+        auto scope = read_file("src/orch/agent_scope.h");
+        auto t = read_file("tests/orch/test_agent_failure_policy.cpp");
+        CHECK(scope.find("apply_on_join_fail_unlocked_") != std::string::npos,
+              "3052 AC4: join_all apply helper");
+        CHECK(header.find("on_join_fail = AgentFailureAction::RestartN") != std::string::npos,
+              "3052 AC4: RetryN mapping cite");
+        CHECK(t.find("#3052 AC1") != std::string::npos, "3052 AC5: failure-policy suite extended");
+        CHECK(read_file("docs/design/3052-on-join-fail.md").empty(),
+              "3052 AC5: no docs/design/3052-* per #1655");
+        CHECK(read_file("tests/orch/test_issue_3052.cpp").empty(),
+              "3052 AC5: no test_issue_3052.cpp per #81967");
+    }
+
+    std::println(
+        "\n=== #2539 + #2756 + #2852 + #2843 + #2974 + #3052 results: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

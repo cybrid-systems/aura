@@ -1004,8 +1004,9 @@ public:
         external_root_slots_for_densify_.clear();
     }
 
-    // Issue #2971: live auto-wired intermediate creates under required.
-    // Soft / unset leaves this 0 (create never inserts). Tests + Agent
+    // Issue #2971 / #3053: live auto-wired intermediate creates under
+    // required (create / try_allocate / allocate_checked via
+    // allocate_raw_impl). Soft / unset leaves this 0. Tests + Agent
     // soak use this to prove zero residual unpinned intermediates after
     // a blocked densify (objects still live, just not moved).
     [[nodiscard]] std::size_t intermediate_create_auto_wire_count() const noexcept {
@@ -1124,14 +1125,8 @@ public:
         // Issue #2166: record size/align for opt-in Moving densify remap.
         dtors_.push_back(
             {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
-        // Issue #2971: production-required auto-wire of intermediate creates.
-        // Soft / unset (pref <= 0) is a single atomic load — no inventory,
-        // no pin, no counter bump (AC6 zero Soft cost). Render hotpath is
-        // exempt (PinOwner / FFI present stays orthogonal).
-        if (aura::core::lifetime::general_object_pin_required_active() &&
-            !aura::core::arena_policy::in_render_hotpath()) {
-            note_intermediate_create_auto_wire_(result);
-        }
+        // Issue #2971 / #3053: auto-wire happens in allocate_raw_impl
+        // (create / try_allocate / allocate_checked share that path).
         return result;
     }
 
@@ -2180,6 +2175,21 @@ private:
         register_external_root_for_densify(p);
     }
 
+    // Issue #3053: try_allocate / allocate_checked / create share
+    // allocate_raw_impl. Only small-pool pointers can relocate; Soft
+    // / unset / render is a single required-active load (AC3).
+    void maybe_note_allocate_intermediate_(void* ptr, std::size_t size) noexcept {
+        if (!ptr)
+            return;
+        if (!aura::core::lifetime::general_object_pin_required_active())
+            return;
+        if (aura::core::arena_policy::in_render_hotpath())
+            return;
+        if (size > SmallObjectPool::kMaxSmallSize || !small_pool_.owns(ptr))
+            return;
+        note_intermediate_create_auto_wire_(ptr);
+    }
+
     void erase_intermediate_create_(void* p) noexcept {
         if (!p || intermediate_creates_.empty())
             return;
@@ -2326,6 +2336,10 @@ private:
             if (ptr) {
                 aura::core::cpp26::record_hotpath_invariant_hit();
                 contract_assert(ptr != nullptr);
+                // Issue #3053: required-regime allocate paths join the
+                // same intermediate inventory as create<T> (AC1). Soft /
+                // unset is a single atomic load (AC3).
+                maybe_note_allocate_intermediate_(ptr, size);
                 maybe_auto_compact_on_alloc();
                 return ptr;
             }

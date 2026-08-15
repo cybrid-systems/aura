@@ -571,6 +571,154 @@ int run_test_agent_failure_policy() {
         }
     }
 
+    // ── #3052: join_all honors on_join_fail ──────────────────────
+    {
+        using aura::orch::JoinPolicy;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        std::println("\n=== Issue #3052: join_all on_join_fail ===");
+        CHECK(true, "issue stamp #3052");
+
+        {
+            AgentFailurePolicy d;
+            CHECK(d.on_join_fail == AgentFailureAction::ReportOnly,
+                  "3052 AC3: default on_join_fail ReportOnly");
+        }
+
+        std::println("\n--- #3052 AC1: RestartN timeout → one restart, then exhaust ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "join-fail-restart";
+            spec.attach_mailbox = false;
+            spec.keepalive_interval_ms = 50;
+            spec.body = [&] {
+                while (keep.load(std::memory_order_relaxed))
+                    aura::orch::fiber_sleep_ms(20);
+            };
+            scope.spawn(spec);
+            const auto first_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto fail0 =
+                g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed);
+            const auto exh0 =
+                g_orch_module_stats.agent_restart_exhausted_total.load(std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol;
+            pol.on_join_fail = AgentFailureAction::RestartN;
+            pol.max_restarts = 1;
+            const auto jr = scope.join_all(jp, pol);
+            CHECK(jr.status != JoinStatus::Ok, "3052 AC1: join not Ok");
+            CHECK(g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed) ==
+                      fail0 + 1,
+                  "3052 AC1: join-fail metric +1");
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
+                      rst0 + 1,
+                  "3052 AC1: one restart");
+            const auto mid_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+            CHECK(mid_id != first_id, "3052 AC1: replacement fiber id");
+            CHECK(scope.handles()[0].ok, "3052 AC1: replacement ok");
+            (void)scope.join_all(jp, pol);
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
+                      rst0 + 1,
+                  "3052 AC1: second fail does not restart");
+            CHECK(g_orch_module_stats.agent_restart_exhausted_total.load(
+                      std::memory_order_relaxed) == exh0 + 1,
+                  "3052 AC1: exhausted after max_restarts");
+            keep.store(false, std::memory_order_relaxed);
+            if (scope.handles()[0].fiber) {
+                scope.handles()[0].fiber->request_cancel();
+                if (auto* s = scope.handles()[0].fiber->owner_sched()) {
+                    s->note_orphan_fiber(scope.handles()[0].fiber, 50);
+                    s->reap_orphans_now();
+                }
+            }
+        }
+
+        std::println("\n--- #3052 AC3: ReportOnly → no restart ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "join-fail-report";
+            spec.body = [&] {
+                while (keep.load(std::memory_order_relaxed))
+                    aura::orch::fiber_sleep_ms(20);
+            };
+            scope.spawn(spec);
+            const auto first_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol; // default ReportOnly
+            (void)scope.join_all(jp, pol);
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+                  "3052 AC3: ReportOnly no restart");
+            const auto same_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+            CHECK(same_id == first_id, "3052 AC3: same fiber");
+            keep.store(false, std::memory_order_relaxed);
+            if (scope.handles()[0].fiber) {
+                scope.handles()[0].fiber->request_cancel();
+                if (auto* s = scope.handles()[0].fiber->owner_sched()) {
+                    s->note_orphan_fiber(scope.handles()[0].fiber, 50);
+                    s->reap_orphans_now();
+                }
+            }
+        }
+
+        std::println("\n--- #3052 AC2: Reclaimed still-running → no restart ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "join-fail-reclaimed";
+            spec.body = [] { aura::orch::fiber_sleep_ms(400); };
+            scope.spawn(spec);
+            if (scope.handles()[0].fiber)
+                scope.handles()[0].fiber->mark_reclaimed();
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto fail0 =
+                g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol;
+            pol.on_join_fail = AgentFailureAction::RestartN;
+            pol.max_restarts = 3;
+            (void)scope.join_all(jp, pol);
+            CHECK(scope.handles()[0].reclaimed_deferred_cleanup ||
+                      (scope.handles()[0].fiber && scope.handles()[0].fiber->is_reclaimed()),
+                  "3052 AC2: still reclaimed");
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+                  "3052 AC2: no restart while reclaimed live");
+            CHECK(g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed) ==
+                      fail0,
+                  "3052 AC2: reclaimed is not join_fail fuel");
+            if (scope.handles()[0].fiber) {
+                scope.handles()[0].fiber->set_state(FiberState::Done);
+                scope.handles()[0].fiber->note_body_exit_if_reclaimed();
+                scope.handles_mut()[0].finish_reclaimed_cleanup_on_dtor();
+            }
+        }
+
+        CHECK(href(cs, "schema-3052") == 3052, "3052: schema-3052");
+        CHECK(href(cs, "join-fail-policy-wired") == 1, "3052: wired sentinel");
+        CHECK(href(cs, "agent-join-fail-total") >= 0, "3052: query key");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

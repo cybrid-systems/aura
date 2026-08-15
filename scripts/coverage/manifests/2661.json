@@ -25,7 +25,7 @@
       "path": "src/orch/agent_spawn.h",
       "contains": [
         "complete_agent_join_cleanup(h, jr)",
-        "complete_agent_join_cleanup(a, jr)"
+        "complete_agent_join_cleanup(a, local)"
       ]
     },
     {
