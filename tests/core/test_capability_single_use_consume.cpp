@@ -847,6 +847,132 @@ int run_test_capability_single_use_consume() {
             }
         }
 
+        // ── #3048: steal / force-cancel / abort residual session revoke ──
+        {
+            std::println("\n--- #3048 AC1/AC2: steal hook revokes live session grant ---");
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+            EffectProvenance prov{};
+            prov.epoch = 40;
+            prov.mutation_id = 40;
+            g_capability_registry().grant_session(30, "mut-3048-steal", Effect::Mutate, prov,
+                                                  /*single_use=*/false);
+            CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 30, "3048-pre",
+                                          false, true),
+                  "AC2: allow before steal revoke");
+            const auto n =
+                aura::core::capability::revoke_session_grants_on_steal_or_abort(40, /*steal=*/true);
+            CHECK(n >= 1, "AC1: steal hook revokes >=1");
+            const auto snap = snapshot_capability_effect_stats();
+            CHECK(snap.capability_live_session_grants == 0, "AC2: live residual cleared");
+            CHECK(snap.capability_session_revoke_steal >= 1, "AC5: steal revoke counter");
+            CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 30, "3048-post",
+                                           false, true),
+                  "AC2: deny after steal revoke under Restricted");
+            CHECK(ring_lookup_reason("session-mid-steal-exit") != nullptr,
+                  "AC5: SE reason session-mid-steal-exit");
+        }
+        {
+            std::println("\n--- #3048 AC1/AC2: abort hook + double-revoke no-op ---");
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+
+            EffectProvenance prov{};
+            prov.epoch = 41;
+            prov.mutation_id = 41;
+            g_capability_registry().grant_session(31, "mut-3048-abort", Effect::Mutate, prov,
+                                                  false);
+            const auto n1 = aura::core::capability::revoke_session_grants_on_steal_or_abort(
+                41, /*steal=*/false);
+            CHECK(n1 >= 1, "AC1: abort hook revokes >=1");
+            const auto n2 = g_capability_registry().revoke_session_grants_for_mid(41);
+            CHECK(n2 == 0, "AC3: second revoke (Guard dtor shape) is no-op");
+            const auto snap = snapshot_capability_effect_stats();
+            CHECK(snap.capability_live_session_grants == 0, "AC3: live residual stays 0");
+            CHECK(snap.capability_session_revoke_abort >= 1, "AC5: abort revoke counter");
+            CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 31, "3048-abort",
+                                           false, true),
+                  "AC2: deny after abort revoke");
+            CHECK(ring_lookup_reason("session-mid-abort-exit") != nullptr,
+                  "AC5: SE reason session-mid-abort-exit");
+        }
+        {
+            std::println("\n--- #3048 AC3: Guard dtor path still session-mid-exit ---");
+            reset_all();
+            set_mode(SandboxMode::Restricted);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+            EffectProvenance prov{};
+            prov.epoch = 42;
+            prov.mutation_id = 42;
+            g_capability_registry().grant_session(32, "mut-3048-dtor", Effect::Mutate, prov, false);
+            const auto n = g_capability_registry().revoke_session_grants_for_mid(42);
+            CHECK(n >= 1, "AC3: normal dtor-shape revoke still works");
+            CHECK(ring_lookup_reason("session-mid-exit") != nullptr,
+                  "AC3: SE reason session-mid-exit unchanged");
+            const auto snap = snapshot_capability_effect_stats();
+            CHECK(snap.capability_session_revoke_steal == 0, "AC3: dtor path is not steal");
+            CHECK(snap.capability_session_revoke_abort == 0, "AC3: dtor path is not abort");
+        }
+        {
+            std::println("\n--- #3048 AC4: Soft/Off empty live residual is zero-cost ---");
+            reset_all();
+            set_mode(SandboxMode::Off);
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            const auto n =
+                aura::core::capability::revoke_session_grants_on_steal_or_abort(99, /*steal=*/true);
+            CHECK(n == 0, "AC4: empty live session → steal hook returns 0");
+            const auto n0 =
+                aura::core::capability::revoke_session_grants_on_steal_or_abort(0, /*steal=*/false);
+            CHECK(n0 == 0, "AC4: mid==0 early-out");
+            const auto snap = snapshot_capability_effect_stats();
+            CHECK(snap.capability_session_revoke_steal == 0, "AC4: no steal counter under empty");
+            CHECK(snap.capability_session_revoke_abort == 0, "AC4: no abort counter under empty");
+        }
+        {
+            std::println("\n--- #3048 AC5/AC6: schema + source-cite + no invent ---");
+            const auto cap = read_file("src/core/capability_model.hh");
+            const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+            const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+            const auto fiber_h = read_file("src/serve/fiber.h");
+            const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+            const auto build = read_file("build.py");
+            CHECK(cap.find("revoke_session_grants_on_steal_or_abort") != std::string::npos,
+                  "AC6: capability_model.hh hook");
+            CHECK(cap.find("session-mid-steal-exit") != std::string::npos,
+                  "AC5: steal SE reason in registry");
+            CHECK(cap.find("session-mid-abort-exit") != std::string::npos,
+                  "AC5: abort SE reason in registry");
+            CHECK(bound.find("set_current_fiber_session_mid") != std::string::npos,
+                  "AC6: Guard enter stamps fiber session mid");
+            CHECK(steal.find("revoke_session_grants_on_steal_or_abort") != std::string::npos,
+                  "AC6: steal-complete / abort hook");
+            CHECK(steal.find("aura_evaluator_on_steal_complete") != std::string::npos,
+                  "AC6: steal-complete cites hook site");
+            CHECK(fiber_h.find("session_mid_") != std::string::npos,
+                  "AC6: Fiber session_mid_ field");
+            CHECK(posture.find("schema-3048") != std::string::npos, "AC5: schema-3048");
+            CHECK(posture.find("session-grant-steal-abort-wired") != std::string::npos,
+                  "AC5: session-grant-steal-abort-wired");
+            CHECK(build.find("check_session_grant_steal_3048") != std::string::npos,
+                  "AC6: build.py wires linter");
+            std::ifstream invent("tests/core/test_issue_3048.cpp");
+            if (!invent.good())
+                invent.open("../tests/core/test_issue_3048.cpp");
+            CHECK(!invent.good(), "AC6: no test_issue_3048.cpp");
+            const std::filesystem::path docs_design = "docs/design";
+            std::error_code ec;
+            if (std::filesystem::is_directory(docs_design, ec)) {
+                for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                    const auto name = entry.path().filename().string();
+                    CHECK(name.find("3048-") == std::string::npos,
+                          std::string("AC6: no docs/design/") + name);
+                }
+            }
+        }
+
         std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;
     }

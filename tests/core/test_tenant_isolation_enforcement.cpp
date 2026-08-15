@@ -1883,6 +1883,48 @@ int main() {
               "ac3041_4_key");
     }
 
+    // ── #3048: steal × session-grant residual (tenant isolation suite) ──
+    {
+        std::println("\n--- #3048: steal×session-grant chaos under Restricted ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        using aura::core::capability::check_and_record_effect;
+        using aura::core::capability::Effect;
+        using aura::core::capability::EffectProvenance;
+        using aura::core::capability::g_capability_registry;
+        using aura::core::capability::revoke_session_grants_on_steal_or_abort;
+        using aura::core::capability::snapshot_capability_effect_stats;
+        EffectProvenance prov{};
+        prov.epoch = 48;
+        prov.mutation_id = 48;
+        g_capability_registry().grant_session(/*tenant=*/7, "mut-3048-iso", Effect::Mutate, prov,
+                                              /*single_use=*/false);
+        CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 7, "3048-iso-pre",
+                                      false, true),
+              "3048: same-tenant session allow before steal");
+        const auto n = revoke_session_grants_on_steal_or_abort(48, /*steal=*/true);
+        CHECK(n >= 1, "3048: steal hook revokes session grant");
+        CHECK(snapshot_capability_effect_stats().capability_live_session_grants == 0,
+              "3048: live session residual 0 after steal");
+        CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, 7, "3048-iso-post",
+                                       false, true),
+              "3048: Restricted denies after steal revoke");
+        const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto cap = read_file("src/core/capability_model.hh");
+        CHECK(steal.find("revoke_session_grants_on_steal_or_abort") != std::string::npos,
+              "3048: steal-complete / force-degrade cite hook");
+        CHECK(bound.find("set_current_fiber_session_mid") != std::string::npos,
+              "3048: Guard enter stamps fiber session mid");
+        CHECK(cap.find("Issue #3048") != std::string::npos ||
+                  cap.find("#3048") != std::string::npos,
+              "3048: capability_model.hh cites #3048");
+        std::ifstream invent("tests/core/test_issue_3048.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3048.cpp");
+        CHECK(!invent.good(), "3048: no test_issue_3048.cpp");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);
