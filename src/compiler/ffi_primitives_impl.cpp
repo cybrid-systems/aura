@@ -133,8 +133,9 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         auto addr = types::as_int(a[0]);
         auto idx = oh->size();
         oh->push_back(reinterpret_cast<void*>(static_cast<std::uintptr_t>(addr)));
-        // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
-        // Not arena-tracked. Wrap arena ptrs via (ffi:pin-buffer).
+        // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: external-native-addr
+        // Not an arena create. Densify-tracked aliases in opaque_heap_
+        // are slot-covered at known-root walk (#3057).
         aura::core::lifetime::note_ffi_opaque_create_exempt("external-native-addr");
         return types::make_opaque(idx);
     });
@@ -168,7 +169,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
         oh->push_back(ptr);
         // Issue #980: track allocation size for bounds checks.
         opaque_sizes_[ptr] = size;
-        // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: libc-heap
+        // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: libc-heap
         // calloc is not densify-tracked. Survive densify as-is.
         aura::core::lifetime::note_ffi_opaque_create_exempt("libc-heap");
         return types::make_opaque(idx);
@@ -300,7 +301,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             std::memcpy(&ptr, base + offset, sizeof(ptr));
             auto ni = oh->size();
             oh->push_back(ptr);
-            // Issue #3022: GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
+            // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
             aura::core::lifetime::note_ffi_opaque_create_exempt("opaque-struct-copy");
             return types::make_opaque(ni);
         }

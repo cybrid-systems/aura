@@ -1989,10 +1989,16 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("issue-2971", kGeneralObjectPinCreateDensifyIssue);
                 // Issue #3022: FFI opaque/native pin-or-remap (or EXEMPT).
                 using aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
+                using aura::core::lifetime::kFfiOpaquePinOrRemapResidualIssue;
                 insert_kv("ffi-opaque-pin-or-remap-wired", 1);
                 insert_kv("ffi-owned-blocks-reclaim-wired", 1);
                 insert_kv("schema-3022", kFfiOpaquePinOrRemapIssue);
                 insert_kv("issue-3022", kFfiOpaquePinOrRemapIssue);
+                // Issue #3057: densify-tracked FFI opaque_heap_ aliases
+                // are slot-covered at known-root walk (not observe-only).
+                insert_kv("ffi-opaque-slot-cover-wired", 1);
+                insert_kv("schema-3057", kFfiOpaquePinOrRemapResidualIssue);
+                insert_kv("issue-3057", kFfiOpaquePinOrRemapResidualIssue);
             }
             // Issue #2266: verify_pins_under_moving_compact fail-closed change.
             // Schema additive — no break. Driver (Phase 5 in

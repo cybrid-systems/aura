@@ -546,6 +546,15 @@ static void ac2891_3_no_void_cast_linter() {
     CHECK(!invent.good(), "2891 AC3: no test_issue_2891.cpp (per #81967)");
 }
 
+static void ac3057_coverage_gate_cite() {
+    std::println("\n--- #3057: FFI opaque_heap_ slot cover cites known-root walk ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(lp.find("kFfiOpaquePinOrRemapResidualIssue = 3057") != std::string::npos, "3057: stamp");
+    CHECK(mb.find("opaque_heap_") != std::string::npos, "3057: opaque_heap_ slotted");
+    CHECK(mb.find("Issue #3057") != std::string::npos, "3057: walk cites #3057");
+}
+
 static void ac3055_coverage_gate_cite() {
     std::println("\n--- #3055: post-Moving stale scan cites last_object_remap_ ---");
     const auto arena = read_file("src/core/arena.ixx");
@@ -615,6 +624,7 @@ int run_test_general_object_pin_coverage_gate() {
     ac2892_1_ran_counter_cite();
     ac3053_coverage_gate_cite();
     ac3055_coverage_gate_cite();
+    ac3057_coverage_gate_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
