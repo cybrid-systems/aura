@@ -1984,8 +1984,9 @@ int run_test_join_drain_reclaim() {
         using aura::orch::AgentHandle;
         using aura::orch::AgentSpec;
         using aura::orch::HandoffToken;
-        // Issue #3089: per-block local Scheduler (orch_sched is a local
-        // static inside the prim register function, not a process-global).
+        // Issue #3089: per-block local Scheduler. The Aura import prim
+        // uses the register-function static orch_sched without capturing
+        // it (capturing the non-copyable holder failed ubsan-smoke -Werror).
         aura::serve::Scheduler sched(1);
 
         // ── AC1: Export → import on second Evaluator yields shared mailbox ──
@@ -2107,6 +2108,25 @@ int run_test_join_drain_reclaim() {
                   "AC5: orch_primitives uses g_handoff_token_stash (not AgentRegistry)");
             CHECK(prim_orch.find("agent_registry") == std::string::npos,
                   "AC5: orch_primitives no 'agent_registry' substring");
+            // ubsan-smoke / -Werror: stash + hash helper must be file-scope
+            // (nested inside register_synthesize_primitives was a nested
+            // function / vexing-parse). Import must not capture orch_sched
+            // and must not treat AgentNameTable::put (returns AgentHandle&)
+            // as bool.
+            const auto stash_pos = prim_orch.find("g_handoff_token_stash");
+            const auto hash_fn_pos = prim_orch.find("std::string new_handoff_token_hash");
+            const auto synthesize_pos = prim_orch.find("void register_synthesize_primitives");
+            CHECK(
+                stash_pos != std::string::npos && synthesize_pos != std::string::npos &&
+                    stash_pos < synthesize_pos,
+                "AC5: g_handoff_token_stash is file-scope (before register_synthesize_primitives)");
+            CHECK(hash_fn_pos != std::string::npos && synthesize_pos != std::string::npos &&
+                      hash_fn_pos < synthesize_pos,
+                  "AC5: new_handoff_token_hash is file-scope (not a nested function)");
+            CHECK(prim_orch.find("[&ev, orch_sched]") == std::string::npos,
+                  "AC5: import lambda does not capture static orch_sched");
+            CHECK(prim_orch.find("if (!ev.agent_names_->put") == std::string::npos,
+                  "AC5: put() returns AgentHandle& — not treated as bool");
         }
 
         // ── AC6: source-cite + no invent + no docs/design/ ──

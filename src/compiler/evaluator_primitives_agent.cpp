@@ -140,6 +140,17 @@ namespace {
         return std::uniform_real_distribution<double>(0.0, 1.0)(agent_prng());
     }
 
+    // Issue #3089: cross-Evaluator handoff token stash. Not AgentRegistry
+    // (check_orch_mvp_scope.py). Transient single-use token stage.
+    std::mutex g_handoff_token_stash_mtx;
+    std::unordered_map<std::string, aura::orch::HandoffToken> g_handoff_token_stash;
+    std::atomic<std::uint64_t> g_handoff_token_counter{0};
+
+    std::string new_handoff_token_hash() {
+        const auto id = g_handoff_token_counter.fetch_add(1, std::memory_order_relaxed);
+        return std::string("handoff:") + std::to_string(id);
+    }
+
     // Issue #1717: RAII swap of evaluator workspace onto a temporary
     // WorkspaceTree child. Restores flat/pool and delete_child on scope exit
     // (exception-safe; closes the bare-swap UAF / leak window).
@@ -1370,25 +1381,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
 #else
     (void)destroy_defuse_index;
 #endif // AURA_ENABLE_SYNTHESIZE
-
-    // Issue #3089: cross-Evaluator handoff token stash. Explicitly NOT
-    // named AgentRegistry / global_agent_registry (linter forbids those —
-    // `scripts/coverage/checks/check_orch_mvp_scope.py` would reject).
-    // Conceptually a transient token stage (from `orch:agent-export-via-token`
-    // until `orch:agent-import-via-token` consumes the token), not a long-term
-    // agent registry. Process-local map with thread-safe access; token is
-    // removed on import (single-use). Soft / Off: a no-op handle returns
-    // `{mailbox=null, fiber=null}` so import is a clean no-op.
-    std::mutex g_handoff_token_stash_mtx;
-    std::unordered_map<std::string, aura::orch::HandoffToken> g_handoff_token_stash;
-    std::atomic<std::uint64_t> g_handoff_token_counter{0};
-
-    inline std::string new_handoff_token_hash() {
-        const auto id = g_handoff_token_counter.fetch_add(1, std::memory_order_relaxed);
-        return std::string("handoff:") + std::to_string(id);
-    }
-
-} // anonymous namespace
+}
 
 void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Issue #1232 Phase 1: gate intend / strategy primitives with kCapStrategy.
@@ -5779,33 +5772,34 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // == 0 so release_reservation_if_any is a no-op on dtor). The
     // source's Scope remains the owner of the body fiber; cancel/join
     // for the proxy routes back through the source.
-    add("orch:agent-import-via-token",
-        [&ev, orch_sched](std::span<const EvalValue> a) -> EvalValue {
-            if (a.empty() || !types::is_string(a[0]))
+    add("orch:agent-import-via-token", [&ev](std::span<const EvalValue> a) -> EvalValue {
+        if (a.empty() || !types::is_string(a[0]))
+            return types::make_string(0);
+        const auto hash_idx = types::as_string_idx(a[0]);
+        if (hash_idx >= ev.string_heap_.size())
+            return types::make_string(0);
+        const auto& hash = ev.string_heap_[hash_idx];
+        aura::orch::HandoffToken tok;
+        {
+            std::lock_guard<std::mutex> lock(g_handoff_token_stash_mtx);
+            auto it = g_handoff_token_stash.find(hash);
+            if (it == g_handoff_token_stash.end())
                 return types::make_string(0);
-            const auto hash_idx = types::as_string_idx(a[0]);
-            if (hash_idx >= ev.string_heap_.size())
-                return types::make_string(0);
-            const auto& hash = ev.string_heap_[hash_idx];
-            aura::orch::HandoffToken tok;
-            {
-                std::lock_guard<std::mutex> lock(g_handoff_token_stash_mtx);
-                auto it = g_handoff_token_stash.find(hash);
-                if (it == g_handoff_token_stash.end())
-                    return types::make_string(0);
-                tok = std::move(it->second);
-                g_handoff_token_stash.erase(it);
-            }
-            auto h = aura::orch::agent_import_handoff(std::move(tok), static_cast<void*>(&ev),
-                                                      *orch_sched.sched);
-            const auto new_name = std::string("proxy-") + std::to_string(h.id);
-            h.name = new_name;
-            if (!ev.agent_names_->put(std::move(h)))
-                return types::make_string(0);
-            const auto idx = ev.string_heap_.size();
-            ev.string_heap_.push_back(new_name);
-            return types::make_string(idx);
-        });
+            tok = std::move(it->second);
+            g_handoff_token_stash.erase(it);
+        }
+        orch_sched.ensure(2);
+        auto h = aura::orch::agent_import_handoff(std::move(tok), static_cast<void*>(&ev),
+                                                  *orch_sched.sched);
+        const auto new_name = std::string("proxy-") + std::to_string(h.id);
+        h.name = new_name;
+        if (!ev.agent_names_)
+            return types::make_string(0);
+        ev.agent_names_->put(std::move(h));
+        const auto idx = ev.string_heap_.size();
+        ev.string_heap_.push_back(new_name);
+        return types::make_string(idx);
+    });
 }
 
 } // namespace aura::compiler::primitives_detail
