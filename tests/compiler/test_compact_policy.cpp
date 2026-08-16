@@ -197,7 +197,7 @@ static void ac5_source_gate() {
     CHECK(!hh.empty(), "AC5: compact_policy.hh");
     CHECK(hh.find("compute_compact_policy") != std::string::npos, "AC5: pure fn");
     CHECK(hh.find("2500") != std::string::npos, "AC5: #2500");
-    auto src = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto src = aura::test::aura_query_prims_source();
     CHECK(src.find("query:compact-policy") != std::string::npos, "AC5: query registered");
     CHECK(src.find("orch:compact-policy") != std::string::npos, "AC5: orch alias");
     CHECK(src.find("arena:recommend-compact") != std::string::npos, "AC5: arena alias");

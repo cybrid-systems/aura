@@ -178,7 +178,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_agent_ask",
     "test_agent_failure_policy",
     "test_agent_scope",
-    "test_audit_wal_force_multi_tenant",
+    # test_audit_wal_force_multi_tenant greened inside fold batch
     "test_boundary_yield_steal_metrics",
     "test_cascade_incremental_pass_suite",
     "test_chaos_fiber_mutation_gc_mailbox",
@@ -189,7 +189,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_hotpath_matrix_batch",
     # test_instr_level_relower_pass / test_layout_stamp greened inside
     # test_aot_jit_stamp_batch
-    "test_isolation_audit_mid",
+    # test_isolation_audit_mid greened inside fold batch
     "test_join_drain_reclaim",
     "test_mailbox_bp_admit",
     "test_moving_compact",
@@ -277,7 +277,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # still SIGSEGV/SIGABRT.
     # Batch 6 reemit/storm: greened test_shape_soa_storm_batch (14/0).
     # test_reemit_production_default_defer_v2 still not compile-fixed.
-    "test_epoch_invariant_misc_batch",
+    # test_epoch_invariant_misc_batch greened (4/0): count_behind no
+    # longer stubbed; inject + walk + fuse ACs follow physical clear.
     # test_ir_closure_jit_misc_batch + test_module_query_batch greened
     # (light-link residual tick; query-and-replace #t / pair-error).
     # test_jit_macro_introduced_preserve greened: preserved-total cite

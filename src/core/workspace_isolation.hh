@@ -289,13 +289,16 @@ struct WorkspaceIsolationPolicy {
         (void)kSecurityAuditFoldIssue;
         char reason_buf[64];
         const char* reason = "isolation-deny";
-        // Issue #2385: unset principal under Restricted/Strict side-effect path.
-        if (current.id == 0) {
-            reason = "isolation-deny:unset-principal";
-        } else if (ref_tenant != 0) {
+        // Issue #2156: foreign principal lives in the reason string (not
+        // mid). Prefer ref-tenant when present so a per-Evaluator
+        // principal (#2659) is not mis-reported as unset-principal just
+        // because the process-global current.id is still 0.
+        if (ref_tenant != 0) {
             std::snprintf(reason_buf, sizeof(reason_buf), "isolation-deny:ref-tenant=%llu",
                           static_cast<unsigned long long>(ref_tenant));
             reason = reason_buf;
+        } else if (current.id == 0) {
+            reason = "isolation-deny:unset-principal";
         }
         // Tenant stays in tenant_id field; mid is Mutation epoch (#2156).
         // effect_bits preserves required side-effect mask for forensic join.

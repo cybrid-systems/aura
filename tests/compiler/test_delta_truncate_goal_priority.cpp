@@ -153,7 +153,7 @@ static void ac5_query_and_source() {
     std::println("\n--- #2508 AC5: query keys + source-cite + #2277 unchanged ---");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto obs = read_file("src/compiler/observability_metrics.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = aura::test::aura_query_prims_source();
     const auto cmake = read_file("CMakeLists.txt");
 
     CHECK(obs.find("delta_truncate_goal_priority_reverify_total") != std::string::npos,

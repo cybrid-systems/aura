@@ -213,7 +213,7 @@ static void ac5_source_and_schema() {
     auto ixx = read_file("src/compiler/type_checker.ixx");
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto aud = read_file("src/compiler/typed_mutation_audit.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = aura::test::aura_query_prims_source();
     CHECK(etc.find("Issue #2458") != std::string::npos, "AC5: typecheck cites #2458");
     CHECK(etc.find("commit_ok_after_delta_snapshot") != std::string::npos,
           "AC5: composite/boundary gate wired");
