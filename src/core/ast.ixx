@@ -1276,6 +1276,8 @@ private:
         // fresh node).
         if (id < occ_stale_.size())
             std::atomic_ref<std::uint8_t>(occ_stale_[id]).store(0, std::memory_order_relaxed);
+        if (id >= parent_.size())
+            parent_.resize(static_cast<std::size_t>(id) + 1, NULL_NODE);
         parent_[id] = NULL_NODE;
         // Issue #1689 / #2412: recycled slot has no incoming edges.
         // Always clear — do not gate on !incoming_parent_index_dirty_.
@@ -1510,7 +1512,14 @@ public:
         sym_id_.push_back(INVALID_SYM);
         // Issue #220: init the per-node children_ entry (uses
         // the outer's allocator, which is the default for now).
-        children_.emplace_back();
+        // If children_ ran ahead of tag_ (restore pad / desync),
+        // emplace_back would leave children_[id] as a stale PCV
+        // with leftover child ids — link_children then OOBs
+        // parent_. Reset the existing slot instead.
+        if (id < children_.size())
+            children_[id] = PersistentChildVector<NodeId>{};
+        else
+            children_.emplace_back();
         param_begin_.push_back(0);
         param_count_.push_back(0);
         cap_require_count_.push_back(0);
@@ -1590,7 +1599,10 @@ public:
         // them as "stale" once and then settle into a
         // stable state).
         last_seen_epoch_.push_back(0);
-        parent_.push_back(NULL_NODE);
+        if (id < parent_.size())
+            parent_[id] = NULL_NODE;
+        else
+            parent_.push_back(NULL_NODE);
         // Issue #1689: keep inverted index parallel to node columns when valid.
         // Issue #2416: acquire load pairs with rebuild release store.
         if (!incoming_parent_index_dirty_.load(std::memory_order_acquire)) {
@@ -3566,8 +3578,19 @@ public:
         // Issue #220/221: walk the per-node PCV. The PCV's
         // iterators are const (the vector is immutable from
         // the outside), so this is read-only iteration.
+        //
+        // parent_ can lag children_/tag_ after rollback restore or
+        // SoA desync (restore_children rebuilds, but parse-append
+        // + free-list reuse can observe a short parent_ column).
+        // Same bound as rebuild_parent_links_from_children — never
+        // operator[] a cid >= parent_.size() (debug abort; release
+        // heap smash / unaligned tcache).
+        if (id >= children_.size())
+            return;
+        if (parent_.size() < size())
+            parent_.resize(size(), NULL_NODE);
         for (auto cid : children_[id]) {
-            if (cid != NULL_NODE)
+            if (cid != NULL_NODE && cid < parent_.size())
                 parent_[cid] = id;
         }
         // Issue #1689: bulk parent rewrite — reindex on next lookup.

@@ -80,6 +80,8 @@ static void ac1_source() {
     auto h = read_file("src/compiler/type_checker.ixx");
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    if (q.find("schema-2028") == std::string::npos)
+        q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     auto m = read_file("src/compiler/observability_metrics.h");
     CHECK(!h.empty() && h.find("Issue #2028") != std::string::npos, "type_checker.ixx #2028");
     CHECK(h.find("solve_delta_occurrence") != std::string::npos, "solve_delta_occurrence API");

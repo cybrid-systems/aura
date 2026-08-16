@@ -2767,6 +2767,13 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
                                 std::uint32_t affected_ref_count = 0) noexcept {
     if (!should_audit(mutation_id))
         return;
+    // Issue #1589 / #3016: capture_audit_event_forced drops mid=0 (never
+    // stamp a refuse-zero into the ring). Callers that passed the
+    // Sampled/Full gate still need a trail row — empty-Guard rollback
+    // and synthetic captures use mid=0 as "no caller mid". Generate a
+    // last-resort id so contextual_total / trail_writes stay honest.
+    if (mutation_id == 0)
+        mutation_id = next_audit_mutation_id();
     capture_audit_event_forced(mutation_id, name, kind, before_epoch, after_epoch, outcome,
                                target_node, nodes_changed, fiber_id, affected_ref_count);
 }

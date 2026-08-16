@@ -278,11 +278,11 @@ static void ac_live_compact_primitive() {
     std::println("\n--- AC_LC2: (engine:metrics \"arena:live-compact\" 1) Force mode ---");
     // Pass mode arg through engine:metrics (register_stats_impl); re-query
     // without args would Soft-run and report mode=0.
-    auto r_mode = cs.eval(R"((hash-ref (engine:metrics \"arena:live-compact\" 1) "mode"))");
+    auto r_mode = cs.eval(R"((hash-ref (engine:metrics "arena:live-compact" 1) "mode"))");
     CHECK(r_mode.has_value() && is_int(*r_mode) && as_int(*r_mode) == 1, "mode=1 (Force)");
 
     std::println("\n--- AC_LC3: (query:arena-live-compact-stats) surfaces counters ---");
-    (void)cs.eval(R"((engine:metrics \"arena:live-compact\" 1))"); // Force bump
+    (void)cs.eval(R"((engine:metrics "arena:live-compact" 1))"); // Force bump
     const auto stats_schema = href(cs, "query:arena-live-compact-stats", "schema");
     // Either obs_eval (2004/2166) or memory.cpp (1518) registration may win.
     CHECK(stats_schema == 2166 || stats_schema == 2004 || stats_schema == 1518,
@@ -302,7 +302,7 @@ static void ac_live_compact_primitive() {
     CHECK(href(cs, "arena:live-compact", "moved-live-objects") == 0,
           "moved-live-objects=#f on Soft");
     auto r_moved =
-        cs.eval(R"((hash-ref (engine:metrics \"arena:live-compact\" 1) "moved-live-objects"))");
+        cs.eval(R"((hash-ref (engine:metrics "arena:live-compact" 1) "moved-live-objects"))");
     CHECK(r_moved.has_value() && is_int(*r_moved) && as_int(*r_moved) == 0,
           "moved-live-objects=#f on Force");
 }

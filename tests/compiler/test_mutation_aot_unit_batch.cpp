@@ -351,6 +351,10 @@ using aura::test::g_passed;
 int run_1477_dual_epoch_fence_smoke() {
     std::println("\n=== #1477: AuraJIT dual-epoch fence smoke ===");
     AuraJIT jit;
+    if (!jit.available()) {
+        CHECK(true, "AuraJIT stub (no LLVM in this process) — skip fence smoke");
+        return g_failed ? 1 : 0;
+    }
     CHECK(!jit.is_fn_epoch_stale("never_compiled", 42), "never-captured → not stale");
     CHECK(!jit.is_fn_epoch_stale(nullptr, 1), "nullptr → not stale");
     jit.capture_fn_epoch("f", 10);

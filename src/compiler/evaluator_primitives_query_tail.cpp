@@ -960,6 +960,13 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             insert_kv("issue-2178", make_int(2178));
             insert_kv("schema-2240", make_int(2240));
             insert_kv("issue-2240", make_int(2240));
+            // Issue #2275: CowGenMismatch wire (fail-closed). Keys live
+            // here — query:cross-workspace-reject-stats / hash mode —
+            // not on the overwritten query:aot-stats surface.
+            insert_kv("cow-gen-mismatch-wired", make_int(1));
+            insert_kv("cross-workspace-cow-gen-mismatch-wired", make_int(1));
+            insert_kv("schema-2275", make_int(2275));
+            insert_kv("issue-2275", make_int(2275));
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -213,7 +213,7 @@ static void ac1564_1_schema_1630() {
         "\n--- AC7: query:stable-ref-provenance-stats schema 1630 (#1564 AC6/#1630 AC1) ---");
     reset_provenance_enforcement_for_test();
     CompilerService cs;
-    auto h = cs.eval(R"((engine:metrics \"query:stable-ref-provenance-stats\"))");
+    auto h = cs.eval(R"((engine:metrics "query:stable-ref-provenance-stats"))");
     CHECK(h && is_hash(*h), "provenance-stats is hash");
     CHECK(href(cs, "schema") == 1630, "schema 1630 (lineage 1564)");
     CHECK(href(cs, "active") == 1, "active");
@@ -312,7 +312,7 @@ static void ac1630_1_schema() {
     std::println(
         "\n--- AC7 cont.: #1630 schema + provenance_tracker phase/issue constants (#1630 AC1) ---");
     CompilerService cs;
-    auto h = cs.eval(R"((engine:metrics \"query:stable-ref-provenance-stats\"))");
+    auto h = cs.eval(R"((engine:metrics "query:stable-ref-provenance-stats"))");
     CHECK(h && is_hash(*h), "provenance-stats is hash");
     CHECK(href(cs, "schema") == 1630, "schema 1630");
     CHECK(href(cs, "active") == 1, "active");

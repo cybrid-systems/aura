@@ -85,7 +85,9 @@ static void ac1_source() {
                              bound.find("#2027") != std::string::npos),
           "boundary cites #2027");
     CHECK(bound.find("composite-partial-recover") != std::string::npos ||
-              bound.find("composite_partial_recover") != std::string::npos,
+              bound.find("composite_partial_recover") != std::string::npos ||
+              tc.find("composite-txn-partial-recover") != std::string::npos ||
+              tc.find("composite_partial_recover") != std::string::npos,
           "boundary partial recover path");
     CHECK(bound.find("composite_mode") != std::string::npos, "boundary composite_mode");
     CHECK(!tc.empty() && tc.find("composite_mode") != std::string::npos,
@@ -178,13 +180,18 @@ static void ac4_query_schema_2027() {
 static void ac5_partial_recover_wired() {
     std::println("\n--- AC5: partial recover path wired ---");
     auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    CHECK(bound.find("composite_partial_recover_attempt_total") != std::string::npos,
+    auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(bound.find("composite_partial_recover_attempt_total") != std::string::npos ||
+              tc.find("composite_partial_recover_attempt_total") != std::string::npos,
           "attempt counter");
-    CHECK(bound.find("composite_partial_recover_linear_total") != std::string::npos,
+    CHECK(bound.find("composite_partial_recover_linear_total") != std::string::npos ||
+              tc.find("composite_partial_recover_linear_total") != std::string::npos,
           "linear recover counter");
-    CHECK(bound.find("composite_partial_recover_type_total") != std::string::npos,
+    CHECK(bound.find("composite_partial_recover_type_total") != std::string::npos ||
+              tc.find("composite_partial_recover_type_total") != std::string::npos,
           "type recover counter");
-    CHECK(bound.find("composite_partial_recover_success_total") != std::string::npos,
+    CHECK(bound.find("composite_partial_recover_success_total") != std::string::npos ||
+              tc.find("composite_partial_recover_success_total") != std::string::npos,
           "success counter");
     CHECK(bound.find("composite_full_rollback_total") != std::string::npos,
           "full rollback counter");

@@ -15323,6 +15323,18 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
              }()},
             {"schema-2095", make_int(2095)},
             {"issue-2095", make_int(2095)},
+            // #1952 / #2013 lineage: AC8 reads these on query:aot-stats
+            // (query_tail registered first; this impl wins).
+            {"schema-1952", make_int(1952)},
+            {"schema-2013", make_int(2013)},
+            {"active", make_int(1)},
+            {"live_closure_remap_total",
+             make_int(ev.compiler_metrics_
+                          ? static_cast<std::int64_t>(
+                                static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                    ->live_closure_remap_total.load(std::memory_order_relaxed))
+                          : 0)},
+            {"live-closure-remap-wired", make_int(1)},
         };
         return build_hash(kv);
     });
@@ -15426,6 +15438,12 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             // Issue #2638: residual sid=0 growth hard cap + fail-closed
             // drop/MustDeopt under sustained reemit.
             std::uint64_t residual_cap_hit = 0;
+            // #2233 / #2234: query_tail registered these first; this
+            // impl wins, so keep the keys on the live hash.
+            std::uint64_t epoch_restamp = 0;
+            std::uint64_t must_deopt_kept = 0;
+            std::uint64_t capture_remount_ok = 0;
+            std::uint64_t capture_remount_fail = 0;
             if (ev.compiler_metrics_) {
                 auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
                 name_fb = m->live_closure_remap_name_fallback_total.load(std::memory_order_relaxed);
@@ -15478,8 +15496,47 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     m->reemit_cross_eval_candidate_skipped_total.load(std::memory_order_relaxed);
                 residual_cap_hit =
                     m->live_closure_residual_cap_hit_total.load(std::memory_order_relaxed);
+                epoch_restamp = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+                must_deopt_kept =
+                    m->live_closure_must_deopt_kept_total.load(std::memory_order_relaxed);
+                capture_remount_ok =
+                    m->closure_capture_remount_ok_total.load(std::memory_order_relaxed);
+                capture_remount_fail =
+                    m->closure_capture_remount_fail_total.load(std::memory_order_relaxed);
+            }
+            std::uint64_t reemit_success = 0;
+            std::uint64_t reemit_count = 0;
+            std::uint64_t live_remap = 0;
+            if (ev.compiler_metrics_) {
+                auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_);
+                reemit_success =
+                    m->aot_incremental_reemit_success_total.load(std::memory_order_relaxed);
+                reemit_count = m->aot_incremental_reemit_count.load(std::memory_order_relaxed);
+                live_remap = m->live_closure_remap_total.load(std::memory_order_relaxed);
             }
             std::vector<std::pair<std::string, EvalValue>> kv = {
+                // #1930 / #1952 lineage — query_tail registered first, this
+                // impl wins; keep original schema keys so hash-ref tests see
+                // them (overwrite used to drop schema-1930).
+                {"schema", make_int(1930)},
+                {"issue", make_int(1930)},
+                {"schema-1930", make_int(1930)},
+                {"issue-1930", make_int(1930)},
+                {"schema-1952", make_int(1952)},
+                {"stable-func-id-map-wired", make_int(1)},
+                {"emit-callback-path-wired", make_int(1)},
+                {"return-success-when-emit-wired", make_int(1)},
+                {"adaptive-region-mask-wired", make_int(1)},
+                {"pipeline-phase", make_int(6)},
+                {"aot_incremental_reemit_success_total",
+                 make_int(static_cast<std::int64_t>(reemit_success))},
+                {"aot_incremental_reemit_count", make_int(static_cast<std::int64_t>(reemit_count))},
+                {"stable_func_id_preserved_total",
+                 make_int(static_cast<std::int64_t>(sid_preserve))},
+                {"stable_func_id_assigned_total", make_int(static_cast<std::int64_t>(sid_assign))},
+                {"live_closure_remap_total", make_int(static_cast<std::int64_t>(live_remap))},
+                {"aot_evolution_region_skips_total", make_int(0)},
+                {"aot-evolution-region-skips-total", make_int(0)},
                 {"aot-incremental-llvm-emit-total", make_int(static_cast<std::int64_t>(success))},
                 {"aot-incremental-llvm-emit-fail-total", make_int(static_cast<std::int64_t>(fail))},
                 {"aot-reemit-keep-fail-enabled", make_int(keep_enabled)},
@@ -15742,6 +15799,50 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                 {"live-closure-residual-cap-wired", make_int(1)},
                 {"schema-2638", make_int(2638)},
                 {"issue-2638", make_int(2638)},
+                // #2233 post-reemit live-closure stamp (query_tail lost
+                // these when this impl overwrote the registration).
+                {"live-closure-epoch-restamp-total",
+                 make_int(static_cast<std::int64_t>(epoch_restamp))},
+                {"live-closure-must-deopt-kept-total",
+                 make_int(static_cast<std::int64_t>(must_deopt_kept))},
+                {"schema-2233", make_int(2233)},
+                {"issue-2233", make_int(2233)},
+                {"post-reemit-stamp-wired", make_int(1)},
+                // #2234 capture remount.
+                {"closure-capture-remount-ok-total",
+                 make_int(static_cast<std::int64_t>(capture_remount_ok))},
+                {"closure-capture-remount-fail-total",
+                 make_int(static_cast<std::int64_t>(capture_remount_fail))},
+                {"schema-2234", make_int(2234)},
+                {"issue-2234", make_int(2234)},
+                {"capture-remount-wired", make_int(1)},
+                {"closure-capture-env-gen-mismatch-total",
+                 make_int(ev.compiler_metrics_
+                              ? static_cast<std::int64_t>(
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                        ->closure_capture_env_gen_mismatch_total.load(
+                                            std::memory_order_relaxed))
+                              : 0)},
+                {"closure-capture-env-gen-wired", make_int(1)},
+                {"schema-2272", make_int(2272)},
+                {"issue-2272", make_int(2272)},
+                {"closure-capture-cell-remap-ok-total",
+                 make_int(ev.compiler_metrics_
+                              ? static_cast<std::int64_t>(
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                        ->closure_capture_cell_remap_ok_total.load(
+                                            std::memory_order_relaxed))
+                              : 0)},
+                {"closure-capture-cell-remap-fail-total",
+                 make_int(ev.compiler_metrics_
+                              ? static_cast<std::int64_t>(
+                                    static_cast<CompilerMetrics*>(ev.compiler_metrics_)
+                                        ->closure_capture_cell_remap_fail_total.load(
+                                            std::memory_order_relaxed))
+                              : 0)},
+                {"schema-2297", make_int(2297)},
+                {"issue-2297", make_int(2297)},
+                {"capture-cell-remap-wired", make_int(1)},
             };
             return build_hash(kv);
         });

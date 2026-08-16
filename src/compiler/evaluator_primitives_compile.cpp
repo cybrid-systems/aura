@@ -3678,10 +3678,27 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
         // Issue #3040: stamp + require_effect_on_ref / for_node_id before Guard.
         if (!gate_compile_node_effect(ev, "compile:mark-narrowing-dirty!", narg))
             return make_bool(false);
+        // Issue #1779: the bit flip must remain visible to
+        // compile:narrowing-dirty? even if try_acquire rejects or the
+        // Guard dtor reanalyze path clears kOccurrenceDirty. Apply the
+        // column write after the Guard so peek sees the requested state.
+        auto apply = [&]() -> bool {
+            if (ev.set_occurrence_dirty_fn_)
+                return ev.set_occurrence_dirty_fn_(node_id, set);
+            auto* ws = ev.workspace_flat();
+            if (!ws || node_id >= ws->size())
+                return false;
+            constexpr auto kOcc =
+                static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty);
+            if (set)
+                ws->mark_dirty(node_id, kOcc);
+            else
+                ws->clear_dirty_for(node_id, kOcc);
+            return true;
+        };
         // Issue #1897: occurrence dirty bit flip under try_acquire Guard.
-        return run_compile_dirty_under_guard(ev, [&]() -> EvalValue {
-            return make_bool(ev.set_occurrence_dirty_fn_(node_id, set));
-        });
+        (void)run_compile_dirty_under_guard(ev, [&]() -> EvalValue { return make_bool(apply()); });
+        return make_bool(apply());
     });
 }
 
@@ -3701,12 +3718,29 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
     //
     // This is the read-only counterpart to mark-narrowing-dirty!.
     add("compile:narrowing-dirty?", [&ev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
+        if (a.empty())
             return make_bool(false);
-        auto node_id = static_cast<std::uint32_t>(as_int(a[0]));
-        if (!ev.query_occurrence_dirty_fn_)
+        std::uint32_t node_id = 0;
+        if (is_int(a[0])) {
+            const auto n = as_int(a[0]);
+            if (n < 0)
+                return make_bool(false);
+            node_id = static_cast<std::uint32_t>(n);
+        } else {
+            const auto narg = parse_compile_node_arg(ev, a[0]);
+            if (!narg.valid)
+                return make_bool(false);
+            node_id = static_cast<std::uint32_t>(narg.id);
+        }
+        // Issue #1779: dedicated query hook (no set+restore). Fall back to
+        // a direct workspace read so peek stays honest if the hook is unset.
+        if (ev.query_occurrence_dirty_fn_ && ev.query_occurrence_dirty_fn_(node_id))
+            return make_bool(true);
+        auto* ws = ev.workspace_flat();
+        if (!ws || node_id >= ws->size())
             return make_bool(false);
-        return make_bool(ev.query_occurrence_dirty_fn_(node_id));
+        return make_bool(ws->is_dirty_for(
+            node_id, static_cast<std::uint8_t>(aura::ast::FlatAST::DirtyReason::kOccurrenceDirty)));
     });
 
     // (compile:occ-cache-stats) — Issue #340: returns

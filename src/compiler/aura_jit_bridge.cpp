@@ -166,7 +166,13 @@ extern "C" void aura_set_current_bridge_epoch(std::uint64_t v) {
 }
 
 extern "C" std::uint64_t aura_get_current_bridge_epoch(void) {
-    return g_current_bridge_epoch.load(std::memory_order_acquire);
+    const auto c = g_current_bridge_epoch.load(std::memory_order_acquire);
+    // Canonical storage is WorkspaceEpoch::Bridge (updated by
+    // bump_mutation_and_bridge_epochs even when the weak
+    // aura_set_current_bridge_epoch stub in libaura_test_objects
+    // wins ELF search order and leaves this C atom stale).
+    const auto ws = aura::core::current_bridge_epoch();
+    return ws > c ? ws : c;
 }
 
 // Issue #2043: linear-ownership epoch dual-write for JIT linear fences.
@@ -765,6 +771,9 @@ extern "C" void aura_set_aot_region_mask(std::uint64_t mask) {
 
 extern "C" void aura_set_aot_region_mask_for_eval(void* eval_ptr, std::uint64_t mask) {
     aot_state_for(eval_ptr).region_mask.store(mask, std::memory_order_relaxed);
+    // Issue #1368: auto-wired g_aot_metrics must observe per-eval region sets.
+    if (aot_metrics())
+        aot_metrics()->aot_per_eval_region_sets.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #2093: per-eval env_frame_version setter. Pairs with the

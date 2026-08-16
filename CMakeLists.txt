@@ -672,6 +672,10 @@ add_library(aura_test_objects SHARED
     src/compiler/type_checker_impl.cpp
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
+    # HotUpdateRegistry SSOT in this SO so mold --as-needed cannot leave
+    # instance() undefined. Do NOT PUBLIC-link the light JIT archive
+    # (its weak aura_reemit_* stubs would bind first and no-op full-JIT tests).
+    src/compiler/hot_update_registry.cpp
     # CI build-test (x86_64 mold --as-needed): weak bridge-hook stubs so
     # libaura_test_objects.so resolves AuraJIT ctor / aura_cleanup_aot_state /
     # aura_set_long_mutation_scheduler_hook / aura_macro_provenance_repin_on_steal
@@ -731,10 +735,10 @@ if(LLVM_FOUND)
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
         src/compiler/aura_jit_bridge.cpp
-        # HotUpdateRegistry lives in aura_jit_light_test_objects (SSOT).
-        # Full LLVM tests resolve instance() from the light SO (always
-        # DT_NEEDED via aura_test_objects) so mold --as-needed cannot
-        # leave libaura_test_objects.so with an undefined singleton.
+        # HotUpdateRegistry lives in aura_test_objects (SSOT). Do not
+        # compile it here — a second copy would ODR-clash with the
+        # test-objects SO. Light/full JIT resolve instance() from
+        # libaura_test_objects.so.
         src/compiler/aura_jit_prim_dispatch_stub.cpp
         src/core/contract_handler.cpp
         src/core/contract_stub.cpp
@@ -788,7 +792,6 @@ add_library(aura_jit_light_test_objects SHARED
     src/compiler/aura_jit.cpp
     src/compiler/aura_jit_runtime.cpp
     src/compiler/aura_jit_bridge_stub.cpp
-    src/compiler/hot_update_registry.cpp
     src/compiler/aura_jit_prim_dispatch_stub.cpp
     src/core/contract_handler.cpp
     src/core/contract_stub.cpp
@@ -820,13 +823,12 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS "-fno-rtti -fcontracts")
 # g_tl_arena SSOT (removed from aura_jit_runtime.cpp).
 target_link_libraries(aura_jit_light_test_objects PUBLIC ${CMAKE_DL_LIBS} aura_tl_arena)
-# CI x86_64 mold --as-needed strips aura_jit_* from test binaries that
-# do not directly reference JIT symbols. libaura_test_objects.so then
-# fails at load with undefined HotUpdateRegistry::instance (security
-# defaults / CastOp density / shape storm all call the singleton).
-# PUBLIC DT_NEEDED on the test-objects SO keeps the light JIT mapped
-# even when the binary itself is --as-needed-clean.
-target_link_libraries(aura_test_objects PUBLIC aura_jit_light_test_objects)
+# Do NOT PUBLIC-link light from aura_test_objects. Light's weak
+# aura_reemit_* stubs would sit first in DT_NEEDED and bind before
+# the full-JIT strong defs (split-brain: set_reemit_candidate_fn
+# from full JIT, aura_reemit_aot_for_dirty from the stub that
+# returns 0). HotUpdateRegistry lives in aura_test_objects; tests
+# that need light/full JIT must link those SOs themselves.
 
 # Phase 2 dedup helper (definition placed early so it precedes all
 # test_issue_* and pilot calls in this file). See also the pilots section

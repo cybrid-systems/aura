@@ -144,6 +144,14 @@ function(aura_issue_test_link_llvm_jit TARGET)
     )
     # AURA_HAVE_LLVM + LLVM includes + llvm_libs come PUBLIC from the lib.
     target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
+    # Prepend so full-JIT strong defs (AuraJIT ctor, reemit body) win
+    # ELF search order against weak stubs in libaura_test_objects.so.
+    get_target_property(_aura_jit_link_libs ${TARGET} LINK_LIBRARIES)
+    if(_aura_jit_link_libs)
+        list(REMOVE_ITEM _aura_jit_link_libs aura_jit_test_objects)
+        list(INSERT _aura_jit_link_libs 0 aura_jit_test_objects)
+        set_property(TARGET ${TARGET} PROPERTY LINK_LIBRARIES "${_aura_jit_link_libs}")
+    endif()
 endfunction()
 
 # LLVM JIT without observability headers (light JIT API tests).

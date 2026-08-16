@@ -2310,10 +2310,14 @@ std::size_t Evaluator::compact_env_frames() {
         // non-empty path). Issue #1510/#1526: also bump bridge_epoch
         // (+ AOT table via service hook) for dual-domain lockstep.
         defuse_version_.fetch_add(1, std::memory_order_release);
-        if (bridge_epoch_bump_fn_ && compiler_service_)
+        const bool bumped_via_hook = bridge_epoch_bump_fn_ && compiler_service_;
+        if (bumped_via_hook)
             bridge_epoch_bump_fn_(compiler_service_);
         // Issue #2017: empty compact still advances epochs — notify once.
-        {
+        // When the service bump hook is bound it already fans out via
+        // aura_aot_bump_func_table_epoch → notify_epoch_bump; a second
+        // notify here double-fires epoch listeners.
+        if (!bumped_via_hook) {
             std::uint64_t notify_epoch = current_bridge_epoch();
             if (notify_epoch == 0)
                 notify_epoch = defuse_version_.load(std::memory_order_acquire);
@@ -2449,7 +2453,8 @@ std::size_t Evaluator::compact_env_frames() {
     // captured-env remap + dual-epoch bump must reach every
     // subsequent emit).
     publish_live_env_linear_to_bridge();
-    if (bridge_epoch_bump_fn_ && compiler_service_)
+    const bool bumped_via_hook = bridge_epoch_bump_fn_ && compiler_service_;
+    if (bumped_via_hook)
         bridge_epoch_bump_fn_(compiler_service_);
 
     // Issue #1526: restamp tree-walker Closure::bridge_epoch → current.
@@ -2489,7 +2494,8 @@ std::size_t Evaluator::compact_env_frames() {
 
     // Issue #2017: notify HotUpdateRegistry epoch listeners exactly once
     // with the post-compact epoch (bridge preferred; defuse fallback).
-    {
+    // Skip when the service bump hook already notified (AOT table epoch).
+    if (!bumped_via_hook) {
         std::uint64_t notify_epoch = current_bridge_epoch();
         if (notify_epoch == 0)
             notify_epoch = defuse_version_.load(std::memory_order_acquire);

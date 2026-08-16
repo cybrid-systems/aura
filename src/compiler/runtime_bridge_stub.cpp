@@ -95,24 +95,14 @@ extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behi
     return 0;
 }
 
-// aura_aot_count_live_generation_behind_slots lives in runtime_ssot.cpp.
-extern "C" __attribute__((weak)) std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t /*v*/) {
-    // Weak stub for light-link fallback. The real bridge (JIT lib) reports
-    // success + advances the exhausted-min-dirty success counter; the stub
-    // returns 0 and never runs the host emit callback. Tests wired for the
-    // real bridge detect the stub via a probe and skip success-streak
-    // assertions (attempt is still verified).
-    return 0;
-}
-
-extern "C" __attribute__((weak)) void* aura_aot_get_reemit_owner_eval(void) {
-    return nullptr;
-}
-extern "C" __attribute__((weak)) void* aura_aot_get_register_owner_eval(void) {
-    return nullptr;
-}
-extern "C" __attribute__((weak)) void aura_aot_set_reemit_owner_eval(void* /*eval_ptr*/) {}
-extern "C" __attribute__((weak)) void aura_aot_set_register_owner_eval(void* /*eval_ptr*/) {}
+// Do NOT stub aura_reemit_aot_for_dirty or the owner-eval TLS accessors
+// here. Same class as aura_set_aot_defuse_version above: a weak definition
+// in libaura_test_objects.so is found first in ELF search order and
+// preempts the strong body in libaura_jit_test_objects.so. Full-JIT tests
+// then see set_reemit_candidate_fn (JIT) + reemit-returns-0 (stub) —
+// split-brain, every incremental-reemit AC fails. Light/full JIT SOs
+// already provide the symbol (stub vs real). Non-JIT binaries leave it
+// undefined; mold --as-needed + lazy bind only fault if a path calls it.
 
 // aura_aot_invalidate_all_stale_slots_for_eval lives in runtime_ssot.cpp.
 

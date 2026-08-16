@@ -306,6 +306,10 @@ enum class CrossWorkspaceReject : std::uint8_t {
 // hard-rejects with CowGenMismatch (soft only within same gen).
 extern "C" void aura_set_live_workspace_cow_gen(std::uint64_t gen) noexcept;
 extern "C" std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept;
+// Issue #2275: per-eval expected COW generation (fail-closed mismatch
+// vs live workspace cow_gen). Bodies in aura_jit_bridge.cpp.
+extern "C" void aura_set_aot_expected_cow_gen_for_eval(void* eval_ptr, std::uint64_t gen) noexcept;
+extern "C" std::uint64_t aura_get_aot_expected_cow_gen_for_eval(void* eval_ptr) noexcept;
 // Issue #2547: per-closure cow_gen_at_capture (0 = unstamped / freed).
 extern "C" std::uint64_t aura_get_closure_cow_gen(std::int64_t closure_id);
 // Issue #2550: per-closure stable_func_id (0 = anonymous / unstamped / freed).

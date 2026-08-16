@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**497** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**499** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,8 +10,8 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 87 primitives (18%)
-- **core**: 365 primitives (73%)
+- **mutation-safety**: 87 primitives (17%)
+- **core**: 367 primitives (74%)
 - **internal-observable**: 44 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -620,6 +620,11 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `syntax:set-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `syntax:set-provenance` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 
+## Terminal: (2)
+
+- `terminal:create-buffer` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:diff` *[core]* — `src/compiler/evaluator_primitives_obs_jit.cpp`
+
 ## Thread_Pool: (1)
 
 - `thread_pool:enqueue` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -735,7 +740,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (365)
+### Core builtins (must remain primitive) (367)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -1068,6 +1073,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `tcp-local-port` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
 - `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
+- `terminal:create-buffer` — `src/compiler/evaluator_primitives_obs_jit.cpp`
+- `terminal:diff` — `src/compiler/evaluator_primitives_obs_jit.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `trunc` — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`

@@ -21,6 +21,7 @@
 #include <thread>
 #include <unordered_set>
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/typed_mutation_audit.h"
 #include <cstring>
 
 import std;
@@ -941,8 +942,10 @@ namespace {
         aura_set_aot_emit_region_mask(0); // no region filter — all 5 candidates re-emit
 
         ReemitFixture f;
+        // Region 2 is Evolution and is permanently skipped (#2016).
+        // Use 6 so all 5 candidates actually re-emit under mask=0.
         f.candidates = {
-            {"alpha", 1, false}, {"bravo", 2, true}, {"charlie", 3, false},
+            {"alpha", 1, false}, {"bravo", 6, true}, {"charlie", 3, false},
             {"delta", 4, true},  {"echo", 5, false},
         };
         aura_set_reemit_candidate_fn(&reemit_candidate_iter, &f);
@@ -975,9 +978,10 @@ namespace {
         // metric still grows by the re-emit count (closure bridge
         // re-stamp is a side-effect of any successful re-emit commit).
         ReemitFixture f;
+        // Region 2 is Evolution (#2016 skip). Use 6 so all 4 re-emit.
         f.candidates = {
             {"w", 1, false},
-            {"x", 2, false},
+            {"x", 6, false},
             {"y", 3, false},
             {"z", 4, false},
         };
@@ -1001,10 +1005,14 @@ namespace {
 
 } // namespace
 
+extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
+
 int run_incremental_aot_closure_1480() {
     std::println("═══ Issue #1480 incremental re-AOT pipeline verification ═══\n");
     aura::test::g_passed = 0;
     aura::test::g_failed = 0;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
 
     test_set_reemit_candidate_callback();
     test_phase1_skeleton_fallback();

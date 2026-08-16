@@ -558,8 +558,12 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("typed-mutation-audit-skip-wired", 1); // #1892
             insert_kv("self-evo-query-hygiene-mandate", 1);  // #1892
             // Primary schema stays 2123 for back-compat; #2525 is additive.
-            insert_kv("issue", 2123);  // #2123 production default-filter contract
-            insert_kv("schema", 2123); // lineage 1892 / 1636 / 1609 / 1501 / 547
+            insert_kv("issue", 2123);       // #2123 production default-filter contract
+            insert_kv("schema", 2123);      // lineage 1892 / 1636 / 1609 / 1501 / 547
+            insert_kv("schema-1892", 1892); // #1892 / #1636 lineage retained
+            insert_kv("issue-1892", 1892);
+            insert_kv("schema-1636", 1636);
+            insert_kv("issue-1636", 1636);
             insert_kv("schema-2123", 2123);
             insert_kv("issue-2123", 2123);
             insert_kv("schema-2525", 2525); // #2525 residual filter/unconstrained

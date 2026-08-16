@@ -92,14 +92,17 @@ static void ac1_source() {
 static void ac2_always_attempt_not_only_composite() {
     std::println("\n--- AC2: Full always attempts partial recover ---");
     auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
     // Recovery is not gated solely by composite (if (composite) wrap removed for attempt)
     CHECK(bound.find("partial_recovery_attempt_total") != std::string::npos,
           "global attempt counter");
     // Attempt is outside composite-only block
     CHECK(bound.find("ac.partial_recovery_attempt_total.fetch_add") != std::string::npos,
           "attempt fetch_add");
-    // Composite still dual-stamps attempt when composite
-    CHECK(bound.find("composite_partial_recover_attempt_total") != std::string::npos,
+    // Composite still dual-stamps attempt when composite (SSOT: typecheck
+    // composite_txn_commit; boundary consumes recovered).
+    CHECK(bound.find("composite_partial_recover_attempt_total") != std::string::npos ||
+              tc.find("composite_partial_recover_attempt_total") != std::string::npos,
           "composite still dual-stamps");
     // full-partial-recover trail name for non-composite recover
     CHECK(bound.find("full-partial-recover") != std::string::npos, "non-composite recover op name");

@@ -136,9 +136,10 @@ int run_narrowing_dirty_1779() {
         }
         CHECK(!prim.empty(), "read compile_04.cpp");
         CHECK(prim.find("#1779") != std::string::npos, "cites #1779");
-        auto pos = prim.find("compile:narrowing-dirty?");
+        auto pos = prim.find("add(\"compile:narrowing-dirty?\"");
         CHECK(pos != std::string::npos, "primitive present");
-        auto win = prim.substr(pos, 800);
+        auto end = prim.find("add(\"", pos + 8);
+        auto win = prim.substr(pos, end == std::string::npos ? 1200 : end - pos);
         CHECK(win.find("query_occurrence_dirty_fn_") != std::string::npos, "uses query hook");
         CHECK(win.find("set_occurrence_dirty_fn_") == std::string::npos,
               "no set hook in query primitive body");
