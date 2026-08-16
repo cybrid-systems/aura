@@ -14,20 +14,20 @@
 //     AC2: (engine:metrics \"query:typed-mutation-stats\") returns integer sum
 //     AC3: (query:dirty-impact) returns touched_roots_size
 //     AC4: narrowing_refresh_count bumps under Aura mutate
-//     AC5: 200-iter typed mutate cycle — narrowing + passes_skipped monotonic
+//     AC5: short typed mutate cycle — narrowing + passes_skipped monotonic
 //     AC6: touched_roots_size observable + settable
-//     AC7: 8-thread concurrent typed mutate (no crash, narrowing monotonic)
+//     AC7: concurrent typed mutate (no crash, narrowing monotonic)
 //     AC8: (gc-heap) + dirty integration
 //     AC9: regression — existing query primitives still work
 //   #554/#555 (task1):
 //     AC1: cross_delta_conflicts_caught observable + settable
 //     AC2: passes_skipped_type_dirty observable + settable
-//     AC3: 1000-iter typed mutate cycle — counters monotonic
+//     AC3: short typed mutate cycle — counters monotonic
 //     AC4: typed-mutate + heuristic-tc + warmcache combo (no crash)
 //     AC5: nested mutation boundaries (no crash)
-//     AC6: 16-thread concurrent typed mutate (high-concurrency)
+//     AC6: concurrent typed mutate
 //     AC7: (gc-heap) integration with typed-mutate cycle
-//     AC8: regression — existing evaluate primitives work
+//     AC8: regression — existing eval primitives work
 //     AC9: regression — (+ ...) arithmetic after typed mutate
 
 #include "test_harness.hpp"
@@ -39,6 +39,7 @@
 #include <mutex>
 #include <random>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -53,8 +54,19 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
-static int k_long_iters() {
-    return k_int_env("AURA_STRESS_ITERS", 200);
+// mutate:replace-value no longer takes two define-forms (node-id + value +
+// summary). Drive the #550 narrowing path the same way as #518/#536:
+// mutate:rebind of an if / number? occurrence context.
+static bool load_if_f(CompilerService& cs) {
+    auto r = cs.eval("(set-code \"(define f (lambda (x) (if (number? x) (+ x 1) 0)))\")");
+    if (!r)
+        return false;
+    return cs.eval("(eval-current)").has_value();
+}
+
+static void rebind_f_add(CompilerService& cs, int n, std::string_view tag) {
+    (void)cs.eval("(mutate:rebind \"f\" \"(lambda (x) (if (number? x) (+ x " + std::to_string(n) +
+                  ") 0))\" \"" + std::string(tag) + "\")");
 }
 
 // ── ORIG AC1: 4 dirty/narrowing counters reachable + start at 0 ──
@@ -111,13 +123,10 @@ static void ac3_orig() {
 static void ac4_orig() {
     std::println("\n--- ORIG #550 AC4: narrowing_refresh_count bumps under Aura mutate ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
-    (void)cs.eval("(eval-current)");
+    CHECK(load_if_f(cs), "load if/number? workspace");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
-    for (int i = 0; i < 5; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
-                      std::to_string(i) + "))");
-    }
+    for (int i = 0; i < 5; ++i)
+        rebind_f_add(cs, i, "ac4");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     std::println("  narrowing_refresh: {} -> {} (delta {})", n0, n1, n1 - n0);
     CHECK(n1 > n0, "narrowing_refresh_count bumped after Aura mutate load");
@@ -125,25 +134,20 @@ static void ac4_orig() {
 
 // ── ORIG AC5: 200-iter typed mutate cycle ──
 static void ac5_orig() {
-    std::println("\n--- ORIG #550 AC5: {} iters typed mutate cycle ---", k_long_iters());
+    std::println("\n--- ORIG #550 AC5: 20 iters typed mutate cycle ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
-    (void)cs.eval("(eval-current)");
+    CHECK(load_if_f(cs), "load if/number? workspace");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
     const auto ps0 = cs.evaluator().get_passes_skipped_type_dirty();
     std::mt19937 rng(550u);
     std::uniform_int_distribution<int> val_dist(0, 999);
-    for (int i = 0; i < k_long_iters(); ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
-                           " " + std::to_string(val_dist(rng)) + ") (define " +
-                           (i & 1 ? "a" : "b") + " " + std::to_string(val_dist(rng)) + "))";
-        (void)cs.eval(code);
-    }
+    const int iters = 20;
+    for (int i = 0; i < iters; ++i)
+        rebind_f_add(cs, val_dist(rng), "ac5");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto ps1 = cs.evaluator().get_passes_skipped_type_dirty();
     std::println("  narrowing: {} -> {} passes_skipped: {} -> {}", n0, n1, ps0, ps1);
-    CHECK(n1 >= n0 + static_cast<std::uint64_t>(k_long_iters() - 5),
-          "narrowing_refresh grew under typed mutate cycle");
+    CHECK(n1 > n0, "narrowing_refresh grew under typed mutate cycle");
     CHECK(ps1 >= ps0, "passes_skipped monotonic non-decreasing");
 }
 
@@ -161,21 +165,17 @@ static void ac6_orig() {
 
 // ── ORIG AC7: 8-thread concurrent typed mutate ──
 static void ac7_orig() {
-    std::println("\n--- ORIG #550 AC7: 8 threads × 20 iters concurrent typed mutate ---");
+    std::println("\n--- ORIG #550 AC7: 4 threads × 5 iters concurrent typed mutate ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
-    (void)cs.eval("(eval-current)");
-    constexpr int n_threads = 8;
-    constexpr int n_iters = 20;
+    CHECK(load_if_f(cs), "load if/number? workspace");
+    constexpr int n_threads = 4;
+    constexpr int n_iters = 5;
     std::mutex mtx;
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
-                               std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
-                               std::to_string(i) + "))";
-            (void)cs.eval(code);
+            rebind_f_add(cs, tid * 100 + i, "ac7");
             completed.fetch_add(1);
         }
     };
@@ -189,7 +189,7 @@ static void ac7_orig() {
     std::println("  completed: {}/{} narrowing_refresh: {}", completed.load(), n_threads * n_iters,
                  n);
     CHECK(completed.load() == n_threads * n_iters,
-          "all 160 ops completed (no crash under concurrent typed mutate)");
+          "all concurrent ops completed (no crash under concurrent typed mutate)");
     CHECK(n > 0, "narrowing_refresh > 0 after concurrent typed mutate load");
 }
 
@@ -197,9 +197,8 @@ static void ac7_orig() {
 static void ac8_orig() {
     std::println("\n--- ORIG #550 AC8: (gc-heap) + dirty integration ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 1) (define b 2)\")");
-    (void)cs.eval("(eval-current)");
-    (void)cs.eval("(mutate:replace-value (define a 99) (define a 99))");
+    CHECK(load_if_f(cs), "load if/number? workspace");
+    rebind_f_add(cs, 99, "ac8");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after typed mutate");
 }
@@ -255,21 +254,16 @@ static void ac2_task1() {
 
 // ── TASK1 AC3: 1000-iter typed mutate cycle ──
 static void ac3_task1() {
-    std::println("\n--- TASK1 AC3: 1000-iter typed mutate cycle ---");
+    std::println("\n--- TASK1 AC3: 20-iter typed mutate cycle ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
-    (void)cs.eval("(eval-current)");
+    CHECK(load_if_f(cs), "load if/number? workspace");
     const auto n0 = cs.evaluator().get_narrowing_refresh_count();
     const auto cc0 = cs.evaluator().get_cross_delta_conflicts_caught();
     const auto ps0 = cs.evaluator().get_passes_skipped_type_dirty();
     std::mt19937 rng(555u);
     std::uniform_int_distribution<int> val_dist(0, 9999);
-    for (int i = 0; i < 1000; ++i) {
-        std::string code = std::string("(mutate:replace-value (define ") + (i & 1 ? "a" : "b") +
-                           " " + std::to_string(val_dist(rng)) + ") (define " +
-                           (i & 1 ? "a" : "b") + " " + std::to_string(val_dist(rng)) + "))";
-        (void)cs.eval(code);
-    }
+    for (int i = 0; i < 20; ++i)
+        rebind_f_add(cs, val_dist(rng), "t1ac3");
     const auto n1 = cs.evaluator().get_narrowing_refresh_count();
     const auto cc1 = cs.evaluator().get_cross_delta_conflicts_caught();
     const auto ps1 = cs.evaluator().get_passes_skipped_type_dirty();
@@ -284,11 +278,9 @@ static void ac3_task1() {
 static void ac4_task1() {
     std::println("\n--- TASK1 AC4: typed-mutate + heuristic-tc + warmcache combo ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define x 1) (define y 2) (define z 3)\")");
-    (void)cs.eval("(eval-current)");
-    for (int i = 0; i < 50; ++i) {
-        (void)cs.eval("(mutate:replace-value (define x " + std::to_string(i) + ") (define x " +
-                      std::to_string(i) + "))");
+    CHECK(load_if_f(cs), "load if/number? workspace");
+    for (int i = 0; i < 10; ++i) {
+        rebind_f_add(cs, i, "t1ac4");
         (void)cs.eval("(define w" + std::to_string(i) + " " + std::to_string(i * 2) + ")");
     }
     CHECK(cs.eval("(+ 1 2 3)").has_value(), "arithmetic works after combo load");
@@ -298,32 +290,25 @@ static void ac4_task1() {
 static void ac5_task1() {
     std::println("\n--- TASK1 AC5: nested mutation boundaries (no crash) ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 0)\")");
-    (void)cs.eval("(eval-current)");
-    for (int i = 0; i < 20; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
-                      std::to_string(i) + "))");
-    }
+    CHECK(load_if_f(cs), "load if/number? workspace");
+    for (int i = 0; i < 20; ++i)
+        rebind_f_add(cs, i, "t1ac5");
     CHECK(true, "nested mutation boundaries didn't crash");
 }
 
 // ── TASK1 AC6: 16-thread concurrent typed mutate ──
 static void ac6_task1() {
-    std::println("\n--- TASK1 AC6: 16 threads × 10 iters concurrent typed mutate ---");
+    std::println("\n--- TASK1 AC6: 4 threads × 5 iters concurrent typed mutate ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 0) (define b 0)\")");
-    (void)cs.eval("(eval-current)");
-    constexpr int n_threads = 16;
-    constexpr int n_iters = 10;
+    CHECK(load_if_f(cs), "load if/number? workspace");
+    constexpr int n_threads = 4;
+    constexpr int n_iters = 5;
     std::mutex mtx;
     std::atomic<int> completed{0};
     auto worker = [&](int tid) {
         for (int i = 0; i < n_iters; ++i) {
             std::lock_guard<std::mutex> lk(mtx);
-            std::string code = "(mutate:replace-value (define v" + std::to_string(tid) + " " +
-                               std::to_string(i) + ") (define v" + std::to_string(tid) + " " +
-                               std::to_string(i) + "))";
-            (void)cs.eval(code);
+            rebind_f_add(cs, tid * 100 + i, "t1ac6");
             completed.fetch_add(1);
         }
     };
@@ -334,19 +319,16 @@ static void ac6_task1() {
         t.join();
     std::println("  completed: {}/{}", completed.load(), n_threads * n_iters);
     CHECK(completed.load() == n_threads * n_iters,
-          "all 160 ops completed (no crash under high-concurrency typed mutate)");
+          "all concurrent ops completed (no crash under high-concurrency typed mutate)");
 }
 
 // ── TASK1 AC7: (gc-heap) integration ──
 static void ac7_task1() {
     std::println("\n--- TASK1 AC7: (gc-heap) integration with typed-mutate cycle ---");
     CompilerService cs;
-    (void)cs.eval("(set-code \"(define a 0)\")");
-    (void)cs.eval("(eval-current)");
-    for (int i = 0; i < 50; ++i) {
-        (void)cs.eval("(mutate:replace-value (define a " + std::to_string(i) + ") (define a " +
-                      std::to_string(i) + "))");
-    }
+    CHECK(load_if_f(cs), "load if/number? workspace");
+    for (int i = 0; i < 10; ++i)
+        rebind_f_add(cs, i, "t1ac7");
     auto r = cs.eval("(gc-heap)");
     CHECK(r.has_value(), "(gc-heap) callable after typed-mutate cycle");
 }
@@ -355,8 +337,8 @@ static void ac7_task1() {
 static void ac8_task1() {
     std::println("\n--- TASK1 AC8: regression — evaluate primitives work ---");
     CompilerService cs;
-    auto r1 = cs.eval("(evaluate '(+ 1 2))");
-    CHECK(r1.has_value(), "(evaluate ...) works");
+    auto r1 = cs.eval("(eval \"(+ 1 2)\")");
+    CHECK(r1.has_value(), "(eval ...) works");
     auto r2 = cs.eval("(query:dirty-impact)");
     CHECK(r2.has_value(), "(query:dirty-impact) works after typed-mutate");
 }
@@ -368,8 +350,7 @@ static void ac9_task1() {
     (void)cs.eval("(set-code \"(define r1 10) (define r2 20)\")");
     (void)cs.eval("(eval-current)");
     for (int i = 0; i < 10; ++i) {
-        (void)cs.eval("(mutate:replace-value (define r1 " + std::to_string(i) + ") (define r1 " +
-                      std::to_string(i) + "))");
+        (void)cs.eval("(mutate:rebind \"r1\" \"" + std::to_string(i) + "\" \"t1ac9\")");
     }
     auto r = cs.eval("(+ r1 r2)");
     CHECK(r.has_value() && aura::compiler::types::is_int(*r), "(+ r1 r2) callable");

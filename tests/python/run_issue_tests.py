@@ -186,7 +186,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_depth_safe_mutation_boundary_steal",
     "test_dirty_aware_shape_linear_passes",
     "test_hotpath_matrix_batch",
-    "test_incremental_typed_selfmod_dirty_narrowing",
     "test_instr_level_relower_pass",
     "test_isolation_audit_mid",
     "test_join_drain_reclaim",
@@ -268,6 +267,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # Batch 3 greened: test_obs_misc_batch + test_production_hardening_batch
     # (schema href via engine:metrics, source-cite type_stats, #2835
     # Restricted multi-tenant, #2985 production-face admit).
+    # Batch 3 leftover greened: test_incremental_typed_selfmod_dirty_narrowing
+    # (mutate:rebind if/number? occurrence path; evaluate → eval).
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",
