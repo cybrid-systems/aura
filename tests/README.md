@@ -79,6 +79,17 @@ tests/
     └── scaffolds/ 起步模板 (不编译, R13+R14 改名)
 ```
 
+## `.aura` file leaves
+
+`suite` and `regression` share `tests/python/aura_file_runner.py`:
+
+| Leaf | Directory | How it is invoked | Pass rule |
+|---|---|---|---|
+| `suite` | `tests/suite/*.aura` | `aura --load file` | exit 0; optional first `;; expect:` |
+| `regression` | `tests/regression/*.aura` | stdin (leading `;;` header stripped) | first `;; expect:` (`no-crash` / `no-error` / `no-timeout` / substring) |
+
+`integ` / `typecheck` / `smoke` stay fixture-JSON. `e2e` keeps the golden PASS harness. `p0` is still `tests/python/test_regression.py`.
+
 ## 命名约定
 
 | 类别 | 例 | 说明 |
@@ -162,9 +173,14 @@ python3 tests/run.py fixtures
 python3 tests/run.py bench
 python3 tests/run.py mutation
 
-./build.py check              # gate + build + default tests
+./build.py check              # gate + build + ci
 ./build.py gate               # static only
+./build.py list               # tiers + leaf suites (SSOT)
+./build.py test               # default: ci (core + safety + issues)
+./build.py test pr            # core + safety + issues-fast
 ./build.py test unit | integ | issues | issues-fast
+./build.py test suite | regression   # shared .aura file runner
+
 
 ninja -C build test_obs_schema_matrix && ./build/test_obs_schema_matrix
 ninja -C build test_arena_batch test_gc_compact_batch  # EXCLUDE_FROM_ALL 目标

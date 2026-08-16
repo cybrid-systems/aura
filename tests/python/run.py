@@ -60,9 +60,7 @@ def _cmd_list(_: argparse.Namespace) -> int:
         if name == "list":
             continue
         print(f"  {name:<{width}}  {desc}")
-    print(
-        "\nAlso available via ./build.py test {unit,integ,smoke,issues,issues-fast,gradual,bench,mutation,bash,suite,…}"
-    )
+    print("\nAlso available via ./build.py test [tier|suite]  (default ci; see ./build.py list)")
     print(f"Build dir: {BUILD}")
     print(f"Aura bin:  {AURA_BIN}  ({'ok' if AURA_BIN.is_file() else 'missing'})")
     return 0
