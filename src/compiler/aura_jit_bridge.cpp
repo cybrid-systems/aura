@@ -3817,21 +3817,39 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         // Unowned (owner==0) or unmapped names pass through (new emits
         // will stamp under the current owner; soft single-eval slots
         // remain unowned).
+        //
+        // #2670 namespaced the stable-id map by eval owner. A name
+        // assigned under the process-default (nullptr) map — or under
+        // a foreign eval — is invisible to aura_lookup_stable_func_id
+        // while reemit TLS is set to the current owner. Walk every
+        // eval's map so a live foreign-owned slot still filters.
         if (filter_by_eval) {
-            const std::uint32_t sid = aura_lookup_stable_func_id(name);
-            if (sid != 0 && sid < kMaxAotFuncs) {
-                auto& slot = g_aot_func_slots[sid];
-                const auto prev_fn = slot.fn_ptr.load(std::memory_order_acquire);
-                if (prev_fn != 0) {
+            bool foreign_owned = false;
+            {
+                std::lock_guard<std::mutex> lock(g_stable_func_id_mtx);
+                for (const auto& [eval, inner] : g_eval_to_stable_func_id) {
+                    auto it = inner.find(name);
+                    if (it == inner.end())
+                        continue;
+                    const std::uint32_t sid = it->second;
+                    if (sid == 0 || sid >= kMaxAotFuncs)
+                        continue;
+                    auto& slot = g_aot_func_slots[sid];
+                    if (slot.fn_ptr.load(std::memory_order_acquire) == 0)
+                        continue;
                     const auto owner = slot.owner_eval.load(std::memory_order_acquire);
                     if (owner != 0 && owner != want_owner) {
-                        ++cross_eval_skips;
-                        if (aot_metrics())
-                            aot_metrics()->reemit_cross_eval_candidate_skipped_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        continue;
+                        foreign_owned = true;
+                        break;
                     }
                 }
+            }
+            if (foreign_owned) {
+                ++cross_eval_skips;
+                if (aot_metrics())
+                    aot_metrics()->reemit_cross_eval_candidate_skipped_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                continue;
             }
         }
 

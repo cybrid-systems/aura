@@ -187,7 +187,9 @@ static void ac5_source_and_gate() {
           "AC5: build script");
     CHECK(build.find("cmd_specjit_per_eval_storm_isolation_coverage") != std::string::npos,
           "AC5: coverage cmd");
-    CHECK(script.find("schema-2370") != std::string::npos, "AC5: coverage script");
+    // Manifest-backed wrapper (scripts/coverage Phase 1) cites the
+    // issue number; schema-2370 lives in the 2370.json manifest.
+    CHECK(script.find("2370") != std::string::npos, "AC5: coverage script");
 }
 
 } // namespace

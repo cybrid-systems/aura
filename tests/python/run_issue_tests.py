@@ -124,20 +124,21 @@ PRE_EXISTING_FAILURES: set[str] = {
     # forever; individual ACs still fail visibly with ⚠. Follow-ups:
     # rebaseline schema sentinels, re-enable docs soft-cites, fix reemit
     # / storm isolation under parallel load.
-    "test_aot_incremental_reemit",
+    # test_aot_incremental_reemit greened: remount env_gen 0=unstamped,
+    # call-time stale_deopt informational when no native fn.
     "test_blame_complete_commit_gate",
     "test_coercion_ban_weak_ir",
     "test_coercion_provenance_miss_force_audit",
     "test_coercion_reject_production_defaults",
     "test_composite_txn_commit",
     # test_dead_coercion_pipeline_wire: schema lineage rebaselined to 2130
-    "test_isolation_stamp_resolve",
+    # test_isolation_stamp_resolve greened inside test_aot_jit_stamp_batch
     "test_lifetime_pin_batch_ffi_present_2048",
     "test_linear_ownership_batch",
     "test_mutate_capability_force",
     "test_mutation_aot_unit_batch",
     "test_mutation_typed_audit_batch",
-    "test_partial_relower_cascade",
+    # test_partial_relower_cascade greened inside test_aot_jit_stamp_batch
     "test_production_security_defaults",
     # test_query_epoch_contract: docs soft-skip when file absent
     "test_reemit_production_default_defer",
@@ -186,16 +187,16 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_depth_safe_mutation_boundary_steal",
     # test_dirty_aware_shape_linear_passes greened inside shape_soa_storm_batch
     "test_hotpath_matrix_batch",
-    "test_instr_level_relower_pass",
+    # test_instr_level_relower_pass / test_layout_stamp greened inside
+    # test_aot_jit_stamp_batch
     "test_isolation_audit_mid",
     "test_join_drain_reclaim",
-    "test_layout_stamp",
     "test_mailbox_bp_admit",
     "test_moving_compact",
     "test_mutation_safety_snapshot_steal",
     "test_pair_slot_lock",
     "test_parallel_intend_pure_contract",
-    "test_partial_relower_storm_gate",
+    # test_partial_relower_storm_gate greened inside test_aot_jit_stamp_batch
     # test_query_and_replace_batch / test_query_epoch_contract greened
     # inside test_module_query_batch
     "test_root_remap_pin_contract_unified",
@@ -216,7 +217,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # ACs, fix exit-path teardown crashers, fix schema query keys.
     "test_agent_apply_mutex",
     "test_agent_max_no_yield",
-    "test_aot_hot_update_health",
+    # test_aot_hot_update_health greened inside test_aot_jit_stamp_batch
     "test_arena_auto_compact_intelligent",
     "test_atomic_batch_rollback_fiber_task1",
     "test_capability_audit_publish",
@@ -225,7 +226,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_compiler_closure_env_safety_post_invalidate",
     "test_densify_ownership_scan_fail_gate",
     "test_dispatch_required_effects",
-    "test_exhausted_min_dirty_reemit",
+    # test_exhausted_min_dirty_reemit greened inside test_aot_jit_stamp_batch
     "test_fiber_orch_core_batch",
     "test_fiber_orch_parallel_quota_batch",
     "test_force_compact_hard_mutex",
@@ -235,20 +236,18 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_incremental_perblock_closure_bridge_safety",
     "test_issue_1990",
     "test_issue_1993",
-    "test_live_closure_full_restamp",
+    # test_live_closure_full_restamp greened inside test_aot_jit_stamp_batch
     "test_lock_order_audit",
     "test_join_drain_timeout",
     "test_orch_agent_mutation_boundary",
     "test_orch_soft_boundary_unified",
     "test_orch_scope",
     "test_per_scope_bp_admit",
-    "test_reemit_mutation_boundary_handshake",
+    # test_reemit_mutation_boundary_handshake / reload_recovery /
+    # shape_storm_partial_relower / specjit_per_eval_storm_isolation /
+    # specjit_pereval_storm_e2e greened inside test_aot_jit_stamp_batch
     "test_refinement_closed_loop",
-    "test_reload_recovery_query",
     "test_require_effect_live_mid",
-    "test_shape_storm_partial_relower",
-    "test_specjit_per_eval_storm_isolation",
-    "test_specjit_pereval_storm_e2e",
     "test_stable_ref_tenant_mandate",
     "test_stats_module_unification",
     "test_steal_complete_gc_defer",
@@ -281,12 +280,16 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_epoch_invariant_misc_batch",
     # test_ir_closure_jit_misc_batch + test_module_query_batch greened
     # (light-link residual tick; query-and-replace #t / pair-error).
-    "test_jit_macro_introduced_preserve",
+    # test_jit_macro_introduced_preserve greened: preserved-total cite
+    # via aura_query_prims_source (lifecycle TU).
     "test_misc_issue_fold_batch",
     "test_mutation_hold_boundary_batch",
     "test_orch_agent_batch",
     "test_security_capability_batch",
-    "test_serve_legacy_issue_batch",
+    # test_serve_legacy_issue_batch greened: spawn_quota !f release cite.
+    # test_aot_jit_stamp_batch greened (26/0): PerEval TLS no longer
+    # stubbed in first DSO; #2606 filter walks all eval maps; remount
+    # / exhaust ACs rebaselined to current production.
     # test_shape_soa_storm_batch greened: PerEval default (#2683), region
     # pump trips on first-window n>=threshold, Global pump uses process window.
 }

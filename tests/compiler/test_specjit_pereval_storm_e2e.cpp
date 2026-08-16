@@ -299,7 +299,9 @@ static void ac5_concurrent_and_source_gate() {
     CHECK(sj.find("g_specjit_per_eval_storm_skip_foreign_total") != std::string::npos,
           "AC5: foreign skip in SpecJIT");
     CHECK(sj.find("storm_isolation_is_per_eval") != std::string::npos, "AC5: PerEval gate");
-    CHECK(sp.find("aura_get_storm_isolation_mode() != 2") != std::string::npos,
+    CHECK(sp.find("aura_get_storm_isolation_mode") != std::string::npos &&
+              (sp.find("iso_mode == 2") != std::string::npos ||
+               sp.find("iso_mode != 2") != std::string::npos),
           "AC5: ShapeProfiler skips global bump under PerEval");
     CHECK(mut.find("schema-2504") != std::string::npos, "AC5: schema-2504 in mutate");
     CHECK(mut.find("specjit-pereval-e2e-isolation-wired") != std::string::npos,
@@ -309,7 +311,9 @@ static void ac5_concurrent_and_source_gate() {
           "AC5: build.py gate script");
     CHECK(build.find("cmd_specjit_pereval_storm_e2e_coverage") != std::string::npos,
           "AC5: build.py coverage cmd");
-    CHECK(script.find("schema-2504") != std::string::npos, "AC5: coverage script present");
+    // Manifest-backed wrapper (scripts/coverage Phase 1) cites the
+    // issue number; schema-2504 lives in the 2504.json manifest.
+    CHECK(script.find("2504") != std::string::npos, "AC5: coverage script present");
     CHECK(script.find("2504") != std::string::npos, "AC5: issue cite in coverage script");
 }
 

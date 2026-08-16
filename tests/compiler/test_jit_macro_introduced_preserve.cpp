@@ -87,11 +87,13 @@ static bool setup_macro_ws(CompilerService& cs) {
 
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2022 ---");
-    auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
-    auto jit = read_file("src/compiler/aura_jit.cpp");
-    auto hdr = read_file("src/compiler/aura_jit.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
-    auto svc = read_file("src/compiler/service.ixx");
+    auto rt = aura::test::aura_read_repo_file("src/compiler/aura_jit_runtime.cpp");
+    auto jit = aura::test::aura_read_repo_file("src/compiler/aura_jit.cpp");
+    auto hdr = aura::test::aura_read_repo_file("src/compiler/aura_jit.h");
+    // query:ir-hygiene-stats keys live in the split query TUs (#2022
+    // preserved-total is in evaluator_primitives_query_lifecycle.cpp).
+    auto q = aura::test::aura_query_prims_source();
+    auto svc = aura::test::aura_read_repo_file("src/compiler/service.ixx");
     CHECK(!rt.empty(), "aura_jit_runtime.cpp readable");
     CHECK(rt.find("Issue #2022") != std::string::npos, "runtime cites #2022");
     CHECK(rt.find("aura_jit_stamp_fn_macro_marker") != std::string::npos, "side-table stamp API");
