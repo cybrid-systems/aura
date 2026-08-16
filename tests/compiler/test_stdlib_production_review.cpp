@@ -26,7 +26,7 @@ using aura::compiler::types::is_pair;
 namespace {
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref {} \'{}\')", aura::test::aura_call_expr(q), key));
+    auto r = cs.eval(aura::test::aura_href_expr(q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);

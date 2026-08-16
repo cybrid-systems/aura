@@ -251,7 +251,8 @@ static void ac6_schema_source() {
     CHECK(href(cs, "schema-2556") == 2556, "AC6: schema-2556 retained");
 
     const auto meta = read_file("src/compiler/castop_typed_meta.h");
-    const auto query = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto query = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                       read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(meta.find("Phase B") != std::string::npos, "AC6: Phase B out of scope documented");
     CHECK(meta.find("Phase C") != std::string::npos, "AC6: Phase C out of scope documented");
     CHECK(query.find("schema-2624") != std::string::npos, "AC6: query schema-2624");

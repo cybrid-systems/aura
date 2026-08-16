@@ -162,7 +162,8 @@ static void ac5_schema_source() {
 
     auto pol = read_file("src/compiler/castop_density_policy.hh");
     auto sd = read_file("src/compiler/service_dirty.cpp");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(pol.find("Issue #2459") != std::string::npos, "AC5: policy cites #2459");
     CHECK(pol.find("apply_density_closed_loop") != std::string::npos, "AC5: closed-loop helper");
     CHECK(pol.find("AURA_CASTOP_DENSITY_STREAK_GATE") != std::string::npos, "AC5: streak env");

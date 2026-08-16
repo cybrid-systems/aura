@@ -255,7 +255,8 @@ static void ac4_schema_source() {
     CHECK(cmap.find("g_coercion_dual_require_drop_total") != std::string::npos,
           "AC4: drop in apply");
 
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("schema-2562") != std::string::npos, "AC4: schema-2562");
     CHECK(q.find("coercion-dual-require-drop-total") != std::string::npos, "AC4: drop key");
     CHECK(q.find("coercion-dual-require-enabled") != std::string::npos, "AC4: enabled key");

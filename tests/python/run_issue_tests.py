@@ -265,6 +265,9 @@ PRE_EXISTING_FAILURES: set[str] = {
     # SIGSEGV under jobs=4. Same class as the 2026-08-03 wave: not caused
     # by the load-time singleton / hash overflow. Track so issues suite
     # stops gating CI; ACs remain visible with ⚠.
+    # Batch 3 greened: test_obs_misc_batch + test_production_hardening_batch
+    # (schema href via engine:metrics, source-cite type_stats, #2835
+    # Restricted multi-tenant, #2985 production-face admit).
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",
@@ -273,10 +276,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_misc_issue_fold_batch",
     "test_module_query_batch",
     "test_mutation_hold_boundary_batch",
-    "test_obs_misc_batch",
     "test_occurrence_coercion_batch",
     "test_orch_agent_batch",
-    "test_production_hardening_batch",
     "test_security_capability_batch",
     "test_serve_legacy_issue_batch",
     "test_shape_soa_storm_batch",

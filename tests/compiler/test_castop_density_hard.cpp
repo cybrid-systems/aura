@@ -157,7 +157,8 @@ static void ac5_query_and_source() {
 
     const auto sd = read_file("src/compiler/service_dirty.cpp");
     const auto pol = read_file("src/compiler/castop_density_policy.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
     CHECK(pol.find("apply_hard_policy") != std::string::npos, "AC5: policy helper");
     CHECK(pol.find("on_force_jit_for_reason") != std::string::npos, "AC5: force-JIT call");

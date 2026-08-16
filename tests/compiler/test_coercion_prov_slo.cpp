@@ -179,7 +179,8 @@ static void ac5_source_schema() {
           "AC5: boundary consumes SLO force");
     CHECK(bound.find("#2558") != std::string::npos, "AC5: boundary cites #2558");
 
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("query:coercion-provenance-health") != std::string::npos, "AC5: health query");
     CHECK(q.find("schema-2558") != std::string::npos, "AC5: schema-2558");
 

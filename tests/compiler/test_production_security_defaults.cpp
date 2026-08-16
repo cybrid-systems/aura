@@ -13,6 +13,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
 #include "compiler/security_capabilities.h"
 #include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
@@ -99,6 +100,7 @@ void reset_process() {
     reset_audit_wal_for_test();
     reset_for_test(); // typed audit → Sampled/4
     set_mode(SandboxMode::Off);
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
     clear_env("AURA_SANDBOX");
     clear_env("AURA_MULTI_TENANT");
     clear_env("AURA_TYPED_AUDIT");
@@ -130,6 +132,10 @@ int run_test_production_security_defaults() {
         std::println("\n--- AC2: un-granted mutate denied ---");
         reset_process();
         apply_production_security_defaults();
+        // set-code / eval-current / mutate:set-body are tree-walker-only.
+        // Production Forbidden (#2213) would hard-fail setup; this AC is
+        // about Restricted capability deny, not the pipeline walker gate.
+        aura::compiler::reset_tree_walker_fallback_policy_for_test();
         CompilerService cs;
         auto& ev = cs.evaluator();
         // Mirror process mode onto this Evaluator instance.
@@ -152,9 +158,14 @@ int run_test_production_security_defaults() {
         reset_process();
         set_env("AURA_MULTI_TENANT", "1");
         apply_production_security_defaults();
-        CHECK(static_cast<std::uint8_t>(g_sandbox_state().mode) == 2, "Strict under multi-tenant");
-        CHECK(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()) == 2,
-              "effect Strict");
+        // #2835: multi-tenant no longer forces Strict (latency). Isolation
+        // is hard_fiber_isolation while sandbox stays Restricted.
+        CHECK(static_cast<std::uint8_t>(g_sandbox_state().mode) == 1,
+              "Restricted under multi-tenant (#2835)");
+        CHECK(static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()) == 1,
+              "effect Restricted (#2835)");
+        CHECK(g_capability_registry().hard_fiber_isolation(),
+              "multi-tenant hard fiber isolation (#2835)");
         clear_env("AURA_MULTI_TENANT");
     }
 

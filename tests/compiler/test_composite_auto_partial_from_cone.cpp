@@ -243,7 +243,8 @@ static void ac5_source_cite() {
     std::println("\n--- #2610 AC5: source-cite + cmake/linter ---");
     auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
     auto aud = read_file("src/compiler/typed_mutation_audit.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     auto cmake = read_file("CMakeLists.txt");
     auto build = read_file("build.py");
 

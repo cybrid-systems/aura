@@ -3,6 +3,9 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
+#include "core/sandbox.hh"
+
 #include <cstdint>
 #include <string>
 #include <string_view>
@@ -22,7 +25,7 @@ using aura::compiler::types::is_int;
 namespace {
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    auto r = cs.eval(aura::test::aura_href_expr(q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -63,7 +66,7 @@ int run_test_production_stability() {
 
     // #1015 serve health
     {
-        auto r = cs.eval("(query:serve-health)");
+        auto r = cs.eval("(engine:metrics \"query:serve-health\")");
         CHECK(r && is_hash(*r), "serve-health is hash");
         CHECK(href(cs, "query:serve-health", "schema") == 1015, "serve-health schema");
         CHECK(href(cs, "query:serve-health", "healthy") == 1, "serve healthy");
@@ -78,11 +81,13 @@ int run_test_production_stability() {
         CHECK(den && is_error(*den), "disable sandbox denied without wildcard");
         auto grant = cs.eval("(security:grant-capability! \"mutate\")");
         CHECK(grant && is_error(*grant), "grant denied in sandbox without wildcard");
-        // Leave sandbox on — restore by starting open service; process exit cleans up.
-        // Disable is denied; for rest of test use new service below.
+        // Process sandbox stays on until we drop it — CompilerService is
+        // not a fresh Off face.
     }
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
 
-    CompilerService cs2; // fresh, sandbox off
+    CompilerService cs2;
     {
         // #1039 ir-marker-stats returns hash (not bare 0)
         auto r = cs2.eval("(engine:metrics \"query:ir-marker-stats\")");

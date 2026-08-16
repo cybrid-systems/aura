@@ -343,7 +343,8 @@ static void ac2317_query_keys() {
 static void ac2317_source_cite_rows() {
     std::println("\n--- #2317 AC5: source-cite rows ---");
     const auto cm = read_file("src/compiler/coercion_map.ixx");
-    const auto ep = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto ep = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(cm.find("g_coercion_sampled_insert_incomplete_total") != std::string::npos,
           "AC5: coercion_map.ixx has new counter");
     CHECK(cm.find("Issue #2317") != std::string::npos, "AC5: coercion_map.ixx cites 2317");
