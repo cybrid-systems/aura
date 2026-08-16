@@ -81,9 +81,11 @@ sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "python"))
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "bench"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
 from aura_file_runner import (  # noqa: E402
+    CommandSpec,
     SnippetSpec,
     discover_aura_files,
     run_aura_file_suite,
+    run_command_suite,
     run_snippet_suite,
 )
 from benchmark_cases import load_typecheck_cases  # noqa: E402
@@ -4671,36 +4673,6 @@ def _case_jobs() -> int:
     return max(1, min(4, tj))
 
 
-def _run_cases_parallel(label: str, cases: list, run_one, *, sort_key=None) -> int:
-    """Run independent cases with optional ThreadPoolExecutor; print ordered."""
-    jobs = _case_jobs()
-    results: list[tuple[object, bool, str]] = []
-    if jobs <= 1 or len(cases) <= 1:
-        for tc in cases:
-            results.append(run_one(tc))
-    else:
-        print(f"  {label} parallel cases jobs={jobs} n={len(cases)}")
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            futs = [pool.submit(run_one, tc) for tc in cases]
-            for fut in as_completed(futs):
-                results.append(fut.result())
-        if sort_key is not None:
-            results.sort(key=lambda row: sort_key(row[0]))
-        else:
-            results.sort(key=lambda row: str(row[0]))
-
-    passed = failed = 0
-    for _key, ok_case, msg in results:
-        if ok_case:
-            ok(msg)
-            passed += 1
-        else:
-            fail(msg)
-            failed += 1
-    print(f"  {label}: {passed}/{passed + failed} passed")
-    return 1 if failed > 0 else 0
-
-
 def test_integ():
     """端到端管线测试 — eval / ir / typecheck / serve (shared snippet runner)."""
     print(f"{B}═══ Integration tests ═══{N}")
@@ -4746,36 +4718,30 @@ def test_integ():
 
 
 def test_typecheck():
-    """类型检查专项测试"""
+    """类型检查专项测试 (shared snippet runner, type: line)."""
     print(f"{B}═══ Typecheck tests ═══{N}")
     if not AURA.exists():
         fail(f"{AURA} not found")
         return 1
-
-    env = _aura_test_env()
-    cases = list(load_typecheck_cases())
-
-    def run_one(tc):
-        name, code, exp_type = tc.name, tc.code, tc.expected_type
-        r = subprocess.run(
-            [str(AURA), "--typecheck"],
-            input=code + "\n",
-            capture_output=True,
-            text=True,
-            timeout=10,
-            env=env,
+    specs = [
+        SnippetSpec(
+            name=tc.name,
+            code=tc.code,
+            extra_args=("--typecheck",),
+            expect_out=tc.expected_type,
+            expect_status=None,
+            timeout_s=10,
+            type_line=True,
         )
-        stdout = r.stdout.strip()
-        type_ok = False
-        for line in stdout.split("\n"):
-            if line.startswith("type:") and exp_type in line:
-                type_ok = True
-                break
-        if type_ok:
-            return (name, True, f"{name:25s} → {exp_type}")
-        return (name, False, f"{name:25s} expected '{exp_type}', got: {stdout[:80]}")
-
-    return _run_cases_parallel("Typecheck", cases, run_one, sort_key=lambda n: n)
+        for tc in load_typecheck_cases()
+    ]
+    return run_snippet_suite(
+        "Typecheck",
+        specs,
+        aura_bin=AURA,
+        env=_aura_test_env(),
+        jobs=_case_jobs(),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -4837,30 +4803,13 @@ def cmd_bench():
 
 
 def test_smoke():
-    """快速冒烟测试"""
+    """快速冒烟测试 (shared command runner)."""
     print(f"{B}═══ Smoke tests ═══{N}")
     if not AURA.exists():
         fail(f"{AURA} not found")
         return 1
-
-    env = _aura_test_env()
-    cases = list(load_smoke_cases())
-
-    def run_one(sc):
-        name, cmd, expected = sc.name, sc.command, sc.expected
-        r = subprocess.run(
-            ["bash", "-c", f"cd {ROOT} && {cmd}"],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
-        )
-        combined = r.stdout + r.stderr
-        if expected in combined:
-            return (name, True, f"{name:20s} → {expected}")
-        return (name, False, f"{name:20s} expected '{expected}', got '{combined[:60]}'")
-
-    return _run_cases_parallel("Smoke", cases, run_one, sort_key=lambda n: n)
+    specs = [CommandSpec(name=sc.name, command=sc.command, expect=sc.expected, cwd=ROOT) for sc in load_smoke_cases()]
+    return run_command_suite("Smoke", specs, env=_aura_test_env(), jobs=_case_jobs())
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5313,8 +5262,8 @@ SUITE_SPECS: tuple[SuiteSpec, ...] = (
     ),
     SuiteSpec("runtime-c", test_runtime_unit, "cpp", "lib/runtime.c harness"),
     SuiteSpec("integ", test_integ, "aura", "fixture integ via aura_file_runner snippets"),
-    SuiteSpec("typecheck", test_typecheck, "aura", "fixture typecheck cases"),
-    SuiteSpec("smoke", test_smoke, "aura", "fixture smoke commands"),
+    SuiteSpec("typecheck", test_typecheck, "aura", "fixture typecheck via aura_file_runner"),
+    SuiteSpec("smoke", test_smoke, "aura", "fixture smoke via command runner"),
     SuiteSpec("bash", test_bash, "aura", "tests/run-tests.sh via tests/python/run.py"),
     SuiteSpec("suite", test_suite_runner, "aura", "tests/suite/*.aura (--load via aura_file_runner)"),
     SuiteSpec(

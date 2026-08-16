@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from aura_file_runner import (  # noqa: E402
+    CommandSpec,
     SnippetSpec,
     discover_aura_files,
     first_expect,
@@ -95,6 +96,22 @@ class TestAuraFileRunner(unittest.TestCase):
         self.assertTrue(judge_snippet(1, "", "divide by zero", spec_re)[0])
         self.assertFalse(judge_snippet(1, "", "oops", spec_re)[0])
         self.assertFalse(judge_snippet(0, "", "", spec, timed_out=True)[0])
+
+    def test_judge_snippet_type_line(self) -> None:
+        spec = SnippetSpec(
+            name="n",
+            code="x",
+            expect_out="Int",
+            expect_status=None,
+            type_line=True,
+        )
+        self.assertTrue(judge_snippet(0, "ok\ntype: Int\n", "", spec)[0])
+        self.assertFalse(judge_snippet(0, "Int without prefix\n", "", spec)[0])
+        self.assertFalse(judge_snippet(0, "type: Float\n", "", spec)[0])
+
+    def test_command_spec_shape(self) -> None:
+        spec = CommandSpec(name="basic", command="echo 3", expect="3")
+        self.assertEqual(spec.timeout_s, 30)
 
 
 if __name__ == "__main__":
