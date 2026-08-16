@@ -87,8 +87,10 @@ tests/
 |---|---|---|---|
 | `suite` | `tests/suite/*.aura` | `aura --load file` | exit 0; optional first `;; expect:` |
 | `regression` | `tests/regression/*.aura` | stdin (leading `;;` header stripped) | first `;; expect:` (`no-crash` / `no-error` / `no-timeout` / substring) |
+| `integ` | `tests/fixtures/integ/*.json` | stdin + `--ir`/`--typecheck`/`--serve` | status + substring / `>=N` / err needle |
+| `p0` snippets | `tests/fixtures/regression/*.json` | stdin (serial; shares `/tmp` seeds) | substring or exact `(…)` out; regex err |
 
-`integ` / `typecheck` / `smoke` stay fixture-JSON. `e2e` keeps the golden PASS harness. `p0` is still `tests/python/test_regression.py`.
+`p0` still runs freeze/AOT/JIT/module extras in `tests/python/test_regression.py` after the snippets. `typecheck` / `smoke` stay fixture-JSON with their own loops. `e2e` keeps the golden PASS harness.
 
 ## 命名约定
 

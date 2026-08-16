@@ -12,9 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "tests" / "python"))
 
 from aura_file_runner import (  # noqa: E402
+    SnippetSpec,
     discover_aura_files,
     first_expect,
     judge,
+    judge_snippet,
     stdin_payload,
 )
 
@@ -60,6 +62,39 @@ class TestAuraFileRunner(unittest.TestCase):
             self.assertEqual(found.cases[0].expect, "1")
             self.assertEqual(len(found.skipped), 1)
             self.assertIn("skip_me.aura", found.skipped[0][0])
+
+    def test_judge_snippet_integ_rules(self) -> None:
+        spec = SnippetSpec(name="n", code="x", expect_out="42", expect_status=0)
+        self.assertTrue(judge_snippet(0, "ans 42", "", spec)[0])
+        self.assertFalse(judge_snippet(1, "ans 42", "", spec)[0])
+        spec_ge = SnippetSpec(name="n", code="x", expect_out=">= 10")
+        self.assertTrue(judge_snippet(0, "val 12", "", spec_ge)[0])
+        self.assertFalse(judge_snippet(0, "val 3", "", spec_ge)[0])
+        spec_err = SnippetSpec(name="n", code="x", expect_err="boom", expect_status=1)
+        self.assertTrue(judge_snippet(1, "", "boom happened", spec_err)[0])
+        spec_div = SnippetSpec(name="n", code="x", expect_status=0, accept_status=(0, -8, 1))
+        self.assertTrue(judge_snippet(-8, "", "", spec_div)[0])
+
+    def test_judge_snippet_p0_rules(self) -> None:
+        spec = SnippetSpec(
+            name="n",
+            code="x",
+            expect_out="(1 2)",
+            expect_status=None,
+            exact_out=True,
+        )
+        self.assertTrue(judge_snippet(0, "(1 2)", "", spec)[0])
+        self.assertFalse(judge_snippet(0, "0 (1 2) extra", "", spec)[0])
+        spec_re = SnippetSpec(
+            name="n",
+            code="x",
+            expect_err="div(ide)?",
+            expect_status=None,
+            err_regex=True,
+        )
+        self.assertTrue(judge_snippet(1, "", "divide by zero", spec_re)[0])
+        self.assertFalse(judge_snippet(1, "", "oops", spec_re)[0])
+        self.assertFalse(judge_snippet(0, "", "", spec, timed_out=True)[0])
 
 
 if __name__ == "__main__":
