@@ -1097,36 +1097,15 @@ void Evaluator::TenantScope::release() noexcept {
 void Evaluator::grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64_t to_tenant,
                                           std::uint16_t effect_bits) noexcept {
     using namespace ::aura::core::workspace_isolation;
-    // Issue #2968: cross-tenant grant write path requires TenantAdmin under
-    // production (Restricted/Strict). Without the meta-privilege a weaker
-    // caller could widen cross-tenant effect masks in the process-global
-    // cross_grants table (multi-tenant isolation depends on grant writers
-    // being gated, not only on the check path #2659/#2385).
-    // AC3: Soft / Off (sandbox_mode_ == 0 && effect_sandbox_mode() == 0)
-    // short-circuits: zero added cost, no privilege lookup, no deny.
-    const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
-    if (force_bind) {
-        using aura::compiler::security::kCapCapability;
-        using aura::compiler::security::kCapTenantAdmin;
-        const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
-        if (!is_admin) {
-            using ::aura::core::security_event::SecurityEventKind;
-            using ::aura::core::security_event_wal::emit_security_event_durable;
-            const auto epoch = ::aura::core::current_mutation_epoch();
-            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
-            const auto tenant =
-                to_tenant != 0 ? to_tenant : static_cast<std::uint64_t>(capability_tenant_id_);
-            const auto fid = static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
-                static_cast<std::uint32_t>(aura_fiber_current_id())));
-            g_tenant_isolation_metrics().cross_tenant_grant_deny_total.fetch_add(
-                1, std::memory_order_relaxed);
-            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
-                                        effect_bits, "cross-tenant-grant",
-                                        "cross-tenant-grant-needs-tenant-admin",
-                                        /*denied=*/true, fid);
-            return; // deny — no grant, no allow-counter bump (AC4)
-        }
-    }
+    // Issue #3086: fence moved into WorkspaceIsolationPolicy::grant_cross_tenant
+    // (the SSOT method). Evaluator wrapper is now a thin stamp+call —
+    // no second policy, no double-count of deny metrics. The SSOT helper
+    // `try_grant_cross_tenant_privileged` is invoked by the method body and
+    // resolves caller principal via g_capability_registry().default_tenant
+    // (Evaluator-internal `capability_tenant_id_` is intentionally NOT used
+    // here: cross-tenant grant writes the process-global table, so the
+    // gate authority must also be process-global — same shape as
+    // CapabilityRegistry::grant_macro_self_evo post-#3029).
     g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, effect_bits);
 }
 

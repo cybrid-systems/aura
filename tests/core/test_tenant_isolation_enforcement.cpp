@@ -1221,6 +1221,153 @@ int main() {
         }
     }
 
+    // ── #3086: SSOT fence — direct g_workspace_isolation().grant_cross_tenant
+    // bypass previously routed only through Evaluator::grant_cross_tenant_access.
+    // Now fence lives in the method body; raw callers cannot widen the table.
+    {
+        std::println("\n--- #3086 AC1: raw grant_cross_tenant under Restricted without TenantAdmin "
+                     "→ deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // default_tenant = 7, target = 42, no TenantAdmin on either → deny.
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            7, std::memory_order_release);
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1,
+              "AC1: cross_tenant_grant_deny_total bumps on direct raw grant under Restricted");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == 0,
+              "AC1: no cross grant written on deny (raw path)");
+        // SE reason present in ring.
+        const auto& ring = g_security_event_ring();
+        bool found = false;
+        const auto cur = ring.seq.load(std::memory_order_acquire);
+        for (auto s = cur; s > 0 && s + 16 > cur; --s) {
+            const auto& e = ring.ring[(s - 1) % ring.ring.size()];
+            if (std::string_view(e.reason) == "cross-tenant-grant-needs-tenant-admin") {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found, "AC1: SE reason 'cross-tenant-grant-needs-tenant-admin' recorded (raw path)");
+    }
+
+    // ── #3086 AC2: Soft / Off zero-cost allow on raw grant ──
+    {
+        std::println("\n--- #3086 AC2: raw grant under Off → allow (zero-cost) ---");
+        reset_all(); // Off
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow_before =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/1, /*to=*/2, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow_after =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC2: Off path does not deny (raw call)");
+        CHECK(allow_after == allow_before + 1, "AC2: Off path bumps allow counter");
+        CHECK(g_workspace_isolation().cross_grant_bits(1, 2) == kEffectMutate,
+              "AC2: Off path cross grant installed");
+    }
+
+    // ── #3086 AC3: target tenant holds TenantAdmin → allow under Restricted ──
+    {
+        std::println("\n--- #3086 AC3: TenantAdmin on target tenant → allow raw grant ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            7, std::memory_order_release);
+        // Grant TenantAdmin to the *target* tenant (42), not caller (7).
+        aura::core::capability::g_capability_registry().grant(
+            /*tenant=*/42, std::string_view("tenant-admin"),
+            ::aura::core::capability::Effect::TenantAdmin,
+            ::aura::core::capability::EffectProvenance{});
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow_before =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow_after =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC3: target-tenant admin → no deny bump");
+        CHECK(allow_after == allow_before + 1, "AC3: target-tenant admin → allow bump");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) == kEffectMutate,
+              "AC3: cross grant installed when target holds TenantAdmin");
+    }
+
+    // ── #3086 AC4: no double-count via Evaluator wrapper ──
+    {
+        std::println("\n--- #3086 AC4: Evaluator wrapper does not double-bump deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            7, std::memory_order_release);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1); // Restricted
+        ev.set_capability_tenant_id(7);
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        ev.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1,
+              "AC4: Evaluator wrapper denial bumps SSOT counter exactly once (no double-count)");
+    }
+
+    // ── #3086 AC5: zero-id guard still short-circuits (no SE, no counter bump) ──
+    {
+        std::println("\n--- #3086 AC5: zero-id short-circuit ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/0, /*to=*/42, kEffectMutate);
+        g_workspace_isolation().grant_cross_tenant(/*from=*/7, /*to=*/0, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before, "AC5: zero-id short-circuit does not bump deny counter");
+    }
+
+    // ── #3086 AC6: source-cite + no invent + no docs/design/ ──
+    {
+        std::println("\n--- #3086 AC6: source-cite + no invent + no docs/design/ ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        CHECK(iso.find("#3086") != std::string::npos, "AC6: workspace_isolation.hh cites #3086");
+        CHECK(iso.find("try_grant_cross_tenant_privileged") != std::string::npos,
+              "AC6: SSOT helper present");
+        CHECK(sec.find("#3086") != std::string::npos, "AC6: evaluator_security.cpp cites #3086");
+        CHECK(sec.find("g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, "
+                       "effect_bits)") != std::string::npos,
+              "AC6: Evaluator wrapper delegates to SSOT method (no second policy)");
+        CHECK(test_self.find("#3086") != std::string::npos, "AC6: test file cites #3086");
+        std::ifstream invent("tests/core/test_issue_3086.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3086.cpp");
+        CHECK(!invent.good(), "AC6: no tests/core/test_issue_3086.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3086-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
     // ── #2969: registry write-fence — foreign-tenant grant/revoke requires
     // TenantAdmin (Option A, minimal; storage/write-isolation face) ──
     {

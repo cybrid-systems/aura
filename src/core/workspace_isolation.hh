@@ -171,14 +171,58 @@ struct WorkspaceIsolationPolicy {
 
     // Grant cross-tenant access: `from` may touch resources owned by `to`
     // for the given effect bits (OR into existing).
+    // Issue #3086: fence moved into the SSOT method (was only in Evaluator
+    // wrapper — bypass risk for any direct caller: future JIT/FFI bridge,
+    // orch helper, test-only path that ships into production, or accidental
+    // `g_workspace_isolation().grant_cross_tenant(...)` from a non-Evaluator
+    // TU). Production (Restricted/Strict) requires TenantAdmin on the caller
+    // (registry default_tenant) or the target tenant. Soft/Off stays zero-cost
+    // (AC3). Same shape as CapabilityRegistry::grant_macro_self_evo post-#3029
+    // and registry foreign-tenant grant_effect_ post-#2968/#2969.
     void grant_cross_tenant(TenantId from, TenantId to, std::uint16_t effect_bits) noexcept {
         if (from == 0 || to == 0)
             return;
+        if (!try_grant_cross_tenant_privileged(from, to, effect_bits))
+            return; // deny path already bumped counter + emitted SE (#2968 stable)
         std::lock_guard<std::mutex> lock(mtx);
         CrossTenantKey key{from, to};
         cross_grants[key] = static_cast<std::uint16_t>(cross_grants[key] | effect_bits);
         g_tenant_isolation_metrics().cross_tenant_capability_grant_total.fetch_add(
             1, std::memory_order_relaxed);
+    }
+
+    // Issue #3086: internal deny-path helper for grant_cross_tenant. Returns
+    // true if the caller (or target) holds TenantAdmin under production;
+    // false (with SE + deny-counter bump) otherwise. Soft/Off is zero-cost
+    // allow (AC3). Evaluator::grant_cross_tenant_access becomes a thin
+    // stamp+call — no second policy to keep in sync, no double-count.
+    [[nodiscard]] bool try_grant_cross_tenant_privileged(TenantId from, TenantId to,
+                                                         std::uint16_t effect_bits) noexcept {
+        using ::aura::core::capability::EffectSandboxMode;
+        using ::aura::core::capability::g_capability_registry;
+        const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
+        if (mode == EffectSandboxMode::Off)
+            return true; // AC3: zero-cost allow under Soft/Off
+        const auto caller = g_capability_registry().default_tenant.load(std::memory_order_acquire);
+        const auto caller_eff = g_capability_registry().effects_for(caller);
+        const auto target_eff = g_capability_registry().effects_for(to);
+        const bool is_admin =
+            ((caller_eff | target_eff) & ::aura::core::capability::Effect::TenantAdmin) !=
+            ::aura::core::capability::Effect::None;
+        if (is_admin)
+            return true;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+        const auto fid = static_cast<std::int64_t>(::aura::core::capability::effect_fiber_id_or(
+            static_cast<std::uint32_t>(aura_fiber_current_id())));
+        g_tenant_isolation_metrics().cross_tenant_grant_deny_total.fetch_add(
+            1, std::memory_order_relaxed);
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        emit_security_event_durable(SecurityEventKind::EffectDeny, to, mid, epoch, effect_bits,
+                                    "cross-tenant-grant", "cross-tenant-grant-needs-tenant-admin",
+                                    /*denied=*/true, fid);
+        return false; // deny — no table write, no allow-counter bump (AC4)
     }
 
     void revoke_cross_tenant(TenantId from, TenantId to) noexcept {
