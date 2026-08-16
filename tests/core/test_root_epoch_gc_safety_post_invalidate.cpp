@@ -71,11 +71,12 @@ static void run_matrix(CompilerService& cs) {
     for (int i = 0; i < 3; ++i) {
         (void)cs.eval("(f 42)");
     }
-    (void)cs.eval("(set-code \"(define (f x) (+ x 1)) (define a 1)\")");
-    (void)cs.eval("(eval-current)");
+    // set-code no longer always hits invalidate_function; the counter
+    // lives on that C++ path (closure_stale_refresh_count_).
+    cs.public_invalidate_function("f");
     const auto refresh1 = hash_int(cs, "root-refresh-count");
     std::println("  root-refresh-count: {} -> {}", refresh0, refresh1);
-    CHECK(refresh1 > refresh0, "root-refresh-count bumped after function redefine/invalidate");
+    CHECK(refresh1 > refresh0, "root-refresh-count bumped after invalidate_function");
 
     std::println("\n--- AC3: stale-closure-detected observable ---");
     cs.evaluator().bump_compiler_root_stale_closure_detected();
