@@ -112,8 +112,8 @@ namespace aura::compiler {
     if (name.empty())
         return false;
     auto has = [&](std::string_view needle) { return name.find(needle) != std::string_view::npos; };
-    return has("render") || has("draw") || has("present") || has("tui") || has("terminal") ||
-           has("frame") || has("cell") || has("ansi");
+    return has("render") || has("draw") || has("present") || has("frame") || has("cell") ||
+           has("ansi");
 }
 
 // Phase stamp for query:render-evolution-stats / template docs.
@@ -162,11 +162,6 @@ inline void register_render_hot_prim(PrimRegistrarT&& add, EvaluatorT& ev, std::
     ev.primitives().set_meta_for_name(name_s, std::move(meta));
     g_register_render_hot_prim_total().fetch_add(1, std::memory_order_relaxed);
 }
-// Known TUI/render hot names that MUST register via the helper (CI gate).
-inline constexpr std::string_view kRenderHotPrimNamesRequired[] = {
-    "tui:present",    "tui:cell",      "tui:clear",         "tui:present-dirty",
-    "tui:draw-batch", "tui:fill-rect", "tui:present-batch", "tui:frame-ansi",
-};
 
 } // namespace aura::compiler
 

@@ -55,7 +55,7 @@ inline constexpr int kModuleLayerCount = 10;
 //   Reflect  → src/reflect/
 //   Renderer → removed (#2625/#2626)
 //   Orch     → src/orch/
-//   Tui      → src/tui/  (domain vertical; still above Core)
+//   Tui      → removed (#2626; src/tui deleted)
 //
 // Numeric order is the *preferred* dependency rank (lower = more fundamental).
 // Higher layers may depend on lower ones; reverse edges are forbidden.

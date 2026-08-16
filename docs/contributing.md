@@ -17,7 +17,7 @@ Adding or changing built-in primitives follows the **primitive authoring contrac
 - Central registration map: `src/compiler/evaluator_primitives_registry.cpp` (#1552)
 - Generated catalogs: [generated/primitives.md](generated/primitives.md), [generated/primitives-registry.md](generated/primitives-registry.md)
 
-**Do not invent new registration styles.** Prefer `register_prim` for general prims and `register_render_hot_prim` only for render-critical hot paths.
+**Do not invent new registration styles.** Prefer `register_prim`. `register_render_hot_prim` is retired with the tui:* surface (#2626).
 
 ## Multi-fiber heap quotas (Agent self-evo)
 

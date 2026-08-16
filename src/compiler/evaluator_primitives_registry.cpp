@@ -18,7 +18,7 @@
 // Registration styles (do NOT invent new ones):
 //   - Preferred general: register_prim(add, ev, name, fn, PrimSpec)
 //     → src/compiler/prim_registrar_scaffold.hh (#2915 / #2996)
-//   - Render hot only: register_render_hot_prim(...) (#2217)
+//   - register_render_hot_prim retired with tui:* (#2217 / #2626)
 //   - Legacy add / prim_registrar_with_meta / DEFINE_PRIMITIVE_META still OK
 //     for unmigrated TUs; core TUs migrated (#2996): list, math+regex+arith,
 //     json, pair+string, vector+hash. New prims must use register_prim unless
@@ -184,9 +184,7 @@ void Evaluator::register_all_primitives() {
     if (full_primitives_enabled()) {
         primitives_detail::register_stdlib_review_primitives(prim_registrar(), *this);
 
-        // Issue #499: foundational EDA primitives module retired 4.4 with the
-        // eda:* vertical (sub-layer 4.1–4.4 of #1968). register_eda_primitives
-        // removed; the call site below is gone too.
+        // Issue #499 / #2629: eda:* C++ vertical + lib/std/eda.aura retired.
 
         primitives_detail::register_security_primitives(prim_registrar(), *this);
 

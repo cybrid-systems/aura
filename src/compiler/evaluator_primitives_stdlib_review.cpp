@@ -15,8 +15,6 @@ module;
 #include "core/provenance_tracker.hh" // Issue #3000: restamp-lag export counters
 #include "core/workspace_epoch.hh"    // Issue #3041: restamp-budget QueryEpoch stale
 #include "jit_typed_mutation_stats.h"
-#include "tui/tui_runtime.hh"
-
 module aura.compiler.evaluator;
 
 import std;
@@ -1889,66 +1887,9 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
             return build_kv_hash(ev, kv);
         });
 
-    // ── Issues #1331–#1343 Phase 1: TUI pixel rendering architecture ──
-    ObservabilityPrims::register_stats_impl(
-        "query:production-sweep-1331-1343-stats",
-        [&ev, metrics](std::span<const EvalValue>) -> EvalValue {
-            auto* m = metrics();
-            if (m) {
-                m->tui_init_total.store(aura::tui::g_tui_init_total.load(std::memory_order_relaxed),
-                                        std::memory_order_relaxed);
-                m->tui_present_total.store(
-                    aura::tui::g_tui_present_total.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                m->tui_cell_writes.store(
-                    aura::tui::g_tui_cell_writes.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                m->tui_diff_cells_emitted.store(
-                    aura::tui::g_tui_diff_cells_emitted.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                m->tui_sync_output_frames.store(
-                    aura::tui::g_tui_sync_output_frames.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                m->tui_half_block_pixels.store(
-                    aura::tui::g_tui_half_block_pixels.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                m->tui_mouse_enable_total.store(
-                    aura::tui::g_tui_mouse_enable_total.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-            }
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"schema", make_int(1331)},
-                {"active", make_int(m ? load_u64(m, m->production_sweep_1331_1343_active) : 1)},
-                {"tui-architecture-plan",
-                 make_int(m ? load_u64(m, m->tui_architecture_plan_active) : 1)},
-                {"tui-layers-total", make_int(m ? load_u64(m, m->tui_layers_total) : 5)},
-                {"tui-runtime-active", make_int(m ? load_u64(m, m->tui_runtime_active) : 1)},
-                {"tui-init-total", make_int(m ? load_u64(m, m->tui_init_total) : 0)},
-                {"tui-present-total", make_int(m ? load_u64(m, m->tui_present_total) : 0)},
-                {"tui-cell-writes", make_int(m ? load_u64(m, m->tui_cell_writes) : 0)},
-                {"tui-diff-cells-emitted",
-                 make_int(m ? load_u64(m, m->tui_diff_cells_emitted) : 0)},
-                {"tui-primitives-active", make_int(m ? load_u64(m, m->tui_primitives_active) : 1)},
-                {"tui-stdlib-active", make_int(m ? load_u64(m, m->tui_stdlib_active) : 1)},
-                {"tui-cyber-cat-demo-active",
-                 make_int(m ? load_u64(m, m->tui_cyber_cat_demo_active) : 1)},
-                {"tui-sync-output-active",
-                 make_int(m ? load_u64(m, m->tui_sync_output_active) : 1)},
-                {"tui-sync-output-frames",
-                 make_int(m ? load_u64(m, m->tui_sync_output_frames) : 0)},
-                {"tui-half-block-pixels", make_int(m ? load_u64(m, m->tui_half_block_pixels) : 0)},
-                {"tui-mouse-scaffold-active",
-                 make_int(m ? load_u64(m, m->tui_mouse_scaffold_active) : 1)},
-                {"tui-mouse-enable-total",
-                 make_int(m ? load_u64(m, m->tui_mouse_enable_total) : 0)},
-                {"tui-games-scaffold-active",
-                 make_int(m ? load_u64(m, m->tui_games_scaffold_active) : 1)},
-                {"issue-1343", make_int(1343)},
-            };
-            return build_kv_hash(ev, kv);
-        });
+    // #2626: query:production-sweep-1331-1343-stats (TUI) retired with src/tui.
 
-    // ── Issues #1336–#1341, #1344–#1348: type/AST/EDA production sweep ──
+    // ── Issues #1336–#1341, #1344–#1348: type/AST production sweep ──
     ObservabilityPrims::register_stats_impl(
         "query:production-sweep-1336-1348-stats",
         [&ev, metrics](std::span<const EvalValue>) -> EvalValue {

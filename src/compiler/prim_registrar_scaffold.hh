@@ -16,8 +16,7 @@
 //       → add(name, fn) + PrimMeta stamp via set_meta_for_name
 //       → required_effects: leave 0 for #2152 name-prefix auto-infer, or set
 //         explicit bits when the name does not encode the effect
-//    B. register_render_hot_prim(...) for render-critical hot prims only
-//       (render_prim_template.hh / #2217) — not for general stdlib
+//    B. register_render_hot_prim retired with tui:* (#2217 / #2626)
 //    C. Legacy: add(name, fn) alone, or add + set_meta_for_name / DEFINE_PRIMITIVE_META
 //       + prim_registrar_with_meta() — still valid for existing TUs; new code
 //       should prefer (A) unless a specialized helper applies

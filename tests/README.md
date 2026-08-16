@@ -68,7 +68,7 @@ tests/
 ├── (renderer/ removed — #2625/#2626)
 ├── repl/         ← src/repl/*
 ├── stdlib/       ← src/stdlib/*
-├── tui/          ← src/tui/*
+├── (tui/ removed — #2626)
 └── (横向支撑)
     ├── e2e/      跨模块 E2E
     ├── bench/    SLO bench (C++ + .aura)

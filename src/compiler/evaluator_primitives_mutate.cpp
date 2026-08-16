@@ -6868,7 +6868,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   - Adds a MutationRecord to the workspace log.
     //   - Does NOT actually construct a real
     //     CoverpointIR record (the SV records are
-    //     Aura-side `lib/std/eda.aura` types, not AST
+    //     Aura-side hardware IR records, not AST
     //     nodes). The follow-up wire the covergroup
     //     records into the workspace AST so the
     //     primitive can mutate the actual record.

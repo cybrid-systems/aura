@@ -98,8 +98,8 @@ int run_test_frame_budget_cascade_isolation() {
         std::println("\n--- AC1/AC2: defer vs allow ---");
         reset_for_test();
         CHECK(!should_defer_cascade("helper"), "no defer outside budget");
-        CHECK(is_render_related_name("terminal-present-batch"), "present is render");
-        CHECK(is_render_related_name("tui:draw-batch"), "tui is render");
+        CHECK(is_render_related_name("present-frame"), "present is render");
+        CHECK(is_render_related_name("draw-cell"), "draw is render");
         CHECK(!is_render_related_name("helper-fn"), "helper not render");
         CHECK(!is_render_related_name("business-logic"), "business not render");
 

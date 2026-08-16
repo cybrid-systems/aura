@@ -12,16 +12,7 @@ export namespace aura::compiler::hot_path_prims {
 inline constexpr int kHotPathPrimitivesPhase = 2;
 inline constexpr int kHotPathPrimitivesIssue = 1676;
 
-enum class HotPrimKind : std::uint8_t {
-    BatchFfi = 0,
-    ParallelIntend = 1,
-    RenderPresent = 2,
-    QuotaCheck = 3,
-    RenderDraw = 4,
-    TerminalPresent = 5,
-    TuiPresent = 6,
-    Count
-};
+enum class HotPrimKind : std::uint8_t { BatchFfi = 0, ParallelIntend = 1, QuotaCheck = 2, Count };
 
 struct HotPrimDescriptor {
     HotPrimKind kind;
@@ -33,13 +24,7 @@ struct HotPrimDescriptor {
 inline constexpr HotPrimDescriptor kHotPrimTable[] = {
     {HotPrimKind::BatchFfi, "batch-ffi-call", true, false},
     {HotPrimKind::ParallelIntend, "parallel-intend", true, false},
-    {HotPrimKind::RenderPresent, "render-present-batch", true, true},
     {HotPrimKind::QuotaCheck, "resource:quota-check", false, false},
-    {HotPrimKind::RenderDraw, "render-draw-batch", true, true},
-    {HotPrimKind::TerminalPresent, "terminal-present-batch", true, true},
-    {HotPrimKind::TuiPresent, "tui:present", false, true},
-    // Issue #2134: Agent batch TermBuf draw/present (render-tier).
-    // Kinds reuse RenderDraw/TerminalPresent semantic tier; names are distinct.
 };
 
 struct HotPathPrimStats {

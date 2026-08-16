@@ -8,7 +8,7 @@
 // Issues covered (24 ranges):
 # 1123_1140, #1144_1148, #1158_1176, #1177_1201, #1229_1240, #1241_1245, #1246_1250, #1256_1260,   \
     #1261_1265, #1266_1270, #1271_1275, #1276_1280, #1281_1285, #1286_1290, #1291_1295,            \
-    #1296_1300, #1301_1305, #1306_1310, #1311_1315, #1316_1320, #1321_1324, #1325_1330, #1331_1343
+    #1296_1300, #1301_1305, #1306_1310, #1311_1315, #1316_1320, #1321_1324, #1325_1330
 
 #include "test_harness.hpp"
 
@@ -1225,18 +1225,7 @@ static void ac_1311_1315() {
               "issue-1315");
     }
 
-    // #1313/#1314: make-terminal-buffer / terminal-* retired with #2626.
-
-    // #1315: arena-render-frame-reset + stats
-    {
-        auto r = cs.eval("(arena-render-frame-reset)");
-        CHECK(r && is_int(*r) && as_int(*r) >= 0, "arena-render-frame-reset");
-        auto st = cs.eval("(engine:metrics \"query:render-arena-frame-stats\")");
-        CHECK(st && is_string(*st), "query:render-arena-frame-stats string");
-        auto resets =
-            href(cs, "query:production-sweep-1311-1315-stats", "render-frame-reset-total");
-        CHECK(resets >= 1, "render frame reset counted");
-    }
+    // #1313/#1314/#1315: terminal-* + arena-render-frame-reset retired with #2626.
 
     {
         CompilerService cs2;
@@ -1304,8 +1293,6 @@ static void ac_1316_1320() {
         CHECK(calls >= 1, "defrag-now calls counted");
         auto attempted = href(cs, Q, "arena-defrag-attempted-total");
         CHECK(attempted >= 1, "defrag attempted counted");
-        auto reset = cs.eval("(arena-render-frame-reset)");
-        CHECK(reset && is_int(*reset) && as_int(*reset) >= 0, "arena-render-frame-reset");
     }
 
     {
@@ -1469,37 +1456,6 @@ static void ac_1325_1330() {
     std::println("production sweep #1325–#1330: OK ({} passed)", ::aura::test::g_passed);
 }
 
-// ── #1331_1343 ──────────────────────────────────────────
-static void ac_1331_1343() {
-
-    CompilerService cs;
-    constexpr auto Q = "query:production-sweep-1331-1343-stats";
-
-    {
-        auto r = cs.eval(aura::test::aura_call_expr(Q));
-        CHECK(r && is_hash(*r), "sweep stats is hash");
-        CHECK(href(cs, Q, "schema") == 1331, "schema");
-        CHECK(href(cs, Q, "active") == 1, "active");
-        CHECK(href(cs, Q, "tui-architecture-plan") == 1, "META plan (#1331)");
-        CHECK(href(cs, Q, "tui-layers-total") == 5, "5 layers");
-        CHECK(href(cs, Q, "tui-runtime-active") == 1, "runtime (#1332)");
-        CHECK(href(cs, Q, "tui-primitives-active") == 1, "primitives (#1333)");
-        CHECK(href(cs, Q, "tui-stdlib-active") == 1, "stdlib (#1334-5)");
-        CHECK(href(cs, Q, "tui-sync-output-active") == 1, "sync output (#1342)");
-        CHECK(href(cs, Q, "tui-mouse-scaffold-active") == 1, "mouse (#1343)");
-        // #2626: tui:* primitives, lib/std/tui, and examples retired.
-        // Sweep query flags stay as historical schema; no prim/file ACs.
-        CHECK(href(cs, Q, "issue-1343") == 1343, "issue-1343");
-    }
-
-    {
-        CompilerService cs2;
-        auto a = cs2.eval("(* 6 7)");
-        CHECK(a && is_int(*a) && as_int(*a) == 42, "(* 6 7)");
-    }
-    std::println("production sweep #1331–#1343: OK ({} passed)", ::aura::test::g_passed);
-}
-
 } // namespace
 
 int main() {
@@ -1525,7 +1481,6 @@ int main() {
     ac_1316_1320();
     ac_1321_1324();
     ac_1325_1330();
-    ac_1331_1343();
     if (::aura::test::g_failed)
         return 1;
     std::println("=== production sweep #1123-#1343: OK ({} passed) ===", ::aura::test::g_passed);
