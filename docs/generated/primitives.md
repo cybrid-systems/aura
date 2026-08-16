@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**494** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**496** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 87 primitives (18%)
-- **core**: 362 primitives (73%)
+- **core**: 364 primitives (73%)
 - **internal-observable**: 44 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -528,10 +528,12 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `mutation-log:diff` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 - `mutation-log:summary` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
 
-## Orch: (21)
+## Orch: (23)
 
 - `orch:agent-ask` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-directory` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-export-via-token` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-import-via-token` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-poll` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-recv` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -732,7 +734,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (362)
+### Core builtins (must remain primitive) (364)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -930,6 +932,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `number?` — `src/compiler/evaluator_primitives_core.cpp`
 - `orch:agent-ask` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-directory` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-export-via-token` — `src/compiler/evaluator_primitives_agent.cpp`
+- `orch:agent-import-via-token` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-join` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-poll` — `src/compiler/evaluator_primitives_agent.cpp`
 - `orch:agent-recv` — `src/compiler/evaluator_primitives_agent.cpp`
