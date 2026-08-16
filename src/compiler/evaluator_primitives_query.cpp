@@ -1275,7 +1275,12 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Uses the `string_heap` reference passed into
             // register_query_primitives() (avoids the private
             // Evaluator::string_heap_ field).
-            auto* ht = FlatHashTable::create(64);
+            // Issue #2432: this block grew to 70 insert_kv calls (schema-2432 /
+            // issue-2432 / ir-generation-fence-wired land past the old 64-slot
+            // capacity and were silently dropped by insert_kv's full-scan
+            // return-without-insert). Bump to 128 so the full LayoutStamp +
+            // stable-ref surface stays visible to hash-ref queries.
+            auto* ht = FlatHashTable::create(128);
             if (!ht)
                 return make_int(rec_int);
             auto meta = ht->metadata();
