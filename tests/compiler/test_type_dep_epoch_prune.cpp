@@ -154,7 +154,7 @@ static void ac5_source_cite_and_invalidate() {
     std::println("\n--- AC5: source-cite + invalidate unit ---");
     const auto tc = read_file("src/compiler/type_checker.ixx");
     const auto tci = read_file("src/compiler/type_checker_impl.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto met = read_file("src/compiler/observability_metrics.h");
     CHECK(tc.find("TypeDepEdge") != std::string::npos, "AC5: TypeDepEdge");
     CHECK(tc.find("prune_type_dep_graph_epoch") != std::string::npos, "AC5: epoch prune");

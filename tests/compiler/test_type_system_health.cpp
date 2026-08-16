@@ -190,7 +190,7 @@ static void ac2_inject_counters() {
 // ── AC5: source-cite ──
 static void ac5_source_cite() {
     std::println("\n--- AC5: source-cite ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto hh = read_file("src/compiler/type_system_health.hh");
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     CHECK(q.find("query:type-system-health") != std::string::npos, "AC5: query registered");

@@ -142,7 +142,7 @@ static void ac5_schema() {
     CHECK(href(cs, "schema-2278") == 2278 || href(cs, "occurrence-goal-sole-authority-wired") == 1,
           "AC5: #2278 lineage");
 
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto met = read_file("src/compiler/observability_metrics.h");
     CHECK(q.find("schema-2461") != std::string::npos, "AC5: query schema");
     CHECK(met.find("occurrence_cache_key_hit_total") != std::string::npos, "AC5: metrics field");

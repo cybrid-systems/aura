@@ -172,7 +172,7 @@ static void ac5_pure_schema() {
     CHECK(href_int(cs, "type-system-health-wired") == 1, "AC5: #2350 wired");
 
     const auto hh = read_file("src/compiler/type_system_health.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(hh.find("decide_type_system_next_action") != std::string::npos, "AC5: decide helper");
     CHECK(hh.find("Issue #2462") != std::string::npos, "AC5: header cites #2462");
     CHECK(q.find("next-action") != std::string::npos, "AC5: query next-action");

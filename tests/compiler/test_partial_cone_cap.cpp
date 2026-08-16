@@ -125,7 +125,7 @@ static void ac4_txn_order() {
 // ── AC5: schema + registrations ──
 static void ac5_schema() {
     std::println("\n--- #2560 AC5: schema-2560 + gate ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("schema-2560") != std::string::npos, "AC5: schema-2560");
     CHECK(q.find("partial-cone-soft-overflow-total") != std::string::npos, "AC5: soft key");
     CHECK(q.find("partial-cone-hard-fallback-total") != std::string::npos, "AC5: hard key");

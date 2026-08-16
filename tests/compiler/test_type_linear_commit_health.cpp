@@ -241,7 +241,7 @@ static void ac4_pure_no_policy() {
 static void ac5_source_cite() {
     std::println("\n--- #2613 AC5: source-cite + no design docs ---");
     const auto hh = read_file("src/compiler/type_linear_commit_health.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     CHECK(hh.find("#2613") != std::string::npos, "AC5: header cites #2613");
     CHECK(hh.find("compute_type_linear_commit_health") != std::string::npos, "AC5: pure compute");
@@ -289,7 +289,7 @@ static void ac2697_4_additive_facade_to_2613() {
 static void ac2697_5_source_and_linter() {
     std::println("\n--- #2697 AC5: source-cite + additive ---");
     const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     CHECK(hdr.find("TypeLinearCommitProof") != std::string::npos,
           "AC5: hdr declares TypeLinearCommitProof struct");
@@ -371,7 +371,7 @@ static void ac2717_4_drift_detection_via_defuse_or_epoch_stamp() {
 static void ac2717_5_additive_no_regression() {
     std::println("\n--- #2717 AC5: additive only (no regression) ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     // #2613 is the "type-linear-commit-health" query — no struct
     // constant in typed_mutation_audit.h. Verified via the "#2613"
     // comment fragment + the query surface in evaluator_primitives_query.cpp.
@@ -396,7 +396,7 @@ static void ac2717_6_source_and_linter() {
     std::println("\n--- #2717 AC6: source-cite + linter + no docs/design/ ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto efm = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto lint = read_file("scripts/check_type_linear_commit_proof_stamp_2717.py");
     const auto build = read_file("build.py");
@@ -470,7 +470,7 @@ static void ac2758_2_quiet_path_zeros() {
 static void ac2758_3_last_counts_queryable() {
     std::println("\n--- #2758 AC3: last counts queryable ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(tma.find("g_last_proof_live_goal_count") != std::string::npos,
           "AC3: last live_goal_count atomic");
     CHECK(tma.find("g_last_proof_linear_root_count") != std::string::npos,
@@ -487,7 +487,7 @@ static void ac2758_3_last_counts_queryable() {
 // ── Issue #2758 AC4: additive — #2613/#2697/#2717 preserved + counts-filled.
 static void ac2758_4_additive_no_regression() {
     std::println("\n--- #2758 AC4: additive no regression ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     CHECK(q.find("schema-2613") != std::string::npos ||
               q.find("type-linear-commit-health") != std::string::npos,
@@ -509,7 +509,7 @@ static void ac2758_5_source_and_linter() {
     std::println("\n--- #2758 AC5/AC6: source-cite + linter ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto build = read_file("build.py");
     const auto lint =
@@ -633,7 +633,7 @@ static void ac2842_3_quiet_path_zeros() {
 
 static void ac2842_4_additive_no_regression() {
     std::println("\n--- #2842 AC4: additive — #2613/#2697/#2717/#2758 preserved ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     CHECK(q.find("schema-2613") != std::string::npos ||
               q.find("type-linear-commit-health") != std::string::npos,
@@ -672,7 +672,7 @@ static void ac2842_5_source_and_linter() {
     std::println("\n--- #2842 AC5/AC6: source-cite + linter + no docs/design ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     const auto build = read_file("build.py");
     const auto lint =
@@ -796,7 +796,7 @@ static void ac2897_4_additive() {
     CHECK(href_evolv(cs, "schema-2854") == 2854, "2897 AC4: lineage schema-2854");
     CHECK(href_evolv(cs, "schema-2860") == 2860, "2897 AC4: lineage schema-2860 sibling");
     // #2860 surface still registered
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("query:evolution-epoch-snapshot") != std::string::npos,
           "2897 AC4: evolution-epoch-snapshot preserved");
     CHECK(q.find("query:type-linear-commit-health") != std::string::npos,
@@ -807,7 +807,7 @@ static void ac2897_4_additive() {
 static void ac2897_5_source_cite() {
     std::println("\n--- #2897 AC5: source-cite + no docs/design ---");
     const auto hh = read_file("src/compiler/type_linear_commit_health.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
     const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
     CHECK(hh.find("2897") != std::string::npos, "2897 AC5: header cites #2897");

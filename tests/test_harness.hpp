@@ -13,6 +13,7 @@
 //   run_pilot_tests()    — report counters (pilot-style mains)
 //   aura_call_expr()     — engine:metrics / stats:get routing for demoted names
 //   aura_href_expr()     — hash-ref wrapper with STRING keys via aura_call_expr
+//   aura_query_prims_source() — concatenated query/stats TUs for source-cite
 //   k_int_env()          — shared stress/fuzz env knobs
 //   capture_stable_refs / validate_stable_refs — FlatAST white-box helpers
 //   note_strategy_*      — hot-path / AI self-mod strategy stamps (#1887)
@@ -28,7 +29,9 @@
 #include <cstdint>
 #include <cstdlib>
 #include <format>
+#include <fstream>
 #include <iostream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <string_view>
@@ -88,6 +91,37 @@ inline std::string aura_call_expr(std::string_view name) {
 // Hash-ref a (possibly demoted) dashboard. STRING keys match FlatHashTable.
 inline std::string aura_href_expr(std::string_view name, std::string_view key) {
     return std::format("(hash-ref {} \"{}\")", aura_call_expr(name), key);
+}
+
+// Read a repo-relative file (AURA_SOURCE_DIR, else cwd / ../ / ../../).
+inline std::string aura_read_repo_file(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    const std::string abs = std::string(AURA_SOURCE_DIR) + "/" + std::string(rel);
+    if (std::ifstream in{abs})
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+#endif
+    for (const auto& p : {std::string(rel), std::string("../") + std::string(rel),
+                          std::string("../../") + std::string(rel)}) {
+        if (std::ifstream in{p})
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+// Concatenated query / stats registration TUs for source-cite ACs.
+// Schema keys moved out of evaluator_primitives_query.cpp (#1449 split).
+inline std::string aura_query_prims_source() {
+    return aura_read_repo_file("src/compiler/evaluator_primitives_query.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_type_stats.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_lifecycle.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_reflect.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_workspace.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_obs_mid.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_tail.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_query_defuse.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_obs_jit.cpp") +
+           aura_read_repo_file("src/compiler/evaluator_primitives_observability.cpp");
 }
 
 // One registered test. Function pointer (not std::function) so module-unit

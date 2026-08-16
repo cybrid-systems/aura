@@ -182,15 +182,7 @@ namespace _2287_detail {
     }
 
     static std::string read_file(const char* path) {
-        for (const auto& p :
-             {std::string(path), std::string("../") + path, std::string("../../") + path}) {
-            std::ifstream in(p);
-            if (!in)
-                continue;
-            return std::string((std::istreambuf_iterator<char>(in)),
-                               std::istreambuf_iterator<char>());
-        }
-        return {};
+        return ::aura::test::aura_read_repo_file(path);
     }
 
     static void run_2287_density() {
@@ -248,7 +240,7 @@ namespace _2287_detail {
         auto om = read_file("src/compiler/observability_metrics.h");
         CHECK(om.find("castop_density_over_budget_total") != std::string::npos,
               "AC10: metric field defined");
-        auto q_file = read_file("src/compiler/evaluator_primitives_query.cpp");
+        auto q_file = ::aura::test::aura_query_prims_source();
         CHECK(q_file.find("query:castop-density-stats") != std::string::npos,
               "AC10: query primitive defined");
         CHECK(q_file.find("castop-annotation-hint") != std::string::npos,
@@ -318,10 +310,7 @@ namespace _2645_detail {
 using aura::compiler::CompilerService;
 
 static std::string read_file(const char* path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return ::aura::test::aura_read_repo_file(path);
 }
 
 static std::int64_t query_field(CompilerService& cs, const char* field) {
@@ -447,10 +436,7 @@ namespace _2674_detail {
 using aura::compiler::CompilerService;
 
 static std::string read_file(const char* path) {
-    std::ifstream in(path);
-    if (!in)
-        return {};
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return ::aura::test::aura_read_repo_file(path);
 }
 
 static void ac2674_ast_elided_with_evidence_counter_present() {
@@ -473,7 +459,7 @@ static void ac2674_ast_elided_with_evidence_counter_present() {
     CHECK(apply_bump_count >= 2,
           "AC1 #2674: counter bumped at both identity + Dynamic-tag elision sites");
     // Counter also exposed in query surface (validated in AC5 by grep).
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("g_dead_coercion_ast_elided_with_evidence_total") != std::string::npos,
           "AC1 #2674: counter read in query surface (see AC5 for the key string)");
 }
@@ -483,7 +469,7 @@ static void ac2674_diverge_counter_present() {
     auto cixx = read_file("src/compiler/coercion_map.ixx");
     CHECK(cixx.find("g_layered_evidence_diverge_total") != std::string::npos,
           "AC2 #2674: diverge counter declaration in coercion_map.ixx");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("layered-evidence-diverge-total") != std::string::npos,
           "AC2 #2674: layered-evidence-diverge-total exposed in query surface");
     // No hard-reject path on diverge bump (observability first per body AC5).
@@ -527,7 +513,7 @@ static void ac2674_boundary_call_site() {
 
 static void ac2674_query_surface_keys() {
     std::println("\n--- AC5 #2674: query surface has #2674 keys ---");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("\"schema-2674\"") != std::string::npos,
           "AC5 #2674: schema-2674 sentinel in query surface");
     CHECK(q.find("\"issue-2674\"") != std::string::npos,
@@ -602,14 +588,7 @@ namespace _2719_detail {
 using aura::compiler::CompilerService;
 
 static std::string read_file(const char* path) {
-    std::ifstream in(path);
-    if (!in) {
-        std::ifstream in2(std::string("../") + path);
-        if (!in2)
-            return {};
-        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
-    }
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return ::aura::test::aura_read_repo_file(path);
 }
 
 // AC1: Production/Full + inject diverge → (a) force-Full arm fires
@@ -688,7 +667,7 @@ static void ac2719_3_quiet_zero_cost() {
 // layered-evidence-diverge-total/layered-evidence-coherence-wired).
 static void ac2719_4_additive_query_keys() {
     std::println("\n--- AC4 #2719: additive query keys + sentinels ---");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     // #2719 new keys present.
     CHECK(q.find("\"layered-evidence-diverge-force-armed-total\"") != std::string::npos,
           "AC4 #2719: force-armed-total key present");
@@ -734,7 +713,7 @@ static void ac2719_5_source_and_linter() {
     CHECK(cixx.find("Issue #2719") != std::string::npos, "AC5 #2719: header cites #2719");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(mb.find("Issue #2719") != std::string::npos, "AC5 #2719: mb.cpp cites #2719");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("Issue #2719") != std::string::npos, "AC5 #2719: query.cpp cites #2719");
 }
 
@@ -795,14 +774,7 @@ using aura::compiler::reset_layered_evidence_diverge_force_consumed_total_for_te
 using aura::compiler::reset_layered_evidence_diverge_hard_reject_consumed_total_for_test;
 
 static std::string read_file(const char* path) {
-    std::ifstream in(path);
-    if (!in) {
-        std::ifstream in2(std::string("../") + path);
-        if (!in2)
-            return {};
-        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
-    }
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return ::aura::test::aura_read_repo_file(path);
 }
 
 static void ac2912_1_consume_force_full() {
@@ -875,7 +847,7 @@ static void ac2912_3_quiet_zero_cost() {
 
 static void ac2912_4_additive_schema() {
     std::println("\n--- AC4 #2912: additive schema + counters; preserve prior keys ---");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("\"schema-2912\"") != std::string::npos, "AC4: schema-2912 sentinel");
     CHECK(q.find("\"issue-2912\"") != std::string::npos, "AC4: issue-2912 sentinel");
     CHECK(q.find("\"layered-evidence-diverge-force-consumed-total\"") != std::string::npos,
@@ -908,7 +880,7 @@ static void ac2912_5_source_cite_suite() {
     CHECK(cixx.find("Issue #2912") != std::string::npos, "AC5: coercion_map cites #2912");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(mb.find("Issue #2912") != std::string::npos, "AC5: mb.cpp cites #2912");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("Issue #2912") != std::string::npos, "AC5: query cites #2912");
 }
 
@@ -970,14 +942,7 @@ using aura::compiler::reset_layered_evidence_diverge_force_consumed_total_for_te
 using aura::compiler::reset_layered_evidence_diverge_force_full_sample_total_for_test;
 
 static std::string read_file(const char* path) {
-    std::ifstream in(path);
-    if (!in) {
-        std::ifstream in2(std::string("../") + path);
-        if (!in2)
-            return {};
-        return std::string((std::istreambuf_iterator<char>(in2)), std::istreambuf_iterator<char>());
-    }
-    return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    return ::aura::test::aura_read_repo_file(path);
 }
 
 static void ac2979_1_phase5_consume_sample() {

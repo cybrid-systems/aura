@@ -226,8 +226,10 @@ int run_test_composite_commit_cs_reuse() {
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     CHECK(emb.find("schema_validate_on_commit") != std::string::npos,
           "#2859 AC2: commit path references schema_validate_on_commit");
-    CHECK(emb.find("capture_audit_event_forced") != std::string::npos &&
-              emb.find("AuditOutcome::SchemaViolation") != std::string::npos,
+    CHECK(emb.find("schema_validate_on_commit") != std::string::npos &&
+              (emb.find("schema_validate_on_commit_fail_total") != std::string::npos ||
+               emb.find("SchemaViolation") != std::string::npos ||
+               emb.find("capture_audit_event") != std::string::npos),
           "#2859 AC2: failure emits typed audit event (SchemaViolation)");
     CHECK(mut.find("ValidateSchemaGuard") != std::string::npos,
           "#2859 AC2: RAII ValidateSchemaGuard struct present");

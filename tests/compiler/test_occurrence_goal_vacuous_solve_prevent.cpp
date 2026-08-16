@@ -176,7 +176,7 @@ static void ac6_schema_and_linter() {
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
     const auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto lint =
         read_file("scripts/coverage/checks/check_occurrence_goal_vacuous_solve_prevent_2647.py");
     const auto build = read_file("build.py");

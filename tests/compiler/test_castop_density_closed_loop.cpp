@@ -162,7 +162,7 @@ static void ac5_schema_source() {
 
     auto pol = read_file("src/compiler/castop_density_policy.hh");
     auto sd = read_file("src/compiler/service_dirty.cpp");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+    auto q = ::aura::test::aura_query_prims_source() +
              read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(pol.find("Issue #2459") != std::string::npos, "AC5: policy cites #2459");
     CHECK(pol.find("apply_density_closed_loop") != std::string::npos, "AC5: closed-loop helper");

@@ -4,9 +4,20 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
+
+#include <exception>
 #include <print>
 
 import std;
+
+static void reset_member_face() {
+    // Members that apply production defaults leave Forbidden tree-walker
+    // and Full audit armed; later set-code / eval / let then hard-fail.
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
 
 extern int run_test_adt_exhaustiveness_audit();
 extern int run_test_adt_hard_gate_exhaustiveness();
@@ -62,6 +73,7 @@ int main() {
     // #2773 early: batch dirty + unified fence (avoids later ADT members
     // aborting the process before discipline checks run).
     std::println("\n──── test_batch_dirty_cascade (early) ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_batch_dirty_cascade() != 0 || g_failed != 0) {
@@ -72,6 +84,7 @@ int main() {
         std::println("OK member test_batch_dirty_cascade ({} checks)", g_passed);
     }
     std::println("\n──── test_batch_dirty_discipline (early) ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_batch_dirty_discipline() != 0 || g_failed != 0) {
@@ -85,6 +98,7 @@ int main() {
     // #2648 early: independent Soft evidence-loss SLO (avoids ADT batch abort
     // masking later members during incremental verify).
     std::println("\n──── test_coercion_evidence_loss_slo ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_evidence_loss_slo() != 0 || g_failed != 0) {
@@ -96,6 +110,7 @@ int main() {
     }
 
     std::println("\n──── test_adt_exhaustiveness_audit ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_adt_exhaustiveness_audit() != 0 || g_failed != 0) {
@@ -107,6 +122,7 @@ int main() {
     }
 
     std::println("\n──── test_adt_hard_gate_exhaustiveness ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_adt_hard_gate_exhaustiveness() != 0 || g_failed != 0) {
@@ -118,6 +134,7 @@ int main() {
     }
 
     std::println("\n──── test_adt_match_goal_table ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_adt_match_goal_table() != 0 || g_failed != 0) {
@@ -129,6 +146,7 @@ int main() {
     }
 
     std::println("\n──── test_batch_dirty_cascade ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_batch_dirty_cascade() != 0 || g_failed != 0) {
@@ -140,6 +158,7 @@ int main() {
     }
 
     std::println("\n──── test_batch_dirty_discipline ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_batch_dirty_discipline() != 0 || g_failed != 0) {
@@ -151,6 +170,7 @@ int main() {
     }
 
     std::println("\n──── test_bidirectional_match_check ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_bidirectional_match_check() != 0 || g_failed != 0) {
@@ -162,6 +182,7 @@ int main() {
     }
 
     std::println("\n──── test_blame_complete_commit_gate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_blame_complete_commit_gate() != 0 || g_failed != 0) {
@@ -173,6 +194,7 @@ int main() {
     }
 
     std::println("\n──── test_blame_soft_recover ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_blame_soft_recover() != 0 || g_failed != 0) {
@@ -184,6 +206,7 @@ int main() {
     }
 
     std::println("\n──── test_boundary_solve_hard_gate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_boundary_solve_hard_gate() != 0 || g_failed != 0) {
@@ -195,6 +218,7 @@ int main() {
     }
 
     std::println("\n──── test_castop_density_closed_loop ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_castop_density_closed_loop() != 0 || g_failed != 0) {
@@ -206,6 +230,7 @@ int main() {
     }
 
     std::println("\n──── test_castop_density_hard ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_castop_density_hard() != 0 || g_failed != 0) {
@@ -217,6 +242,7 @@ int main() {
     }
 
     std::println("\n──── test_castop_typed_meta ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_castop_typed_meta() != 0 || g_failed != 0) {
@@ -228,6 +254,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_ban_weak_ir ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_ban_weak_ir() != 0 || g_failed != 0) {
@@ -239,6 +266,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_dual_require ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_dual_require() != 0 || g_failed != 0) {
@@ -250,6 +278,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_prov_slo ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_prov_slo() != 0 || g_failed != 0) {
@@ -261,6 +290,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_provenance_fast_strict ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_provenance_fast_strict() != 0 || g_failed != 0) {
@@ -273,6 +303,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_provenance_miss_force_audit ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_provenance_miss_force_audit() != 0 || g_failed != 0) {
@@ -285,6 +316,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_reject_production_defaults ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_reject_production_defaults() != 0 || g_failed != 0) {
@@ -297,6 +329,7 @@ int main() {
     }
 
     std::println("\n──── test_coercion_unify_incomplete_skip ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_coercion_unify_incomplete_skip() != 0 || g_failed != 0) {
@@ -308,6 +341,7 @@ int main() {
     }
 
     std::println("\n──── test_composite_auto_partial_from_cone ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_composite_auto_partial_from_cone() != 0 || g_failed != 0) {
@@ -320,6 +354,7 @@ int main() {
     }
 
     std::println("\n──── test_composite_commit_cs_reuse ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_composite_commit_cs_reuse() != 0 || g_failed != 0) {
@@ -331,6 +366,7 @@ int main() {
     }
 
     std::println("\n──── test_composite_cs_signature_matrix ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_composite_cs_signature_matrix() != 0 || g_failed != 0) {
@@ -342,6 +378,7 @@ int main() {
     }
 
     std::println("\n──── test_composite_txn_commit ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_composite_txn_commit() != 0 || g_failed != 0) {
@@ -353,6 +390,7 @@ int main() {
     }
 
     std::println("\n──── test_dead_coercion_columnar ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_dead_coercion_columnar() != 0 || g_failed != 0) {
@@ -364,6 +402,7 @@ int main() {
     }
 
     std::println("\n──── test_dead_coercion_dirty_cone ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_dead_coercion_dirty_cone() != 0 || g_failed != 0) {
@@ -375,6 +414,7 @@ int main() {
     }
 
     std::println("\n──── test_dead_coercion_layered ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_dead_coercion_layered() != 0 || g_failed != 0) {
@@ -386,6 +426,7 @@ int main() {
     }
 
     std::println("\n──── test_instance_constraint_depth_cap ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_instance_constraint_depth_cap() != 0 || g_failed != 0) {
@@ -397,6 +438,7 @@ int main() {
     }
 
     std::println("\n──── test_occurrence_cache_key ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_occurrence_cache_key() != 0 || g_failed != 0) {
@@ -408,6 +450,7 @@ int main() {
     }
 
     std::println("\n──── test_occurrence_dirty_key_authority ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_occurrence_dirty_key_authority() != 0 || g_failed != 0) {
@@ -419,6 +462,7 @@ int main() {
     }
 
     std::println("\n──── test_occurrence_goal_epoch_table ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_occurrence_goal_epoch_table() != 0 || g_failed != 0) {
@@ -432,7 +476,15 @@ int main() {
     std::println("\n──── test_occurrence_goal_persist_rehydrate ────");
     g_passed = 0;
     g_failed = 0;
-    if (run_test_occurrence_goal_persist_rehydrate() != 0 || g_failed != 0) {
+    int persist_rc = 1;
+    try {
+        persist_rc = run_test_occurrence_goal_persist_rehydrate();
+    } catch (const std::exception& ex) {
+        std::println("persist_rehydrate threw: {}", ex.what());
+        ++g_failed;
+        persist_rc = 1;
+    }
+    if (persist_rc != 0 || g_failed != 0) {
         ++members_failed;
         std::println("FAIL member test_occurrence_goal_persist_rehydrate ({}/{})", g_passed,
                      g_failed);
@@ -442,6 +494,7 @@ int main() {
     }
 
     std::println("\n──── test_occurrence_goal_vacuous_solve_prevent ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_occurrence_goal_vacuous_solve_prevent() != 0 || g_failed != 0) {
@@ -454,6 +507,7 @@ int main() {
     }
 
     std::println("\n──── test_partial_cone_cap ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_partial_cone_cap() != 0 || g_failed != 0) {
@@ -465,6 +519,7 @@ int main() {
     }
 
     std::println("\n──── test_partial_cone_commit_gate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_partial_cone_commit_gate() != 0 || g_failed != 0) {
@@ -476,6 +531,7 @@ int main() {
     }
 
     std::println("\n──── test_solve_delta_unresolved_export ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_solve_delta_unresolved_export() != 0 || g_failed != 0) {
@@ -487,6 +543,7 @@ int main() {
     }
 
     std::println("\n──── test_type_dep_epoch_prune ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_dep_epoch_prune() != 0 || g_failed != 0) {
@@ -498,6 +555,7 @@ int main() {
     }
 
     std::println("\n──── test_type_dep_partial_merge ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_dep_partial_merge() != 0 || g_failed != 0) {
@@ -509,6 +567,7 @@ int main() {
     }
 
     std::println("\n──── test_type_dirty_cone_dep_graph ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_dirty_cone_dep_graph() != 0 || g_failed != 0) {
@@ -520,6 +579,7 @@ int main() {
     }
 
     std::println("\n──── test_type_linear_commit_health ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_linear_commit_health() != 0 || g_failed != 0) {
@@ -531,6 +591,7 @@ int main() {
     }
 
     std::println("\n──── test_type_system_health ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_system_health() != 0 || g_failed != 0) {
@@ -542,6 +603,7 @@ int main() {
     }
 
     std::println("\n──── test_type_system_health_next_action ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_system_health_next_action() != 0 || g_failed != 0) {
@@ -553,6 +615,7 @@ int main() {
     }
 
     std::println("\n──── test_type_timeout_repair ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_type_timeout_repair() != 0 || g_failed != 0) {
