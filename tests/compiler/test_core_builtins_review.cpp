@@ -5,8 +5,7 @@
 // the core builtins review checklist surface (file-level):
 //   - AC1: lib/std/core.aura present + exports 10 functions
 //   - AC2: 10 engine primitives wrapped (>=5 acceptance met)
-//   - AC3: docs/design/core-builtins-checklist.md present
-//         with STAY + DEMOTE tables + review process
+//   - AC3: no docs/design/core-builtins-checklist.md (#1655)
 //
 // (Avoiding CompilerService construction in this test — it
 // conflicts with the same module session after multiple
@@ -24,6 +23,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -40,6 +40,14 @@ static int count_occurrences(const std::string& haystack, const std::string& nee
     return count;
 }
 
+static std::string repo_file(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    return std::string(AURA_SOURCE_DIR) + "/" + std::string(rel);
+#else
+    return std::string(rel);
+#endif
+}
+
 static std::string read_file(const std::string& path) {
     std::ifstream f(path);
     std::string content;
@@ -53,7 +61,7 @@ static std::string read_file(const std::string& path) {
 // ── AC1: lib/std/core.aura present + exports 10 functions
 bool test_stdlib_core_file_present() {
     std::println("\n--- AC1: lib/std/core.aura present + 10 exports ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/core.aura";
+    const std::string lib_path = repo_file("lib/std/core.aura");
     std::string content = read_file(lib_path);
     CHECK(!content.empty(), "lib/std/core.aura exists on disk");
     CHECK(content.find("(export") != std::string::npos, "stdlib/core.aura has (export ...) line");
@@ -74,7 +82,7 @@ bool test_stdlib_core_file_present() {
     CHECK(content.find("(core:clamp") != std::string::npos,
           "stdlib/core.aura exports (core:clamp)");
     CHECK(content.find("(core:lerp") != std::string::npos, "stdlib/core.aura exports (core:lerp)");
-    std::string type_content = read_file("/home/dev/code/aura/lib/std/core.aura-type");
+    std::string type_content = read_file(repo_file("lib/std/core.aura-type"));
     CHECK(!type_content.empty(), "lib/std/core.aura-type exists on disk");
     std::println("  lib/core.aura: present + 10 funcs + export + type");
     return true;
@@ -83,7 +91,7 @@ bool test_stdlib_core_file_present() {
 // ── AC2: 10 engine primitives wrapped (>=5 acceptance met)
 bool test_10_primitives_wrapped() {
     std::println("\n--- AC2: >= 10 engine primitives wrapped ---");
-    std::string content = read_file("/home/dev/code/aura/lib/std/core.aura");
+    std::string content = read_file(repo_file("lib/std/core.aura"));
     CHECK(!content.empty(), "lib/std/core.aura exists");
     const int n = count_occurrences(content, "(core:");
     std::println("  (core: occurrences in stdlib: {}", n);
@@ -91,31 +99,11 @@ bool test_10_primitives_wrapped() {
     return true;
 }
 
-// ── AC3: docs/design/core-builtins-checklist.md present
-//         with STAY + DEMOTE tables + review process
+// ── AC3: no docs/design/core-builtins-checklist.md (#1655)
 bool test_decision_doc_exists() {
-    std::println("\n--- AC3: docs/design/core-builtins-checklist.md ---");
-    std::string content = read_file("/home/dev/code/aura/docs/design/core-builtins-checklist.md");
-    CHECK(!content.empty(), "decision doc exists");
-    CHECK(content.find("STAY in engine") != std::string::npos, "doc has STAY in engine section");
-    CHECK(content.find("Demoted to stdlib") != std::string::npos,
-          "doc has Demoted to stdlib section");
-    CHECK(content.find("Reusable review process") != std::string::npos,
-          "doc has Reusable review process section");
-    CHECK(content.find("Acceptance criteria check") != std::string::npos,
-          "doc has Acceptance criteria check section");
-    // Count ship rows (table format: `| ... | ship |` with optional
-    // checkmark prefix). Match `|...ship` with ` ship |` end.
-    int ship_count = 0;
-    std::size_t pos = 0;
-    while ((pos = content.find(" ship |", pos + 1)) != std::string::npos) {
-        // The text before " ship |" may be "|" (table col sep) or
-        // "checkmark space" (decoration). Both are table rows.
-        // We accept both as valid Tier 1 demoted markers.
-        ++ship_count;
-    }
-    std::println("  ship rows in decision doc: {}", ship_count);
-    CHECK(ship_count >= 10, "decision doc has >= 10 ship rows (Tier 1 demoted)");
+    std::println("\n--- AC3: no docs/design/core-builtins-checklist.md (#1655) ---");
+    std::string content = read_file(repo_file("docs/design/core-builtins-checklist.md"));
+    CHECK(content.empty(), "no docs/design/core-builtins-checklist.md per #1655");
     return true;
 }
 

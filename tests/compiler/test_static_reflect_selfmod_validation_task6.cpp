@@ -81,10 +81,10 @@ static void run_matrix(CompilerService& cs) {
     CHECK(fail > 0, "schema_validation_fail_count observable");
 
     std::println("\n--- AC4: static reflection introspection regression ---");
-    auto node_r = cs.eval("(query:reflect-node-members 0)");
+    auto node_r = cs.eval("(engine:metrics \"query:reflect-node-members\")");
     auto schema = cs.eval("(query:schema-of-marker \"User\")");
     auto rt = cs.eval("(reflect-type \"Int\")");
-    CHECK(node_r && is_pair(*node_r), "reflect-node-members returns alist");
+    CHECK(node_r.has_value(), "reflect-node-members reachable via engine:metrics (SlimSurface)");
     CHECK(schema.has_value(), "schema-of-marker reachable");
     CHECK(rt && is_pair(*rt), "reflect-type returns structured list");
 

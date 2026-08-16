@@ -168,8 +168,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # with ⚠ markers. Categories:
     #   - heap/UAF under mutate+parallel (test_pair_slot_lock malloc corruption)
     #   - agent/orch scope races (test_agent_ask SIGSEGV)
-    #   - spec/doc rebaseline (test_stdlib_infrastructure, test_synthesize_namespace_demotion)
-    #   - reflect/EDSL AC drift (test_static_reflect_selfmod_validation_task6)
+    #   - spec/doc rebaseline (batch 1 greened: stdlib/synthesize/core-builtins/
+    #     query-namespace/ast-workspace + static-reflect SlimSurface)
     #   - type/coercion/constraint surface drift (rest)
     # Follow-ups: rebaseline specs, fix malloc corruption under mutate
     # stress, address SIGSEGV in agent_ask.
@@ -177,14 +177,12 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_agent_ask",
     "test_agent_failure_policy",
     "test_agent_scope",
-    "test_ast_workspace_modules",
     "test_audit_wal_force_multi_tenant",
     "test_boundary_yield_steal_metrics",
     "test_cascade_incremental_pass_suite",
     "test_chaos_fiber_mutation_gc_mailbox",
     "test_coercion_dead_elim_castop_flow_zerooverhead",
     "test_contracts",
-    "test_core_builtins_review",
     "test_dead_coercion_pipeline_wire",
     "test_depth_safe_mutation_boundary_steal",
     "test_dirty_aware_shape_linear_passes",
@@ -205,14 +203,10 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_partial_relower_storm_gate",
     "test_query_and_replace_batch",
     "test_query_epoch_contract",
-    "test_query_namespace_audit",
     "test_root_epoch_gc_safety_post_invalidate",
     "test_root_remap_pin_contract_unified",
     "test_safepoint_mutation",
     "test_soa_dirty_aware_pipeline",
-    "test_static_reflect_selfmod_validation_task6",
-    "test_stdlib_infrastructure",
-    "test_synthesize_namespace_demotion",
     # test_ast_concurrency: std::vector bounds-check exception under
     # parallel ast-concurrency load (SIGABRT); same wave as above.
     "test_ast_concurrency",

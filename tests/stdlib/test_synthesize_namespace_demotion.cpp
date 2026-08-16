@@ -16,7 +16,7 @@
 //   - AC6: synthesize:pipeline lint hint removed (was dead ref)
 //   - AC7: lint hint count reduced by ≥2 in synthesize:
 //          namespace surface
-//   - AC8: docs/design/synthesize-namespace-decision.md exists
+//   - AC8: no docs/design/synthesize-namespace-decision.md (#1655)
 //   - AC9: regression — existing primitives still work
 
 #include "test_harness.hpp"
@@ -31,6 +31,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -44,6 +45,14 @@ namespace aura_issue_561_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
+
+static std::string repo_file(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    return std::string(AURA_SOURCE_DIR) + "/" + std::string(rel);
+#else
+    return std::string(rel);
+#endif
+}
 
 // ── AC1: (query:templates) engine-level accessor returns list
 bool test_query_templates_accessor() {
@@ -87,7 +96,7 @@ bool test_synthesize_list_templates_removed() {
 // ── AC3: lib/std/synthesize.aura file present + exports
 bool test_stdlib_synthesize_file_present() {
     std::println("\n--- AC3: lib/std/synthesize.aura present + exports ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/synthesize.aura";
+    const std::string lib_path = repo_file("lib/std/synthesize.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/synthesize.aura exists on disk");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -107,7 +116,7 @@ bool test_stdlib_synthesize_file_present() {
 // ── AC4: lib/std/synthesize.aura-type file present
 bool test_stdlib_synthesize_type_file() {
     std::println("\n--- AC4: lib/std/synthesize.aura-type present ---");
-    std::ifstream ft("/home/dev/code/aura/lib/std/synthesize.aura-type");
+    std::ifstream ft(repo_file("lib/std/synthesize.aura-type"));
     CHECK(ft.good(), "lib/std/synthesize.aura-type exists on disk");
     return true;
 }
@@ -135,8 +144,7 @@ bool test_remaining_synthesize_primitives() {
 // ── AC6: synthesize:pipeline lint hint removed (was dead ref)
 bool test_synthesize_pipeline_hint_removed() {
     std::println("\n--- AC6: synthesize:pipeline lint hint removed from diagnostic.cpp ---");
-    const std::string diag_path =
-        "/home/dev/code/aura/src/compiler/evaluator_primitives_diagnostic.cpp";
+    const std::string diag_path = repo_file("src/compiler/evaluator_primitives_diagnostic.cpp");
     std::ifstream f(diag_path);
     CHECK(f.good(), "diagnostic.cpp exists");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -166,36 +174,24 @@ bool test_synthesize_namespace_surface_reduced() {
     // lint hints (synthesize:fill + synthesize:pipeline)
     // = -3 surface items in the synthesize: namespace.
     // We verify both halves:
-    std::ifstream f1("/home/dev/code/aura/lib/std/synthesize.aura");
-    std::ifstream f2("/home/dev/code/aura/lib/std/synthesize.aura-type");
-    std::ifstream f3("/home/dev/code/aura/docs/design/synthesize-namespace-decision.md");
+    std::ifstream f1(repo_file("lib/std/synthesize.aura"));
+    std::ifstream f2(repo_file("lib/std/synthesize.aura-type"));
+    std::ifstream f3(repo_file("docs/design/synthesize-namespace-decision.md"));
     const bool aura_ok = f1.good();
     const bool type_ok = f2.good();
     const bool doc_ok = f3.good();
     std::println("  stdlib wrappers: aura={} type={} decision-doc={}", aura_ok, type_ok, doc_ok);
     CHECK(aura_ok, "stdlib wrappers present");
     CHECK(type_ok, "stdlib type signatures present");
-    CHECK(doc_ok, "decision doc present");
+    CHECK(!doc_ok, "no docs/design/synthesize-namespace-decision.md per #1655");
     return true;
 }
 
-// ── AC8: docs/design/synthesize-namespace-decision.md exists
+// ── AC8: no docs/design/synthesize-namespace-decision.md (#1655)
 bool test_decision_doc_exists() {
-    std::println("\n--- AC8: docs/design/synthesize-namespace-decision.md exists ---");
-    std::ifstream f("/home/dev/code/aura/docs/design/synthesize-namespace-decision.md");
-    CHECK(f.good(), "decision doc exists");
-    if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        f.close();
-        const bool has_demoted = content.find("DEMOTED to stdlib") != std::string::npos;
-        const bool has_stays = content.find("STAYS in engine") != std::string::npos;
-        const bool has_candidate =
-            content.find("NON-TRIVIAL demotion candidate") != std::string::npos;
-        std::println("  decision doc: present + 3 sections");
-        CHECK(has_demoted, "doc has DEMOTED section");
-        CHECK(has_stays, "doc has STAYS section");
-        CHECK(has_candidate, "doc has NON-TRIVIAL candidate section");
-    }
+    std::println("\n--- AC8: no docs/design/synthesize-namespace-decision.md (#1655) ---");
+    std::ifstream f(repo_file("docs/design/synthesize-namespace-decision.md"));
+    CHECK(!f.good(), "no docs/design/synthesize-namespace-decision.md per #1655");
     return true;
 }
 
