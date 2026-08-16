@@ -731,7 +731,10 @@ if(LLVM_FOUND)
         src/compiler/aura_jit.cpp
         src/compiler/aura_jit_runtime.cpp
         src/compiler/aura_jit_bridge.cpp
-        src/compiler/hot_update_registry.cpp # Issue #1956
+        # HotUpdateRegistry lives in aura_jit_light_test_objects (SSOT).
+        # Full LLVM tests resolve instance() from the light SO (always
+        # DT_NEEDED via aura_test_objects) so mold --as-needed cannot
+        # leave libaura_test_objects.so with an undefined singleton.
         src/compiler/aura_jit_prim_dispatch_stub.cpp
         src/core/contract_handler.cpp
         src/core/contract_stub.cpp
@@ -817,6 +820,13 @@ set_source_files_properties(
     PROPERTIES COMPILE_FLAGS "-fno-rtti -fcontracts")
 # g_tl_arena SSOT (removed from aura_jit_runtime.cpp).
 target_link_libraries(aura_jit_light_test_objects PUBLIC ${CMAKE_DL_LIBS} aura_tl_arena)
+# CI x86_64 mold --as-needed strips aura_jit_* from test binaries that
+# do not directly reference JIT symbols. libaura_test_objects.so then
+# fails at load with undefined HotUpdateRegistry::instance (security
+# defaults / CastOp density / shape storm all call the singleton).
+# PUBLIC DT_NEEDED on the test-objects SO keeps the light JIT mapped
+# even when the binary itself is --as-needed-clean.
+target_link_libraries(aura_test_objects PUBLIC aura_jit_light_test_objects)
 
 # Phase 2 dedup helper (definition placed early so it precedes all
 # test_issue_* and pilot calls in this file). See also the pilots section
