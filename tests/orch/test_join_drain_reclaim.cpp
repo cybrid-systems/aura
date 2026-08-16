@@ -1720,11 +1720,256 @@ int run_test_join_drain_reclaim() {
                   "3051 AC6: build.py wires linter");
         }
     }
-}
-}
 
-std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed, aura::test::g_failed);
-return aura::test::g_failed ? 1 : 0;
+    // ── #3087: ensure_reclaimed_cleanup — C++ host helper for long-lived
+    // AgentHandle after Reclaimed join (closes quota/mailbox leak window
+    // when the host stores the handle in a vector, hands it to another
+    // component, or polls later). SSOT for the production auto-wait —
+    // maybe_auto_wait_reclaimed_production delegates here (single source
+    // of truth for 50ms wait + flag writes). Same shape as the
+    // WorkspaceIsolationPolicy fence post-#3086 and the
+    // CapabilityRegistry::grant_macro_self_evo fence post-#3029.
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::AgentHandle;
+        using aura::orch::ensure_reclaimed_cleanup;
+        using aura::orch::g_orch_module_stats;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::serve::Fiber;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        // ── AC1: !must_wait_reclaimed → zero-cost no-op ──
+        std::println(
+            "\n--- #3087 AC1: ensure_reclaimed_cleanup with !must_wait_reclaimed → zero-cost ---");
+        {
+            apply_dev_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            const auto clean0 =
+                g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+            const auto wr = ensure_reclaimed_cleanup(h);
+            CHECK(wr.status == JoinStatus::Invalid,
+                  "3087 AC1: !must_wait_reclaimed returns Invalid (zero-cost no-op)");
+            CHECK(wr.wait_us == 0, "3087 AC1: !must_wait_reclaimed wait_us == 0");
+            CHECK(!wr.cleanup_completed, "3087 AC1: !must_wait_reclaimed no cleanup");
+            CHECK(!h.wait_reclaimed_used,
+                  "3087 AC1: !must_wait_reclaimed does not set wait_reclaimed_used");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+                  "3087 AC1: !must_wait_reclaimed does not bump wait_reclaimed_total");
+            CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(
+                      std::memory_order_relaxed) == clean0,
+                  "3087 AC1: !must_wait_reclaimed does not bump cleanup counter");
+        }
+
+        // ── AC2: must_wait_reclaimed + body already done → reservation released ──
+        std::println(
+            "\n--- #3087 AC2: must_wait + body done → cleanup_completed, reservation released ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(h.must_wait_reclaimed, "3087 AC2: production join sets must_wait_reclaimed");
+            CHECK(h.reserved_memory_bytes == 4096, "3087 AC2: reservation held pre-helper");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            const auto clean0 =
+                g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+            const auto wr = ensure_reclaimed_cleanup(h);
+            CHECK(wr.status == JoinStatus::Ok, "3087 AC2: body done → Ok status");
+            CHECK(wr.cleanup_completed, "3087 AC2: cleanup ran (body exited before timeout)");
+            CHECK(!wr.still_running, "3087 AC2: body not still-running after exit");
+            CHECK(h.wait_reclaimed_used, "3087 AC2: wait_reclaimed_used set after helper");
+            CHECK(!h.wait_reclaimed_timeout, "3087 AC2: no timeout (body already exited)");
+            CHECK(h.reserved_memory_bytes == 0,
+                  "3087 AC2: reservation released without host storing flag");
+            CHECK(!h.reclaimed_deferred_cleanup,
+                  "3087 AC2: Done-path cleanup ran (deferred flag cleared)");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) ==
+                      wait0 + 1,
+                  "3087 AC2: reuses wait_reclaimed_total");
+            CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(
+                      std::memory_order_relaxed) == clean0 + 1,
+                  "3087 AC2: reuses wait_reclaimed_cleanup_total");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        // ── AC3: must_wait + body still running → timeout, no release ──
+        std::println(
+            "\n--- #3087 AC3: must_wait + body still running → timeout, #2661 preserved ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            const auto wr = ensure_reclaimed_cleanup(h);
+            CHECK(wr.status == JoinStatus::Timeout, "3087 AC3: body still running → Timeout");
+            CHECK(wr.still_running, "3087 AC3: still_running flagged");
+            CHECK(!wr.cleanup_completed, "3087 AC3: no cleanup on timeout");
+            CHECK(h.wait_reclaimed_used, "3087 AC3: wait_reclaimed_used set");
+            CHECK(h.wait_reclaimed_timeout, "3087 AC3: wait_reclaimed_timeout set");
+            CHECK(h.reserved_memory_bytes == 2048,
+                  "3087 AC3: #2661 no release on timeout (body-stack contract)");
+            CHECK(wr.wait_us > 0, "3087 AC3: folded wait_us > 0 (50ms window elapsed)");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+
+        // ── AC4: idempotent — second call after first succeeds is no-op ──
+        std::println("\n--- #3087 AC4: ensure_reclaimed_cleanup idempotent ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 1024;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            const auto wr1 = ensure_reclaimed_cleanup(h);
+            CHECK(wr1.status == JoinStatus::Ok && wr1.cleanup_completed,
+                  "3087 AC4: first call cleans up");
+            const auto wait0 =
+                g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+            const auto clean0 =
+                g_orch_module_stats.wait_reclaimed_cleanup_total.load(std::memory_order_relaxed);
+            const auto wr2 = ensure_reclaimed_cleanup(h);
+            CHECK(wr2.status == JoinStatus::Invalid,
+                  "3087 AC4: second call → Invalid (deferred flag already cleared)");
+            CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+                  "3087 AC4: second call does not bump wait_reclaimed_total");
+            CHECK(g_orch_module_stats.wait_reclaimed_cleanup_total.load(
+                      std::memory_order_relaxed) == clean0,
+                  "3087 AC4: second call does not bump cleanup counter");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        // ── AC5: long-lived handle keep pattern → cleanup within ≤50ms ──
+        std::println("\n--- #3087 AC5: long-lived handle × ensure_reclaimed_cleanup releases ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            std::vector<std::unique_ptr<Fiber>> fibers;
+            std::vector<std::unique_ptr<AgentHandle>> handles;
+            for (int i = 0; i < 4; ++i) {
+                fibers.push_back(std::make_unique<Fiber>([] {}));
+                fibers.back()->mark_reclaimed();
+                auto h = std::make_unique<AgentHandle>();
+                h->ok = true;
+                h->fiber = fibers.back().get();
+                h->reserved_memory_bytes = 256 * (i + 1);
+                JoinPolicy policy{};
+                policy.primary_ms = 1;
+                policy.drain_ms = 0;
+                (void)join_agent(*h, policy);
+                handles.push_back(std::move(h));
+            }
+            for (auto& f : fibers) {
+                f->set_state(FiberState::Done);
+                f->note_body_exit_if_reclaimed();
+            }
+            for (auto& h : handles) {
+                CHECK(h->must_wait_reclaimed,
+                      "3087 AC5: must_wait_reclaimed holds after join (pre-helper)");
+                CHECK(h->reserved_memory_bytes > 0, "3087 AC5: reservation held pre-helper");
+                const auto wr = ensure_reclaimed_cleanup(*h);
+                CHECK(wr.status == JoinStatus::Ok && wr.cleanup_completed,
+                      "3087 AC5: helper cleans up body-already-exited handle");
+                CHECK(h->reserved_memory_bytes == 0,
+                      "3087 AC5: long-lived handle releases reservation after helper");
+            }
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        // ── AC6: source-cite + no invent + no docs/design/ ──
+        std::println("\n--- #3087 AC6: source-cite + no invent + no docs/design/ ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto test_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+            CHECK(spawn.find("#3087") != std::string::npos, "3087 AC6: agent_spawn.h cites #3087");
+            CHECK(spawn.find("ensure_reclaimed_cleanup") != std::string::npos,
+                  "3087 AC6: SSOT helper present in agent_spawn.h");
+            CHECK(spawn.find("ensure_reclaimed_cleanup(h)") != std::string::npos,
+                  "3087 AC6: maybe_auto_wait_reclaimed_production delegates to SSOT helper");
+            CHECK(test_self.find("#3087") != std::string::npos, "3087 AC6: test file cites #3087");
+            std::ifstream invent("tests/orch/test_issue_3087.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_3087.cpp");
+            CHECK(!invent.good(),
+                  "3087 AC6: no tests/orch/test_issue_3087.cpp (forbidden per #81967)");
+            const std::filesystem::path docs_design = "docs/design";
+            std::error_code ec;
+            if (std::filesystem::is_directory(docs_design, ec)) {
+                for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                    const auto name = entry.path().filename().string();
+                    CHECK(name.find("3087-") == std::string::npos,
+                          std::string("3087 AC6: no docs/design/") + name +
+                              " (forbidden per #1655)");
+                }
+            }
+        }
+    }
+
+    std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
+                 aura::test::g_failed);
+    return aura::test::g_failed ? 1 : 0;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

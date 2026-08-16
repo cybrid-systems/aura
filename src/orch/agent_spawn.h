@@ -2079,14 +2079,39 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
 // must_wait=false: no-op (zero extra wait / counter). Does **not**
 // change C++ JoinPolicy default (#3012 AC4). Reuses wait_reclaimed_*
 // counters (#2924). Returns folded wait_us (0 on no-op).
+//
+// Issue #3087: SSOT for the production auto-wait. ensure_reclaimed_cleanup
+// is the public helper C++ hosts call once after join_agent when they keep
+// the AgentHandle long-term (vector-of-handles, hand to another component,
+// poll-later pattern) — closes the "host forgets the second wait_reclaimed"
+// quota/mailbox-attach leak window. maybe_auto_wait_reclaimed_production
+// delegates here so the wait logic lives in one place. Same shape as
+// WorkspaceIsolationPolicy::grant_cross_tenant / try_grant_cross_tenant_privileged
+// post-#3086 and CapabilityRegistry::grant_macro_self_evo post-#3029.
+[[nodiscard]] inline WaitReclaimedResult ensure_reclaimed_cleanup(AgentHandle& h) noexcept {
+    // AC: zero-cost when Soft/Off or explicit wait already ran (the
+    // production gate is the must_wait_reclaimed flag set in join_agent;
+    // explicit JoinPolicy{.wait_reclaimed_ms = N} clears it before this
+    // helper is called, see L2302..2309).
+    if (!h.must_wait_reclaimed) {
+        WaitReclaimedResult out;
+        out.status = serve::JoinStatus::Invalid;
+        return out; // zero extra wait / counter / lock
+    }
+    auto wr = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault);
+    h.wait_reclaimed_used = true;
+    h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+    return wr;
+}
+
 [[nodiscard]] inline std::uint64_t
 maybe_auto_wait_reclaimed_production(AgentHandle& h,
                                      bool caller_passed_wait_reclaimed_ms) noexcept {
     if (caller_passed_wait_reclaimed_ms || !h.must_wait_reclaimed)
         return 0;
-    auto wr = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault);
-    h.wait_reclaimed_used = true;
-    h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+    // Issue #3087: delegate to the SSOT helper so the wait logic
+    // (50 ms deadline + flag writes) lives in one place.
+    auto wr = ensure_reclaimed_cleanup(h);
     return wr.wait_us;
 }
 
