@@ -135,7 +135,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_isolation_stamp_resolve greened inside test_aot_jit_stamp_batch
     "test_lifetime_pin_batch_ffi_present_2048",
     "test_linear_ownership_batch",
-    "test_mutate_capability_force",
+    # test_mutate_capability_force greened inside fold batch
     "test_mutation_aot_unit_batch",
     "test_mutation_typed_audit_batch",
     # test_partial_relower_cascade greened inside test_aot_jit_stamp_batch
@@ -144,7 +144,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_reemit_production_default_defer",
     "test_reemit_production_default_defer_v2",
     "test_render_agent_closedloop_2051",
-    "test_rollback_by_marker",
+    # test_rollback_by_marker greened inside fold batch
     "test_security_audit_unify",
     "test_security_event_wal_replay",
     "test_solve_delta_unresolved_export",
@@ -283,7 +283,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # (light-link residual tick; query-and-replace #t / pair-error).
     # test_jit_macro_introduced_preserve greened: preserved-total cite
     # via aura_query_prims_source (lifecycle TU).
-    "test_misc_issue_fold_batch",
+    # test_misc_issue_fold_batch greened (27/0): reset_member_face
+    # between members; query cites / eval-no-side-effects rebaselined.
     "test_mutation_hold_boundary_batch",
     "test_orch_agent_batch",
     "test_security_capability_batch",

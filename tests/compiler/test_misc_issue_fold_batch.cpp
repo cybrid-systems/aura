@@ -4,9 +4,23 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/coercion_provenance_policy.hh"
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
+
 #include <print>
 
 import std;
+
+// Isolation/security members leave production face + tree-walker
+// Forbidden; later set-code/eval members then fail. Reset between
+// members (same as test_linear_misc_batch).
+static void reset_member_face() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+}
 
 extern int run_test_aether_denseness_residual();
 extern int run_test_audit_wal_force_multi_tenant();
@@ -46,302 +60,47 @@ int main() {
     int members_passed = 0;
     std::println("=== test_misc_issue_fold_batch (27 members) ===");
 
-    std::println("\n──── test_aether_denseness_residual ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_aether_denseness_residual() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_aether_denseness_residual ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_aether_denseness_residual ({} checks)", g_passed);
-    }
+    const auto run = [&](const char* name, int (*fn)()) {
+        std::println("\n──── {} ────", name);
+        reset_member_face();
+        g_passed = 0;
+        g_failed = 0;
+        if (fn() != 0 || g_failed != 0) {
+            ++members_failed;
+            std::println("FAIL member {} ({}/{})", name, g_passed, g_failed);
+        } else {
+            ++members_passed;
+            std::println("OK member {} ({} checks)", name, g_passed);
+        }
+    };
 
-    std::println("\n──── test_audit_wal_force_multi_tenant ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_audit_wal_force_multi_tenant() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_audit_wal_force_multi_tenant ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_audit_wal_force_multi_tenant ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_aura_sandbox_env ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_aura_sandbox_env() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_aura_sandbox_env ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_aura_sandbox_env ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_bugfix ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_bugfix() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_bugfix ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_bugfix ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_commercial_tenant_profile ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_commercial_tenant_profile() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_commercial_tenant_profile ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_commercial_tenant_profile ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_compact_policy ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_compact_policy() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_compact_policy ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_compact_policy ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_delta_truncate_goal_priority ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_delta_truncate_goal_priority() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_delta_truncate_goal_priority ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_delta_truncate_goal_priority ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_dual_path_desync_hard_fail ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_dual_path_desync_hard_fail() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_dual_path_desync_hard_fail ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_dual_path_desync_hard_fail ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_escape_move_elision_gate ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_escape_move_elision_gate() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_escape_move_elision_gate ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_escape_move_elision_gate ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_incremental_soundness_oracle ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_incremental_soundness_oracle() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_incremental_soundness_oracle ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_incremental_soundness_oracle ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_isolation_audit_mid ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_isolation_audit_mid() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_isolation_audit_mid ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_isolation_audit_mid ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_mutate_capability_force ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_mutate_capability_force() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_mutate_capability_force ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_mutate_capability_force ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_orch_scope_child ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_orch_scope_child() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_orch_scope_child ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_orch_scope_child ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_post_compact_lifecycle ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_post_compact_lifecycle() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_post_compact_lifecycle ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_post_compact_lifecycle ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_reverify_expand ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_reverify_expand() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_reverify_expand ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_reverify_expand ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_rollback_by_marker ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_rollback_by_marker() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_rollback_by_marker ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_rollback_by_marker ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_selfevo_bugfix ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_selfevo_bugfix() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_selfevo_bugfix ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_selfevo_bugfix ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_shape_profiler_concurrency ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_shape_profiler_concurrency() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_shape_profiler_concurrency ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_shape_profiler_concurrency ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_symbol_eq ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_symbol_eq() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_symbol_eq ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_symbol_eq ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_truncate_commit_gate ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_truncate_commit_gate() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_truncate_commit_gate ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_truncate_commit_gate ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_try_catch_bind ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_try_catch_bind() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_try_catch_bind ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_try_catch_bind ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_while_define_oneshot ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_while_define_oneshot() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_while_define_oneshot ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_while_define_oneshot ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_fixup_deltas ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_fixup_deltas() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_fixup_deltas ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_fixup_deltas ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_reset_slot_parent_edges ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_reset_slot_parent_edges() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_reset_slot_parent_edges ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_reset_slot_parent_edges ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_restamp_sla_observability ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_restamp_sla_observability() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_restamp_sla_observability ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_restamp_sla_observability ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_subtree_dirty_bounds ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_subtree_dirty_bounds() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_subtree_dirty_bounds ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_subtree_dirty_bounds ({} checks)", g_passed);
-    }
-
-    std::println("\n──── test_transaction_guard ────");
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_transaction_guard() != 0 || g_failed != 0) {
-        ++members_failed;
-        std::println("FAIL member test_transaction_guard ({}/{})", g_passed, g_failed);
-    } else {
-        ++members_passed;
-        std::println("OK member test_transaction_guard ({} checks)", g_passed);
-    }
+    run("test_aether_denseness_residual", run_test_aether_denseness_residual);
+    run("test_audit_wal_force_multi_tenant", run_test_audit_wal_force_multi_tenant);
+    run("test_aura_sandbox_env", run_test_aura_sandbox_env);
+    run("test_bugfix", run_test_bugfix);
+    run("test_commercial_tenant_profile", run_test_commercial_tenant_profile);
+    run("test_compact_policy", run_test_compact_policy);
+    run("test_delta_truncate_goal_priority", run_test_delta_truncate_goal_priority);
+    run("test_dual_path_desync_hard_fail", run_test_dual_path_desync_hard_fail);
+    run("test_escape_move_elision_gate", run_test_escape_move_elision_gate);
+    run("test_incremental_soundness_oracle", run_test_incremental_soundness_oracle);
+    run("test_isolation_audit_mid", run_test_isolation_audit_mid);
+    run("test_mutate_capability_force", run_test_mutate_capability_force);
+    run("test_orch_scope_child", run_test_orch_scope_child);
+    run("test_post_compact_lifecycle", run_test_post_compact_lifecycle);
+    run("test_reverify_expand", run_test_reverify_expand);
+    run("test_rollback_by_marker", run_test_rollback_by_marker);
+    run("test_selfevo_bugfix", run_test_selfevo_bugfix);
+    run("test_shape_profiler_concurrency", run_test_shape_profiler_concurrency);
+    run("test_symbol_eq", run_test_symbol_eq);
+    run("test_truncate_commit_gate", run_test_truncate_commit_gate);
+    run("test_try_catch_bind", run_test_try_catch_bind);
+    run("test_while_define_oneshot", run_test_while_define_oneshot);
+    run("test_fixup_deltas", run_test_fixup_deltas);
+    run("test_reset_slot_parent_edges", run_test_reset_slot_parent_edges);
+    run("test_restamp_sla_observability", run_test_restamp_sla_observability);
+    run("test_subtree_dirty_bounds", run_test_subtree_dirty_bounds);
+    run("test_transaction_guard", run_test_transaction_guard);
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);

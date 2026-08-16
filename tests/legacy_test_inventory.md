@@ -33,10 +33,10 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 240 | 240 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 241 | 241 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 53 | 53 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 82 | 82 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
@@ -140,7 +140,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_macro_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/compiler/test_macro_reflect_batch.cpp` → theme `edsl_hygiene`
 - `tests/serve/test_mailbox_fiber_batch.cpp` → theme `fiber_orch`
-- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `edsl_hygiene`
+- `tests/compiler/test_misc_issue_fold_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_module_query_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutate_batch.cpp` → theme `mutation_dirty`
 - `tests/compiler/test_mutation_aot_unit_batch.cpp` → theme `observability`
@@ -1142,13 +1142,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (240)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (241)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (240)
+#### domain/ (241)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1268,6 +1268,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_intro_restamp.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_macro_restamp_after_flat.cpp (which covers
 - `tests/compiler/test_macro_schema_dirty_propagate.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2098 + file-level atomic + C-linkage reader +
 - `tests/core/test_marker_metadata_lock.cpp` (—) [domain_suite, theme_core] — Issue #1783 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
 - `tests/core/test_module_boundary.cpp` (—) [domain_suite, theme_core] — Issue #1885 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_module_query_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_module_query_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_rebind_residual.cpp` (—) [domain_suite, theme_compiler] — AC1: set-code multi-define (define g (f)) binds call result, not procedure
@@ -1533,13 +1534,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2897 — query:type-linear-evolution-snapshot single atomic
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (53)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (52)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (53)
+#### domain/ (52)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1566,7 +1567,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_macro_reflect_batch.cpp — batch driver for macro+reflect+self-evo family.
 - `tests/compiler/test_macro_restamp_after_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2019 + restamp_macro_introduced_generations
 - `tests/compiler/test_macro_self_evo_capability.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2023; MacroSelfEvoPolicy + check_macro_self_evo
-- `tests/compiler/test_misc_issue_fold_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_misc_issue_fold_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_move_node_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2801; is_macro_introduced + note metric
 - `tests/core/test_node_meta_gap.cpp` (—) [domain_suite, theme_core] — AC1: gap entry tag is 0x0C sentinel and is_gap == true
 - `tests/reflect/test_node_tag_align_b1.cpp` (—) [small, domain_suite, theme_reflect] — Wave B1: NodeTag P2996 identifiers ↔ kNodeTagNames alignment.
