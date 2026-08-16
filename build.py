@@ -80,7 +80,12 @@ _ROOT_FOR_PATH = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "python"))
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "bench"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
-from aura_file_runner import discover_aura_files, run_aura_file_suite  # noqa: E402
+from aura_file_runner import (  # noqa: E402
+    SnippetSpec,
+    discover_aura_files,
+    run_aura_file_suite,
+    run_snippet_suite,
+)
 from benchmark_cases import load_typecheck_cases  # noqa: E402
 from integ_cases import load_integ_cases  # noqa: E402
 from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets  # noqa: E402
@@ -4697,79 +4702,42 @@ def _run_cases_parallel(label: str, cases: list, run_one, *, sort_key=None) -> i
 
 
 def test_integ():
-    """端到端管线测试 — eval / ir / typecheck / serve"""
+    """端到端管线测试 — eval / ir / typecheck / serve (shared snippet runner)."""
     print(f"{B}═══ Integration tests ═══{N}")
     if not AURA.exists():
         fail(f"{AURA} not found — run 'build' first")
         return 1
 
     flags = {
-        "eval": [],
-        "ir": ["--ir"],
-        "typecheck": ["--typecheck"],
-        "serve": ["--serve"],
+        "eval": (),
+        "ir": ("--ir",),
+        "typecheck": ("--typecheck",),
+        "serve": ("--serve",),
     }
-    env = _aura_test_env()
-    cases = list(load_integ_cases())
-
-    def run_one(tc):
-        args = [str(AURA)] + flags.get(tc.pipeline, [])
-        pipe_input = tc.code if tc.pipeline == "serve" else tc.code + "\n"
-        r = subprocess.run(
-            args,
-            input=pipe_input,
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=env,
+    specs: list[SnippetSpec] = []
+    for tc in load_integ_cases():
+        specs.append(
+            SnippetSpec(
+                name=f"[{tc.pipeline:10s}] {tc.name}",
+                code=tc.code,
+                extra_args=flags.get(tc.pipeline, ()),
+                expect_out=tc.expected,
+                expect_err=tc.expected_err,
+                expect_status=tc.expected_status,
+                # err_div_zero accepts 0 / SIGFPE / clean error report.
+                accept_status=(0, -8, 1) if tc.name == "err_div_zero" else (),
+                timeout_s=30,
+                stdin_suffix="" if tc.pipeline == "serve" else "\n",
+                stdout_last_line=tc.pipeline == "serve",
+            )
         )
-        ok_case = True
-        issues = []
-        # err_div_zero accepts multiple exit codes:
-        #   0  = clean evaluation (test author's intent)
-        #   -8 = legacy SIGFPE crash (pre-IR-executor behavior)
-        #   1  = clean error report (IR executor DivisionByZero,
-        #         post-#212 pure arithmetic_div_pure path)
-        if r.returncode != tc.expected_status and not (tc.name == "err_div_zero" and r.returncode in (0, -8, 1)):
-            ok_case = False
-            issues.append(f"exit_code={r.returncode} (expected {tc.expected_status})")
-
-        stdout = r.stdout.strip()
-        stderr = r.stderr.strip()
-        check_stdout = stdout.split("\n")[-1] if tc.pipeline == "serve" else stdout
-
-        if tc.expected:
-            if tc.expected.startswith(">="):
-                try:
-                    threshold = int(tc.expected[2:].strip())
-                    tokens = check_stdout.strip().split()
-                    if not tokens:
-                        ok_case = False
-                        issues.append(f"expected value>={threshold}, got empty stdout (stderr={stderr[:80]!r})")
-                    else:
-                        val = int(tokens[-1])
-                        if val < threshold:
-                            ok_case = False
-                            issues.append(f"expected value>={threshold}, got: {check_stdout[:80]}...")
-                except ValueError:
-                    if tc.expected not in check_stdout:
-                        ok_case = False
-                        issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:80]}...")
-            elif tc.expected not in check_stdout:
-                ok_case = False
-                issues.append(f"expected '{tc.expected}' in stdout, got: {stdout[:80]}...")
-
-        if tc.expected_err:
-            combined = stdout + "\n" + stderr
-            if tc.expected_err not in combined:
-                ok_case = False
-                issues.append(f"expected error '{tc.expected_err}' not found")
-
-        if ok_case:
-            return (tc.name, True, f"[{tc.pipeline:10s}] {tc.name}")
-        return (tc.name, False, f"[{tc.pipeline:10s}] {tc.name} — {'; '.join(issues)}")
-
-    return _run_cases_parallel("Integration", cases, run_one, sort_key=lambda n: n)
+    return run_snippet_suite(
+        "Integration",
+        specs,
+        aura_bin=AURA,
+        env=_aura_test_env(),
+        jobs=_case_jobs(),
+    )
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5344,7 +5312,7 @@ SUITE_SPECS: tuple[SuiteSpec, ...] = (
         "same runner as issues, AURA_ISSUES_TIER=fast",
     ),
     SuiteSpec("runtime-c", test_runtime_unit, "cpp", "lib/runtime.c harness"),
-    SuiteSpec("integ", test_integ, "aura", "fixture integ (eval/ir/typecheck/serve)"),
+    SuiteSpec("integ", test_integ, "aura", "fixture integ via aura_file_runner snippets"),
     SuiteSpec("typecheck", test_typecheck, "aura", "fixture typecheck cases"),
     SuiteSpec("smoke", test_smoke, "aura", "fixture smoke commands"),
     SuiteSpec("bash", test_bash, "aura", "tests/run-tests.sh via tests/python/run.py"),
@@ -5356,7 +5324,7 @@ SUITE_SPECS: tuple[SuiteSpec, ...] = (
         "tests/regression/*.aura (stdin + ;; expect: via aura_file_runner)",
     ),
     SuiteSpec("gradual", test_gradual, "aura", "gradual guarantee"),
-    SuiteSpec("p0", test_p0_regression, "aura", "P0 regression surface"),
+    SuiteSpec("p0", test_p0_regression, "aura", "P0 snippets + freeze/AOT extras"),
     SuiteSpec("e2e", test_e2e, "aura", "commercial_readiness golden E2E", parallel=False),
     SuiteSpec("suite-s0", test_suite_s0, "aura", "suite subset under AURA_PRIMITIVES=s0", parallel=False),
     SuiteSpec("repl", test_repl, "extra", "REPL pexpect"),

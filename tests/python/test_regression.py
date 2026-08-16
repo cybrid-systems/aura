@@ -2,41 +2,19 @@
 """Regression tests for recently fixed P0 issues and new features."""
 
 import os
-import re
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 
 from _aura_harness import AURA_BIN as AURA
+from aura_file_runner import SnippetSpec, run_snippet_suite
 from regression_cases import load_regression_cases
 
 REPO = Path(__file__).resolve().parents[2]  # #1932 repo root
 
-
-def run(code, timeout=30):
-    """Run a single Aura snippet.
-
-    Default timeout 30s (was 10s). Multi-mutate / dep-chain cases can
-    spend several seconds in typecheck+cascade under load; a hard 10s
-    raised uncaught TimeoutExpired and aborted the whole p0 suite mid-run.
-    """
-    try:
-        r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=timeout)
-        return r.stdout.strip(), r.stderr.strip(), r.returncode
-    except subprocess.TimeoutExpired as e:
-        # Surface as a failed case instead of killing the suite.
-        out = (e.stdout or b"" if isinstance(e.stdout, (bytes, bytearray)) else e.stdout) or ""
-        err = (e.stderr or b"" if isinstance(e.stderr, (bytes, bytearray)) else e.stderr) or ""
-        if isinstance(out, (bytes, bytearray)):
-            out = out.decode("utf-8", errors="replace")
-        if isinstance(err, (bytes, bytearray)):
-            err = err.decode("utf-8", errors="replace")
-        return (out or "").strip(), ((err or "") + f"\n[TIMEOUT after {timeout}s]").strip(), 124
-
-
-# Regression cases live in tests/fixtures/regression/*.json (#1962)
-# (loaded via tests/regression_cases.py → fixture_store).
+# Fixture snippets live in tests/fixtures/regression/*.json (#1962)
+# and run through aura_file_runner.run_snippet_suite.
 
 
 # Cleanup temp files, then seed fixtures that directory-list / file-* cases
@@ -716,49 +694,40 @@ for f in ["/tmp/aura-test-out", "/tmp/aura-aot-compare", "/tmp/aura-aot-runtime"
     if os.path.exists(f):
         os.remove(f)
 
-passed = 0
-failed = 0
-# Regression cases temporarily skipped. SIGSEGV null-owner is fixed;
-# remaining: module free-var freezes for std/ant helpers after require
-# (output-contains-any?) and std/ast-viz helpers after mutate (node-label).
+# Fixture snippets share /tmp seeds — keep serial (jobs=1).
+# Remaining skips: module free-var freezes after require/mutate.
 KNOWN_SKIP = {
     "ast-viz-dot-mutation": "unbound free-var node-label after mutate:rebind (module capture)",
     "colony-search": "unbound free-var output-contains-any? in colony:search (module capture)",
 }
+skipped: list[tuple[str, str]] = []
+specs: list[SnippetSpec] = []
 for case in load_regression_cases():
-    name, code, expect_out, expect_err = case.name, case.code, case.expect_out, case.expect_err
-    if name in KNOWN_SKIP:
-        print(f"  ↷  {name}: SKIPPED — {KNOWN_SKIP[name]}")
+    if case.name in KNOWN_SKIP:
+        skipped.append((case.name, KNOWN_SKIP[case.name]))
         continue
-    try:
-        out, err, rc = run(code)
-    except Exception as e:  # defensive: never abort the whole suite mid-loop
-        print(f"  ❌ {name}: harness exception: {e}")
-        failed += 1
-        continue
-    ok = True
-    if rc == 124:
-        ok = False  # timeout
-    if expect_out:
-        if expect_out.startswith("(") and expect_out.endswith(")"):
-            # Parenthesized output: exact match
-            if out != expect_out:
-                ok = False
-        else:
-            if expect_out not in out:
-                ok = False
-    if expect_err and not re.search(expect_err, err):
-        ok = False
-    if ok:
-        print(f"  ✅ {name}")
-        passed += 1
-    else:
-        print(f"  ❌ {name}: expected out~{expect_out!r} err~{expect_err!r}, got out={out!r} err={err!r}")
-        failed += 1
-
-print(
-    f"\n{passed}/{passed + failed} Aura + {passed_s}/{passed_s + failed_s} subprocess = {passed + passed_s}/{passed + failed + passed_s + failed_s} all passed"
+    specs.append(
+        SnippetSpec(
+            name=case.name,
+            code=case.code,
+            expect_out=case.expect_out,
+            expect_err=case.expect_err,
+            expect_status=None,
+            timeout_s=30,
+            stdin_suffix="",
+            err_regex=True,
+            exact_out=bool(case.expect_out.startswith("(") and case.expect_out.endswith(")")),
+        )
+    )
+snippet_rc = run_snippet_suite(
+    "P0 snippets",
+    specs,
+    aura_bin=AURA,
+    env=os.environ.copy(),
+    jobs=1,
+    skipped=skipped,
 )
+print(f"\nP0 snippets rc={snippet_rc}; subprocess {passed_s}/{passed_s + failed_s} passed")
 
 # Issue p0-regression: defensive cleanup. test_cross_session may
 # have left orphaned aura --serve-async processes (even on
@@ -775,4 +744,4 @@ subprocess.run(
     timeout=5,
 )
 
-sys.exit(1 if (failed > 0 or failed_s > 0) else 0)
+sys.exit(1 if (snippet_rc != 0 or failed_s > 0) else 0)
