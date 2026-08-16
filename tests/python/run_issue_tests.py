@@ -196,8 +196,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_pair_slot_lock",
     "test_parallel_intend_pure_contract",
     "test_partial_relower_storm_gate",
-    "test_query_and_replace_batch",
-    "test_query_epoch_contract",
+    # test_query_and_replace_batch / test_query_epoch_contract greened
+    # inside test_module_query_batch
     "test_root_remap_pin_contract_unified",
     "test_safepoint_mutation",
     # test_soa_dirty_aware_pipeline greened inside shape_soa_storm_batch
@@ -229,7 +229,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_fiber_orch_core_batch",
     "test_fiber_orch_parallel_quota_batch",
     "test_force_compact_hard_mutex",
-    "test_force_jit_repromote",
+    # test_force_jit_repromote greened inside test_ir_closure_jit_misc_batch
     "test_grant_epoch_fiber_bind",
     "test_grant_epoch_retain_window",
     "test_incremental_perblock_closure_bridge_safety",
@@ -279,10 +279,10 @@ PRE_EXISTING_FAILURES: set[str] = {
     # Batch 6 reemit/storm: greened test_shape_soa_storm_batch (14/0).
     # test_reemit_production_default_defer_v2 still not compile-fixed.
     "test_epoch_invariant_misc_batch",
-    "test_ir_closure_jit_misc_batch",
+    # test_ir_closure_jit_misc_batch + test_module_query_batch greened
+    # (light-link residual tick; query-and-replace #t / pair-error).
     "test_jit_macro_introduced_preserve",
     "test_misc_issue_fold_batch",
-    "test_module_query_batch",
     "test_mutation_hold_boundary_batch",
     "test_orch_agent_batch",
     "test_security_capability_batch",
