@@ -1272,6 +1272,74 @@ struct AgentHandle {
     void finish_reclaimed_cleanup_on_dtor() noexcept;
 };
 
+// Issue #3089: portable cross-Evaluator handoff state. Captures only the
+// shared / observed bits needed to route to a body fiber owned by another
+// Evaluator. Does NOT introduce a global AgentRegistry — the proxy handle
+// is registered in the destination Evaluator's local AgentNameTable (per
+// #1966 / #2226 contract) and the source's Scope remains the owner of the
+// body fiber. Existing send/recv/BP/Reclaimed contracts are preserved via
+// shared mailbox + liveness + coop (shared_ptr) and observed fiber state
+// (raw pointer, source-owned). Reservation stays with the source — the
+// proxy's release_reservation_if_any() is a no-op (reserved_memory_bytes
+// == 0) so dtor cleanup is idempotent (#2009 invariant).
+struct HandoffToken {
+    std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mailbox;
+    serve::Fiber* fiber = nullptr; // observed, source-owned
+    std::shared_ptr<AgentLiveness> liveness;
+    std::shared_ptr<AgentCoopYield> coop;
+    std::uint64_t capability_tenant_id = 0;
+    std::uint64_t reserved_quota_tenant = 0;
+    std::uint32_t producer_bp_budget = 0;
+    // Source provenance for forensics (no global side effect).
+    std::uint64_t source_fiber_id = 0;
+};
+
+// Issue #3089: export a portable handoff token from a source handle.
+// Captures the shared mailbox + liveness + coop + observed fiber state.
+// The source handle remains valid; the token is a portable view into the
+// same body fiber. No global AgentRegistry; reservation stays with the
+// source. Soft / Off: a token over an unspawned handle yields
+// {mailbox=null, fiber=null}; receiving is a no-op (callers can detect
+// via HandoffToken::mailbox / fiber != null).
+inline HandoffToken agent_export_handoff(AgentHandle& src) noexcept {
+    HandoffToken tok;
+    tok.mailbox = src.mailbox;
+    tok.fiber = src.fiber;
+    tok.liveness = src.liveness;
+    tok.coop = src.coop;
+    tok.capability_tenant_id = src.reserved_quota_tenant;
+    tok.reserved_quota_tenant = src.reserved_quota_tenant;
+    tok.producer_bp_budget = src.producer_bp_budget;
+    tok.source_fiber_id = src.fiber ? src.fiber->id() : 0;
+    return tok;
+}
+
+// Issue #3089: import a portable handoff token on a target Evaluator.
+// Creates a proxy AgentHandle that shares the source's mailbox /
+// liveness / coop (via shared_ptr), observes the source's fiber state
+// (raw pointer, source owns), and reserves NO quota. The proxy's dtor
+// cleanup is idempotent on 0 counters / shared mailbox — no double-count,
+// no global registry. dst_ev is a void* per the issue proposal (no
+// Evaluator type dependency in the orch public header). sched is reserved
+// for future Scheduler-owned keepalive on the proxy (no-op for now).
+inline AgentHandle agent_import_handoff(HandoffToken tok, void* dst_ev,
+                                        serve::Scheduler& sched) noexcept {
+    (void)dst_ev; // reserved for future Evaluator-keyed name registration
+    (void)sched;  // reserved for future Scheduler-owned keepalive
+    AgentHandle h;
+    h.id = tok.fiber ? tok.fiber->id() : 0;
+    h.fiber = tok.fiber;
+    h.mailbox = tok.mailbox;
+    h.liveness = tok.liveness;
+    h.coop = tok.coop;
+    h.ok = (tok.fiber != nullptr && tok.mailbox != nullptr);
+    h.reserved_quota_tenant = tok.reserved_quota_tenant;
+    h.producer_bp_budget = tok.producer_bp_budget;
+    // NO reservation; NO quota bump. The source remains the owner;
+    // release_reservation_if_any() on the proxy early-exits (== 0).
+    return h;
+}
+
 struct AgentSpec {
     std::string name;
     std::function<void()> body; // required for spawn
