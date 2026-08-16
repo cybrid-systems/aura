@@ -22,6 +22,7 @@
 #include <vector>
 
 extern "C" std::int64_t aura_alloc_closure(std::int64_t func_id);
+extern "C" void aura_reset_runtime();
 extern "C" void aura_closure_set_name(std::int64_t closure_id, const char* name);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
@@ -307,6 +308,10 @@ static std::int64_t href_aot_stats(CompilerService& cs, const char* key) {
 // AC1: named closure held across reemit → sync remount succeeds.
 static void ac2602_named_held_no_mustdeopt() {
     std::println("\n--- #2602 AC1: named closure held → sync remount ok ---");
+    // #2602 sync walk iterates the global closure table; clear the ~17
+    // closures left by the #2542 section so sync_ok/sync_fail count only
+    // this AC's own live set (mirrors reset_runtime at run_test start).
+    aura_reset_runtime();
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -338,6 +343,7 @@ static void ac2602_named_held_no_mustdeopt() {
 // AC2: remount fail path — verify helper exists + sync_fail bumped structure.
 static void ac2602_remount_fail_path() {
     std::println("\n--- #2602 AC2: remount fail → sync_fail + MustDeopt ---");
+    aura_reset_runtime();
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -359,6 +365,7 @@ static void ac2602_remount_fail_path() {
 // AC3: anonymous closure (sid=0) stays on call-time path — sync walk skips.
 static void ac2602_anonymous_still_force_deopt() {
     std::println("\n--- #2602 AC3: anonymous sid=0 → call-time path ---");
+    aura_reset_runtime();
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -387,6 +394,7 @@ static void ac2602_anonymous_still_force_deopt() {
 // AC4: soft / no live named closures → zero extra work (decide short-circuit).
 static void ac2602_soft_zero_cost() {
     std::println("\n--- #2602 AC4: soft / no live closures → zero extra work ---");
+    aura_reset_runtime();
     CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -448,6 +456,20 @@ static void ac2602_source_and_schema() {
 } // namespace
 
 int run_test_live_closure_full_restamp() {
+    // Isolate from other batch members' residual closure-table state:
+    // the real remap/sync walk iterates the global g_closure_* tables, so
+    // slots left by earlier members skew MustDeopt + sync_ok/sync_fail.
+    aura_reset_runtime();
+    // Issue #3060+: earlier batch members' CompilerService runs leave
+    // non-zero process-global version stamps (defuse / live-env / linear
+    // fingerprint). aura_reset_runtime() clears the closure tables but NOT
+    // these globals; remount then compares (cid_defuse == 0) ||
+    // (cid_defuse == live_env_gen) against a stale non-zero defuse stamp
+    // and fails-closed (MustDeopt re-set + sync_fail). Zero them so this
+    // member starts from the same clean state as standalone.
+    aura_set_aot_defuse_version(0);
+    aura_set_aot_live_env_frame_version(0);
+    aura_set_aot_live_linear_state_fingerprint(0);
     std::println("=== Issue #2542: full live-closure epoch restamp on reemit ===");
     ac1_named_full_restamp();
     ac2_anonymous_must_deopt();
