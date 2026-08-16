@@ -89,7 +89,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         if (a.empty() || !is_bool(a[0]))
             return make_bool(old);
         const bool want = as_bool(a[0]);
-        if (old && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+        // Issue #3088: elevation gate reads the authority triple
+        // (sandbox_mode_ bool OR effect_sandbox_mode() != 0) so a drifted
+        // bool cannot reopen elevation under Restricted.
+        const bool sandboxed = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
+        if (sandboxed && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
@@ -98,12 +102,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 "security:set-sandbox-mode!: wildcard capability required while sandboxed",
                 ev.primitive_error_counter_ptr());
         }
+        // Issue #3088: thin stamp+call to the SSOT adapter — adapter
+        // routes through set_effect_sandbox_mode → aura::core::sandbox::set_mode
+        // (#2657 SOLE writer) and keeps sandbox_mode_ in sync. No more
+        // manual mirror at the call site.
         ev.set_sandbox_mode(want);
-        // #1565: mirror bool sandbox into effect Restricted/Off.
-        if (want && ev.effect_sandbox_mode() == 0)
-            ev.set_effect_sandbox_mode(1); // Restricted
-        if (!want && ev.effect_sandbox_mode() != 2)
-            ev.set_effect_sandbox_mode(0);
         return make_bool(old);
     });
 
@@ -111,7 +114,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("security:set-effect-sandbox-mode!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_int(static_cast<std::int64_t>(ev.effect_sandbox_mode()));
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard) &&
+        // Issue #3088: gate reads the authority triple (bool OR effect mode != 0)
+        // so a drifted bool cannot reopen downgrade under Restricted.
+        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard) &&
             as_int(a[0]) < static_cast<std::int64_t>(ev.effect_sandbox_mode())) {
             // Downgrade while sandboxed requires wildcard
             ev.bump_capability_denial();
@@ -129,7 +135,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("security:grant-effect!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1]))
             return make_bool(false);
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+        // Issue #3088: authority triple (bool OR effect mode != 0) so a
+        // drifted bool cannot reopen elevation under Restricted.
+        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
             return make_bool(false);
         }
@@ -180,7 +189,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                         "security:grant-capability!: requires capability name",
                                         ev.primitive_error_counter_ptr());
         }
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+        // Issue #3088: authority triple (bool OR effect mode != 0) so a
+        // drifted bool cannot reopen elevation under Restricted.
+        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                 m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
@@ -908,7 +920,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("security:set-tenant-principal!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+        // Issue #3088: authority triple (bool OR effect mode != 0) so a
+        // drifted bool cannot reopen tenant-elevate under Restricted.
+        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             // Elevating tenant while sandboxed requires wildcard.
             if (static_cast<std::uint64_t>(as_int(a[0])) != ev.capability_tenant_id()) {
                 ev.bump_capability_denial();
@@ -948,7 +963,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     add("security:grant-cross-tenant!", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 3 || !is_int(a[0]) || !is_int(a[1]) || !is_int(a[2]))
             return make_bool(false);
-        if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
+        // Issue #3088: authority triple (bool OR effect mode != 0) so a
+        // drifted bool cannot reopen cross-tenant grant under Restricted.
+        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
+            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
             return make_bool(false);
         }

@@ -6347,7 +6347,24 @@ public:
     }
     // Issue #676: sandbox + capability model.
     [[nodiscard]] bool sandbox_mode() const noexcept { return sandbox_mode_; }
-    void set_sandbox_mode(bool v) noexcept { sandbox_mode_ = v; }
+    // Issue #3088: SSOT adapter — routes through set_effect_sandbox_mode
+    // (which calls aura::core::sandbox::set_mode, the SOLE writer per
+    // #2657). Keeps `sandbox_mode_ == (effect_sandbox_mode() != 0)`
+    // after return so a direct C++ call, partial failure, or future prim
+    // drift cannot leave the bool out of sync with the effect-mode
+    // authority. Strict (effect mode 2) is preserved across down-call
+    // (`false` only resets to 0 if not Strict); the Strict-downgrade
+    // path stays a separate `set_effect_sandbox_mode` call.
+    void set_sandbox_mode(bool v) noexcept {
+        if (v) {
+            if (effect_sandbox_mode() == 0)
+                set_effect_sandbox_mode(1); // Restricted
+        } else {
+            if (effect_sandbox_mode() != 2)
+                set_effect_sandbox_mode(0);
+        }
+        // sandbox_mode_ already updated inside set_effect_sandbox_mode.
+    }
     [[nodiscard]] bool has_capability(std::string_view cap) const noexcept;
     void grant_capability(std::string cap);
     void bump_capability_denial() noexcept {

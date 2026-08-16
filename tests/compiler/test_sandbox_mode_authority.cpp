@@ -45,6 +45,9 @@
 #include <vector>
 
 import std;
+import aura.compiler.evaluator;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
@@ -259,6 +262,172 @@ int run_test_sandbox_mode_authority_2657() {
         // message + close comment.
         std::println("  commit message + close comment carry the design rationale");
         CHECK(true, "AC6: source-cite bundled in commit + close comment");
+    }
+
+
+    // ── #3088: SSOT adapter — Evaluator::set_sandbox_mode(bool) routes through
+    // set_effect_sandbox_mode → aura::core::sandbox::set_mode (#2657 SOLE writer).
+    // Privilege gates that previously read ev.sandbox_mode() alone now also
+    // (or instead) consult ev.effect_sandbox_mode() != 0 so a drifted bool
+    // cannot reopen elevation under Restricted. Same shape as the
+    // WorkspaceIsolationPolicy fence post-#3086 and the
+    // CapabilityRegistry::grant_macro_self_evo fence post-#3029.
+    {
+        // per-block using-decls (function body is outside the anonymous
+        // namespace, so any decls there do not propagate — matches the
+        // #3051 per-test-block pattern in test_join_drain_reclaim.cpp).
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::compiler::security::kCapWildcard;
+        using aura::compiler::types::as_bool;
+        using aura::compiler::types::is_bool;
+
+        // Local source-cite helper (read text file into std::string).
+        auto read_file = [](const char* path) -> std::string {
+            for (const auto& p :
+                 {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+                std::ifstream in(p);
+                if (!in)
+                    continue;
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }
+            return {};
+        };
+        // ── AC1: adapter consistency — set_sandbox_mode(true) keeps bool+effect in sync ──
+        std::println(
+            "\n--- #3088 AC1: set_sandbox_mode(true) → bool+effect synced to Restricted ---");
+        {
+            reset_all();
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            // Pre: Off / Off.
+            CHECK(ev.sandbox_mode() == false, "AC1: pre bool false");
+            CHECK(ev.effect_sandbox_mode() == 0, "AC1: pre effect 0");
+            // Adapter call.
+            ev.set_sandbox_mode(true);
+            // Post: both surface Restricted / non-zero.
+            CHECK(ev.sandbox_mode() == true, "AC1: post bool true");
+            CHECK(ev.effect_sandbox_mode() == 1, "AC1: post effect Restricted (1)");
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "AC1: bool == (effect != 0) after set_sandbox_mode(true)");
+        }
+
+        // ── AC2: adapter Strict preservation — set_sandbox_mode(false) preserves Strict ──
+        std::println("\n--- #3088 AC2: set_sandbox_mode(false) under Strict preserves Strict ---");
+        {
+            reset_all();
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            // Set Strict via the SSOT.
+            ev.set_effect_sandbox_mode(2); // Strict
+            CHECK(ev.effect_sandbox_mode() == 2, "AC2: pre effect Strict (2)");
+            CHECK(ev.sandbox_mode() == true, "AC2: pre bool true (effect != 0)");
+            // Try to disable via adapter.
+            ev.set_sandbox_mode(false);
+            // Strict downgrade path is NOT routed through the adapter; Strict stays.
+            CHECK(ev.effect_sandbox_mode() == 2, "AC2: post effect still Strict (2)");
+            CHECK(ev.sandbox_mode() == true, "AC2: post bool still true (effect != 0)");
+        }
+
+        // ── AC3: adapter Soft path — set_sandbox_mode(false) under Restricted resets to Off ──
+        std::println("\n--- #3088 AC3: set_sandbox_mode(false) under Restricted resets to Off ---");
+        {
+            reset_all();
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            ev.set_effect_sandbox_mode(1); // Restricted
+            CHECK(ev.effect_sandbox_mode() == 1, "AC3: pre effect Restricted");
+            ev.set_sandbox_mode(false);
+            // Not Strict → adapter sets effect to 0.
+            CHECK(ev.effect_sandbox_mode() == 0, "AC3: post effect Off (0)");
+            CHECK(ev.sandbox_mode() == false, "AC3: post bool false (effect == 0)");
+        }
+
+        // ── AC4: authority triple agreement after every API call ──
+        std::println(
+            "\n--- #3088 AC4: sandbox_mode_ == (effect_sandbox_mode() != 0) after every API ---");
+        {
+            reset_all();
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            // Through every public API path the bool must mirror the authority.
+            ev.set_effect_sandbox_mode(1);
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "AC4: set_effect_sandbox_mode(1) sync");
+            ev.set_effect_sandbox_mode(2);
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "AC4: set_effect_sandbox_mode(2) sync");
+            ev.set_sandbox_mode(true);
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "AC4: set_sandbox_mode(true) sync");
+            ev.set_sandbox_mode(false); // under Strict → preserved
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "AC4: set_sandbox_mode(false) under Strict sync");
+            ev.set_effect_sandbox_mode(0);
+            CHECK(ev.sandbox_mode() == (ev.effect_sandbox_mode() != 0),
+                  "AC4: set_effect_sandbox_mode(0) sync");
+        }
+
+        // ── AC5: prim gate unification — security:grant-effect! under Restricted denies without
+        // wildcard ──
+        std::println("\n--- #3088 AC5: prim gates under Restricted deny without wildcard ---");
+        {
+            reset_all();
+            aura::core::sandbox::set_mode(SandboxMode::Restricted);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            // No wildcard granted — every gate must deny under Restricted.
+            CHECK(ev.has_capability(kCapWildcard) == false, "AC5: no wildcard");
+            CHECK(ev.effect_sandbox_mode() == 1, "AC5: effect Restricted");
+            CHECK(ev.sandbox_mode() == true, "AC5: bool mirrors effect");
+            // security:grant-effect! → returns #f (deny) under sandbox without wildcard.
+            // Issue #3088: prim eval is on CompilerService, not Evaluator
+            // (per the test_join_drain_reclaim.cpp pattern).
+            const auto r1 = cs.eval(std::string("(security:grant-effect! \"mut\" 8)"));
+            CHECK(r1 && aura::compiler::types::is_bool(*r1) && !aura::compiler::types::as_bool(*r1),
+                  "AC5: security:grant-effect! denied under Restricted without wildcard");
+            // security:set-sandbox-mode! false → denied (effect != 0 still triggers gate).
+            const auto r2 = cs.eval(std::string("(security:set-sandbox-mode! #f)"));
+            CHECK(r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2),
+                  "AC5: security:set-sandbox-mode! returns prior bool under deny");
+            // The state must remain Restricted — adapter / SSOT would never have run.
+            CHECK(ev.effect_sandbox_mode() == 1,
+                  "AC5: effect still Restricted after denied set-sandbox-mode!");
+            CHECK(ev.sandbox_mode() == true, "AC5: bool still true after denied set-sandbox-mode!");
+        }
+
+        // ── AC6: source-cite + no invent + no docs/design/ ──
+        std::println("\n--- #3088 AC6: source-cite + no invent + no docs/design/ ---");
+        {
+            const auto ev_ctor = read_file("src/compiler/evaluator.ixx");
+            const auto sec = read_file("src/compiler/evaluator_security.cpp");
+            const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+            CHECK(ev_ctor.find("#3088") != std::string::npos, "AC6: evaluator.ixx cites #3088");
+            CHECK(ev_ctor.find("SSOT adapter") != std::string::npos,
+                  "AC6: set_sandbox_mode adapter comment");
+            CHECK(prim.find("#3088") != std::string::npos,
+                  "AC6: evaluator_primitives_security.cpp cites #3088");
+            CHECK(prim.find("authority triple (bool OR effect mode != 0)") != std::string::npos,
+                  "AC6: prim gates use authority triple fallback");
+            CHECK(sec.find("SOLE writer") != std::string::npos ||
+                      sec.find("#2657") != std::string::npos,
+                  "AC6: evaluator_security.cpp cites #2657 SOLE writer");
+            std::ifstream invent("tests/compiler/test_issue_3088.cpp");
+            if (!invent.good())
+                invent.open("../tests/compiler/test_issue_3088.cpp");
+            CHECK(!invent.good(),
+                  "AC6: no tests/compiler/test_issue_3088.cpp (forbidden per #81967)");
+            const std::filesystem::path docs_design = "docs/design";
+            std::error_code ec;
+            if (std::filesystem::is_directory(docs_design, ec)) {
+                for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                    const auto name = entry.path().filename().string();
+                    CHECK(name.find("3088-") == std::string::npos,
+                          std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+                }
+            }
+        }
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
