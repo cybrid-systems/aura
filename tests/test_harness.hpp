@@ -12,6 +12,7 @@
 //   AURA_ISSUE_BOOTSTRAP — CompilerService main scaffolding
 //   run_pilot_tests()    — report counters (pilot-style mains)
 //   aura_call_expr()     — engine:metrics / stats:get routing for demoted names
+//   aura_href_expr()     — hash-ref wrapper with STRING keys via aura_call_expr
 //   k_int_env()          — shared stress/fuzz env knobs
 //   capture_stable_refs / validate_stable_refs — FlatAST white-box helpers
 //   note_strategy_*      — hot-path / AI self-mod strategy stamps (#1887)
@@ -82,6 +83,11 @@ inline std::string aura_call_expr(std::string_view name) {
           name.ends_with("-histogram"))))
         return std::format("(stats:get \"{}\")", name);
     return std::format("({})", name);
+}
+
+// Hash-ref a (possibly demoted) dashboard. STRING keys match FlatHashTable.
+inline std::string aura_href_expr(std::string_view name, std::string_view key) {
+    return std::format("(hash-ref {} \"{}\")", aura_call_expr(name), key);
 }
 
 // One registered test. Function pointer (not std::function) so module-unit

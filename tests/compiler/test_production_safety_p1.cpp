@@ -22,7 +22,7 @@ using aura::compiler::types::is_void;
 namespace {
 
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    auto r = cs.eval(aura::test::aura_href_expr(q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -56,18 +56,19 @@ int run_test_production_safety_p1() {
     {
         auto r = cs.eval("(stats:get \"mutation-history\")");
         CHECK(r && is_void(*r), "mutation-history no-arg → void");
-        auto r2 = cs.eval("(mutation-history \"x\")");
+        auto r2 = cs.eval("(engine:metrics \"mutation-history\" \"x\")");
         CHECK(r2 && is_void(*r2), "mutation-history non-int → void");
     }
 
     // #1050: hw-coercion-warning returns real empty string (valid heap index)
     {
-        auto r = cs.eval("(compile:hw-coercion-warning \"no-such-a\" \"no-such-b\")");
+        auto r =
+            cs.eval("(engine:metrics \"compile:hw-coercion-warning\" \"no-such-a\" \"no-such-b\")");
         CHECK(r && is_string(*r), "hw-coercion-warning returns string");
         // Empty content: string idx must be in-range for subsequent use.
         // Length check via string-length if available.
-        auto len =
-            cs.eval("(string-length (compile:hw-coercion-warning \"no-such-a\" \"no-such-b\"))");
+        auto len = cs.eval("(string-length (engine:metrics \"compile:hw-coercion-warning\" "
+                           "\"no-such-a\" \"no-such-b\"))");
         if (len && is_int(*len))
             CHECK(as_int(*len) == 0, "hw warning empty → length 0");
         else

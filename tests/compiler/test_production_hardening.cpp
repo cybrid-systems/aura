@@ -27,7 +27,7 @@ namespace {
 std::int64_t href(CompilerService& cs, std::string_view q, std::string_view key) {
     // String keys (not symbols) — matches FlatHashTable string keys from
     // build_kv_hash in evaluator_primitives_stdlib_review.cpp.
-    auto r = cs.eval(std::format("(hash-ref ({}) \"{}\")", q, key));
+    auto r = cs.eval(aura::test::aura_href_expr(q, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);

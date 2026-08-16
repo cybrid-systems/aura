@@ -215,7 +215,8 @@ static void ac4_wired_sentinel() {
 // ── AC5: source-cite query registration ──
 static void ac5_source_cite() {
     std::println("\n--- AC5: source-cite query + accessors ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto tci = read_file("src/compiler/type_checker.ixx");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     CHECK(q.find("schema-2359") != std::string::npos, "AC5: query schema-2359");

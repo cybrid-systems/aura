@@ -184,7 +184,8 @@ static void ac4_soft_observe() {
 static void ac5_source_schema_live() {
     std::println("\n--- #2553 AC5: source-cite + schema-2553 + live policy ---");
     const auto th = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto lint = read_file("scripts/coverage/checks/check_commit_readiness_score_2553.py");
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");

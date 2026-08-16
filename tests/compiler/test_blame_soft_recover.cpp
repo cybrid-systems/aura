@@ -252,7 +252,8 @@ static void ac4_schema_source() {
           "AC4: boundary wires Soft recover");
     CHECK(bound.find("#2561") != std::string::npos, "AC4: boundary cites #2561");
 
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("schema-2561") != std::string::npos, "AC4: schema-2561 in query");
     CHECK(q.find("blame-soft-recover-total") != std::string::npos, "AC4: recover query key");
     CHECK(q.find("query:type-incremental-fidelity-stats") != std::string::npos,

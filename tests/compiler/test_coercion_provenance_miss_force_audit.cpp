@@ -251,7 +251,8 @@ static void ac6_source_wiring() {
     std::println("\n--- AC6: source wiring #2102 ---");
     auto cm = read_file("src/compiler/coercion_map.ixx");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(!cm.empty() && cm.find("Issue #2102") != std::string::npos, "coercion_map #2102");
     CHECK(cm.find("note_provenance_miss_for_boundary") != std::string::npos, "note helper");
     CHECK(cm.find("g_coercion_provenance_miss_force_audit_total") != std::string::npos,

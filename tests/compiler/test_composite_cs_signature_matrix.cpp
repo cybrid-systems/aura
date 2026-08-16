@@ -221,7 +221,8 @@ static void ac5_source_and_schema() {
     std::println("\n--- #2509 AC5: source-cite + schema ---");
     const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
     const auto cmake = read_file("CMakeLists.txt");
     const auto ixx = read_file("src/compiler/type_checker.ixx");

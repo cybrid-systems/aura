@@ -163,7 +163,8 @@ static void ac5_source_schema() {
           "AC5: security_defaults wires lock-order");
     CHECK(sec.find("#2557") != std::string::npos, "AC5: security_defaults cites #2557");
 
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("query:lock-order-audit-stats") != std::string::npos, "AC5: query prim");
     CHECK(q.find("schema-2557") != std::string::npos, "AC5: schema-2557");
     CHECK(q.find("production-soft-active") != std::string::npos, "AC5: production-soft-active key");

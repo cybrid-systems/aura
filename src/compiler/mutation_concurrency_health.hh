@@ -219,11 +219,13 @@ inline void reset_mutation_concurrency_health_soft_for_test() noexcept {
 [[nodiscard]] inline bool mutation_concurrency_health_soft_mode() noexcept {
     if (is_mutation_concurrency_health_soft_for_test())
         return true;
+    // Explicit production face (apply_production_audit_defaults) wins over
+    // process AURA_SANDBOX=off — the issues runner always sets the latter.
+    if (typed_audit::production_defaults_active())
+        return false;
     const char* sandbox = std::getenv("AURA_SANDBOX");
     if (sandbox && sandbox[0] != '\0' && std::string_view(sandbox) == "off")
         return true;
-    if (typed_audit::production_defaults_active())
-        return false;
     return true; // Soft default when production flag is off
 }
 

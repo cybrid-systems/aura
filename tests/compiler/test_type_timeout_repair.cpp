@@ -350,7 +350,8 @@ namespace _2343_detail {
         std::println("\n--- #2343 AC5: source-cite ---");
         auto impl = read_file("src/compiler/type_checker_impl.cpp");
         auto ixx = read_file("src/compiler/type_checker.ixx");
-        auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+        auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                 read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
         auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
         CHECK(impl.find("export_unresolved_var_constraint_graph") != std::string::npos,
               "AC5: export helper in solve path");
