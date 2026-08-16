@@ -486,7 +486,7 @@ int run_test_parallel_intend_pure_contract() {
         {
             auto p = std::filesystem::current_path();
             while (p != p.root_path()) {
-                if (std::filesystem::exists(p / "scripts" /
+                if (std::filesystem::exists(p / "scripts" / "coverage" / "checks" /
                                             "check_pure_parallel_isolation_wording.py") &&
                     std::filesystem::exists(p / "src" / "orch" / "README.md")) {
                     root = p;

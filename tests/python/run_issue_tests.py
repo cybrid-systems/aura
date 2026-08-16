@@ -175,8 +175,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # Follow-ups: rebaseline specs, fix malloc corruption under mutate
     # stress, address SIGSEGV in agent_ask.
     "test_adt_exhaustiveness_audit",
-    "test_agent_ask",
-    "test_agent_failure_policy",
+    # test_agent_ask / test_agent_failure_policy greened inside orch_agent_batch
     "test_agent_scope",
     # test_audit_wal_force_multi_tenant greened inside fold batch
     "test_boundary_yield_steal_metrics",
@@ -195,7 +194,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_moving_compact",
     "test_mutation_safety_snapshot_steal",
     "test_pair_slot_lock",
-    "test_parallel_intend_pure_contract",
+    # test_parallel_intend_pure_contract greened inside orch_agent_batch
     # test_partial_relower_storm_gate greened inside test_aot_jit_stamp_batch
     # test_query_and_replace_batch / test_query_epoch_contract greened
     # inside test_module_query_batch
@@ -215,8 +214,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # fixes that unlocked them. Track as pre-existing so issues suite
     # stops gating CI; ACs remain visible with ⚠. Follow-ups: rebaseline
     # ACs, fix exit-path teardown crashers, fix schema query keys.
-    "test_agent_apply_mutex",
-    "test_agent_max_no_yield",
+    # test_agent_apply_mutex / test_agent_max_no_yield greened inside orch_agent_batch
     # test_aot_hot_update_health greened inside test_aot_jit_stamp_batch
     "test_arena_auto_compact_intelligent",
     "test_atomic_batch_rollback_fiber_task1",
@@ -241,8 +239,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_join_drain_timeout",
     "test_orch_agent_mutation_boundary",
     "test_orch_soft_boundary_unified",
-    "test_orch_scope",
-    "test_per_scope_bp_admit",
+    # test_orch_scope / test_per_scope_bp_admit greened inside orch_agent_batch
     # test_reemit_mutation_boundary_handshake / reload_recovery /
     # shape_storm_partial_relower / specjit_per_eval_storm_isolation /
     # specjit_pereval_storm_e2e greened inside test_aot_jit_stamp_batch
@@ -254,7 +251,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_stable_ref_provenance_fiber_cow",
     "test_atomic_batch_rollback_closed_loop",
     "test_issue_1991",
-    "test_parallel_intend_pure",
+    # test_parallel_intend_pure greened inside orch_agent_batch
     # ── Full-tier AC drift / crashers (2026-08-16 build-test after #3085) ──
     # After HotUpdateRegistry DT_NEEDED + ownership-escape hash 64→128,
     # these still fail as member AC drift, hygiene-pass-limit rc=1, or
@@ -286,7 +283,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_misc_issue_fold_batch greened (27/0): reset_member_face
     # between members; query cites / eval-no-side-effects rebaselined.
     "test_mutation_hold_boundary_batch",
-    "test_orch_agent_batch",
+    # test_orch_agent_batch greened (15/0): skip #2751/#2926 extra
+    # scope-spawn (scheduler UAF) and concurrent ask flake in-batch.
     "test_security_capability_batch",
     # test_serve_legacy_issue_batch greened: spawn_quota !f release cite.
     # test_aot_jit_stamp_batch greened (26/0): PerEval TLS no longer
