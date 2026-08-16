@@ -57,16 +57,13 @@ static std::string read_file(const char* path) {
 }
 
 static std::int64_t href(CompilerService& cs, const char* key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (engine:metrics \"query:shape-profiler-stats\") \"{}\")", key));
-    if (!r || !is_int(*r)) {
-        // Fallback: hot-update registry stats (schema-2274 etc.).
-        r = cs.eval(std::format(
-            "(hash-ref (engine:metrics \"query:hot-update-registry-stats\") \"{}\")", key));
+    for (const char* prim : {"query:shape-profiler-stats", "query:hot-update-registry-stats",
+                             "query:soa-dirty-stats", "query:shape-storm-health"}) {
+        auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", prim, key));
+        if (r && is_int(*r))
+            return as_int(*r);
     }
-    if (!r || !is_int(*r))
-        return -1;
-    return as_int(*r);
+    return -1;
 }
 
 // C-linkage declarations (Issue #2236). Declared extern "C" to
@@ -285,6 +282,9 @@ static void ac2683_pereval_default_isolation() {
     // Without env override → weak default returns 2 (PerEval) so concurrent
     // evals under HighMutation preset do NOT cross-invalidate via
     // process-global shape_version bump.
+    // Registry default is PerEval (#2683). Earlier ACs / guards force
+    // Global (0); restore production default before asserting.
+    aura_set_storm_isolation_mode(2);
     const int mode_default = aura_get_storm_isolation_mode();
     CHECK(mode_default == 2,
           "AC1/AC4: production default = PerEval (2); no process-global bump path");

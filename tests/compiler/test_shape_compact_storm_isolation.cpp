@@ -31,6 +31,8 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 
+extern "C" void aura_set_storm_isolation_mode(int mode) noexcept;
+
 namespace {
 
 using aura::compiler::CompilerService;
@@ -269,8 +271,10 @@ static void ac2908_compact_no_global_bump() {
     // AC1: pure compact under default PerEval → process-global unchanged.
     std::println("\n--- #2908 AC1: pure compact leaves process-global version flat ---");
     CHECK(kShapeCompactNoGlobalBumpIssue == 2908, "AC1: issue stamp");
-    // Ensure production default (clear Global override for this process).
+    // Ensure PerEval (#2683). Strong HotUpdateRegistry getter defaults
+    // to Global; set explicitly so compact does not bump process-global.
     ::unsetenv("AURA_SHAPE_STORM_ISOLATION");
+    ::aura_set_storm_isolation_mode(2);
     ShapeProfiler sp;
     sp.apply_preset(ShapeProfiler::kLowMutationPreset);
     seed_stable(sp, 6, 80);
