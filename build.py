@@ -5222,6 +5222,41 @@ def test_suite_s0():
     return test_suite_runner(s0=True)
 
 
+def test_s0_metrics():
+    """Cheap engine:metrics probe under AURA_PRIMITIVES=s0 (build-test step).
+
+    Production defaults forbid tree-walker fallback (#2213), so this must
+    use the same Soft harness env as the other aura suites.
+    """
+    print(f"{B}═══ s0 engine:metrics ═══{N}")
+    if not AURA.exists():
+        fail(f"{AURA} not found — run 'build' first")
+        return 1
+    prog = (
+        "(define m (engine:metrics))\n"
+        '(unless (hash? m) (error "engine:metrics not hash"))\n'
+        '(unless (= 2 (hash-ref m "schema")) (error "schema"))\n'
+        '(display "s0 engine:metrics ok")\n'
+        "(newline)\n"
+    )
+    env = _aura_test_env({"AURA_PRIMITIVES": "s0"})
+    r = subprocess.run(
+        [str(AURA)],
+        input=prog,
+        text=True,
+        capture_output=True,
+        env=env,
+        cwd=ROOT,
+    )
+    out = (r.stdout or "") + (r.stderr or "")
+    if r.returncode != 0 or "s0 engine:metrics ok" not in (r.stdout or ""):
+        sys.stdout.write(out)
+        fail(f"s0 engine:metrics probe failed (rc={r.returncode})")
+        return 1
+    ok("s0 engine:metrics ok")
+    return 0
+
+
 def test_e2e():
     """Issue #1934: commercial_readiness .aura E2E with golden PASS labels."""
     script = ROOT / "tests" / "python" / "run_e2e.py"
@@ -16684,6 +16719,7 @@ def main():
         "fuzz": cmd_fuzz,
         "production-concurrency": cmd_production_concurrency,
         "production-concurrency-coverage": cmd_production_concurrency_coverage,
+        "s0-metrics": test_s0_metrics,
         "chaos-pr-hard-fail": cmd_chaos_pr_hard_fail_gate,
         "chaos-pr-hard-fail-coverage": cmd_chaos_pr_hard_fail_coverage,
         "chaos-release-blocker-2902": cmd_chaos_release_blocker_2902,
