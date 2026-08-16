@@ -4,9 +4,20 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/coercion_provenance_policy.hh"
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
+
 #include <print>
 
 import std;
+
+static void reset_member_face() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+}
 
 extern int run_test_linear_enforce_boundary_align();
 extern int run_test_linear_enforce_production_defaults();
@@ -28,6 +39,7 @@ int main() {
     std::println("=== test_linear_misc_batch (11 members) ===");
 
     std::println("\n──── test_linear_enforce_boundary_align ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_enforce_boundary_align() != 0 || g_failed != 0) {
@@ -39,6 +51,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_enforce_production_defaults ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_enforce_production_defaults() != 0 || g_failed != 0) {
@@ -51,6 +64,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_enforce_strict ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_enforce_strict() != 0 || g_failed != 0) {
@@ -62,6 +76,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_enforce_strict_default ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_enforce_strict_default() != 0 || g_failed != 0) {
@@ -73,6 +88,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_escape_commit_hardblock ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_escape_commit_hardblock() != 0 || g_failed != 0) {
@@ -84,6 +100,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_force_unified ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_force_unified() != 0 || g_failed != 0) {
@@ -95,6 +112,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_gc_window ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_gc_window() != 0 || g_failed != 0) {
@@ -106,6 +124,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_partial_revalidate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_partial_revalidate() != 0 || g_failed != 0) {
@@ -117,6 +136,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_synth_boundary_authority ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_synth_boundary_authority() != 0 || g_failed != 0) {
@@ -129,6 +149,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_synth_violation ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_synth_violation() != 0 || g_failed != 0) {
@@ -140,6 +161,7 @@ int main() {
     }
 
     std::println("\n──── test_linear_three_layer_wire ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_linear_three_layer_wire() != 0 || g_failed != 0) {

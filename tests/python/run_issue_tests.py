@@ -156,7 +156,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_mutation_occurrence_dirty_batch: peek + query-hook cite greened
     "test_fiber_native_keepalive",  # intermittent SIGSEGV/SIGBUS under jobs>1
     "test_residual_gc_defer_assert",  # process-wide MutationHold race under parallel
-    "test_arena_compact_hook_concurrent",  # hook-fire race under parallel compact load
+    # test_arena_compact_hook_concurrent: solo green; parallel flake → serial recovery
     "test_concurrent",
     # ── Full-tier flakes / crashers (2026-08-03 CI after #2573) ──
     # 43 additional tests surfaced as CI-gating after the
@@ -201,9 +201,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_root_remap_pin_contract_unified",
     "test_safepoint_mutation",
     "test_soa_dirty_aware_pipeline",
-    # test_ast_concurrency: std::vector bounds-check exception under
-    # parallel ast-concurrency load (SIGABRT); same wave as above.
-    "test_ast_concurrency",
+    # test_ast_concurrency: solo 232/0; parallel flake → serial recovery
     # test_macro_hygiene_limits: clone_macro_body depth_limit
     # check trips on hard MAX_HYGIENE_DEPTH=1024 runtime_cap=3 — pre-existing
     # AC drift, same wave.
@@ -274,10 +272,13 @@ PRE_EXISTING_FAILURES: set[str] = {
     # leftover SLO / evidence-loss reset between members.
     # Batch 4 (rc=1 / 0-AC-fail class): greened test_macro_hygiene_batch
     # (live rest-stamp) + test_stable_ref_validate_batch (restamp :node).
+    # Batch 5 crash/race: greened test_arena_compact_hook_concurrent +
+    # test_ast_concurrency (solo) + test_linear_misc_batch (face reset +
+    # light-link C epoch). fiber_orch_* / linear_ownership / mutation_hold
+    # still SIGSEGV/SIGABRT.
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",
-    "test_linear_misc_batch",
     "test_misc_issue_fold_batch",
     "test_module_query_batch",
     "test_mutation_hold_boundary_batch",

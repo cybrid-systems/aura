@@ -3,9 +3,20 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/coercion_provenance_policy.hh"
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
+
 #include <print>
 
 import std;
+
+static void reset_member_face() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+}
 
 extern int run_test_effect_epoch_mutation_unify();
 extern int run_test_guard_exit_occurrence_refresh();
@@ -36,6 +47,7 @@ int main() {
     std::println("=== test_mutation_hold_boundary_batch (21 members) ===");
 
     std::println("\n──── test_effect_epoch_mutation_unify ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_effect_epoch_mutation_unify() != 0 || g_failed != 0) {
@@ -47,6 +59,7 @@ int main() {
     }
 
     std::println("\n──── test_guard_exit_occurrence_refresh ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_guard_exit_occurrence_refresh() != 0 || g_failed != 0) {
@@ -58,6 +71,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_contention ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_contention() != 0 || g_failed != 0) {
@@ -69,6 +83,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_guard_try_acquire_unit ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_guard_try_acquire_unit() != 0 || g_failed != 0) {
@@ -80,6 +95,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_hold_estimate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_hold_estimate() != 0 || g_failed != 0) {
@@ -91,6 +107,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_hold_hard_timeout ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_hold_hard_timeout() != 0 || g_failed != 0) {
@@ -102,6 +119,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_hold_live ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_hold_live() != 0 || g_failed != 0) {
@@ -113,6 +131,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_hold_slo ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_hold_slo() != 0 || g_failed != 0) {
@@ -124,6 +143,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_log_pressure ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_log_pressure() != 0 || g_failed != 0) {
@@ -135,6 +155,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_memory_blame ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_memory_blame() != 0 || g_failed != 0) {
@@ -146,6 +167,7 @@ int main() {
     }
 
     std::println("\n──── test_outermost_exit_order ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_outermost_exit_order() != 0 || g_failed != 0) {
@@ -157,6 +179,7 @@ int main() {
     }
 
     std::println("\n──── test_post_steal_linear_revalidate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_post_steal_linear_revalidate() != 0 || g_failed != 0) {
@@ -168,6 +191,7 @@ int main() {
     }
 
     std::println("\n──── test_predicate_memo_boundary_selective ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_predicate_memo_boundary_selective() != 0 || g_failed != 0) {
@@ -179,6 +203,7 @@ int main() {
     }
 
     std::println("\n──── test_typed_mutation_audit_decision ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_typed_mutation_audit_decision() != 0 || g_failed != 0) {
@@ -190,6 +215,7 @@ int main() {
     }
 
     std::println("\n──── test_gc_defer_mutation_hold ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_gc_defer_mutation_hold() != 0 || g_failed != 0) {
@@ -201,6 +227,7 @@ int main() {
     }
 
     std::println("\n──── test_boundary_yield_steal_metrics ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_boundary_yield_steal_metrics() != 0 || g_failed != 0) {
@@ -212,6 +239,7 @@ int main() {
     }
 
     std::println("\n──── test_depth_safe_mutation_boundary_steal ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_depth_safe_mutation_boundary_steal() != 0 || g_failed != 0) {
@@ -223,6 +251,7 @@ int main() {
     }
 
     std::println("\n──── test_mutation_safety_snapshot_steal ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mutation_safety_snapshot_steal() != 0 || g_failed != 0) {
@@ -234,6 +263,7 @@ int main() {
     }
 
     std::println("\n──── test_orch_agent_mutation_boundary ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_orch_agent_mutation_boundary() != 0 || g_failed != 0) {
@@ -245,6 +275,7 @@ int main() {
     }
 
     std::println("\n──── test_orch_soft_boundary_unified ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_orch_soft_boundary_unified() != 0 || g_failed != 0) {
@@ -256,6 +287,7 @@ int main() {
     }
 
     std::println("\n──── test_yield_while_mutation_held ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_yield_while_mutation_held() != 0 || g_failed != 0) {
