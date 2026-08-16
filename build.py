@@ -4,7 +4,7 @@ Aura — 统一构建/测试入口
 
 Usage:
   ./build.py [--sanitizer=asan|ubsan|tsan] build    # CMake 构建 (sanitizer-插桩)
-  ./build.py [--sanitizer=asan|ubsan|tsan] test [suite]  # 运行测试
+  ./build.py [--sanitizer=asan|ubsan|tsan] test [tier|suite]  # 运行测试（默认 ci）
   ./build.py check            # gate + ci（与 CI 相同）
   ./build.py gate             # docs + ruff + format + fixtures + parallel coverage checks
   ./build.py gate --changed   # pre-push fast path: only checks touching git diff (+ cascade off)
@@ -51,18 +51,16 @@ Usage:
   #   #2931: ./build.py chaos-steal-gc-nightly-2931 — steal×mutate×GC×mailbox
   #          soak hard gate (AURA_CHAOS_STEAL_GC=1 duration≥600 workers≥8)
 
-Test suites:
-  unit        C++ 单元测试 (61 cases)
-  integ       端到端管线测试 (.aura)
-  typecheck   类型检查测试
-  bench       Benchmark 基线 + 回归检测（strict 时 hard fail）
-  smoke       快速冒烟测试
-  all         全部测试 (默认)
-  core        核心管线 (unit + integ + typecheck + smoke + bash + suite)
-  safety      安全回归 (gradual + regression + p0)
-  issues      Issue #226 — unified test_issue_* runner (tier via AURA_ISSUES_TIER)
-  issues-fast 同上，强制 fast 档（bundle 子集 + git 变更）
-  check       构建 + core + safety + issues（CI 默认）
+Test tiers (./build.py test [name]; default ci — see ./build.py list):
+  pr          core + safety + issues-fast
+  ci          core + safety + issues   (`all` is an alias of ci)
+  nightly     ci + e2e + bench + suite-s0
+  everything  every leaf (includes demo / ai / mutation / bench)
+  core        unit integ typecheck smoke bash suite repl runtime-c concurrent
+  safety      gradual regression p0
+  issues      C++ domain / issue binaries (AURA_ISSUES_TIER)
+  issues-fast same runner, fast tier
+  check       gate + build + ci
 """
 
 import hashlib
@@ -71,7 +69,9 @@ import shutil
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock
 
@@ -80,6 +80,7 @@ _ROOT_FOR_PATH = Path(__file__).resolve().parent
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "python"))
 sys.path.insert(0, str(_ROOT_FOR_PATH / "tests" / "bench"))
 from _aura_harness import B, G, N, R, Y, fail, info, ok, run, warn  # noqa: E402
+from aura_file_runner import discover_aura_files, run_aura_file_suite  # noqa: E402
 from benchmark_cases import load_typecheck_cases  # noqa: E402
 from integ_cases import load_integ_cases  # noqa: E402
 from issue_tier import issues_tier, load_fast_targets, resolve_issue_targets  # noqa: E402
@@ -4603,15 +4604,12 @@ def cmd_clean():
 
 
 def test_unit():
-    """C++ 单元测试 — test_ir (61 cases)"""
+    """C++ test_ir only (concurrent is its own leaf)."""
     print(f"{B}═══ Unit tests ═══{N}")
     if not TEST_BIN.exists():
         fail(f"{TEST_BIN} not found — run 'build' first")
         return 1
 
-    all_ok = True
-
-    # test_ir
     start = time.time()
     r = subprocess.run([str(TEST_BIN)], capture_output=True, text=True)
     elapsed = time.time() - start
@@ -4621,7 +4619,6 @@ def test_unit():
         elif "FAIL" in line:
             fail(line.strip())
     if r.returncode != 0:
-        all_ok = False
         # Surface UBSAN/ASAN diagnostics + aborts (stderr was previously
         # swallowed, which made CI failures look like silent unit fails).
         fail(f"test_ir exited {r.returncode}")
@@ -4634,26 +4631,12 @@ def test_unit():
             print(f"{R}── test_ir stderr ──{N}")
             for line in lines:
                 print(f"  {line}")
+        print(f"  Unit tests: {elapsed:.2f}s")
+        fail("unit tests failed")
+        return 1
     print(f"  Unit tests: {elapsed:.2f}s")
-
-    # test_concurrent
-    concurrent_bin = BUILD / "test_concurrent"
-    if concurrent_bin.exists():
-        start2 = time.time()
-        r2 = subprocess.run([str(concurrent_bin)], timeout=300)
-        elapsed2 = time.time() - start2
-        # binary prints directly to terminal; just check rc
-        if r2.returncode == 0:
-            ok(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
-        else:
-            fail(f"concurrent (exit {r2.returncode}) in {elapsed2:.2f}s")
-            all_ok = False
-
-    if all_ok:
-        ok("all unit tests passed")
-    else:
-        fail("some unit tests failed")
-    return 0 if all_ok else 1
+    ok("unit tests passed")
+    return 0
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -5111,82 +5094,22 @@ def test_bash():
 
 
 def test_regression():
-    """Run tests/regression/*.aura as compiler regression checks."""
-    reg_dir = ROOT / "tests" / "regression"
+    """Run tests/regression/*.aura via the shared file runner (stdin + ;; expect:)."""
+    print(f"{B}═══ Regression tests ═══{N}")
     aura_bin = os.environ.get("AURA_BIN", str(AURA))
-    if not reg_dir.exists():
+    found = discover_aura_files(ROOT / "tests" / "regression")
+    if not found.cases:
         print("  No regression tests found", flush=True)
         return 0
-
-    failed = 0
-    total = 0
-    for fpath in sorted(reg_dir.glob("*.aura")):
-        total += 1
-        text = fpath.read_text()
-        expected = ""
-        for line in text.splitlines():
-            if line.startswith(";; expect:"):
-                expected = line[len(";; expect:") :].strip()
-                break
-
-        name = fpath.stem
-        code_lines = []
-        in_code = False
-        for line in text.splitlines():
-            if not in_code and not line.startswith(";;") and line.strip():
-                in_code = True
-            if in_code:
-                code_lines.append(line)
-        code = "\n".join(code_lines)
-
-        try:
-            r = subprocess.run(
-                [aura_bin],
-                input=code,
-                capture_output=True,
-                text=True,
-                timeout=10,
-                env=_aura_test_env(),
-            )
-            sig_map = {-6: "SIGABRT", -8: "SIGFPE", -11: "SIGSEGV"}
-
-            if expected == "no-crash":
-                if r.returncode < 0:
-                    print(
-                        f"    FAIL {name}: {sig_map.get(r.returncode, f'signal{-r.returncode}')}",
-                        flush=True,
-                    )
-                    failed += 1
-                else:
-                    print(f"    PASS {name}")
-            elif expected == "no-error":
-                if "internal error" in (r.stderr or "").lower():
-                    print(f"    FAIL {name}: internal error", flush=True)
-                    failed += 1
-                else:
-                    print(f"    PASS {name}")
-            elif expected == "no-timeout":
-                print(f"    PASS {name}")
-            elif r.returncode < 0:
-                print(
-                    f"    FAIL {name}: {sig_map.get(r.returncode, f'signal{-r.returncode}')}",
-                    flush=True,
-                )
-                failed += 1
-            elif r.returncode != 0:
-                print(f"    FAIL {name}: exit {r.returncode}", flush=True)
-                failed += 1
-            elif expected and expected not in (r.stdout or ""):
-                print(f"    FAIL {name}: expected '{expected}', got '{r.stdout.strip()}'")
-                failed += 1
-            else:
-                print(f"    PASS {name}")
-        except subprocess.TimeoutExpired:
-            print(f"    TIMEOUT {name}", flush=True)
-            failed += 1
-
-    print(f"  Regression: {total - failed}/{total} passed", flush=True)
-    return 0 if failed == 0 else 1
+    return run_aura_file_suite(
+        "Regression",
+        found,
+        aura_bin=aura_bin,
+        env=_aura_test_env(),
+        mode="stdin",
+        timeout_s=10,
+        jobs=1,
+    )
 
 
 def test_concurrent():
@@ -5201,19 +5124,6 @@ def test_concurrent():
     # system load, causing false-positive "1/N test suites
     # failed" in CI). 600s gives comfortable headroom.
     r = subprocess.run([str(bin_path)], timeout=600)
-    if r.returncode != 0 and r.stderr:
-        print(r.stderr[:500], file=sys.stderr)
-    return r.returncode
-
-
-def test_issue_146():
-    """Run Issue #146 (pure-function extraction) tests."""
-    print(f"{B}═══ Issue #146 Tests (pure-function extraction) ═══{N}")
-    bin_path = BUILD / "test_issue_146"
-    if not bin_path.exists():
-        print("  test_issue_146 binary not found (build first)")
-        return 1
-    r = subprocess.run([str(bin_path)], timeout=60)
     if r.returncode != 0 and r.stderr:
         print(r.stderr[:500], file=sys.stderr)
     return r.returncode
@@ -5361,99 +5271,33 @@ def _suite_jobs() -> int:
 
 
 def test_suite_runner(*, s0: bool = False):
-    """Run all tests/suite/*.aura files.
-
-    s0=True sets AURA_PRIMITIVES=s0 and only runs SUITE_S0_FILES (surface smoke).
-    Parallelism via AURA_SUITE_JOBS (see _suite_jobs). Each case is a separate
-    aura process; the binary is read-only so cases are independent.
-    """
+    """Run tests/suite/*.aura via the shared file runner (--load, exit 0)."""
     label = "Suite tests (s0)" if s0 else "Suite tests"
     print(f"{B}═══ {label} ═══{N}")
     if not AURA.exists():
         fail(f"{AURA} not found — run 'build' first")
         return 1
-    root = ROOT / "tests" / "suite"
     env = _aura_test_env()
     if s0:
         env["AURA_PRIMITIVES"] = "s0"
-
-    # Collect work items first (skip bookkeeping is sequential and cheap).
-    work: list[Path] = []
-    skipped = 0
-    for f in sorted(root.glob("*.aura")):
-        if f.name == "run-tests.aura":
-            continue
-        if f.name in SUITE_SKIP:
-            print(f"  {Y}↷{N}  suite/{f.stem}.aura: SKIPPED — {SUITE_SKIP[f.name]}")
-            skipped += 1
-            continue
-        if s0 and f.name not in SUITE_S0_FILES:
-            continue
-        work.append(f)
-
-    def _run_one(f: Path) -> tuple[str, bool, str]:
-        name = f.stem
-        try:
-            code = f.read_text(encoding="utf-8", errors="replace")
-        except OSError as e:
-            return name, False, str(e)[:80]
-        if not code:
-            return name, False, "empty"
-        try:
-            r = subprocess.run(
-                [str(AURA), "--load", str(f)],
-                capture_output=True,
-                text=True,
-                timeout=120,
-                env=env,
-            )
-        except subprocess.TimeoutExpired:
-            return name, False, "timeout 120s"
-        if r.returncode == 0:
-            return name, True, ""
-        errstr = (r.stderr or r.stdout or "")[:80]
-        return name, False, errstr
-
-    jobs = _suite_jobs()
-    passed = 0
-    failed = 0
-    if jobs <= 1 or len(work) <= 1:
-        for f in work:
-            name, ok_case, err = _run_one(f)
-            if ok_case:
-                ok(f"  suite/{name}.aura")
-                passed += 1
-            else:
-                warn(f"  suite/{name}.aura: {err}")
-                failed += 1
-    else:
-        print(f"  suite parallel jobs={jobs} cases={len(work)}")
-        with ThreadPoolExecutor(max_workers=jobs) as pool:
-            futs = {pool.submit(_run_one, f): f for f in work}
-            # Preserve deterministic print order by stem.
-            results: dict[str, tuple[bool, str]] = {}
-            for fut in as_completed(futs):
-                name, ok_case, err = fut.result()
-                results[name] = (ok_case, err)
-            for name in sorted(results):
-                ok_case, err = results[name]
-                if ok_case:
-                    ok(f"  suite/{name}.aura")
-                    passed += 1
-                else:
-                    warn(f"  suite/{name}.aura: {err}")
-                    failed += 1
-
-    total = passed + failed + skipped
-    summary = f"  Suite: {passed}/{total} passed"
-    if skipped:
-        summary += f" ({skipped} skipped)"
-    if jobs > 1:
-        summary += f" [jobs={jobs}]"
+    found = discover_aura_files(
+        ROOT / "tests" / "suite",
+        skip=SUITE_SKIP,
+        exclude={"run-tests.aura"},
+        allow=set(SUITE_S0_FILES) if s0 else None,
+    )
+    rc = run_aura_file_suite(
+        "Suite",
+        found,
+        aura_bin=AURA,
+        env=env,
+        mode="load",
+        timeout_s=120,
+        jobs=_suite_jobs(),
+    )
     if s0:
-        summary += " [AURA_PRIMITIVES=s0]"
-    print(summary)
-    return 1 if failed > 0 else 0
+        print("  [AURA_PRIMITIVES=s0]")
+    return rc
 
 
 def test_suite_s0():
@@ -5471,10 +5315,61 @@ def test_e2e():
 
 
 # ═══════════════════════════════════════════════════════════════
-# CI tiering
+# Suite registry — leaves + tiers (SSOT for list / help / expand)
 # ═══════════════════════════════════════════════════════════════
 
-CI_CORE = [
+
+@dataclass(frozen=True)
+class SuiteSpec:
+    name: str
+    fn: Callable[[], int]
+    kind: str  # cpp | aura | extra
+    doc: str
+    parallel: bool = True
+
+
+SUITE_SPECS: tuple[SuiteSpec, ...] = (
+    SuiteSpec("unit", test_unit, "cpp", "C++ test_ir only"),
+    SuiteSpec("concurrent", test_concurrent, "cpp", "C++ test_concurrent stress"),
+    SuiteSpec(
+        "issues",
+        test_issues,
+        "cpp",
+        "C++ domain / issue binaries (AURA_ISSUES_TIER=full)",
+    ),
+    SuiteSpec(
+        "issues-fast",
+        test_issues,
+        "cpp",
+        "same runner as issues, AURA_ISSUES_TIER=fast",
+    ),
+    SuiteSpec("runtime-c", test_runtime_unit, "cpp", "lib/runtime.c harness"),
+    SuiteSpec("integ", test_integ, "aura", "fixture integ (eval/ir/typecheck/serve)"),
+    SuiteSpec("typecheck", test_typecheck, "aura", "fixture typecheck cases"),
+    SuiteSpec("smoke", test_smoke, "aura", "fixture smoke commands"),
+    SuiteSpec("bash", test_bash, "aura", "tests/run-tests.sh via tests/python/run.py"),
+    SuiteSpec("suite", test_suite_runner, "aura", "tests/suite/*.aura (--load via aura_file_runner)"),
+    SuiteSpec(
+        "regression",
+        test_regression,
+        "aura",
+        "tests/regression/*.aura (stdin + ;; expect: via aura_file_runner)",
+    ),
+    SuiteSpec("gradual", test_gradual, "aura", "gradual guarantee"),
+    SuiteSpec("p0", test_p0_regression, "aura", "P0 regression surface"),
+    SuiteSpec("e2e", test_e2e, "aura", "commercial_readiness golden E2E", parallel=False),
+    SuiteSpec("suite-s0", test_suite_s0, "aura", "suite subset under AURA_PRIMITIVES=s0", parallel=False),
+    SuiteSpec("repl", test_repl, "extra", "REPL pexpect"),
+    SuiteSpec("bench", test_bench, "extra", "benchmark SLO", parallel=False),
+    SuiteSpec("mutation", test_mutation, "extra", "mutation_loop smoke", parallel=False),
+    SuiteSpec("demo", test_demo, "extra", "agent demo pipeline", parallel=False),
+    SuiteSpec("ai", test_ai_agent_demo, "extra", "AI agent demo", parallel=False),
+)
+
+SUITE_BY_NAME: dict[str, SuiteSpec] = {s.name: s for s in SUITE_SPECS}
+SUITES: dict[str, Callable[[], int]] = {s.name: s.fn for s in SUITE_SPECS}
+
+CORE_LEAVES: tuple[str, ...] = (
     "unit",
     "integ",
     "typecheck",
@@ -5484,59 +5379,57 @@ CI_CORE = [
     "repl",
     "runtime-c",
     "concurrent",
-]
-CI_SAFETY = ["gradual", "regression", "p0"]
-# Issue #226: unified test_issue_* runner (tests/run_issue_tests.py).
-# AURA_ISSUES_TIER=fast on PR CI (~18 targets + changed issues);
-# AURA_ISSUES_TIER=full on main (all ~90+ binaries).
+)
+SAFETY_LEAVES: tuple[str, ...] = ("gradual", "regression", "p0")
+CI_LEAVES: tuple[str, ...] = CORE_LEAVES + SAFETY_LEAVES + ("issues",)
+PR_LEAVES: tuple[str, ...] = CORE_LEAVES + SAFETY_LEAVES + ("issues-fast",)
+NIGHTLY_LEAVES: tuple[str, ...] = CI_LEAVES + ("e2e", "bench", "suite-s0")
+EVERYTHING_LEAVES: tuple[str, ...] = tuple(s.name for s in SUITE_SPECS if s.name != "issues-fast")
+
+TIER_LEAVES: dict[str, tuple[str, ...]] = {
+    "core": CORE_LEAVES,
+    "safety": SAFETY_LEAVES,
+    "pr": PR_LEAVES,
+    "ci": CI_LEAVES,
+    "all": CI_LEAVES,
+    "nightly": NIGHTLY_LEAVES,
+    "everything": EVERYTHING_LEAVES,
+}
+
+TIER_DOCS: dict[str, str] = {
+    "pr": "core + safety + issues-fast",
+    "ci": "core + safety + issues (CI / default; `all` is an alias)",
+    "all": "alias of ci — not every leaf",
+    "nightly": "ci + e2e + bench + suite-s0",
+    "everything": "every leaf including demo / ai / mutation / bench",
+    "core": "unit integ typecheck smoke bash suite repl runtime-c concurrent",
+    "safety": "gradual + regression + p0",
+}
+
+# Derived aliases for older call sites.
+CI_CORE = list(CORE_LEAVES)
+CI_SAFETY = list(SAFETY_LEAVES)
 CI_ISSUES = ["issues"]
 CI_ISSUES_FAST = ["issues-fast"]
-# Suites safe to run in parallel (each spawns its own process / binary).
-# Aura is read-only under Soft sandbox defaults (_aura_test_env).
-# p0 uses fixed /tmp/aura-* *within* its own process only — a single p0
-# instance is fine alongside other suites (they do not share those paths).
-# Kept serial: bench (heavy SLO).
-CI_PARALLEL_SAFE = frozenset(
-    {
-        "unit",
-        "concurrent",
-        "issues",
-        "issues-fast",
-        "repl",
-        "gradual",
-        "runtime-c",
-        "integ",
-        "typecheck",
-        "smoke",
-        "bash",
-        "suite",
-        "regression",
-        "p0",
-    }
-)
+CI_PARALLEL_SAFE = frozenset(s.name for s in SUITE_SPECS if s.parallel)
 
-SUITES = {
-    "unit": test_unit,
-    "integ": test_integ,
-    "typecheck": test_typecheck,
-    "bench": test_bench,
-    "smoke": test_smoke,
-    "mutation": test_mutation,
-    "runtime-c": test_runtime_unit,
-    "gradual": test_gradual,
-    "demo": test_demo,
-    "regression": test_regression,
-    "p0": test_p0_regression,
-    "ai": test_ai_agent_demo,
-    "bash": test_bash,
-    "suite": test_suite_runner,
-    "suite-s0": test_suite_s0,
-    "e2e": test_e2e,  # Issue #1934 commercial_readiness golden E2E
-    "repl": test_repl,
-    "concurrent": test_concurrent,
-    "issues": test_issues,
-    "issues-fast": test_issues,
-}
+
+def _validate_suite_registry() -> None:
+    """Fail loud if tiers drift from leaves."""
+    unknown = [n for leaves in TIER_LEAVES.values() for n in leaves if n not in SUITE_BY_NAME]
+    if unknown:
+        raise RuntimeError(f"tier references unknown leaves: {unknown}")
+    if TIER_LEAVES["all"] != TIER_LEAVES["ci"]:
+        raise RuntimeError("`all` must stay an alias of `ci`")
+    extra_in_ci = {"demo", "ai", "mutation", "bench", "e2e", "suite-s0"} & set(TIER_LEAVES["ci"])
+    if extra_in_ci:
+        raise RuntimeError(f"ci/all must not include extras: {sorted(extra_in_ci)}")
+    unit_src = test_unit.__code__.co_names
+    if "test_concurrent" in unit_src or "concurrent_bin" in unit_src:
+        raise RuntimeError("unit must not embed the concurrent binary")
+
+
+_validate_suite_registry()
 
 
 _test_print_lock = Lock()
@@ -5550,25 +5443,44 @@ def _test_jobs() -> int:
         return 1
 
 
-def _expand_suite_names(suite_names: list[str]) -> list[tuple[str, object]]:
-    if not suite_names or "all" in suite_names:
-        suite_names = list(SUITES.keys())
+def _known_suite_names() -> str:
+    leaves = ", ".join(s.name for s in SUITE_SPECS)
+    tiers = ", ".join(TIER_LEAVES)
+    return f"tiers: {tiers}; leaves: {leaves}"
 
-    if "issues-fast" in suite_names:
+
+def _expand_suite_names(suite_names: list[str]) -> list[tuple[str, object]]:
+    if not suite_names:
+        suite_names = ["ci"]
+
+    rewritten = ["ci" if n == "all" else n for n in suite_names]
+    if "all" in suite_names:
+        info("`all` is an alias of `ci` (not every leaf). Use `everything` for demo/bench/ai.")
+
+    if any(n == "issues-fast" or n == "pr" for n in rewritten):
         os.environ["AURA_ISSUES_TIER"] = "fast"
 
     items: list[tuple[str, object]] = []
-    for name in suite_names:
-        if name in SUITES:
-            items.append((name, SUITES[name]))
-        elif name == "core":
-            for s in CI_CORE:
-                items.append((f"core/{s}", SUITES[s]))
-        elif name == "safety":
-            for s in CI_SAFETY:
-                items.append((f"safety/{s}", SUITES[s]))
+    seen: set[str] = set()
+
+    def add_leaf(label: str, leaf: str) -> None:
+        if leaf in seen:
+            return
+        spec = SUITE_BY_NAME.get(leaf)
+        if spec is None:
+            warn(f"unknown suite '{leaf}' (use: {_known_suite_names()})")
+            return
+        seen.add(leaf)
+        items.append((label, spec.fn))
+
+    for name in rewritten:
+        if name in SUITE_BY_NAME:
+            add_leaf(name, name)
+        elif name in TIER_LEAVES:
+            for leaf in TIER_LEAVES[name]:
+                add_leaf(f"{name}/{leaf}", leaf)
         else:
-            warn(f"unknown suite '{name}' (use: {', '.join(SUITES.keys())})")
+            warn(f"unknown suite '{name}' (use: {_known_suite_names()})")
     return items
 
 
@@ -15983,20 +15895,23 @@ def cmd_ci():
     Honors AURA_ISSUE_BUILD=none (skip issue binary matrix + issues suite)
     for PR path-filter when only scripts/lib tooling changed.
     """
-    suites = CI_CORE + CI_SAFETY + CI_ISSUES
-    return cmd_build() or cmd_test(suites)
+    return cmd_build() or cmd_test(["ci"])
 
 
 def cmd_list():
-    """列出测试套件"""
-    print(f"{B}Available test suites:{N}")
-    print(f"  {'core':12s} CI核心管线 (unit + integ + typecheck + smoke + bash + suite)")
-    print(f"  {'safety':12s} CI安全回归 (gradual + regression + p0)")
-    print(f"  {'check':12s} CI默认: build + core + safety + issues")
-    print(f"  {'issues-fast':12s} issue tests (AURA_ISSUES_TIER=fast)")
+    """列出测试档位与叶子套件（由 SUITE_SPECS / TIER_LEAVES 生成）。"""
+    print(f"{B}Test tiers{N}  (./build.py test <tier>; default ci)")
+    width = max(len(n) for n in TIER_LEAVES)
+    for name in ("pr", "ci", "all", "nightly", "everything", "core", "safety"):
+        print(f"  {name:<{width}}  {TIER_DOCS[name]}")
     print()
-    for name, func in sorted(SUITES.items()):
-        print(f"  {name:12s} {func.__doc__}")
+    print(f"{B}Leaf suites{N}  (./build.py test <leaf>)")
+    kind_width = max(len(s.kind) for s in SUITE_SPECS)
+    for spec in SUITE_SPECS:
+        par = "parallel" if spec.parallel else "serial"
+        print(f"  {spec.name:<12}  [{spec.kind:<{kind_width}} {par:<8}]  {spec.doc}")
+    print()
+    print("  check         gate + build + ci")
     return 0
 
 
@@ -17093,7 +17008,7 @@ def main():
         "primcall-str-intern": cmd_primcall_str_intern_coverage,
         "linear-three-layer-wire": cmd_linear_three_layer_wire_coverage,
         "partial-cone-cap": cmd_partial_cone_cap_coverage,
-        "test": lambda: cmd_test(args or ["all"]),
+        "test": lambda: cmd_test(args or ["ci"]),
         "list": cmd_list,
         "demo": test_demo,
         "regression": lambda: cmd_test(["regression"]),
