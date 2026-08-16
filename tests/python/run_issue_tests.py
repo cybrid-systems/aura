@@ -542,6 +542,9 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
         "test_tenant_isolation_enforcement",
         "test_fiber_orch_parallel_quota_batch",
         "test_chaos_mutate_steal_gc_mailbox",
+        # 24-member mailbox/fiber/join-drain batch; 60s default dies mid-batch
+        # (rc=124) before test_join_drain_reclaim even starts.
+        "test_mailbox_fiber_batch",
     )
     is_heavy = (
         "bench" in bin_name

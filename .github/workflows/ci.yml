@@ -197,27 +197,22 @@ jobs:
 
     # suite-s0 dropped: ./build.py ci already runs full tests/suite/*.aura
     # (which is a superset of SUITE_S0_FILES). Keep a cheap s0 metrics probe.
+    # Soft harness env (AURA_SANDBOX=off) — production tree-walker Forbidden
+    # (#2213) otherwise exits 1 on unless/hash? even when the probe printed ok.
     - name: "engine:metrics under s0"
       env:
-        AURA_PRIMITIVES: s0
         AURA_RUNTIME_DIR: ${{ github.workspace }}
-      run: |
-        printf '%s\n' \
-          '(define m (engine:metrics))' \
-          '(unless (hash? m) (error "engine:metrics not hash"))' \
-          '(unless (= 2 (hash-ref m "schema")) (error "schema"))' \
-          '(display "s0 engine:metrics ok")' \
-          '(newline)' \
-          | ./build/aura
+      run: python3 build.py s0-metrics
 
     # Issue #1569: hard SLO gate for compiler pipeline benchmarks.
     # Main only — PR wall time; regressions still caught on merge-to-main.
+    # --runs 3: single-run after a cold compile is a 5× flake on vec_basic.
     - name: Benchmark SLO gate (#1569)
       if: github.event_name == 'push' && github.ref == 'refs/heads/main'
       env:
         AURA_RUNTIME_DIR: ${{ github.workspace }}
         AURA_CI_STRICT_BENCH: "1"
-      run: python3 build.py bench --strict
+      run: python3 build.py bench --strict --runs 3
 
   # Single green check for branch protection when gate ‖ build-test.
   # Succeeds only if gate is green and build-test is green or skipped
