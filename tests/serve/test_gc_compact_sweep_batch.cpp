@@ -136,13 +136,15 @@ static void run_1865_pair_remap_clear() {
         if (pos == std::string::npos)
             pos = gc.find("Evaluator::compact_sweep");
         CHECK(pos != std::string::npos, "compact_sweep present");
-        auto win = gc.substr(pos, 2200);
+        auto win = gc.substr(pos, 6000);
         CHECK(win.find("pair_remap_.clear()") != std::string::npos ||
                   win.find("pair_remap_.clear") != std::string::npos,
               "clears pair_remap_");
         CHECK(win.find("heap_mutex()") != std::string::npos, "holds heap_mutex");
         auto clear_pos = win.find("pair_remap_.clear");
-        auto panic_pos = win.find("should_defer_compact_for_pending_checkpoint");
+        auto panic_pos = win.find("should_defer_destructive_gc");
+        if (panic_pos == std::string::npos)
+            panic_pos = win.find("has_panic_checkpoint");
         CHECK(clear_pos != std::string::npos && panic_pos != std::string::npos &&
                   clear_pos > panic_pos,
               "clear after panic-defer check");

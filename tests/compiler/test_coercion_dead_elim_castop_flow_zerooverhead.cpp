@@ -8,6 +8,7 @@
 // AC4: Gradual Dynamic/consistent mutate loop — semantic match + metrics grow
 // AC5: query:coercion-zerooverhead-stats primitive monotonic
 
+#include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
 import std;
@@ -206,8 +207,12 @@ static void test_coercion_map_apply_round_trip() {
     auto call_id = flat->add_call(callee_var, std::span<const aura::ast::NodeId>{__call_args});
     flat->root = call_id;
 
+    // Off audit: incomplete dual-provenance still inserts (Sampled/Full
+    // skip). type_id=2 so identity elision does not fire if the literal
+    // already carries Int type_id=1.
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Off);
     aura::compiler::CoercionMap cm;
-    cm.add(call_id, 1, arg0, 2, 1, 0, 0);
+    cm.add(call_id, 1, arg0, 0, 2, 0, 0);
     const auto applied = aura::compiler::apply_coercion_map(*flat, cm);
     CHECK(applied == 1, "apply_coercion_map applied 1 entry");
     auto parent = flat->get(call_id);

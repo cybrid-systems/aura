@@ -269,9 +269,9 @@ bool test_regression_existing_primitives() {
     auto r1 = cs.eval("(engine:metrics \"query:edsl-concurrency-stats\")");
     CHECK(r1.has_value() && aura::compiler::types::is_int(*r1),
           "(engine:metrics \"query:edsl-concurrency-stats\") (new for #556)");
-    auto r2 = cs.eval("(query:typed-mutation-stats-task1)");
+    auto r2 = cs.eval("(engine:metrics \"query:typed-mutation-stats-task1\")");
     CHECK(r2.has_value() && aura::compiler::types::is_int(*r2),
-          "(query:typed-mutation-stats-task1) (regression for #555)");
+          "(engine:metrics \"query:typed-mutation-stats-task1\") (regression for #555)");
     auto r3 = cs.eval("(engine:metrics \"query:typed-mutation-stats\")");
     CHECK(r3.has_value() && aura::compiler::types::is_int(*r3),
           "(engine:metrics \"query:typed-mutation-stats\") (regression for #550)");
