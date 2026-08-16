@@ -215,11 +215,11 @@ static void ac4_schema_source_cite() {
 
     const auto pass = read_file("src/compiler/pass_impls.ixx");
     const auto meta = read_file("src/compiler/dce_elided_deopt_meta.h");
-    const auto query = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto query = ::aura::test::aura_query_prims_source();
     CHECK(pass.find("Issue #2611") != std::string::npos, "AC4: pass_impls cites #2611");
     CHECK(meta.find("Issue #2611") != std::string::npos || meta.find("#2611") != std::string::npos,
           "AC4: dce_elided_deopt_meta.h cites #2611");
-    CHECK(query.find("schema-2611") != std::string::npos, "AC4: query schema-2611");
+    CHECK(::aura::test::aura_cxx_string_has(query, "schema-2611"), "AC4: query schema-2611");
     CHECK(meta.find("stamp_elided_cast_deopt_meta") != std::string::npos, "AC4: stamp API");
     CHECK(meta.find("expose_last_deopt_meta") != std::string::npos, "AC4: expose API");
 }

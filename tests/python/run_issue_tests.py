@@ -272,11 +272,12 @@ PRE_EXISTING_FAILURES: set[str] = {
     # occurrence_coercion_batch greened: comment-aware source-cite,
     # typecheck-current skip workspace re-lock under MutationBoundary (#3082),
     # leftover SLO / evidence-loss reset between members.
+    # Batch 4 (rc=1 / 0-AC-fail class): greened test_macro_hygiene_batch
+    # (live rest-stamp) + test_stable_ref_validate_batch (restamp :node).
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",
     "test_linear_misc_batch",
-    "test_macro_hygiene_batch",
     "test_misc_issue_fold_batch",
     "test_module_query_batch",
     "test_mutation_hold_boundary_batch",
@@ -284,7 +285,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_security_capability_batch",
     "test_serve_legacy_issue_batch",
     "test_shape_soa_storm_batch",
-    "test_stable_ref_validate_batch",
 }
 
 _print_lock = Lock()

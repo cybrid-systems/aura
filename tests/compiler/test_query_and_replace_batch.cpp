@@ -21,6 +21,8 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <chrono>
@@ -77,35 +79,38 @@ static auto Ev = [](CompilerService& cs, std::string_view code) {
 
 // AC1: single Guard + atomic-batch wrapping. Failure rolls back fully.
 static void ac2527_1_no_match_returns_success() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     if (!Ev(cs, "(define x 1) (define y 2) (define z 3)").has_value()) {
-        ++g_failed;
+        CHECK(false, "AC1: set-code");
         return;
     }
     if (!cs.eval("(eval-current)").has_value()) {
-        ++g_failed;
+        CHECK(false, "AC1: eval-current");
         return;
     }
     // No LiteralInt nodes are :replaced via [:tag :LiteralInt] since matches
     // collection requires predicates that match. We use a predicate that
     // matches nothing → no-op fast path.
+    // Template must be last — kwargs after it make a.back() a keyword
+    // and the primitive returns bad-arg (not a hash). Default hygiene
+    // is already :macro-introduced-only.
     auto r = cs.eval("(mutate:query-and-replace-batch "
-                     "(query:where :tag :NoSuchNodeType) \"42\" "
-                     " :hygiene-keep :macro-introduced-only)");
+                     "(query:where :tag \"NoSuchNodeType\") \"42\")");
     if (!r) {
-        ++g_failed;
+        CHECK(false, "AC1: mutate:query-and-replace-batch returned");
         return;
     }
     if (!is_hash(*r)) {
-        ++g_failed;
+        CHECK(false, "AC1: result is hash");
         return;
     }
     // Check :success #t, :replaced-count 0, :skipped-count 0.
     auto hs = cs.eval("(hash-ref (mutate:query-and-replace-batch "
-                      "(query:where :tag :NoSuchNodeType) \"42\" "
-                      " :hygiene-keep :macro-introduced-only) :success)");
+                      "(query:where :tag \"NoSuchNodeType\") \"42\") :success)");
     if (!hs || !is_bool(*hs) || !as_bool(*hs)) {
-        ++g_failed;
+        CHECK(false, "AC1: :success #t");
         return;
     }
     ++g_passed;
@@ -126,8 +131,7 @@ static void ac2527_1_size_counter_bumps() {
     }
     const std::uint64_t baseline = load_u64(m->query_replace_batch_size);
     auto r = cs.eval("(mutate:query-and-replace-batch "
-                     "(query:where :tag :NoSuchNodeType) \"42\" "
-                     " :hygiene-keep :macro-introduced-only)");
+                     "(query:where :tag \"NoSuchNodeType\") \"42\")");
     if (!r || !is_hash(*r)) {
         ++g_failed;
         return;
@@ -161,8 +165,7 @@ static void ac2527_2_basic_success_path() {
     // For this test, we verify the no-op path (no matches) and the
     // partial-fail-collect path via a stub workspace.
     auto r = cs.eval("(mutate:query-and-replace-batch "
-                     "(query:where :tag :LiteralInt) \"999\" "
-                     " :hygiene-keep :macro-introduced-only)");
+                     "(query:where :tag \"LiteralInt\") \"999\")");
     if (!r || !is_hash(*r)) {
         ++g_failed;
         return;
@@ -193,7 +196,7 @@ static void ac2527_4_bad_arg_template_not_string() {
         return;
     }
     auto r = cs.eval("(mutate:query-and-replace-batch "
-                     "(query:where :tag :LiteralInt) 42)");
+                     "(query:where :tag \"LiteralInt\") 42)");
     if (!r || !is_error(*r)) {
         ++g_failed;
         return;
@@ -209,7 +212,7 @@ static void ac2527_5_bad_hygiene_mode() {
         return;
     }
     auto r = cs.eval("(mutate:query-and-replace-batch "
-                     "(query:where :tag :LiteralInt) \"42\" "
+                     "(query:where :tag \"LiteralInt\") \"42\" "
                      " :hygiene-keep :bogus-mode)");
     if (!r || !is_error(*r)) {
         ++g_failed;
@@ -238,8 +241,7 @@ static void ac2527_7_query_surface_keys() {
     }
     // Bump at least one call so size > 0.
     auto r = cs.eval("(mutate:query-and-replace-batch "
-                     "(query:where :tag :NoSuchNodeType) \"42\" "
-                     " :hygiene-keep :macro-introduced-only)");
+                     "(query:where :tag \"NoSuchNodeType\") \"42\")");
     (void)r;
     if (href2527(cs, "schema-2527") != 2527) {
         ++g_failed;
@@ -285,6 +287,8 @@ static void ac2527_8_source_doc_comment() {
 
 int run_test_query_and_replace_batch() {
     std::print("=== Issue #2527: mutate:query-and-replace-batch ===\n");
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     ac2527_1_no_match_returns_success();
     ac2527_1_size_counter_bumps();
     ac2527_2_basic_success_path();
