@@ -1878,7 +1878,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_subtype_constraint_meet.cpp` (—) [domain_suite, theme_compiler] — AC1: SUBTYPE goals in solve_delta; CONFLICT exports kind=SUBTYPE
 - `tests/compiler/test_tco_jump_terminator_emitted.cpp` (—) [domain_suite, theme_compiler] — AC1: source has one Jump assign in transform; cites #2833; no "need Branch"
 - `tests/compiler/test_test_strategy.cpp` (—) [domain_suite, theme_compiler] — Issue #1623/#1624/#1627/#1887 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_tier_dispatch.cpp` (—) [domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
+- `tests/compiler/test_tier_dispatch.cpp` (—) [small, domain_suite, theme_compiler] — test_tier_dispatch.cpp — Issue #1356: HotTierTable for kPrimPerfHot primitives
 - `tests/compiler/test_timeout_repair_rich_roots.cpp` (—) [domain_suite, theme_compiler] — AC1: TIMEOUT with live occurrence goals → suggested set includes
 - `tests/compiler/test_tree_walker_fallback_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: Under Forbidden (production-strict), needs_tree_walker → HardError
 - `tests/core/test_type_cache_stats_snapshot.cpp` (—) [domain_suite, theme_core] — Issue #1797 (#1978 renamed): issue# moved from filename to header.
