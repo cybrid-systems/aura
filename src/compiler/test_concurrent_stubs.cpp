@@ -16,3 +16,13 @@
 extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* /*ev_ptr*/) noexcept {
     return 0; // stub: no-op for test_concurrent
 }
+
+// Issue #2370: PerEval storm TLS lives in spec_jit_controller.cpp.
+// test_concurrent does not compile that TU (or aura_jit_bridge_stub.cpp);
+// the first-DSO weak stubs were removed from
+// aura_jit_prim_dispatch_stub.cpp so full-JIT DSOs keep the strong TLS.
+// Light-link only: nullptr means Global / process-window storm path.
+extern "C" __attribute__((weak)) void aura_set_storm_eval_context(void* /*eval_ptr*/) noexcept {}
+extern "C" __attribute__((weak)) void* aura_get_storm_eval_context(void) noexcept {
+    return nullptr;
+}
