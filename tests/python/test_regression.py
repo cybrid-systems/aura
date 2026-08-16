@@ -237,11 +237,17 @@ def test_aura_type_different_types():
             f.write('(define (greet n) (string-append "hi " n))\n')
         with open(sig_path, "w") as f:
             f.write("greet: String -> String\n")
-        # Use numeric arg to avoid string escaping issues in pipe mode
-        code = f'(begin (require "{mod_path}" all:)(set-code "(display (greet 42))")(display (typecheck-current))(display "|")(eval-current))'
+        # Pass a String so typecheck stays clean. Numeric 42 used to dodge
+        # quoting, but default Balanced (#2992) warns on Int vs String and
+        # typecheck-current then omits "no errors" even though eval succeeds.
+        code = (
+            f'(begin (require "{mod_path}" all:)'
+            f'(set-code "(display (greet \\"world\\"))")'
+            f'(display (typecheck-current))(display "|")(eval-current))'
+        )
         r = subprocess.run([AURA], input=code, capture_output=True, text=True, timeout=10)
         assert "no errors" in r.stdout, f"type error: {r.stdout}"
-        assert "hi 42" in r.stdout, f"eval wrong: {r.stdout}"
+        assert "hi world" in r.stdout, f"eval wrong: {r.stdout}"
     print("  ✅ test-aura-type-different-types")
 
 
