@@ -560,6 +560,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       snap.sandbox_mode != 0 ? 1 : 0); // Restricted/Strict → armed
             insert_kv("schema-2707", 2707);
             insert_kv("issue-2707", 2707);
+            // Issue #3090: production grant refused when prov.mutation_id == 0
+            // under Restricted/Strict (same refuse semantics as
+            // resolve_audit_mutation_id #2836). Additive on
+            // query:capability-effect-stats surface (no new primitive name,
+            // primitive freeze #1448).
+            insert_kv("grant-mid-refused-total", static_cast<std::int64_t>(snap.grant_mid_refused));
+            insert_kv("schema-3090", 3090);
+            insert_kv("issue-3090", 3090);
             insert_kv("grants", static_cast<std::int64_t>(snap.grants));
             insert_kv("revokes", static_cast<std::int64_t>(snap.revokes));
             insert_kv("checks", static_cast<std::int64_t>(snap.checks));
