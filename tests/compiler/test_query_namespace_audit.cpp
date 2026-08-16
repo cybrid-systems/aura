@@ -30,6 +30,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -44,10 +45,18 @@ namespace aura_issue_562_detail {
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
+static std::string repo_file(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    return std::string(AURA_SOURCE_DIR) + "/" + std::string(rel);
+#else
+    return std::string(rel);
+#endif
+}
+
 // ── AC1: lib/std/query.aura present + exports
 bool test_stdlib_query_file_present() {
     std::println("\n--- AC1: lib/std/query.aura present + exports ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
+    const std::string lib_path = repo_file("lib/std/query.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists on disk");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -66,7 +75,7 @@ bool test_stdlib_query_file_present() {
     CHECK(has_nodes_with_marker, "stdlib/query.aura exports (query:nodes-with-marker)");
     CHECK(has_find_by_name, "stdlib/query.aura exports (query:find-by-name)");
     CHECK(has_subtree, "stdlib/query.aura exports (query:subtree)");
-    std::ifstream ft("/home/dev/code/aura/lib/std/query.aura-type");
+    std::ifstream ft(repo_file("lib/std/query.aura-type"));
     CHECK(ft.good(), "lib/std/query.aura-type exists on disk");
     return true;
 }
@@ -75,7 +84,7 @@ bool test_stdlib_query_file_present() {
 //         categories (verified via stdlib file structure)
 bool test_query_list_categories_count() {
     std::println("\n--- AC2: stdlib/query.aura (query:list-categories) >= 10 ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
+    const std::string lib_path = repo_file("lib/std/query.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -100,7 +109,7 @@ bool test_query_list_categories_count() {
 // ── AC3: stdlib/query.aura (query:help) handles known key
 bool test_query_help_known_key() {
     std::println("\n--- AC3: stdlib/query.aura (query:help) handles known key ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
+    const std::string lib_path = repo_file("lib/std/query.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -129,7 +138,7 @@ bool test_query_help_known_key() {
 // ── AC4: stdlib/query.aura safe fallback wrappers (no engine state)
 bool test_query_safe_fallback_wrappers() {
     std::println("\n--- AC4: stdlib/query.aura safe fallback wrappers ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
+    const std::string lib_path = repo_file("lib/std/query.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -150,7 +159,7 @@ bool test_query_safe_fallback_wrappers() {
 // ── AC5: stdlib/query.aura (query:subtree) iterative walk
 bool test_query_subtree_iterative_walk() {
     std::println("\n--- AC5: stdlib/query.aura (query:subtree) iterative walk ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/query.aura";
+    const std::string lib_path = repo_file("lib/std/query.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/query.aura exists");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -167,36 +176,12 @@ bool test_query_subtree_iterative_walk() {
     return true;
 }
 
-// ── AC7: docs/design/query-namespace-decision.md exists
-//         + 12+ demotion candidates documented
+// ── AC7: no docs/design/query-namespace-decision.md (#1655)
 bool test_decision_doc_exists() {
-    std::println("\n--- AC7: docs/design/query-namespace-decision.md ---");
-    const std::string doc_path = "/home/dev/code/aura/docs/design/query-namespace-decision.md";
+    std::println("\n--- AC7: no docs/design/query-namespace-decision.md (#1655) ---");
+    const std::string doc_path = repo_file("docs/design/query-namespace-decision.md");
     std::ifstream f(doc_path);
-    CHECK(f.good(), "decision doc exists");
-    if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        f.close();
-        const bool has_tier1 = content.find("Tier 1") != std::string::npos;
-        const bool has_tier2 = content.find("Tier 2") != std::string::npos;
-        const bool has_tier3 = content.find("Tier 3") != std::string::npos;
-        const bool has_followup = content.find("Future follow-up") != std::string::npos;
-        std::println("  decision doc: present + 3 tiers + follow-up section");
-        CHECK(has_tier1, "doc has Tier-1 section");
-        CHECK(has_tier2, "doc has Tier-2 section");
-        CHECK(has_tier3, "doc has Tier-3 section");
-        CHECK(has_followup, "doc has Future follow-up section");
-        // Count demotion candidates (rows in tables).
-        // We don't easily count lines, but we verify the doc
-        // contains "DEMOTE candidate" at least 4 times.
-        int demote_count = 0;
-        std::size_t pos = 0;
-        while ((pos = content.find("DEMOTE candidate", pos + 1)) != std::string::npos) {
-            ++demote_count;
-        }
-        std::println("  DEMOTE candidate occurrences: {}", demote_count);
-        CHECK(demote_count >= 4, "decision doc has >= 4 DEMOTE candidate occurrences");
-    }
+    CHECK(!f.good(), "no docs/design/query-namespace-decision.md per #1655");
     return true;
 }
 
@@ -213,8 +198,8 @@ bool test_regression_core_query_primitives() {
     CHECK(r2.has_value(), "(query :children-stable) (regression - core)");
     auto r3 = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(r3.has_value(), "(query:by-marker) (regression - core)");
-    auto r4 = cs.eval("(query:tag-arity-count 32 0)");
-    CHECK(r4.has_value(), "(query:tag-arity-count) (regression - core)");
+    auto r4 = cs.eval("(engine:metrics \"query:tag-arity-count\")");
+    CHECK(r4.has_value(), "(engine:metrics \"query:tag-arity-count\") SlimSurface stats_impl");
     auto r5 = cs.eval("(query:templates)");
     CHECK(r5.has_value(), "(query:templates) (regression for #561)");
     auto r6 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");

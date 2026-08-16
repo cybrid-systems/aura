@@ -6,7 +6,7 @@
 //   - AC1: lib/std/ast.aura present + exports 6 functions
 //   - AC2: lib/std/workspace.aura enhanced (+5 functions)
 //   - AC3: 12 primitives wrapped (≥5 acceptance met)
-//   - AC4: docs/design/ast-workspace-decision.md present
+//   - AC4: no docs/design/ast-workspace-decision.md (#1655)
 //   - AC5: regression — core ast:* + workspace:* primitives work
 
 #include "test_harness.hpp"
@@ -21,6 +21,7 @@
 #include <mutex>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
@@ -35,10 +36,18 @@ namespace aura_issue_563_detail {
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
 
+static std::string repo_file(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    return std::string(AURA_SOURCE_DIR) + "/" + std::string(rel);
+#else
+    return std::string(rel);
+#endif
+}
+
 // ── AC1: lib/std/ast.aura present + exports 6 functions
 bool test_stdlib_ast_file_present() {
     std::println("\n--- AC1: lib/std/ast.aura present + 6 exports ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/ast.aura";
+    const std::string lib_path = repo_file("lib/std/ast.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/ast.aura exists on disk");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -58,7 +67,7 @@ bool test_stdlib_ast_file_present() {
     CHECK(has_version, "stdlib/ast.aura exports (ast:version-summary)");
     CHECK(has_ref_stats, "stdlib/ast.aura exports (ast:ref-stats)");
     CHECK(has_mem_pressure, "stdlib/ast.aura exports (ast:memory-pressure)");
-    std::ifstream ft("/home/dev/code/aura/lib/std/ast.aura-type");
+    std::ifstream ft(repo_file("lib/std/ast.aura-type"));
     CHECK(ft.good(), "lib/std/ast.aura-type exists on disk");
     return true;
 }
@@ -66,7 +75,7 @@ bool test_stdlib_ast_file_present() {
 // ── AC2: lib/std/workspace.aura enhanced (+5 functions)
 bool test_stdlib_workspace_enhanced() {
     std::println("\n--- AC2: lib/std/workspace.aura enhanced (+5 funcs) ---");
-    const std::string lib_path = "/home/dev/code/aura/lib/std/workspace.aura";
+    const std::string lib_path = repo_file("lib/std/workspace.aura");
     std::ifstream f(lib_path);
     CHECK(f.good(), "lib/std/workspace.aura exists on disk");
     std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
@@ -93,8 +102,8 @@ bool test_stdlib_workspace_enhanced() {
 // ── AC3: 12 primitives wrapped (≥5 acceptance met)
 bool test_12_primitives_wrapped() {
     std::println("\n--- AC3: >= 12 primitives wrapped ---");
-    const std::string ast_path = "/home/dev/code/aura/lib/std/ast.aura";
-    const std::string ws_path = "/home/dev/code/aura/lib/std/workspace.aura";
+    const std::string ast_path = repo_file("lib/std/ast.aura");
+    const std::string ws_path = repo_file("lib/std/workspace.aura");
     std::ifstream f1(ast_path);
     std::ifstream f2(ws_path);
     CHECK(f1.good(), "lib/std/ast.aura exists");
@@ -127,23 +136,12 @@ bool test_12_primitives_wrapped() {
     return true;
 }
 
-// ── AC4: docs/design/ast-workspace-decision.md present
+// ── AC4: no docs/design/ast-workspace-decision.md (#1655)
 bool test_decision_doc_exists() {
-    std::println("\n--- AC4: docs/design/ast-workspace-decision.md ---");
-    const std::string doc_path = "/home/dev/code/aura/docs/design/ast-workspace-decision.md";
+    std::println("\n--- AC4: no docs/design/ast-workspace-decision.md (#1655) ---");
+    const std::string doc_path = repo_file("docs/design/ast-workspace-decision.md");
     std::ifstream f(doc_path);
-    CHECK(f.good(), "decision doc exists");
-    if (f.good()) {
-        std::string content((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
-        f.close();
-        const bool has_ast_section = content.find("ast: namespace") != std::string::npos;
-        const bool has_ws_section = content.find("workspace: namespace") != std::string::npos;
-        const bool has_acceptance = content.find("Acceptance criteria check") != std::string::npos;
-        std::println("  decision doc: present + ast+workspace sections + acceptance");
-        CHECK(has_ast_section, "doc has ast: section");
-        CHECK(has_ws_section, "doc has workspace: section");
-        CHECK(has_acceptance, "doc has Acceptance criteria check section");
-    }
+    CHECK(!f.good(), "no docs/design/ast-workspace-decision.md per #1655");
     return true;
 }
 
