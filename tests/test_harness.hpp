@@ -14,6 +14,7 @@
 //   aura_call_expr()     — engine:metrics / stats:get routing for demoted names
 //   aura_href_expr()     — hash-ref wrapper with STRING keys via aura_call_expr
 //   aura_query_prims_source() — concatenated query/stats TUs for source-cite
+//   aura_cxx_string_has() — find across adjacent C++ string-literal splits
 //   k_int_env()          — shared stress/fuzz env knobs
 //   capture_stable_refs / validate_stable_refs — FlatAST white-box helpers
 //   note_strategy_*      — hot-path / AI self-mod strategy stamps (#1887)
@@ -107,6 +108,84 @@ inline std::string aura_read_repo_file(std::string_view rel) {
                                std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+// True if *needle* appears in *src*, or as adjacent C++ string literals
+// (`"foo-"\n          "bar"` compiles to "foo-bar" but is split on disk).
+// Skips // and /* */ comments so quotes inside comments cannot desync
+// the scan (the naive collapse treated `"proof is pre-remap"` as a literal).
+inline bool aura_cxx_string_has(std::string_view src, std::string_view needle) {
+    if (needle.empty() || src.find(needle) != std::string_view::npos)
+        return true;
+
+    const auto skip_ws_and_comments = [&](std::size_t& i) {
+        while (i < src.size()) {
+            const char c = src[i];
+            if (c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v') {
+                ++i;
+                continue;
+            }
+            if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {
+                i += 2;
+                while (i < src.size() && src[i] != '\n')
+                    ++i;
+                continue;
+            }
+            if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
+                i += 2;
+                while (i + 1 < src.size() && !(src[i] == '*' && src[i + 1] == '/'))
+                    ++i;
+                i = (i + 1 < src.size()) ? i + 2 : src.size();
+                continue;
+            }
+            break;
+        }
+    };
+
+    std::string run;
+    run.reserve(256);
+    for (std::size_t i = 0; i < src.size();) {
+        skip_ws_and_comments(i);
+        if (i >= src.size())
+            break;
+        if (src[i] == '"') {
+            ++i;
+            while (i < src.size() && src[i] != '"') {
+                if (src[i] == '\\' && i + 1 < src.size()) {
+                    run.push_back(src[i + 1]);
+                    i += 2;
+                } else {
+                    run.push_back(src[i]);
+                    ++i;
+                }
+            }
+            if (i < src.size())
+                ++i;
+            continue;
+        }
+        if (src[i] == '\'') {
+            ++i;
+            while (i < src.size() && src[i] != '\'') {
+                if (src[i] == '\\' && i + 1 < src.size())
+                    i += 2;
+                else
+                    ++i;
+            }
+            if (i < src.size())
+                ++i;
+            if (run.find(needle) != std::string::npos)
+                return true;
+            run.clear();
+            continue;
+        }
+        if (!run.empty()) {
+            if (run.find(needle) != std::string::npos)
+                return true;
+            run.clear();
+        }
+        ++i;
+    }
+    return run.find(needle) != std::string::npos;
 }
 
 // Concatenated query / stats registration TUs for source-cite ACs.

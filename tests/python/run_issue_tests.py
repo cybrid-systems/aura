@@ -269,8 +269,9 @@ PRE_EXISTING_FAILURES: set[str] = {
     # Restricted multi-tenant, #2985 production-face admit).
     # Batch 3 leftover greened: test_incremental_typed_selfmod_dirty_narrowing
     # (mutate:rebind if/number? occurrence path; evaluate → eval).
-    # occurrence_coercion_batch 22→41 members ok (schema helper, tree-walker
-    # reset, Sampled→Off). Still 4 members: persist EDEADLK + leftover query keys.
+    # occurrence_coercion_batch greened: comment-aware source-cite,
+    # typecheck-current skip workspace re-lock under MutationBoundary (#3082),
+    # leftover SLO / evidence-loss reset between members.
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",
@@ -279,7 +280,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_misc_issue_fold_batch",
     "test_module_query_batch",
     "test_mutation_hold_boundary_batch",
-    "test_occurrence_coercion_batch",
     "test_orch_agent_batch",
     "test_security_capability_batch",
     "test_serve_legacy_issue_batch",
