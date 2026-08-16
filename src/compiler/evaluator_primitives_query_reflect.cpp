@@ -321,7 +321,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto scored = compute_type_linear_commit_health(snap);
 
             // Issue #3020: ~73 live keys; next_pow2(planned*2) (256).
-            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 100;
+            constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 160;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kTypeLinearCommitHealthPlannedKeys));
             if (!ht)

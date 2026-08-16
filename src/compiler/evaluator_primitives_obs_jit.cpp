@@ -10291,8 +10291,11 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                         m->own_escape_post_savings_total.load(std::memory_order_relaxed))
                   : 0;
             const std::int64_t active = 1;
-            // Capacity: #863 + #2263 + #2286 + #2309 + #2344 keys (~24).
-            auto* ht = FlatHashTable::create(64) /* #1141 / #2344 */;
+            // Capacity: #863 + #2263 + #2286 + #2309 + #2344 + #2507 +
+            // #2899 + #2964 + #3006 + #3032 + #3063 + #3085 (~71 keys).
+            // 64 silently dropped schema-2507 / steal-densify-clear
+            // (insert_kv full-scan return). Same class as #2432 64→128.
+            auto* ht = FlatHashTable::create(128) /* #1141 / #2344 / #3085 */;
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
