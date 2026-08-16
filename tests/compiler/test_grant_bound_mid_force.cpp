@@ -27,6 +27,7 @@ using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::make_grant_provenance;
 using aura::core::capability::reset_capability_effects_for_test;
+using aura::core::capability::snapshot_capability_effect_stats;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::test::g_failed;
@@ -92,7 +93,102 @@ int run_test_grant_bound_mid_force() {
         CHECK(cap.find("bound_mutation_id") != std::string::npos, "bound mid");
         CHECK(cap.find("force_mutation_bind") != std::string::npos, "force bind");
     }
-    std::println("\n=== #2531: {} passed, {} failed ===", g_passed, g_failed);
+    {
+        // Issue #3090: production mid-fallback refuse vs grant synthesized mid.
+        //   AC1: Restricted grant with prov.mid == 0 → REFUSE (no synthesis to
+        //        `epoch ?: 1`); counter capability_grant_mid_refused_total +1;
+        //        find_grant returns false.
+        //   AC2: Strict refuse parity (same shape as AC1).
+        //   AC3: Soft/Off legacy zero-cost: grant with prov.mid == 0 still
+        //        applied (bound_mid == 0); counter unchanged. AC5 contract.
+        //   AC4: Restricted with prov.mid != 0 → ALLOW (bound_mid == prov.mid);
+        //        no synthesis path triggered (refuse is pre-checked).
+        //   AC5: snapshot exposes grant_mid_refused for Agent dashboards
+        //        (query:capability-effect-stats key grant-mid-refused-total).
+        //   AC6: source-cite for #3090 — refuse block + counter + SE reason
+        //        string + linter coverage all present.
+        std::println("\n--- #3090 AC1: Restricted refuse (no phantom mid=1) ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        auto& met = g_capability_effect_metrics();
+        const auto before_a1 = met.capability_grant_mid_refused_total.load();
+        EffectProvenance empty_a1{}; // zero mid
+        g_capability_registry().grant(101, "mutate", Effect::Mutate, empty_a1);
+        aura::core::capability::CapabilityGrant g_a1;
+        CHECK(!g_capability_registry().find_grant(101, "mutate", g_a1),
+              "#3090 AC1: refused (find_grant false)");
+        const auto after_a1 = met.capability_grant_mid_refused_total.load();
+        CHECK(after_a1 == before_a1 + 1, "#3090 AC1: capability_grant_mid_refused_total +1");
+    }
+    {
+        std::println("\n--- #3090 AC2: Strict refuse parity ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        auto& met = g_capability_effect_metrics();
+        const auto before_a2 = met.capability_grant_mid_refused_total.load();
+        EffectProvenance empty_a2{};
+        g_capability_registry().grant(102, "mutate", Effect::Mutate, empty_a2);
+        aura::core::capability::CapabilityGrant g_a2;
+        CHECK(!g_capability_registry().find_grant(102, "mutate", g_a2), "#3090 AC2: refused");
+        const auto after_a2 = met.capability_grant_mid_refused_total.load();
+        CHECK(after_a2 == before_a2 + 1, "#3090 AC2: counter +1");
+    }
+    {
+        std::println("\n--- #3090 AC3: Soft/Off legacy no refuse ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        auto& met = g_capability_effect_metrics();
+        const auto before_a3 = met.capability_grant_mid_refused_total.load();
+        EffectProvenance empty_a3{};
+        g_capability_registry().grant(103, "mutate", Effect::Mutate, empty_a3);
+        aura::core::capability::CapabilityGrant g_a3;
+        CHECK(g_capability_registry().find_grant(103, "mutate", g_a3), "#3090 AC3: legacy allowed");
+        CHECK(g_a3.bound_mutation_id == 0, "#3090 AC3: Off keeps bound_mid=0 (zero-cost)");
+        const auto after_a3 = met.capability_grant_mid_refused_total.load();
+        CHECK(after_a3 == before_a3, "#3090 AC3: refuse counter unchanged (Off contract)");
+    }
+    {
+        std::println("\n--- #3090 AC4: Restricted with non-zero mid allow ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        auto prov_a4 = make_grant_provenance(4242, true, 0, 0);
+        g_capability_registry().grant(104, "mutate", Effect::Mutate, prov_a4);
+        aura::core::capability::CapabilityGrant g_a4;
+        CHECK(g_capability_registry().find_grant(104, "mutate", g_a4), "#3090 AC4: found");
+        CHECK(g_a4.bound_mutation_id == 4242, "#3090 AC4: bound_mid == prov.mid (no synthesis)");
+    }
+    {
+        std::println("\n--- #3090 AC5: snapshot.grant_mid_refused visible ---");
+        // After AC1+AC2 each bumped the counter once, snapshot must expose
+        // the additive count under query:capability-effect-stats
+        // (key grant-mid-refused-total / schema-3090).
+        const auto snap = snapshot_capability_effect_stats();
+        CHECK(snap.grant_mid_refused >= 2, "#3090 AC5: snapshot.grant_mid_refused >= 2 (AC1+AC2)");
+    }
+    {
+        std::println("\n--- #3090 AC6: source-cite + linter self-test ---");
+        auto cap = read_file("src/core/capability_model.hh");
+        CHECK(cap.find("3090") != std::string::npos, "#3090 AC6: cite #3090");
+        CHECK(cap.find("grant-mid-refused") != std::string::npos, "#3090 AC6: SE reason string");
+        CHECK(cap.find("capability_grant_mid_refused_total") != std::string::npos,
+              "#3090 AC6: refuse counter declared");
+        // Verify the linter is wired (runs fast; ensures CI gate stays green).
+        const std::string linter_out = [] {
+            std::FILE* p =
+                popen("python3 scripts/check_grant_mid_refused_3090.py --strict 2>&1", "r");
+            if (!p)
+                return std::string{};
+            char buf[4096]{};
+            std::string out;
+            while (std::fgets(buf, sizeof(buf), p))
+                out.append(buf);
+            pclose(p);
+            return out;
+        }();
+        CHECK(linter_out.find("[OK]") != std::string::npos,
+              "#3090 AC6: linter check_grant_mid_refused_3090.py stays clean");
+    }
+    std::println("\n=== #2531 + #3090: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

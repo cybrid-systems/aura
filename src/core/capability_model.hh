@@ -264,6 +264,15 @@ struct CapabilityEffectMetrics {
     // wrong offsets corrupt neighboring heap — see #2906).
     std::atomic<std::uint64_t> capability_session_revoke_steal_total{0};
     std::atomic<std::uint64_t> capability_session_revoke_abort_total{0};
+    // Issue #3090: production (Restricted/Strict) grant refused when
+    // prov.mutation_id == 0 — same refuse semantics as
+    // resolve_audit_mutation_id (#2836). Grants no longer synthesize
+    // bound_mid = epoch ?: 1 (which produced phantom mid=1 entries that
+    // could not be joined with Typed trail / SE mid=0 refuse events).
+    // Distinct from capability_mid_join_zero_deny_total (which fires at
+    // provenance_ok check side, #2707): this counter fires at grant write
+    // side. Appended at struct END (never insert mid-struct: #2906).
+    std::atomic<std::uint64_t> capability_grant_mid_refused_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -482,9 +491,36 @@ struct CapabilityRegistry {
     // Issue #2944: session_bound=true marks a mutation-session grant —
     // mid-bound under Restricted/Strict; auto-revoked on outermost
     // MutationBoundary exit for bound_mutation_id (session-mid-exit).
+    // Issue #3090: production (Restricted/Strict) refuses grants when
+    // prov.mutation_id == 0 — same refuse semantics as
+    // resolve_audit_mutation_id (#2836). Refuse is checked pre-lock so the
+    // grant is rejected entirely (no effects OR, no bound_mid update).
+    // Bumps capability_grant_mid_refused_total + emits SE
+    // reason="grant-mid-refused" with mid=0 so Agent joins via reason +
+    // mid=0 across grant ↔ trail ↔ effect-check surfaces. Soft/Off keeps
+    // the legacy synthesis (zero-cost contract, AC5) for session_bound.
     void grant(TenantId tenant, std::string_view name, Effect effects,
                const EffectProvenance& prov = {}, bool single_use = false,
                bool session_bound = false) {
+        // Pre-lock refuse (Issue #3090). Reads only sandbox_mode atomic +
+        // prov.mutation_id (caller-owned); no registry state needed.
+        {
+            const auto mode_refuse = sandbox_mode.load(std::memory_order_acquire);
+            const bool fail_closed = (mode_refuse == EffectSandboxMode::Restricted ||
+                                      mode_refuse == EffectSandboxMode::Strict);
+            if (fail_closed && prov.mutation_id == 0) {
+                auto& met_refuse = g_capability_effect_metrics();
+                met_refuse.capability_grant_mid_refused_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                emit_security_event_durable(
+                    SecurityEventKind::EffectDeny, tenant,
+                    /*mid=*/0, /*epoch=*/prov.epoch, static_cast<std::uint16_t>(effects), name,
+                    "grant-mid-refused", /*denied=*/true, static_cast<std::int64_t>(prov.fiber_id));
+                return;
+            }
+        }
         std::lock_guard<std::mutex> lock(mtx);
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
@@ -498,10 +534,11 @@ struct CapabilityRegistry {
             g.bound_node_id = prov.node_id;
             g.grant_epoch = prov.epoch;
             g.grant_fiber_id = prov.fiber_id;
-            // Issue #2531: under Restricted/Strict, never leave bound_mid=0 so
-            // provenance_ok mid join cannot silently skip (anti mid-join hole).
-            // Soft/Off (sandbox_mode==Off) keeps legacy optional mid.
-            // Issue #2944: session_bound always needs non-zero mid stamp.
+            // Issue #2531 / #2944: Soft/Off (sandbox_mode==Off) keeps legacy
+            // optional mid; session_bound always needs non-zero mid stamp.
+            // After the pre-lock refuse (#3090), production with bound_mid==0
+            // has already been refused above, so this synthesis is unreachable
+            // under Restricted/Strict — it only fires for Soft/Off + session_bound.
             if ((sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off ||
                  session_bound) &&
                 g.bound_mutation_id == 0) {
@@ -781,9 +818,15 @@ struct CapabilityRegistry {
         using ::aura::core::security_event::SecurityEventKind;
         using ::aura::core::security_event_wal::emit_security_event_durable;
         (void)kSecurityAuditFoldIssue;
-        const auto mid = prov.mutation_id != 0
-                             ? prov.mutation_id
-                             : (prov.epoch != 0 ? prov.epoch : static_cast<std::uint64_t>(1));
+        // Issue #3090: do NOT synthesize SE mid to `epoch ?: 1`. The old
+        // `prov.mutation_id != 0 ? prov.mutation_id : (epoch ?: 1)` produced
+        // phantom mid=1 entries that could not be joined with Typed trail /
+        // grant refuse mid=0 events. Let mid=0 flow into the SE so Agent
+        // joins via SE.reason (mid-fallback-refused / grant-mid-refused) +
+        // mid=0 across trail ↔ grant ↔ effect-check surfaces (#3090 AC4).
+        // Soft / quiet recording path may emit mid=0 here; SE.reason carries
+        // the failure class — that is the canonical refuse shape.
+        const auto mid = prov.mutation_id;
         const auto epoch = prov.epoch != 0 ? prov.epoch : mid;
         const auto kind = denied ? SecurityEventKind::EffectDeny : SecurityEventKind::EffectAllow;
         const char* reason = reason_hint;
@@ -911,7 +954,33 @@ struct CapabilityRegistry {
             g.bound_node_id = prov.node_id;
             g.grant_epoch = prov.epoch;
             g.grant_fiber_id = prov.fiber_id;
+            // Issue #3090: production refuse parity with grant(). Refuse when
+            // Restricted/Strict and prov.mutation_id == 0 (same shape; macro
+            // self-evo apply is gated by TenantAdmin fence #3029 above, but
+            // this refuse is mid-specific and independent of TenantAdmin).
+            {
+                const auto mode_refuse = sandbox_mode.load(std::memory_order_acquire);
+                const bool fail_closed = (mode_refuse == EffectSandboxMode::Restricted ||
+                                          mode_refuse == EffectSandboxMode::Strict);
+                if (fail_closed && g.bound_mutation_id == 0) {
+                    auto& met_refuse = g_capability_effect_metrics();
+                    met_refuse.capability_grant_mid_refused_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    using ::aura::core::security_event::SecurityEventKind;
+                    using ::aura::core::security_event_wal::emit_security_event_durable;
+                    emit_security_event_durable(SecurityEventKind::EffectDeny, tenant,
+                                                /*mid=*/0, /*epoch=*/prov.epoch,
+                                                static_cast<std::uint16_t>(Effect::MacroSelfEvo),
+                                                "macro-self-evo", "grant-mid-refused",
+                                                /*denied=*/true,
+                                                static_cast<std::int64_t>(prov.fiber_id));
+                    return;
+                }
+            }
             // Issue #2531: same non-zero mid force as grant().
+            // After the refuse block above, this synthesis is dead under
+            // production (bound_mid==0 has been refused above); it only
+            // fires for Soft/Off when bound_mid is still zero.
             if (sandbox_mode.load(std::memory_order_acquire) != EffectSandboxMode::Off &&
                 g.bound_mutation_id == 0) {
                 g.bound_mutation_id = g.grant_epoch != 0 ? g.grant_epoch : 1;
@@ -1154,10 +1223,18 @@ make_grant_provenance(std::uint64_t provenance_mutation_id = 0, bool force_mutat
     if (force_mutation_bind) {
         // Issue #2531: production (sandbox != Off) grant mid join must be
         // non-zero so provenance_ok mid compare cannot silently skip.
-        // Fallback chain: caller mid → Mutation epoch → epoch stamp → 1.
+        // Fallback chain: caller mid → Mutation epoch → 0.
+        // Issue #3090: do NOT fall through to `epoch ?: 1` — that synthesized
+        // phantom mid=1 entries which broke mid-join alignment with
+        // resolve_audit_mutation_id's refuse path (mid=0). Returning
+        // mutation_id=0 lets the upper grant() apply refuse path bump
+        // capability_grant_mid_refused_total + emit SE reason="grant-mid-refused"
+        // instead of stamping a phantom mid=1 that cannot be joined with the
+        // typed-trail / effect-check surfaces.
         prov.mutation_id = provenance_mutation_id != 0 ? provenance_mutation_id : me;
-        if (prov.mutation_id == 0)
-            prov.mutation_id = prov.epoch != 0 ? prov.epoch : 1;
+        // No `prov.epoch ?: 1` fallback: 0 is the canonical "no caller mid,
+        // no Mutation epoch" signal; grant() apply will refuse under
+        // Restricted/Strict per #3090 AC1.
     } else {
         prov.mutation_id = provenance_mutation_id;
     }
@@ -1214,6 +1291,9 @@ inline void reset_capability_effects_for_test() noexcept {
     // Issue #3048: steal / abort session-revoke breakdown.
     m.capability_session_revoke_steal_total.store(0, std::memory_order_relaxed);
     m.capability_session_revoke_abort_total.store(0, std::memory_order_relaxed);
+    // Issue #3090: production grant refused when prov.mutation_id == 0
+    // (Restricted/Strict). Reset alongside the rest of the grant counters.
+    m.capability_grant_mid_refused_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1274,6 +1354,11 @@ struct CapabilityEffectStatsSnapshot {
     // capability_session_revoke; Agent-readable vs normal session-mid-exit).
     std::uint64_t capability_session_revoke_steal = 0;
     std::uint64_t capability_session_revoke_abort = 0;
+    // Issue #3090: production (Restricted/Strict) grant refused when
+    // prov.mutation_id == 0. Distinct from mid_join_zero_deny (#2707,
+    // check side): this is the grant-write-side refuse counter. Additive
+    // on query:capability-effect-stats (key grant-mid-refused-total).
+    std::uint64_t grant_mid_refused = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1352,6 +1437,8 @@ struct CapabilityEffectStatsSnapshot {
             m.capability_session_revoke_steal_total.load(std::memory_order_acquire);
         s.capability_session_revoke_abort =
             m.capability_session_revoke_abort_total.load(std::memory_order_acquire);
+        // Issue #3090: production grant refused when prov.mutation_id == 0.
+        s.grant_mid_refused = m.capability_grant_mid_refused_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&
