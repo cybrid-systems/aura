@@ -115,6 +115,9 @@ int run_test_commercial_tenant_profile() {
         set_effect_fiber_id_override(2);
         EffectProvenance caller{};
         caller.fiber_id = 2;
+        // #2707: Restricted fail-closes mid==0 before fiber share is
+        // observed. Stamp the grant mid so this AC tests fiber share.
+        caller.mutation_id = prov.mutation_id;
         const bool ok = g_capability_registry().provenance_ok(/*tenant=*/10, caller);
         CHECK(ok, "AC1: fiber B same tenant soft allow");
         CHECK(g_capability_effect_metrics().capability_fiber_mismatch_total.load() > m0,
@@ -141,6 +144,7 @@ int run_test_commercial_tenant_profile() {
         set_effect_fiber_id_override(2);
         EffectProvenance caller{};
         caller.fiber_id = 2;
+        caller.mutation_id = prov.mutation_id;
         const bool ok = g_capability_registry().provenance_ok(10, caller);
         CHECK(!ok, "AC2: fiber B same tenant hard deny");
         CHECK(g_capability_effect_metrics().capability_fiber_mismatch_total.load() > m0,
@@ -170,6 +174,7 @@ int run_test_commercial_tenant_profile() {
         set_effect_fiber_id_override(2);
         EffectProvenance caller{};
         caller.fiber_id = 2;
+        caller.mutation_id = prov.mutation_id;
         const bool ok = g_capability_registry().provenance_ok(10, caller);
         CHECK(ok, "AC3: fiber B allowed under soft override");
         CHECK(g_capability_effect_metrics().capability_fiber_hard_deny_total.load() == d0,

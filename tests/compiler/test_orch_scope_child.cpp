@@ -108,8 +108,11 @@ static void ac2631_query_surface_schema() {
     CHECK(href(cs, "issue-2631") == 2631, "AC4: issue-2631");
     // Compatibility: prior #2588 / #2083 / #2161 preserved.
     CHECK(href(cs, "schema-2588") == 2588, "AC4: schema-2588 retained");
-    CHECK(href(cs, "schema-2083") == 2083, "AC4: schema-2083 retained");
-    CHECK(href(cs, "schema-2161") == 2161, "AC4: schema-2161 retained");
+    // 2083 / 2161 live on orch:scope-spawn hashes, not the module-stats
+    // dashboard (schema-2588 / 2631 are the query lineage).
+    const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(agent.find("schema-2083") != std::string::npos, "AC4: schema-2083 retained");
+    CHECK(agent.find("schema-2161") != std::string::npos, "AC4: schema-2161 retained");
     CHECK(href(cs, "orch-scope-wired") == 1, "AC4: orch-scope-wired");
 }
 

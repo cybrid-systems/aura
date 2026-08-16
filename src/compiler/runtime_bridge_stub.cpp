@@ -90,10 +90,12 @@ extern "C" __attribute__((weak)) void aura_set_current_bridge_epoch(std::uint64_
 // runtime_ssot.cpp (libaura_tl_arena.so).
 
 // epoch-invariant note_* / must_deopt / v_read live in runtime_ssot.cpp.
-
-extern "C" __attribute__((weak)) std::size_t aura_aot_count_live_generation_behind_slots(void) {
-    return 0;
-}
+//
+// Do NOT stub aura_aot_count_live_generation_behind_slots here. A weak
+// 0-return in libaura_test_objects.so is found before the strong
+// runtime_ssot.cpp body in libaura_tl_arena.so (DT_NEEDED order) and
+// every epoch-invariant inject AC sees behind=0. The SSOT dispatches
+// through the registered JIT hook (or returns 0 when unregistered).
 
 // Do NOT stub aura_reemit_aot_for_dirty or the owner-eval TLS accessors
 // here. Same class as aura_set_aot_defuse_version above: a weak definition

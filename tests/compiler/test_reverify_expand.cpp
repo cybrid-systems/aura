@@ -199,7 +199,7 @@ static void ac5_query_and_source() {
 
     const auto tci = read_file("src/compiler/type_checker_impl.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = aura::test::aura_query_prims_source();
     CHECK(tci.find("delta_reverify_expand_total") != std::string::npos,
           "AC5: expand counter bumped in reverify");
     CHECK(tci.find("expand_limit") != std::string::npos, "AC5: expand_limit formula");

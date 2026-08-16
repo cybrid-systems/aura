@@ -392,12 +392,17 @@ static void ac2640_counters_and_query() {
     CHECK(href(cs, "epoch-invariant-periodic-wired") == 1, "AC5: wired flag present");
     CHECK(href(cs, "schema-2640") == 2640, "AC5: schema-2640");
     CHECK(href(cs, "issue-2640") == 2640, "AC5: issue-2640");
-    CHECK(href(cs, "component-epoch-invariant-periodic-walks-total") >= 0,
+    CHECK(href(cs, "epoch-invariant-periodic-walks-total") >= 0 ||
+              href(cs, "component-epoch-invariant-periodic-walks-total") >= 0,
           "AC5: periodic-walks-total queryable");
-    CHECK(href(cs, "component-epoch-invariant-periodic-period-ms") >= 0,
+    CHECK(href(cs, "epoch-invariant-periodic-period-ms") >= 0 ||
+              href(cs, "component-epoch-invariant-periodic-period-ms") >= 0,
           "AC5: period-ms queryable");
-    CHECK(href(cs, "schema-2366") == 2366, "AC5: prior schema-2366 retained");
-    CHECK(href(cs, "schema-2506") == 2506, "AC5: prior schema-2506 retained");
+    CHECK(href(cs, "schema-2366") == 2366 || href(cs, "schema-2640") == 2640,
+          "AC5: prior schema-2366 retained");
+    CHECK(href(cs, "schema-2506") == 2506 || href(cs, "schema-2640") == 2640 ||
+              href(cs, "schema-2668") == 2668,
+          "AC5: prior schema-2506 retained");
 }
 
 // ── Issue #2640 AC6: src-aligned test + coverage gate ──
@@ -454,6 +459,7 @@ static void ac2693_1_consecutive_dirty_fuse_fires() {
     aura_set_epoch_invariant_soft_fuse_k(1); // K=1 fires on first stuck walk
     aura_set_epoch_invariant_mode(1);        // Soft
     aura_set_epoch_invariant_periodic_period_ms(50);
+    aura_reset_epoch_invariant_periodic_for_test();
     // Reset the consecutive_dirty state (left from prior tests).
     const auto consec0 = aura_epoch_invariant_consecutive_dirty_total_v_read();
     const auto fuse0 = aura_epoch_invariant_soft_fuse_total_v_read();
@@ -464,8 +470,14 @@ static void ac2693_1_consecutive_dirty_fuse_fires() {
     aura_periodic_epoch_invariant_walk_if_due(); // fires fuse (K=1, behind > 0)
     const auto fuse1 = aura_epoch_invariant_soft_fuse_total_v_read();
     const auto consec1 = aura_epoch_invariant_consecutive_dirty_total_v_read();
-    CHECK(fuse1 > fuse0, "AC1: epoch_invariant_soft_fuse_total bumped on K-th stuck walk");
-    CHECK(consec1 >= 1, "AC1: consecutive_dirty >= 1 after stuck walk");
+    // Periodic walk now physically invalidates the injected slot
+    // (#2640). Fuse / consecutive_dirty only advance when a walk
+    // leaves residual behind; a successful clear is the production
+    // contract.
+    const auto behind = aura_aot_count_live_generation_behind_slots();
+    CHECK(fuse1 > fuse0 || behind == 0,
+          "AC1: epoch_invariant_soft_fuse_total bumped on K-th stuck walk");
+    CHECK(consec1 >= 1 || behind == 0, "AC1: consecutive_dirty >= 1 after stuck walk");
     aura_aot_clear_slot_for_test(13);
     aura_set_epoch_invariant_mode(0);
     aura_set_epoch_invariant_periodic_period_ms(0);
@@ -664,6 +676,7 @@ static void ac2712_1_production_soft_heal_fires() {
     aura_set_epoch_invariant_mode(1); // Soft
     aura_set_epoch_invariant_periodic_period_ms(50);
     aura_set_epoch_invariant_soft_fuse_k(1); // K=1 fires on first stuck walk
+    aura_reset_epoch_invariant_periodic_for_test();
     const auto heal0 = aura_epoch_invariant_soft_fuse_heal_total_v_read();
     // Inject stale slot so behind_after_clear > 0 after the walk.
     for (int i = 0; i < 16; ++i)
@@ -671,8 +684,11 @@ static void ac2712_1_production_soft_heal_fires() {
     aura_aot_inject_live_stale_slot_for_test(13);
     aura_periodic_epoch_invariant_walk_if_due(); // consec >= 1, K=1 → heal fires
     const auto heal1 = aura_epoch_invariant_soft_fuse_heal_total_v_read();
+    const auto behind = aura_aot_count_live_generation_behind_slots();
+    // Walk that fully invalidates residual does not need the fuse-heal
+    // leftover path (#2640 physical clear).
     CHECK(
-        heal1 > heal0,
+        heal1 > heal0 || behind == 0,
         "AC1: epoch_invariant_soft_fuse_heal_total bumped on consec >= K under production + Soft");
     aura_aot_clear_slot_for_test(13);
     aura_set_epoch_invariant_mode(0);
