@@ -313,7 +313,7 @@ static void ac2898_5_source_cite() {
     std::println("\n--- #2898 AC5: source-cite + no docs/design ---");
     const auto aud = read_file("src/compiler/typed_mutation_audit.h");
     const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+    const auto q = ::aura::test::aura_query_prims_source() +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto om = read_file("src/compiler/observability_metrics.h");
     const auto t = read_file("tests/compiler/test_composite_txn_commit.cpp");

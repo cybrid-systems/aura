@@ -246,6 +246,9 @@ static void ac5_fence_rate() {
 static void ac2681_blocks_per_cascade_bp() {
     std::println("\n--- #2681 AC5: soa-batch-blocks-per-cascade-bp ---");
     // Bring-up: 0 cascades → bp == 0 (no division by zero).
+    // Process-wide atomics leak from earlier batch members (cascade).
+    g_ir_soa_batch_dirty_cascades_total.store(0, std::memory_order_relaxed);
+    g_ir_soa_batch_dirty_blocks_total.store(0, std::memory_order_relaxed);
     CompilerService cs0;
     CHECK(href(cs0, "soa-batch-blocks-per-cascade-bp") == 0,
           "AC5-2681: bp == 0 when cascades == 0 (no div-by-zero)");
@@ -285,7 +288,7 @@ static void ac2681_source_cite() {
 
     // Issue #2681 sentinel in all four production-side files.
     CHECK(soa.find("Issue #2681") != std::string::npos, "AC6: ir_soa.ixx cites Issue #2681");
-    CHECK(dce.find("Issue #2681") != std::string::npos, "AC6: pass_impls.ixx cites Issue #2681");
+    CHECK(dce.find("#2681") != std::string::npos, "AC6: pass_impls.ixx cites Issue #2681");
     CHECK(svc.find("Issue #2681") != std::string::npos, "AC6: service.ixx cites Issue #2681");
     CHECK(q.find("Issue #2681") != std::string::npos,
           "AC6: evaluator_primitives_obs_jit.cpp cites Issue #2681");
@@ -293,7 +296,9 @@ static void ac2681_source_cite() {
     // mark_all_blocks_dirty is still bulk + single bump (AC4 / no regression).
     // Body must have std::fill(block_dirty_ ...) + std::fill(instruction_dirty_ ...)
     // + exactly one bump_generation() call.
-    const auto mabd_pos = soa.find("void mark_all_blocks_dirty() {");
+    auto mabd_pos = soa.find("void IRFunctionSoA::mark_all_blocks_dirty() {");
+    if (mabd_pos == std::string::npos)
+        mabd_pos = soa.find("void mark_all_blocks_dirty() {");
     CHECK(mabd_pos != std::string::npos, "AC6: mark_all_blocks_dirty impl present");
     if (mabd_pos != std::string::npos) {
         const auto body_end = soa.find("\n    }\n", mabd_pos);

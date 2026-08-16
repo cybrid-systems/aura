@@ -157,7 +157,7 @@ static void ac5_query_and_source() {
 
     const auto sd = read_file("src/compiler/service_dirty.cpp");
     const auto pol = read_file("src/compiler/castop_density_policy.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+    const auto q = ::aura::test::aura_query_prims_source() +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     const auto met = read_file("src/compiler/observability_metrics.h");
     CHECK(pol.find("apply_hard_policy") != std::string::npos, "AC5: policy helper");
@@ -259,7 +259,7 @@ static void ac3084_4_blame_default_unchanged() {
 
 static void ac3084_5_schema_and_linter() {
     std::println("\n--- #3084 AC5: schema + linter + no invent ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+    const auto q = ::aura::test::aura_query_prims_source() +
                    read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
     CHECK(q.find("schema-3084") != std::string::npos, "3084 AC5: schema-3084");
     CHECK(q.find("hot-residual-soft-must-deopt-total") != std::string::npos,

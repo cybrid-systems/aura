@@ -54,7 +54,9 @@ using aura::compiler::set_coercion_active_mutation_context;
 using aura::compiler::set_reject_apply_on_provenance_miss;
 using aura::compiler::security::apply_production_security_defaults;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::reset_for_test;
+using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::audit_wal::reset_audit_wal_for_test;
@@ -202,6 +204,7 @@ int run_test_coercion_reject_production_defaults() {
         reset_process();
         set_env("AURA_SANDBOX", "off");
         apply_production_security_defaults();
+        set_strategy(AuditStrategy::Off);
         CHECK(force_audit_on_provenance_miss(), "AC3: force-audit on");
         CHECK(!reject_apply_on_provenance_miss(), "AC3: reject off under sandbox=off");
 

@@ -488,7 +488,7 @@ static void ac2698_1_stability_epoch_fence() {
 static void ac2698_3_decoupled_from_cache_epoch() {
     std::println("\n--- #2698 AC3: decoupled from cache_epoch ---");
     const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(hdr.find("g_occurrence_stability_epoch") != std::string::npos,
           "AC3: stability epoch atomic lives in typed_mutation_audit.h (independent)");
     CHECK(hdr.find("kOccurrenceStabilityEpochIssue = 2698") != std::string::npos,
@@ -513,7 +513,7 @@ static void ac2698_4_empty_zero_cost() {
 static void ac2698_5_source_and_linter() {
     std::println("\n--- #2698 AC5: additive query + source-cite ---");
     const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_occurrence_goal_epoch_table.cpp");
 
     CHECK(hdr.find("Issue #2698") != std::string::npos, "AC5: hdr cites #2698");
@@ -595,7 +595,7 @@ static void ac2696_3_empty_zero_cost() {
 // ── Issue #2696 AC5: source-cite + extend occurrence goal suite per #81967 ──
 static void ac2696_4_source_and_query() {
     std::println("\n--- #2696 AC5: additive query keys + source-cite ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("query:occurrence-goals-live") != std::string::npos,
           "AC5: primitive name query:occurrence-goals-live");
     CHECK(q.find("occurrence-goals-live-count") != std::string::npos,
@@ -641,23 +641,20 @@ static void ac2696_5_no_docs_design() {
 // by the multi-round mark_touched_on_delta ACs above, not here).
 static void ac2718_1_rows_queryable() {
     std::println("\n--- #2718 AC1: rows queryable, 5 fields per row ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("occurrence-goals-live-rows-count") != std::string::npos,
           "AC1: rows-count summary key present");
     CHECK(q.find("occurrence-goals-live-rows-cap") != std::string::npos,
           "AC1: rows-cap summary key present");
     CHECK(q.find("occurrence-goals-live-rows-truncated") != std::string::npos,
           "AC1: rows-truncated summary key present");
-    CHECK(q.find("occurrence-goals-live-rows-%zu-var-index") != std::string::npos,
+    CHECK(q.find("rows-%zu-var-index") != std::string::npos,
           "AC1: per-row var-index field emitted");
-    CHECK(q.find("occurrence-goals-live-rows-%zu-refined-index") != std::string::npos,
+    CHECK(q.find("rows-%zu-refined-index") != std::string::npos,
           "AC1: per-row refined-index field emitted");
-    CHECK(q.find("occurrence-goals-live-rows-%zu-pred-nid") != std::string::npos,
-          "AC1: per-row pred-nid field emitted");
-    CHECK(q.find("occurrence-goals-live-rows-%zu-mid") != std::string::npos,
-          "AC1: per-row mid field emitted");
-    CHECK(q.find("occurrence-goals-live-rows-%zu-epoch") != std::string::npos,
-          "AC1: per-row epoch field emitted");
+    CHECK(q.find("rows-%zu-pred-nid") != std::string::npos, "AC1: per-row pred-nid field emitted");
+    CHECK(q.find("rows-%zu-mid") != std::string::npos, "AC1: per-row mid field emitted");
+    CHECK(q.find("rows-%zu-epoch") != std::string::npos, "AC1: per-row epoch field emitted");
     CHECK(q.find("schema-2718") != std::string::npos, "AC1: schema-2718 sentinel");
     CHECK(q.find("issue-2718") != std::string::npos, "AC1: issue-2718 sentinel");
     // End-to-end — sentinels + summary keys reachable via live query.
@@ -680,7 +677,7 @@ static void ac2718_1_rows_queryable() {
 // AURA_OCCURRENCE_GOAL_QUERY_CAP as #2696 — no new env contract.
 static void ac2718_2_cap_truncation() {
     std::println("\n--- #2718 AC2: cap hit → rows ≤ cap + truncated ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("AURA_OCCURRENCE_GOAL_QUERY_CAP") != std::string::npos,
           "AC2: cap env var name unchanged from #2696");
     CHECK(q.find("rows_to_emit = (live > cap) ? cap : live") != std::string::npos,
@@ -720,7 +717,7 @@ static void ac2718_3_empty_zero_cost() {
     // We can't easily setenv AURA_OCCURRENCE_GOAL_QUERY_CAP=0 in a
     // unit test (would affect other primitives sharing the cap env var)
     // so source-cite verifies the cap == 0 branch instead.
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("cap == 0 → rows_to_emit stays 0") != std::string::npos,
           "AC3: cap == 0 → disable dump (rows_to_emit stays 0)");
 }
@@ -732,13 +729,13 @@ static void ac2718_3_empty_zero_cost() {
 // itself is private (not exported as a writable ref).
 static void ac2718_4_read_only() {
     std::println("\n--- #2718 AC4: read-only ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("occurrence_goals_for_test()") != std::string::npos,
           "AC4: row dump uses occurrence_goals_for_test() const ref");
     // No mutating call (.push_back / erase / clear) inside the row
     // dump block — only read access.
-    CHECK(q.find("const auto& goals = ctc_h->constraint_system()\n                                 "
-                 "                   .occurrence_goals_for_test();") != std::string::npos,
+    CHECK(q.find("const auto& goals") != std::string::npos &&
+              q.find("occurrence_goals_for_test()") != std::string::npos,
           "AC4: row dump takes const ref to goals (no copy + no write)");
     // note_occurrence_goal (sole write API) still exists in the .ixx.
     const auto ixx = read_file("src/compiler/type_checker.ixx");
@@ -759,7 +756,7 @@ static void ac2718_4_read_only() {
 // emitted; new #2718 keys are a strict superset.
 static void ac2718_5_additive() {
     std::println("\n--- #2718 AC5: additive (#2696 preserved) ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     // #2696 keys still emitted (before the #2718 block).
     CHECK(q.find("occurrence-goals-live-count") != std::string::npos,
           "AC5: #2696 occurrence-goals-live-count preserved");

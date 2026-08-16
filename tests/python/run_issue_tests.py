@@ -269,6 +269,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # Restricted multi-tenant, #2985 production-face admit).
     # Batch 3 leftover greened: test_incremental_typed_selfmod_dirty_narrowing
     # (mutate:rebind if/number? occurrence path; evaluate → eval).
+    # occurrence_coercion_batch 22→41 members ok (schema helper, tree-walker
+    # reset, Sampled→Off). Still 4 members: persist EDEADLK + leftover query keys.
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",

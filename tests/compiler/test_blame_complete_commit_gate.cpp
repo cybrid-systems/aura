@@ -235,6 +235,7 @@ int run_test_blame_complete_commit_gate() {
         std::println("\n--- AC2b: reject-off sentinel path ---");
         reset_process();
         set_reject_apply_on_provenance_miss(false);
+        set_strategy(AuditStrategy::Off);
         FlatAST flat;
         StringPool pool;
         aura::ast::NodeId parent = 0, lit = 0;

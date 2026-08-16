@@ -32,6 +32,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/lock_order_audit.h"
 #include "compiler/observability_metrics.h"
 #include "compiler/ownership_escape_lowering_gate.h"
 #include "compiler/typed_mutation_audit.h"
@@ -1691,6 +1692,7 @@ static void ac2995_7_source_cite() {
 
 int run_test_occurrence_goal_persist_rehydrate() {
     std::println("=== test_occurrence_goal_persist_rehydrate ===");
+    aura::compiler::lock_order::reset_tls_for_test();
     ac2_soft_zero_writes();
     ac1_persist_prune_rehydrate();
     ac3_cap_truncates();
@@ -1735,6 +1737,9 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2995_5_fence_same_ensure();
     ac2995_6_query_keys();
     ac2995_7_source_cite();
+    // #2995 acquire workspace/type locks; TLS depth can desync from the
+    // actual mutex so #3004 then hits pthread EDEADLK. Clear depth first.
+    aura::compiler::lock_order::reset_tls_for_test();
     std::println("\n=== #3004 persist + Full audit atomic with query:type ===");
     ac3004_1_authority_after_persist();
     ac3004_2_soft_no_durable();

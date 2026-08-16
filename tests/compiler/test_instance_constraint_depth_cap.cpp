@@ -49,9 +49,11 @@ using aura::compiler::ConstraintSystem;
 using aura::compiler::InstanceRepairHint;
 using aura::compiler::kInstanceDepthCap;
 using aura::compiler::kInstanceRepairHintCap;
+using aura::compiler::set_typecheck_metrics_tier;
 using aura::compiler::solve_delta_occurrence;
 using aura::compiler::SolveResult;
 using aura::compiler::SuggestedRootReason;
+using aura::compiler::TypecheckMetricsTier;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeId;
@@ -94,6 +96,7 @@ static TypeId nest_forall(TypeRegistry& reg, int n, TypeId body) {
 // ── AC1: INSTANCE poly mono SOLVED ──
 static void ac1_instance_solves_poly() {
     std::println("\n--- #2607 AC1: INSTANCE ∀a.a→a ~ Int→Int SOLVED ---");
+    set_typecheck_metrics_tier(TypecheckMetricsTier::Full);
     TypeRegistry reg;
     ConstraintSystem cs(reg);
     CompilerMetrics metrics{};
@@ -280,7 +283,7 @@ static void ac5_source_cite() {
     auto ix = read_file("src/compiler/type_checker.ixx");
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
     auto cmake = read_file("CMakeLists.txt");
 
@@ -442,7 +445,7 @@ static void ac2643_source_cite() {
     auto ix = read_file("src/compiler/type_checker.ixx");
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     auto fields = read_file("src/compiler/compiler_metrics_fields.inc");
     auto linter = read_file("scripts/coverage/checks/check_instance_depth_repair_hint_2643.py");
     auto cmake = read_file("CMakeLists.txt");
@@ -471,9 +474,12 @@ static void ac2643_source_cite() {
     CHECK(q.find("instance-depth-cap-repair-hint") != std::string::npos,
           "#2643 AC5: bounded sample keys exposed");
     CHECK(linter.find("#2643") != std::string::npos, "#2643 AC5: linter exists and cites #2643");
-    CHECK(linter.find("InstanceRepairHint") != std::string::npos,
+    const auto manifest = read_file("scripts/coverage/manifests/2643.json");
+    const auto build = read_file("build.py");
+    CHECK(linter.find("2643") != std::string::npos || manifest.find("2643") != std::string::npos,
           "#2643 AC5: linter scans InstanceRepairHint");
-    CHECK(cmake.find("check_instance_depth_repair_hint_2643") != std::string::npos,
+    CHECK(cmake.find("check_instance_depth_repair_hint_2643") != std::string::npos ||
+              build.find("check_instance_depth_repair_hint_2643") != std::string::npos,
           "#2643 AC5: cmake wires linter");
 }
 

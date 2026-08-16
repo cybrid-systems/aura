@@ -260,7 +260,7 @@ static void ac6_high_fanout_gate() {
 static void ac2703_1_production_hard_face() {
     std::println("\n--- #2703 AC1: production hard-face (code 10) ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(tma.find("Issue #2703") != std::string::npos, "AC1: tma cites #2703");
     CHECK(tma.find("g_cone_outside_goal_drop_total") != std::string::npos,
           "AC1: tma has hard-face counter");
@@ -299,7 +299,7 @@ static void ac2703_3_empty_drop_zero_cost() {
 // ── Issue #2703 AC4: query keys + sentinel + additive surface ──
 static void ac2703_4_query_keys_added() {
     std::println("\n--- #2703 AC4: query keys + additive ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("query:cone-outside-goal-drop") != std::string::npos ||
               q.find("cone-outside-goal-drop-total") != std::string::npos,
           "AC4: query primitive / counter surfaced");
@@ -317,7 +317,7 @@ static void ac2703_4_query_keys_added() {
 static void ac2703_5_source_and_linter() {
     std::println("\n--- #2703 AC5: source-cite + linter ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
     const auto build = read_file("build.py");
     const auto lint = read_file("scripts/coverage/checks/check_cone_outside_goal_drop_2703.py");
@@ -347,7 +347,7 @@ static void ac2703_6_no_docs_design() {
 static void ac2704_1_production_hard_face() {
     std::println("\n--- #2704 AC1: production hard-face (code 11) ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(tma.find("Issue #2704") != std::string::npos, "AC1: tma cites #2704");
     CHECK(tma.find("g_occurrence_empty_after_fence_total") != std::string::npos,
           "AC1: tma has hard-face counter");
@@ -385,7 +385,7 @@ static void ac2704_3_same_epoch_zero_cost() {
 // ── Issue #2704 AC4: query keys + sentinel + additive surface ──
 static void ac2704_4_query_keys_added() {
     std::println("\n--- #2704 AC4: query keys + additive ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("query:occurrence-empty-after-fence") != std::string::npos ||
               q.find("occurrence-empty-after-fence-total") != std::string::npos,
           "AC4: query primitive / counter surfaced");
@@ -403,7 +403,7 @@ static void ac2704_4_query_keys_added() {
 static void ac2704_5_source_and_linter() {
     std::println("\n--- #2704 AC5: source-cite + linter ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
     const auto build = read_file("build.py");
     const auto lint =
@@ -519,7 +519,7 @@ static void ac2716_4_additive_no_regression() {
 // ── Issue #2716 AC5: query keys + schema/issue sentinels ──
 static void ac2716_5_query_keys_added() {
     std::println("\n--- #2716 AC5: additive query keys ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("occurrence-hard-face-full-solve-recover-total") != std::string::npos,
           "AC5: query exposes occurrence-hard-face-full-solve-recover-total");
     CHECK(q.find("occurrence-hard-face-full-solve-recover-wired") != std::string::npos,
@@ -539,7 +539,7 @@ static void ac2716_5_query_keys_added() {
 static void ac2716_6_source_and_linter() {
     std::println("\n--- #2716 AC6: source-cite + linter + no docs/design/ ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
     const auto lint = read_file("scripts/check_occurrence_hard_face_commit_2716.py");
     const auto build = read_file("build.py");
@@ -588,7 +588,7 @@ static void ac2750_2_typechecker_wires_recover() {
 
 static void ac2750_3_query_keys() {
     std::println("\n--- #2750 AC3: query keys additive ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("occurrence-hard-face-recover-success-total") != std::string::npos,
           "AC3: recover-success key");
     CHECK(q.find("occurrence-hard-face-recover-fail-total") != std::string::npos,
@@ -721,7 +721,7 @@ static void ac2909_4_schema_and_publish_wire() {
     std::println("\n--- #2909 AC4: schema + publish wire + lineage preserved ---");
     const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(tma.find("publish_cone_outside_goal_drop") != std::string::npos, "AC4: publish helper");
     CHECK(tma.find("g_cone_truncate_force_closure_total") != std::string::npos,
           "AC4: force-closure total");
@@ -1271,7 +1271,7 @@ static void ac2694_4_empty_no_extra_work() {
 // ── Issue #2694 AC5: additive schema + source-cite + extend test per #81967 ──
 static void ac2694_5_query_keys_added() {
     std::println("\n--- #2694 AC5: additive query keys + schema sentinel ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     CHECK(q.find("soft-truncated-silent-dep-escalate-total") != std::string::npos,
           "AC5: query exposes soft-truncated-silent-dep-escalate-total");
     CHECK(q.find("last-soft-truncated-silent-dep-count") != std::string::npos,
@@ -1304,7 +1304,7 @@ static void ac2694_6_source_and_linter() {
     std::println("\n--- #2694 AC6: source-cite + no docs/design/ ---");
     const auto hdr = read_file("src/compiler/typed_mutation_audit.h");
     const auto svc = read_file("src/compiler/type_checker_impl.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto t = read_file("tests/compiler/test_partial_cone_commit_gate.cpp");
 
     CHECK(hdr.find("Issue #2694") != std::string::npos, "AC6: hdr cites #2694");

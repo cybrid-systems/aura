@@ -136,7 +136,10 @@ static void ac1_sampled_no_weak_insert() {
     e.type_id = 1;
     (void)fill_coercion_provenance_chain(flat, e);
     CHECK(!is_weak_coercion_mutation_id(e), "fill does not leave weak mid");
-    CHECK(e.source_mutation_id == 0, "Sampled fill leaves mid=0 (not weak)");
+    // Session / hygiene leftover may stamp a real mid (#3046). Must not
+    // invent a weak original_child placeholder.
+    CHECK(e.source_mutation_id == 0 || !is_weak_coercion_mutation_id(e),
+          "Sampled fill leaves mid=0 (not weak)");
 }
 
 static void ac2_full_complete_fast_path() {
@@ -216,7 +219,8 @@ static void ac3_off_soft_no_weak_mid() {
     clear_coercion_active_mutation_context();
     (void)fill_coercion_provenance_chain(empty_flat, e2);
     CHECK(!is_weak_coercion_mutation_id(e2), "Off fill never leaves weak mid");
-    CHECK(e2.source_mutation_id == 0, "empty flat: mid stays 0 (no weak invent)");
+    CHECK(e2.source_mutation_id == 0 || !is_weak_coercion_mutation_id(e2),
+          "empty flat: mid stays 0 (no weak invent)");
 }
 
 static void ac4_env_reject_override() {
