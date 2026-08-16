@@ -89,8 +89,11 @@ tests/
 | `regression` | `tests/regression/*.aura` | stdin (leading `;;` header stripped) | first `;; expect:` (`no-crash` / `no-error` / `no-timeout` / substring) |
 | `integ` | `tests/fixtures/integ/*.json` | stdin + `--ir`/`--typecheck`/`--serve` | status + substring / `>=N` / err needle |
 | `p0` snippets | `tests/fixtures/regression/*.json` | stdin (serial; shares `/tmp` seeds) | substring or exact `(…)` out; regex err |
+| `typecheck` | benchmark fixtures with `typecheck_suite` | stdin + `--typecheck` | a `type:` line contains expected type |
+| `smoke` | `tests/fixtures/smoke.json` | `bash -c` command | substring in stdout+stderr |
+| `e2e` | `tests/e2e/commercial_readiness/` | `aura --load` via `invoke_aura_load` | E2E-PASS + golden labels |
 
-`p0` still runs freeze/AOT/JIT/module extras in `tests/python/test_regression.py` after the snippets. `typecheck` / `smoke` stay fixture-JSON with their own loops. `e2e` keeps the golden PASS harness.
+`p0` still runs freeze/AOT/JIT/module extras in `tests/python/test_regression.py` after the snippets.
 
 ## 命名约定
 

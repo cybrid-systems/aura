@@ -5,9 +5,12 @@ File cases (suite / regression):
   tests/suite/*.aura        --load file, default expect = exit 0
   tests/regression/*.aura   stdin (header ;; comments stripped), ``;; expect:``
 
-Snippet cases (integ / p0 fixtures):
+Snippet cases (integ / p0 / typecheck fixtures):
   stdin + optional extra argv (--ir / --typecheck / --serve)
-  judge_snippet: status, substring / >=N / exact (…), err needle or regex
+  judge_snippet: status, substring / >=N / exact (…), type: line, err needle or regex
+
+Command cases (smoke): bash -c, substring in combined output.
+e2e --load spawn is invoke_aura_load (golden checks stay in e2e_harness).
 """
 
 from __future__ import annotations
@@ -22,6 +25,26 @@ from pathlib import Path
 from _aura_harness import fail, ok, warn
 
 SIG_MAP = {-6: "SIGABRT", -8: "SIGFPE", -11: "SIGSEGV"}
+
+
+def invoke_aura_load(
+    path: Path,
+    *,
+    aura_bin: str | Path,
+    env: dict[str, str],
+    timeout_s: float,
+    cwd: str | Path | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Shared `aura --load path` spawn (suite files + e2e). May raise TimeoutExpired."""
+    kwargs: dict = {
+        "capture_output": True,
+        "text": True,
+        "timeout": timeout_s,
+        "env": env,
+    }
+    if cwd is not None:
+        kwargs["cwd"] = str(cwd)
+    return subprocess.run([str(aura_bin), "--load", str(path)], **kwargs)
 
 
 @dataclass(frozen=True)
@@ -97,6 +120,7 @@ class SnippetSpec:
     stdout_last_line: bool = False
     err_regex: bool = False
     exact_out: bool = False
+    type_line: bool = False  # typecheck: a "type:" line contains expect_out
 
 
 def judge_snippet(
@@ -116,7 +140,11 @@ def judge_snippet(
         if exit_code not in allowed:
             issues.append(f"exit_code={exit_code} (expected {spec.expect_status})")
     view = stdout.split("\n")[-1] if spec.stdout_last_line else stdout
-    if spec.expect_out.startswith(">="):
+    if spec.type_line:
+        hit = any(line.startswith("type:") and spec.expect_out in line for line in stdout.split("\n"))
+        if not hit:
+            issues.append(f"expected type:{spec.expect_out!r} in stdout")
+    elif spec.expect_out.startswith(">="):
         try:
             threshold = int(spec.expect_out[2:].strip())
             tokens = view.strip().split()
@@ -210,6 +238,70 @@ def run_snippet_suite(
     return 1 if failed > 0 else 0
 
 
+@dataclass(frozen=True)
+class CommandSpec:
+    """Shell command case (smoke fixtures)."""
+
+    name: str
+    command: str
+    expect: str
+    timeout_s: float = 30
+    cwd: str | Path | None = None
+
+
+def run_command_suite(
+    label: str,
+    specs: Sequence[CommandSpec],
+    *,
+    env: dict[str, str],
+    jobs: int = 1,
+) -> int:
+    """Run bash -c cases; pass if ``expect`` is in stdout+stderr."""
+
+    def run_one(spec: CommandSpec) -> tuple[str, bool, str]:
+        try:
+            proc = subprocess.run(
+                ["bash", "-c", spec.command],
+                capture_output=True,
+                text=True,
+                timeout=spec.timeout_s,
+                env=env,
+                cwd=None if spec.cwd is None else str(spec.cwd),
+            )
+        except subprocess.TimeoutExpired:
+            return spec.name, False, f"timeout {spec.timeout_s:g}s"
+        combined = (proc.stdout or "") + (proc.stderr or "")
+        if spec.expect in combined:
+            return spec.name, True, ""
+        got = combined.strip()[:60]
+        return spec.name, False, f"expected {spec.expect!r}, got {got!r}"
+
+    work = list(specs)
+    results: list[tuple[str, bool, str]]
+    if jobs <= 1 or len(work) <= 1:
+        results = [run_one(s) for s in work]
+    else:
+        print(f"  {label} parallel jobs={jobs} cases={len(work)}")
+        with ThreadPoolExecutor(max_workers=jobs) as pool:
+            futs = {pool.submit(run_one, s): s for s in work}
+            collected: dict[str, tuple[bool, str]] = {}
+            for fut in as_completed(futs):
+                name, ok_case, err = fut.result()
+                collected[name] = (ok_case, err)
+        results = [(n, collected[n][0], collected[n][1]) for n in sorted(collected)]
+
+    passed = failed = 0
+    for name, ok_case, err in results:
+        if ok_case:
+            ok(name)
+            passed += 1
+        else:
+            fail(f"{name}: {err}" if err else name)
+            failed += 1
+    print(f"  {label}: {passed}/{passed + failed} passed")
+    return 1 if failed > 0 else 0
+
+
 def discover_aura_files(
     root: Path,
     *,
@@ -265,13 +357,7 @@ def run_aura_file_suite(
             return case.rel, False, "empty"
         try:
             if mode == "load":
-                proc = subprocess.run(
-                    [aura_bin, "--load", str(case.path)],
-                    capture_output=True,
-                    text=True,
-                    timeout=timeout_s,
-                    env=env,
-                )
+                proc = invoke_aura_load(case.path, aura_bin=aura_bin, env=env, timeout_s=timeout_s)
             else:
                 proc = subprocess.run(
                     [aura_bin],

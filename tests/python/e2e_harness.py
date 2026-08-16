@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any
 
 from _aura_harness import AURA_BIN, ROOT, TESTS
+from aura_file_runner import invoke_aura_load
 
 E2E_ROOT = TESTS / "e2e"
 COMMERCIAL = E2E_ROOT / "commercial_readiness"
@@ -82,14 +83,7 @@ def run_aura_file(
         run_env["AURA_SANDBOX"] = "off"
     t0 = time.time()
     try:
-        proc = subprocess.run(
-            [str(bin_path), "--load", str(path)],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=str(ROOT),
-            env=run_env,
-        )
+        proc = invoke_aura_load(path, aura_bin=bin_path, env=run_env, timeout_s=timeout, cwd=ROOT)
         elapsed = time.time() - t0
         # strip NULs from crash dumps
         out = (proc.stdout or "").replace("\x00", "")
