@@ -1027,6 +1027,10 @@ void CompilerService::invalidate_function(const std::string& name) {
         if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end()) {
             ensure_source_to_ir_map_(cit->second);
             source_to_ir = cit->second.source_to_ir_map;
+            // Issue #2031: dirty path populates the reverse index from
+            // lowered IR when the persisted map is still empty after ensure.
+            if (source_to_ir.empty() && !cit->second.irs.empty())
+                populate_source_to_ir_from_irs(cit->second.irs, source_to_ir);
             for (std::size_t fi = 0; fi < cit->second.irs.size(); ++fi)
                 ir_cache_index[cit->second.irs[fi].name] = fi;
         }

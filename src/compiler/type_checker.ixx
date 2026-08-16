@@ -947,12 +947,11 @@ public:
     // even when preserve_last=false, a *complete* chain is retained
     // (forensic self-evo rollback under dirty cascade). Issue #2307:
     // retained_mutation_id_ / retained_predicate_cond_node_ are
-    // FORENSIC-ONLY — Agents can read them via the accessors below for
-    // blame-chain forensics, but solve_delta_occurrence explicitly does
-    // NOT read them (occurrence_goals_ is the sole authority for
-    // cross-delta occurrence priority replay per #2307 AC1). The
-    // historical #2024 stitch path is documented but no longer consulted
-    // by the solver; multi-delta continuity is preserved by replaying the
+    // FORENSIC-ONLY for occurrence priority (#2307 AC1:
+    // occurrence_goals_ is the sole authority). solve_delta_occurrence
+    // restores active_mutation_id from retained for #2028 provenance
+    // continuity but does not seed the priority worklist from them.
+    // Multi-delta occurrence priority is preserved by replaying the
     // live OccurrenceGoal table (epoch == 0 untagged OR epoch ==
     // current_epoch) in solve_delta_occurrence.
     void clear_blame_context(bool preserve_last = false) noexcept {
@@ -1010,12 +1009,12 @@ public:
         f.kind = 0;
         last_blame_chain_.frames.push_back(f);
     }
-    // Issue #2024 / #2307: FORENSIC-ONLY cross-delta continuity anchors
+    // Issue #2024 / #2307 / #2028: cross-delta continuity anchors
     // captured by clear_blame_context. Agents / tests may read these for
-    // blame-chain forensics, but solve_delta_occurrence does NOT consult
-    // them — occurrence_goals_ is the sole authority for occurrence
-    // priority replay on the solver path. See clear_blame_context above
-    // for the full #2307 rationale.
+    // blame-chain forensics. solve_delta_occurrence restores
+    // active_mutation_id from retained for provenance continuity (#2028)
+    // but does not seed occurrence priority from them (#2307 —
+    // occurrence_goals_ is the sole authority for priority replay).
     [[nodiscard]] std::uint64_t retained_mutation_id() const noexcept {
         return retained_mutation_id_;
     }

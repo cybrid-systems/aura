@@ -1034,115 +1034,125 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             ac.partial_recovery_fail_total.fetch_add(1, std::memory_order_relaxed);
                         }
                     }
-                    // Issue #2145 / #2545: hard-gate force rollback for Full /
-                    // Strict / composite. Linear axes go through the unified
-                    // force_linear_rollback entry first (single counter
-                    // ownership; no double-count with linear_invariant_fail).
-                    if (!inv_ok && !recovered && (composite || hard_gate)) {
-                        auto& ac = typed_audit::g_typed_mutation_audit_counters;
-                        const bool linear_forced = force_linear_rollback(
-                            composite ? "composite-linear-force" : "linear-force-rollback", &first);
-                        if (!linear_forced &&
-                            (strat == typed_audit::AuditStrategy::Full || hard_gate)) {
-                            // Type / provenance / adt (non-linear) force path.
-                            ac.full_strategy_force_rollback_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                            ac.hard_gate_force_rollback_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
-                                m->typed_mutation_full_force_rollback_total.fetch_add(
+                    // Issue #2145 / #2545 / #2029: hard-gate force rollback
+                    // for Full / Strict / composite. Linear axes go through
+                    // the unified force_linear_rollback entry first (single
+                    // counter ownership; no double-count with
+                    // linear_invariant_fail). Structural rollback only if
+                    // partial recover did not succeed.
+                    if (!inv_ok && (composite || hard_gate)) {
+                        if (!recovered) {
+                            auto& ac = typed_audit::g_typed_mutation_audit_counters;
+                            const bool linear_forced = force_linear_rollback(
+                                composite ? "composite-linear-force" : "linear-force-rollback",
+                                &first);
+                            if (!linear_forced &&
+                                (strat == typed_audit::AuditStrategy::Full || hard_gate)) {
+                                // Type / provenance / adt (non-linear) force path.
+                                ac.full_strategy_force_rollback_total.fetch_add(
                                     1, std::memory_order_relaxed);
-                            aura_escape_move_gate_clear();
-                            g_linear_escape_gate_clear_on_rollback_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        }
-                        if (composite) {
-                            ac.composite_full_rollback_total.fetch_add(1,
+                                ac.hard_gate_force_rollback_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                                    m->typed_mutation_full_force_rollback_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                aura_escape_move_gate_clear();
+                                g_linear_escape_gate_clear_on_rollback_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                            if (composite) {
+                                ac.composite_full_rollback_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            }
+                            // Issue #2309: linear force path already cleared the
+                            // escape gate inside force_linear_rollback; non-linear
+                            // path cleared above.
+                            // Issue #2284: publish boundary hard-reject signal on the
+                            // repair surface. The typecheck path already published the
+                            // detailed unresolved_affected_nodes data; we only update
+                            // the status + publish_total here to avoid clobbering the
+                            // repair set with an empty boundary-only snapshot.
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                                constexpr std::uint64_t kHardRejectStatus = 99;
+                                m->type_repair_last_timeout_status.store(kHardRejectStatus,
+                                                                         std::memory_order_relaxed);
+                                m->type_repair_publish_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
+                            }
+                            // Agent-visible deny reason (#2145 / #2076 shape).
+                            std::string_view deny_kind = "invariant";
+                            if (first.cross_batch_linear_escape)
+                                deny_kind = "linear-escape";
+                            else if (!first.linear_ok)
+                                deny_kind = "linear";
+                            else if (!first.type_ok)
+                                deny_kind = "type";
+                            else if (!first.provenance_ok)
+                                deny_kind = "provenance";
+                            last_mutate_error_ = typed_audit::format_invariant_deny_reason(
+                                deny_kind, capability_tenant_id(),
+                                composite ? "composite-invariant-force-rollback"
+                                          : "invariant-force-rollback");
+                            if (strict_sandbox) {
+                                strict_mutate_hold_.store(1, std::memory_order_relaxed);
+                                ac.hard_gate_strict_hold_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                            }
+                            // Issue #2959: dual topology structural undo (same as
+                            // failure path) under one structural exclusive.
+                            BoundaryRollbackStats stats;
+                            stats.field_records_rolled =
+                                workspace_flat_->abort_restore_dual_topology(
+                                    cp.mutation_log_size, std::move(cp.children_snapshot));
+                            if (stats.field_records_rolled > 0) {
+                                bump_mutation_log_rollback_count();
+                                if (nested_boundary)
+                                    bump_edsl_nested_atomic_rollback();
+                            }
+                            stats.children_column_restored = true;
+                            if (cp.fine_rollback) {
+                                workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
+                                workspace_flat_->restore_param_columns(
+                                    std::move(cp.param_snapshot));
+                                stats.sym_id_column_restored = true;
+                                stats.param_columns_restored = true;
+                            }
+                            // Realign atomic-batch flag if nested path left it inconsistent.
+                            if (workspace_flat_->atomic_batch_active() !=
+                                cp.bump_suppressed_at_entry) {
+                                if (cp.bump_suppressed_at_entry)
+                                    workspace_flat_->begin_atomic_batch();
+                                else
+                                    workspace_flat_->rollback_atomic_batch();
+                                suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
+                            }
+                            // Issue #3033: dual-topology abort → force-dirty IR cache
+                            // (stamps point at intermediate state; see exit boundary).
+                            if (abort_ir_cache_force_dirty_fn_)
+                                abort_ir_cache_force_dirty_fn_();
+                            // Issue #3030: invariant force-rollback clears proof face.
+                            typed_audit::clear_type_linear_commit_proof_on_abort();
+                            last_boundary_rollback_stats_ = stats;
+                            defuse_index_ = nullptr;
+                            // Issue #2105: leave txn_dirty set until outermost clean exit,
+                            // or clear when no remaining nested guards.
+                            if (!nested_boundary)
+                                clear_txn_dirty();
+                            typed_audit::record_boundary_outcome(
+                                mid,
+                                composite ? "composite-invariant-force-rollback"
+                                          : "invariant-force-rollback",
+                                cp.version, epoch_after, /*success=*/false,
+                                static_cast<std::uint32_t>(audit_target), 0, fid);
+                            // Strict trail: Error outcome for Agent dashboards.
+                            if (strict_sandbox)
+                                typed_audit::capture_audit_event_forced(
+                                    mid, "strict-invariant-denied",
+                                    typed_audit::MutationKind::Structural, cp.version, epoch_after,
+                                    typed_audit::AuditOutcome::Error,
+                                    static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                            return cp;
                         }
-                        // Issue #2309: linear force path already cleared the
-                        // escape gate inside force_linear_rollback; non-linear
-                        // path cleared above.
-                        // Issue #2284: publish boundary hard-reject signal on the
-                        // repair surface. The typecheck path already published the
-                        // detailed unresolved_affected_nodes data; we only update
-                        // the status + publish_total here to avoid clobbering the
-                        // repair set with an empty boundary-only snapshot.
-                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
-                            constexpr std::uint64_t kHardRejectStatus = 99;
-                            m->type_repair_last_timeout_status.store(kHardRejectStatus,
-                                                                     std::memory_order_relaxed);
-                            m->type_repair_publish_total.fetch_add(1, std::memory_order_relaxed);
-                        }
-                        // Agent-visible deny reason (#2145 / #2076 shape).
-                        std::string_view deny_kind = "invariant";
-                        if (first.cross_batch_linear_escape)
-                            deny_kind = "linear-escape";
-                        else if (!first.linear_ok)
-                            deny_kind = "linear";
-                        else if (!first.type_ok)
-                            deny_kind = "type";
-                        else if (!first.provenance_ok)
-                            deny_kind = "provenance";
-                        last_mutate_error_ = typed_audit::format_invariant_deny_reason(
-                            deny_kind, capability_tenant_id(),
-                            composite ? "composite-invariant-force-rollback"
-                                      : "invariant-force-rollback");
-                        if (strict_sandbox) {
-                            strict_mutate_hold_.store(1, std::memory_order_relaxed);
-                            ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
-                        }
-                        // Issue #2959: dual topology structural undo (same as
-                        // failure path) under one structural exclusive.
-                        BoundaryRollbackStats stats;
-                        stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
-                            cp.mutation_log_size, std::move(cp.children_snapshot));
-                        if (stats.field_records_rolled > 0) {
-                            bump_mutation_log_rollback_count();
-                            if (nested_boundary)
-                                bump_edsl_nested_atomic_rollback();
-                        }
-                        stats.children_column_restored = true;
-                        if (cp.fine_rollback) {
-                            workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
-                            workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
-                            stats.sym_id_column_restored = true;
-                            stats.param_columns_restored = true;
-                        }
-                        // Realign atomic-batch flag if nested path left it inconsistent.
-                        if (workspace_flat_->atomic_batch_active() != cp.bump_suppressed_at_entry) {
-                            if (cp.bump_suppressed_at_entry)
-                                workspace_flat_->begin_atomic_batch();
-                            else
-                                workspace_flat_->rollback_atomic_batch();
-                            suppressed_misalign_caught_.fetch_add(1, std::memory_order_relaxed);
-                        }
-                        // Issue #3033: dual-topology abort → force-dirty IR cache
-                        // (stamps point at intermediate state; see exit boundary).
-                        if (abort_ir_cache_force_dirty_fn_)
-                            abort_ir_cache_force_dirty_fn_();
-                        // Issue #3030: invariant force-rollback clears proof face.
-                        typed_audit::clear_type_linear_commit_proof_on_abort();
-                        last_boundary_rollback_stats_ = stats;
-                        defuse_index_ = nullptr;
-                        // Issue #2105: leave txn_dirty set until outermost clean exit,
-                        // or clear when no remaining nested guards.
-                        if (!nested_boundary)
-                            clear_txn_dirty();
-                        typed_audit::record_boundary_outcome(
-                            mid,
-                            composite ? "composite-invariant-force-rollback"
-                                      : "invariant-force-rollback",
-                            cp.version, epoch_after, /*success=*/false,
-                            static_cast<std::uint32_t>(audit_target), 0, fid);
-                        // Strict trail: Error outcome for Agent dashboards.
-                        if (strict_sandbox)
-                            typed_audit::capture_audit_event_forced(
-                                mid, "strict-invariant-denied",
-                                typed_audit::MutationKind::Structural, cp.version, epoch_after,
-                                typed_audit::AuditOutcome::Error,
-                                static_cast<std::uint32_t>(audit_target), 0, fid, 0);
-                        return cp;
                     }
                     // Success path: record outcome when audit passed / recovered.
                     // Enforcement already linked via record_invariant_audit_result.
@@ -2406,6 +2416,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->runtime_obs_export_ready.store(1, std::memory_order_relaxed);
         }
     }
+    // post-boundary linear closed-loop (hold-time batch published above; #1764)
     // Issue #1461: Agent Decision Metrics liveness — outermost
     // failed Guard must bump the fiber-boundary rollback counter
     // so (agent:decision-metrics) / stats facade see a real signal

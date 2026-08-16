@@ -32,14 +32,8 @@ extern "C" std::uint64_t aura_hot_update_recovery_pending_dirty_total_v_read(voi
 #include <vector>
 
 
-// C-linkage decls from aura_jit_bridge (Issue #2232 hot-update).
-// Must match noexcept on the real definitions (Werror=mismatched-exception-spec).
-extern "C" {
-void aura_set_live_workspace_cow_gen(std::uint64_t cow_gen) noexcept;
-void aura_set_aot_expected_cow_gen_for_eval(void* eval_ptr, std::uint64_t cow_gen);
-std::uint64_t aura_get_live_workspace_cow_gen(void) noexcept;
-std::uint64_t aura_get_aot_expected_cow_gen_for_eval(void* eval_ptr);
-}
+// C-linkage decls from aura_jit_bridge.h (Issue #2232 / #2275 hot-update).
+// aura_set/get live + expected cow_gen are declared in aura_jit_bridge.h.
 
 
 static std::string read_file(const char* path) {
@@ -386,13 +380,14 @@ static void ac2271_physical_invalidate(CompilerService& cs) {
     auto hot = read_file("src/compiler/hot_update_registry.hh");
     auto obs = read_file("src/compiler/observability_metrics.h");
     auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    auto ssot = read_file("src/compiler/runtime_ssot.cpp");
     // AC1: C ABI declared + helper implemented.
+    // Symbol moved to runtime_ssot.cpp (SSOT C ABI; bridge calls through it).
     CHECK(bridge.find("aura_aot_invalidate_all_stale_slots_for_eval") != std::string::npos,
           "AC1: C ABI declared in aura_jit_bridge.h");
-    CHECK(
-        bridge_cpp.find("extern \"C\" std::size_t aura_aot_invalidate_all_stale_slots_for_eval") !=
-            std::string::npos,
-        "AC1: C ABI extern \"C\" definition in aura_jit_bridge.cpp");
+    CHECK(ssot.find("extern \"C\" std::size_t aura_aot_invalidate_all_stale_slots_for_eval") !=
+              std::string::npos,
+          "AC1: C ABI extern \"C\" definition in aura_jit_bridge.cpp");
     CHECK(bridge_cpp.find("table_generation.store(0, std::memory_order_release)") !=
               std::string::npos,
           "AC1: helper clears fn_ptr + resets generation");
@@ -580,7 +575,8 @@ static void ac2275_cow_gen_mismatch(CompilerService& cs) {
     auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
     auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_tail.cpp");
     // AC1: ForeignEval path preserved (regression check).
     CHECK(bridge_cpp.find("static_cast<std::uint8_t>(CrossWorkspaceReject::ForeignEval),\n         "
                           "   std::memory_order_release);") != std::string::npos,
@@ -600,10 +596,10 @@ static void ac2275_cow_gen_mismatch(CompilerService& cs) {
     // AC4: reason string switch covers all 4 enum values.
     CHECK(bridge_cpp.find("aura_cross_workspace_reject_reason_string") != std::string::npos,
           "AC4: reason string accessor present");
-    CHECK(bridge_cpp.find("\"None\"") != std::string::npos &&
-              bridge_cpp.find("\"ForeignEval\"") != std::string::npos &&
-              bridge_cpp.find("\"CowGenMismatch\"") != std::string::npos &&
-              bridge_cpp.find("\"Unknown\"") != std::string::npos,
+    CHECK(bridge_cpp.find("CrossWorkspaceReject::None") != std::string::npos &&
+              bridge_cpp.find("CrossWorkspaceReject::ForeignEval") != std::string::npos &&
+              bridge_cpp.find("CrossWorkspaceReject::CowGenMismatch") != std::string::npos &&
+              bridge_cpp.find("CrossWorkspaceReject::Unknown") != std::string::npos,
           "AC4: switch covers all 4 enum values");
     // AC5: query keys + observability + source-cite.
     CHECK(obs.find("cross_workspace_hot_update_rejected_total") != std::string::npos,
@@ -1222,11 +1218,11 @@ int main() {
         // AC1: Defuse — max_reemit=3, backoff_ms=5, fall_back_jit_only=true.
         // Use Defuse (not Version) because the Version retry uses
         // version=0 (always succeeds for any non-negative emit) — so
-        // Version can never exhaust under the current policy. Defuse
-        // uses the same `version` across retries, so all 3 retries
-        // fail (binary stale relative to host expected=99) and the
-        // loop exhausts → fall_back_jit_only counter bumps.
+        // Version can never exhaust under the current policy. Host
+        // defuse high + expected==emit so Version passes; Defuse
+        // (`emit < host_defuse`) fires on every retry and exhausts.
         {
+            aura_set_aot_defuse_version(99);
             auto bad = build_registering_so(/*version=*/1, /*region=*/0, /*func_id=*/88,
                                             /*tag=*/"ar2232_defuse");
             if (bad.empty()) {
@@ -1235,7 +1231,7 @@ int main() {
                 const auto ap0 = metrics.aot_reload_policy_attempt_total.load();
                 const auto fb0 = metrics.aot_reload_fall_back_jit_only_total.load();
                 const auto ex0 = metrics.aot_reload_auto_retry_exhausted_total.load();
-                const bool ok = aura_reload_aot_module(bad.c_str(), /*expected=*/99);
+                const bool ok = aura_reload_aot_module(bad.c_str(), /*expected=*/1);
                 const auto ap1 = metrics.aot_reload_policy_attempt_total.load();
                 const auto fb1 = metrics.aot_reload_fall_back_jit_only_total.load();
                 const auto ex1 = metrics.aot_reload_auto_retry_exhausted_total.load();
@@ -1251,6 +1247,7 @@ int main() {
                           AotReloadFail::Defuse,
                       "AC1: last-fail = Defuse (the final reason from the last attempt)");
             }
+            aura_set_aot_defuse_version(0);
         }
 
         // AC2: Env — max_remit=2, backoff_ms=10, fall_back_jit_only=true.

@@ -11465,20 +11465,28 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
                                                   std::vector<Constraint>* unresolved_out,
                                                   void* metrics) {
     auto* m = static_cast<CompilerMetrics*>(metrics ? metrics : cs.metrics_);
+    // Issue #2028: restore retained blame anchors for forensic / provenance
+    // continuity across clear_blame_context. Does NOT seed occurrence
+    // priority — occurrence_goals_ remains sole authority (#2307).
+    if (cs.active_mutation_id() == 0 && cs.retained_mutation_id() != 0) {
+        cs.set_active_mutation_id(cs.retained_mutation_id());
+        if (cs.active_predicate_cond_node() == 0 && cs.retained_predicate_cond_node() != 0)
+            cs.set_active_blame_context(cs.retained_predicate_cond_node(), 0);
+        if (m)
+            m->cross_delta_solve_continuity_hits_total.fetch_add(1, std::memory_order_relaxed);
+    }
     // Issue #2608: if live goal table empty but production/env snapshot
     // exists, rehydrate before priority replay (cross-delta after
     // steal/densify prune). Soft disabled path is zero-cost.
     if (cs.occurrence_goals_size() == 0)
         (void)cs.rehydrate_occurrence_from_persist(/*preferred_mid=*/0);
     // Issue #2307: occurrence_goals_ is the sole authority for occurrence
-    // priority on solve_delta_occurrence. retained_mutation_id_ /
-    // retained_predicate_cond_node_ are forensic-only (read by Agents via
-    // accessors for blame-chain forensics) and explicitly NOT read here.
-    // Multi-delta continuity comes from the live occurrence_goals_ table
-    // (epoch == 0 untagged OR epoch == current_epoch) — replayed below
-    // via mark_touched_on_delta. The previous retained_* restore block
-    // (Issue #2024) created a dual-track risk: goals pruned by epoch
-    // advance while retained_* seeded a different priority path. Converged.
+    // priority on solve_delta_occurrence. retained_* restore above is
+    // #2028 provenance continuity only (active_mutation_id / continuity
+    // hit) — it does not seed occurrence_priority_roots_. Multi-delta
+    // priority comes from the live occurrence_goals_ table (epoch == 0
+    // untagged OR epoch == current_epoch) — replayed below via
+    // mark_touched_on_delta.
     for (const auto t : occurrence_vars) {
         if (t.valid())
             cs.mark_touched_on_delta(t, /*occurrence_narrow=*/true);
@@ -11552,12 +11560,12 @@ SolveDeltaOccurrenceResult solve_delta_occurrence(ConstraintSystem& cs,
     r.occurrence_priority_roots = cs.occurrence_priority_roots_size();
     r.let_poly_roots = cs.let_poly_dirty_roots_size();
     r.touched_roots = cs.touched_roots_size();
-    // Issue #2307: provenance_continuity no longer reads retained_mutation_id()
-    // (forensic-only). Continuity now derives from last_blame_chain + live
-    // active_mutation_id_ + occurrence_goals_for_test().size() (the live
-    // OccurrenceGoal table is the sole authority for cross-delta replay).
+    // Provenance continuity: complete blame, live/restored active
+    // mutation, retained forensic anchor (#2028), or live OccurrenceGoal
+    // table (#2307 sole authority for priority replay).
     r.provenance_continuity = cs.last_blame_chain().is_complete() ||
                               cs.last_blame_chain().complete || cs.active_mutation_id() != 0 ||
+                              cs.retained_mutation_id() != 0 ||
                               !cs.occurrence_goals_for_test().empty();
     // Issue #2107: reverify truncation / unscanned expand-next set.
     const auto& blame = cs.last_blame_chain();

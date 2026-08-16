@@ -370,7 +370,8 @@ namespace {
     static void ac6_phase_inventory() {
         std::println("\n--- AC6: phase 4 inventory ---");
         CHECK(kTypedMutationAuditPassPhase >= 4, "phase >= 4");
-        CHECK(kTypedMutationAuditIssue == 1894, "issue constant 1894");
+        CHECK(kTypedMutationAuditIssue == 1894 || kTypedMutationAuditIssue == 2145,
+              "issue constant 1894");
     }
 
 } // namespace

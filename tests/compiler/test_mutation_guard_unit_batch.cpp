@@ -239,7 +239,11 @@ namespace {
             return {};
         auto end = src.find("post-boundary linear closed-loop", pos);
         if (end == std::string::npos)
-            end = pos + 5500;
+            end = src.find("enter_ts_.has_value()", pos);
+        if (end == std::string::npos)
+            end = pos + 16000;
+        else
+            end += 80; // include the has_value() line itself
         return src.substr(pos, end - pos);
     }
 
@@ -383,7 +387,7 @@ namespace {
             return {};
         auto end = src.find("post-boundary linear closed-loop", pos);
         if (end == std::string::npos)
-            end = pos + 5500;
+            end = pos + 16000;
         return src.substr(pos, end - pos);
     }
 
@@ -1862,7 +1866,8 @@ int run_350_match_exhaustiveness_notes_smoke() {
     CHECK(tc.find("analyze_match_exhaustiveness") != std::string::npos ||
               tc.find("check_match_exhaustiveness") != std::string::npos,
           "match exhaustiveness analyzer present");
-    const auto q = read_src("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_src("src/compiler/evaluator_primitives_query.cpp") +
+                   read_src("src/compiler/evaluator_primitives_query_tail.cpp");
     CHECK(!q.empty(), "evaluator_primitives_query.cpp readable");
     CHECK(q.find("query:match-exhaustiveness-notes") != std::string::npos,
           "stats name query:match-exhaustiveness-notes registered");

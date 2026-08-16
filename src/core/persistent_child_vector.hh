@@ -290,8 +290,13 @@ public:
     }
 
     // ── Capacity (const) ──────────────────────────────────────
-    constexpr size_type size() const noexcept { return size_; }
-    constexpr bool empty() const noexcept { return size_ == 0; }
+    constexpr size_type size() const noexcept {
+        if (!data_ || !data_->data)
+            return 0;
+        const auto cap = data_->size;
+        return (cap != 0 && size_ > cap) ? cap : size_;
+    }
+    constexpr bool empty() const noexcept { return size() == 0; }
     constexpr const_pointer data() const noexcept { return data_ ? data_->data.get() : nullptr; }
     // Issue #1624: SoAColumnarFull — contiguous column view + shape stamp
     // (arity = children count for PCV cache locality / shape matching).
@@ -350,8 +355,18 @@ public:
     // Safe for empty / default-constructed vectors: when data_
     // is null (no underlying Storage), begin() == end() ==
     // nullptr. The for-range loop on an empty PCV is a no-op.
-    const_iterator begin() const noexcept { return data_ ? data_->data.get() : nullptr; }
-    const_iterator end() const noexcept { return data_ ? data_->data.get() + size_ : nullptr; }
+    // Cap at Storage::size so a stale size_ cannot walk past
+    // TLS-recycled capacity (kTlsMaxElems) into heap metadata.
+    const_iterator begin() const noexcept {
+        return (data_ && data_->data) ? data_->data.get() : nullptr;
+    }
+    const_iterator end() const noexcept {
+        if (!data_ || !data_->data)
+            return nullptr;
+        const auto cap = data_->size;
+        const auto n = (cap != 0 && size_ > cap) ? cap : size_;
+        return data_->data.get() + n;
+    }
     const_iterator cbegin() const noexcept { return begin(); }
     const_iterator cend() const noexcept { return end(); }
 
@@ -632,6 +647,10 @@ private:
         for (std::size_t i = 0; i < kTlsSlots; ++i) {
             if (fl.slots[i]) {
                 Storage* raw = fl.slots[i].release();
+                // Drop leftover child ids from the previous tenant so
+                // a stale PCV size_ cannot re-walk old NodeIds.
+                if (raw && raw->data)
+                    std::fill_n(raw->data.get(), kTlsMaxElems, T{});
                 g_pcv_hotpath_metrics().tls_scratch_hit_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
                 tls_last_alloc_was_hit() = true;

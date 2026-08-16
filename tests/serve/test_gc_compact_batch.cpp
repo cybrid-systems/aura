@@ -2134,7 +2134,7 @@ static void run_1488_arena_adaptive_stats_no_dead_heap_push() {
         std::println("\n--- #1488 AC4: production-hardening flag ---");
         CompilerService cs;
         auto r = cs.eval(
-            R"((hash-ref (engine:metrics \"query:production-hardening-1072-1096-stats\") "arena-adaptive-no-dead-push"))");
+            R"((hash-ref (engine:metrics "query:production-hardening-1072-1096-stats") "arena-adaptive-no-dead-push"))");
         CHECK(r && aura::compiler::types::is_int(*r) && aura::compiler::types::as_int(*r) == 1,
               "arena-adaptive-no-dead-push == 1 (flag set, #1072 fix landed)");
     }
@@ -2232,7 +2232,7 @@ static void run_1489_panic_checkpoint_gc_deferral() {
         CHECK(h && aura::compiler::types::is_hash(*h), "gc-panic-deferral-stats is hash");
         auto href_field = [&](const char* key) -> std::int64_t {
             std::string src = std::format(
-                R"((hash-ref (engine:metrics \"query:gc-panic-deferral-stats\") "{}"))", key);
+                R"((hash-ref (engine:metrics "query:gc-panic-deferral-stats") "{}"))", key);
             auto r = cs.eval(src);
             if (!r || !aura::compiler::types::is_int(*r))
                 return -1;

@@ -25,6 +25,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "compiler/observability_metrics.h"
 #include "compiler/runtime_shared.h" // aura_set_aot_metrics + closures
+#include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -50,6 +51,7 @@ extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 // Issue #2172: SpecJITController conservative-due-to-shape-storm counter
 // (file-level atomic in spec_jit_controller.cpp, exposed via C-linkage).
 extern "C" std::uint64_t aura_specjit_conservative_due_to_shape_storm_total_v_read(void);
+extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
 
 import std;
 import aura.compiler.evaluator;
@@ -138,8 +140,14 @@ static void ac1_source() {
     auto bridge =
         read_first({"src/compiler/aura_jit_bridge.cpp", "../src/compiler/aura_jit_bridge.cpp"});
     auto hdr = read_first({"src/compiler/aura_jit_bridge.h", "../src/compiler/aura_jit_bridge.h"});
-    auto q = read_first({"src/compiler/evaluator_primitives_query.cpp",
-                         "../src/compiler/evaluator_primitives_query.cpp"});
+    std::string q;
+    for (const char* p : {"src/compiler/evaluator_primitives_query.cpp",
+                          "../src/compiler/evaluator_primitives_query.cpp",
+                          "src/compiler/evaluator_primitives_query_tail.cpp",
+                          "../src/compiler/evaluator_primitives_query_tail.cpp",
+                          "src/compiler/evaluator_primitives_obs_eval.cpp",
+                          "../src/compiler/evaluator_primitives_obs_eval.cpp"})
+        q += read_file(p);
     CHECK(!bridge.empty() && bridge.find("#1930") != std::string::npos, "bridge cites #1930");
     CHECK(bridge.find("preserve_stable_func_id") != std::string::npos ||
               bridge.find("g_name_to_stable_func_id") != std::string::npos,
@@ -165,8 +173,8 @@ static void ac2_schema() {
           "emit path");
     CHECK(href(cs, "query:aot-incremental-reemit-stats", "return-success-when-emit-wired") == 1,
           "return success");
-    CHECK(href(cs, "query:aot-incremental-reemit-stats", "pipeline-phase") == 5,
-          "phase 5 (+ adaptive mask #2016)");
+    CHECK(href(cs, "query:aot-incremental-reemit-stats", "pipeline-phase") >= 5,
+          "phase 5 (+ adaptive mask #2016 / must-deopt #2128)");
     CHECK(href(cs, "query:aot-incremental-reemit-stats", "aot_incremental_reemit_success_total") >=
               0,
           "success key");
@@ -204,8 +212,16 @@ static void ac3_stable_map_api() {
     aura_clear_stable_func_id_map();
 }
 
+static void allow_reemit_outside_boundary() {
+    // CompilerService ACs arm production defaults (#2818) which re-Defer
+    // reemit and trip #3025 owner-missing when leftover AotStates remain.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
+}
+
 static void ac4_emit_success_return() {
     std::println("\n--- AC4: emit callback — return = success count ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -243,6 +259,7 @@ static void ac4_emit_success_return() {
 
 static void ac5_skeleton_return() {
     std::println("\n--- AC5: skeleton would-reemit return (#1480) ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -268,6 +285,7 @@ static void ac5_skeleton_return() {
 
 static void ac6_multi_round_stable() {
     std::println("\n--- AC6: multi-round same names keep func_id ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -301,6 +319,7 @@ static void ac6_multi_round_stable() {
 
 static void ac7_fuzz() {
     std::println("\n--- AC7: 1000-iter fuzz ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -353,6 +372,7 @@ static void ac8_lineage() {
 // after epoch bump; unnamed / other-name closures still deopt.
 static void ac9_live_closure_remap() {
     std::println("\n--- AC9: #2013 live closure remap after reemit ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -444,6 +464,7 @@ static void ac9_live_closure_remap() {
 // miss remap for gensym names that changed between defines. AC1.
 static void ac9b_same_name_redefine() {
     std::println("\n--- AC9b: #2092 same-name redefine safety ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -523,6 +544,7 @@ static void ac9b_same_name_redefine() {
 // fallback when enabled. Strict tests keep the flag at 0 (default).
 static void ac9c_name_fallback() {
     std::println("\n--- AC9c: #2092 name fallback off by default ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -538,10 +560,15 @@ static void ac9c_name_fallback() {
     const auto c_legacy = aura_alloc_closure(300);
     CHECK(c_legacy >= 0, "alloc c_legacy");
     aura_closure_set_name(c_legacy, "legacy");
+    // #2550 set_name stamps a non-zero sid (and residual #2175 backfill
+    // would rematch sid=0 by name). Force a dummy sid that is not in
+    // the remitted set so this AC exercises name-fallback, not backfill.
+    aura_test_force_closure_stable_func_id(c_legacy, 0xBEEFu);
 
     // Now process the define (post-closure).
     const auto sid_legacy = aura_get_or_preserve_stable_func_id("legacy", nullptr);
     CHECK(sid_legacy != 0, "legacy stable id assigned");
+    CHECK(sid_legacy != 0xBEEFu, "legacy remitted sid != forced dummy");
 
     ReemitFixture rf;
     rf.candidates = {{"legacy", 1, false}};
@@ -593,6 +620,7 @@ static void ac9c_name_fallback() {
 // (AC4 — same-name redefine safety from #2092 preserved).
 static void ac9d_legacy_sid_backfill_2175() {
     std::println("\n--- AC9d: #2175 legacy sid=0 backfill (independent of name fallback) ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -694,6 +722,7 @@ static void ac9d_legacy_sid_backfill_2175() {
 // Issue #2014: deopt storm detection + reemit recovery throttle.
 static void ac10_deopt_storm_throttle() {
     std::println("\n--- AC10: #2014 deopt storm detection + reemit throttle ---");
+    allow_reemit_outside_boundary();
     using aura::compiler::hot_update_registry;
     using aura::compiler::kHotUpdateDeoptStormEpoch;
 
@@ -941,6 +970,7 @@ static void ac14_specjit_shape_conservative() {
 }
 static void ac11_adaptive_region_mask() {
     std::println("\n--- AC11: #2016 Evolution exclude + adaptive mask + stable table ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -1045,6 +1075,7 @@ static void ac11_adaptive_region_mask() {
 // the failure path without bringing in the full LLVM runtime.
 static void ac13a_reemit_fail_counter() {
     std::println("\n--- AC13a: #2095 fail counter on compile failure ---");
+    allow_reemit_outside_boundary();
     // Reset storm state left over from AC12 (otherwise
     // should_throttle_reemit() can short-circuit and the test would
     // not exercise the emit-failure path at all).
@@ -1225,6 +1256,7 @@ static void ac_restamp_hit() {
 
 static void ac_restamp_miss() {
     std::println("\n--- AC2: #2233 miss path — MustDeopt set, batch_deopt_for called ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -1242,6 +1274,10 @@ static void ac_restamp_miss() {
     const auto cid = aura_alloc_closure(0); // stored_sid=0
     CHECK(cid >= 0, "AC2: alloc (stored_sid=0)");
     aura_closure_set_name(cid, "miss_2233");
+    // #2550 set_name stamps a non-zero sid; residual backfill would
+    // rematch sid=0 by name. Force a dummy sid not in the remitted set
+    // so the miss path (fallback off) is actually taken.
+    aura_test_force_closure_stable_func_id(cid, 0xBEEFu);
 
     ReemitFixture rf;
     rf.candidates = {{"miss_2233", 1, false}};
@@ -1320,6 +1356,7 @@ static void ac_restamp_source_cite() {
 // 7 remount / capture / wire-up sites for grep reference.
 static void ac_capture_remount_hit() {
     std::println("\n--- AC1: #2234 hit path — captures rebound, consistency gate ok ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -1369,6 +1406,7 @@ static void ac_capture_remount_hit() {
 
 static void ac_capture_remount_miss() {
     std::println("\n--- AC2: #2234 miss path — captures inconsistent, consistency gate fail ---");
+    allow_reemit_outside_boundary();
     aura::compiler::CompilerMetrics metrics{};
     aura_set_aot_metrics(&metrics);
     aura_clear_stable_func_id_map();
@@ -1471,7 +1509,9 @@ static void ac2272_env_gen_remount(CompilerService& cs) {
     auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
     auto ev_ixx = read_file("src/compiler/evaluator.ixx");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_tail.cpp") +
+             read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     // AC1: C ABI declared + impls.
     CHECK(bridge_h.find("aura_closure_set_env_gen") != std::string::npos,
           "AC1: aura_closure_set_env_gen C ABI declared");
@@ -1547,11 +1587,14 @@ static void ac2272_env_gen_remount(CompilerService& cs) {
 // AC5: source-cite; #2272 / #2234 paths remain green.
 static void ac2297_structural_cell_remap(CompilerService& cs) {
     std::println("\n--- AC #2297: structural capture-cell remount after densify ---");
+    allow_reemit_outside_boundary();
     auto jit_rt = read_file("src/compiler/aura_jit_runtime.cpp");
     auto bridge_h = read_file("src/compiler/aura_jit_bridge.h");
     auto bridge_cpp = read_file("src/compiler/aura_jit_bridge.cpp");
     auto obs = read_file("src/compiler/observability_metrics.h");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+             read_file("src/compiler/evaluator_primitives_query_tail.cpp") +
+             read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     auto rpass = read_file("src/compiler/root_remap_pass.ixx");
 
     CHECK(bridge_h.find("aura_set_densify_object_remap") != std::string::npos,
@@ -1693,6 +1736,10 @@ static void ac2297_structural_cell_remap(CompilerService& cs) {
 } // namespace
 
 int main() {
+    // Unit ACs drive aura_reemit_aot_for_dirty outside a MutationBoundary.
+    // Production default Defer would skip the body (#2205); SoftEnter is
+    // the documented test opt-in.
+    aura_hot_update_set_reemit_boundary_policy(0);
     std::println("=== Issue #1930–#2016: reemit + remap + storm + adaptive mask ===");
     ac1_source();
     ac2_schema();

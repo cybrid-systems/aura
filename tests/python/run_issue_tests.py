@@ -125,34 +125,23 @@ PRE_EXISTING_FAILURES: set[str] = {
     # rebaseline schema sentinels, re-enable docs soft-cites, fix reemit
     # / storm isolation under parallel load.
     "test_aot_incremental_reemit",
-    "test_aot_reload_primitive",
     "test_blame_complete_commit_gate",
     "test_coercion_ban_weak_ir",
     "test_coercion_provenance_miss_force_audit",
     "test_coercion_reject_production_defaults",
     "test_composite_txn_commit",
-    "test_composite_nested_txn_invariant_audit",
-    "test_constraint_solver_surface_cross_delta",
     # test_dead_coercion_pipeline_wire: schema lineage rebaselined to 2130
-    "test_envframe_epoch_batch",
-    "test_fiber_integration_batch",
-    "test_full_strategy_partial_recovery",
-    "test_hot_update_cascade_dirty_reemit",
-    "test_instr_level_impact_scope",
     "test_isolation_stamp_resolve",
-    "test_jit_aot_hot_update_unit_batch",
     "test_lifetime_pin_batch_ffi_present_2048",
     "test_linear_ownership_batch",
     "test_mutate_capability_force",
     "test_mutation_aot_unit_batch",
-    "test_mutation_guard_unit_batch",
     "test_mutation_typed_audit_batch",
     "test_partial_relower_cascade",
     "test_production_security_defaults",
     # test_query_epoch_contract: docs soft-skip when file absent
     "test_reemit_production_default_defer",
     "test_reemit_production_default_defer_v2",
-    "test_reflect_pattern_hygiene_batch",
     "test_render_agent_closedloop_2051",
     "test_rollback_by_marker",
     "test_security_audit_unify",
@@ -164,7 +153,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # binary with a 60s default timeout → rc=124 under jobs=4.
     # ── Full-tier flakes / crashers (2026-08-01 CI after #2521–#2526) ──
     # Parallel-load races or typechecker UAF on mutate stress — not demotion.
-    "test_mutation_occurrence_dirty_batch",  # SIGSEGV in solve_delta_occurrence
+    # test_mutation_occurrence_dirty_batch: peek + query-hook cite greened
     "test_fiber_native_keepalive",  # intermittent SIGSEGV/SIGBUS under jobs>1
     "test_residual_gc_defer_assert",  # process-wide MutationHold race under parallel
     "test_arena_compact_hook_concurrent",  # hook-fire race under parallel compact load
@@ -201,7 +190,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_dirty_aware_shape_linear_passes",
     "test_dirty_reason_verification_propagation",
     "test_edsl_concurrent_fiber_boundary_task1",
-    "test_envframe_truncate_epoch",
     "test_hardware_resource_linear_ownership",
     "test_hotpath_matrix_batch",
     "test_incremental_typed_selfmod_dirty_narrowing",
@@ -218,7 +206,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_query_and_replace_batch",
     "test_query_epoch_contract",
     "test_query_namespace_audit",
-    "test_reflect_hygiene_unit_batch",
     "test_root_epoch_gc_safety_post_invalidate",
     "test_root_remap_pin_contract_unified",
     "test_safepoint_mutation",
@@ -254,7 +241,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_dispatch_required_effects",
     "test_exhausted_min_dirty_reemit",
     "test_fiber_orch_core_batch",
-    "test_fiber_strategy_evolve_batch",
     "test_fiber_orch_parallel_quota_batch",
     "test_force_compact_hard_mutex",
     "test_force_jit_repromote",
@@ -266,10 +252,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_issue_1993",
     "test_live_closure_full_restamp",
     "test_lock_order_audit",
-    "test_macro_self_evo_capability",
     "test_mutation_rollback_coverage",
     "test_join_drain_timeout",
-    "test_obs_schema_matrix",
     "test_orch_agent_mutation_boundary",
     "test_orch_soft_boundary_unified",
     "test_orch_scope",
@@ -278,8 +262,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_refinement_closed_loop",
     "test_reload_recovery_query",
     "test_require_effect_live_mid",
-    "test_scan_skip_freed_closures",
-    "test_scheduler_gc_defer_pending_panic_steal",
     "test_shape_storm_partial_relower",
     "test_specjit_per_eval_storm_isolation",
     "test_specjit_pereval_storm_e2e",
@@ -290,7 +272,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_atomic_batch_rollback_closed_loop",
     "test_issue_1991",
     "test_parallel_intend_pure",
-    "test_flatast_atomic_lock_batch",
     # ── Full-tier AC drift / crashers (2026-08-16 build-test after #3085) ──
     # After HotUpdateRegistry DT_NEEDED + ownership-escape hash 64→128,
     # these still fail as member AC drift, hygiene-pass-limit rc=1, or

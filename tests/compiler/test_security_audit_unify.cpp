@@ -230,7 +230,7 @@ int run_test_security_audit_unify() {
                                                                        /*denied=*/false, 0, 5);
 
         // Filter by tenant=10: (limit tenant) → 10 10
-        auto r_t = cs.eval(R"((engine:metrics \"query:security-audit\" 10 10))");
+        auto r_t = cs.eval(R"((engine:metrics "query:security-audit" 10 10))");
         CHECK(r_t.has_value(), "security-audit tenant query ok");
         auto lines_t = list_string_lines(cs, *r_t);
         std::println("  tenant=10 lines: {}", lines_t.size());
@@ -253,7 +253,7 @@ int run_test_security_audit_unify() {
         CHECK(saw_typed, "typed join present for mutation_id=7002");
 
         // mutation-id filter: limit=10 tenant=10 fiber=5 since=0 mid=7001
-        auto r_mid = cs.eval(R"((engine:metrics \"query:security-audit\" 10 10 5 0 7001))");
+        auto r_mid = cs.eval(R"((engine:metrics "query:security-audit" 10 10 5 0 7001))");
         CHECK(r_mid.has_value(), "mutation-id filter query ok");
         auto lines_mid = list_string_lines(cs, *r_mid);
         bool only_7001 = !lines_mid.empty();
@@ -265,7 +265,7 @@ int run_test_security_audit_unify() {
         CHECK(only_7001, "mutation-id filter returns only 7001");
 
         // tenant=20
-        auto r20 = cs.eval(R"((engine:metrics \"query:security-audit\" 10 20))");
+        auto r20 = cs.eval(R"((engine:metrics "query:security-audit" 10 20))");
         CHECK(r20.has_value(), "tenant=20 query ok");
         auto lines20 = list_string_lines(cs, *r20);
         CHECK(!lines20.empty(), "tenant=20 has rows");
@@ -274,7 +274,7 @@ int run_test_security_audit_unify() {
         }
 
         // fiber=9 with tenant=20
-        auto rf = cs.eval(R"((engine:metrics \"query:security-audit\" 10 20 9))");
+        auto rf = cs.eval(R"((engine:metrics "query:security-audit" 10 20 9))");
         CHECK(rf.has_value(), "fiber filter query ok");
         auto lines_f = list_string_lines(cs, *rf);
         CHECK(!lines_f.empty(), "fiber=9 returns rows");
@@ -294,7 +294,7 @@ int run_test_security_audit_unify() {
         CHECK(href_stats(cs, "schema") == 2054, "schema key");
         CHECK(href_stats(cs, "unified") == 1, "unified=1");
         CHECK(href_stats(cs, "ring-size") == 64, "ring-size=64");
-        auto st = cs.eval(R"((engine:metrics \"query:security-audit-stats\"))");
+        auto st = cs.eval(R"((engine:metrics "query:security-audit-stats"))");
         CHECK(st && is_hash(*st), "stats returns hash");
     }
 

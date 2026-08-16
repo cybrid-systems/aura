@@ -22,8 +22,10 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/hot_update_registry.hh"
 #include "compiler/aura_jit_bridge.h"
+#include "compiler/typed_mutation_audit.h"
 
 extern "C" void aura_reset_runtime();
+extern "C" void aura_hot_update_set_reemit_boundary_policy(int policy);
 
 #include <cstdint>
 #include <fstream>
@@ -159,6 +161,8 @@ static void ac3_dirty_notify_on_mark() {
 
 static void ac4_reemit_when_wired() {
     std::println("\n--- AC4: reemit provider wired → trigger + candidates ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
     auto& reg = hot_update_registry();
     // Static feed: cascade reemit may outlive this stack frame if async.
     // Synthetic candidate name (not a live define): host emit_ok still
@@ -550,6 +554,8 @@ static void ac3059_4_linter_no_invent() {
 } // namespace
 
 int main() {
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura_hot_update_set_reemit_boundary_policy(0);
     std::println("=== test_hot_update_cascade_dirty_reemit (#2035 / #2090 / #2162) ===");
     ac1_source();
     ac2_region_mask_logic();

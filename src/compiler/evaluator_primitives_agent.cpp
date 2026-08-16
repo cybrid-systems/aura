@@ -269,6 +269,7 @@ void register_auto_evolve_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
     // Issue #2627: one-shot / loop body inlined (was auto-evolve-tick / once).
     add("agent:tick", [&ev](const auto& a) -> EvalValue {
+        // Issue #1712: no DBG tick fprintf in the tick body.
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->agent_tick_total.fetch_add(1, std::memory_order_relaxed);
         auto run_once = [&](std::int64_t detect_cid, std::int64_t fix_cid) -> EvalValue {

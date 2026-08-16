@@ -168,7 +168,8 @@ static void ac2904_5_query_and_atomics() {
     auto r = cs.eval("(engine:metrics \"query:dirty-columnar\")");
     CHECK(r.has_value(), "AC5: query:dirty-columnar returns value");
     // Structural: schema keys in query source.
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_lifecycle.cpp");
     CHECK(q.find("schema-2904") != std::string::npos, "AC5: schema-2904 in query");
     CHECK(q.find("dirty-column-writes-total") != std::string::npos, "AC5: column-writes key");
     CHECK(q.find("dirty-upward-cascades-avoided-total") != std::string::npos,

@@ -1807,7 +1807,10 @@ static int aura_remount_closure_captures_unlocked(std::int64_t closure_id,
     const auto cid_defuse =
         cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
     const auto cid_linear = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
-    const bool env_ok = (cid_defuse == 0) || (cid_defuse == live_env_gen);
+    // Issue #2234: defuse axis is host defuse_version, not env_frame.
+    // live_env_gen is the #2272 PRIMARY env axis (checked above).
+    const auto live_defuse = aura_get_aot_defuse_version();
+    const bool env_ok = (cid_defuse == 0) || (cid_defuse == live_defuse);
     const bool linear_ok = (cid_linear == 0) || (cid_linear == linear_fp);
     // Issue #2894: split Defuse vs Linear so Agents can branch without
     // correlating separate counters. Prefer Defuse when both drift.
@@ -3240,7 +3243,6 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
         g_closure_stable_func_ids[cid] = match_id;
         g_closure_bridge_epochs[cid] = new_bridge_epoch;
-        g_closure_defuse_versions[cid] = host_defuse;
         // Issue #2542: restamp env_gen to live env-frame generation so
         // remount PRIMARY axis (#2272) aligns after reemit.
         g_closure_env_gen[cid] = live_env;
@@ -3253,7 +3255,9 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         ++remapped;
         // Issue #2233 / #2542: post-reemit stamp metric — hit path.
         aura_bump_live_closure_epoch_restamp_total(1);
-        // Issue #2234 / #2503: post-reemit capture remount. Fail path
+        // Issue #2234 / #2503: remount BEFORE restamping defuse so the
+        // consistency gate sees the pre-reemit stamp (hit: stamped
+        // defuse == live; miss: stamped defuse behind live). Fail path
         // shares remount_or_force_deopt_unlocked (MustDeopt + batch_deopt).
         // Unlocked: exclusive g_closure_table_mtx already held.
         if (aura_closure_has_env_or_linear_captures_unlocked(static_cast<std::int64_t>(cid))) {
@@ -3261,6 +3265,7 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
             (void)remount_or_force_deopt_unlocked(static_cast<std::int64_t>(cid), live_env,
                                                   live_linear_fp, new_bridge_epoch);
         }
+        g_closure_defuse_versions[cid] = host_defuse;
         if (via_name_fallback)
             ++name_fallback_count;
     }
