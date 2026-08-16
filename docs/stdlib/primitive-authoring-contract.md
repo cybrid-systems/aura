@@ -8,7 +8,7 @@ Follow this document; do **not** invent a new registration style.
 | Piece | Location |
 |-------|----------|
 | Official helper | `src/compiler/prim_registrar_scaffold.hh` → `register_prim` + `PrimSpec` |
-| Render hot-path only | `src/compiler/render_prim_template.hh` → `register_render_hot_prim` |
+| Render hot-path helper | Retired with tui:* (#2626). Do not add new render-hot prims. |
 | Meta macros (legacy/compatible) | `DEFINE_PRIMITIVE_META` / `DEFINE_PRIMITIVE_META_SECURE` in `primitives_detail.h` |
 | Capture / error helpers | `PRIM_ERROR`, `PRIM_CAPTURE_*` in `primitives_detail.h` |
 | Central boot map | `src/compiler/evaluator_primitives_registry.cpp` (#1552) |
@@ -36,7 +36,7 @@ Factories: `pure_general`, `io_general`, `mutate_general` (all in the scaffold h
 
 ## Rules Agents must keep
 
-1. **One style** — Prefer `register_prim(...)`. Use `register_render_hot_prim` only for render-critical hot names. Do not add ad-hoc `add` + custom meta maps in new TUs.
+1. **One style** — Prefer `register_prim(...)`. Do not add ad-hoc `add` + custom meta maps in new TUs. `register_render_hot_prim` is retired (#2626).
 2. **Central registry** — Every new `register_*_primitives` group is called from `Evaluator::register_all_primitives()`.
 3. **PrimMeta auto-effects** — Leave `PrimSpec.required_effects == 0` so issue **#2152** infers from the name (`mutate:`, `file:`, …). Set explicit bits only when the name does not encode the effect.
 4. **Hot table** — Set `perf_tier = kPrimPerfHot` only when the prim is on a trusted hot path; `finalize_hot_table()` (Evaluator ctor) rebuilds `hot_map_` after all registrations. Scaffold never bypasses that path.

@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**497** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**494** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -11,7 +11,7 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 **Classification (Issue #559)**:
 
 - **mutation-safety**: 87 primitives (18%)
-- **core**: 365 primitives (73%)
+- **core**: 362 primitives (73%)
 - **internal-observable**: 44 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -171,7 +171,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (265)
+## Core builtins (262)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -181,7 +181,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `apply` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arena-offset` *[core]* — `src/compiler/evaluator_primitives_misc.cpp`
-- `arena-render-frame-reset` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `asin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `assert` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `atan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -362,8 +361,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `register-predicate!` *[core]* — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `register-strategy!` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `remainder` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
-- `render-hotpath-enter` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
-- `render-hotpath-exit` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
 - `reply` *[core]* — `src/compiler/evaluator_primitives_messaging.cpp`
 - `reverse` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `rollback` *[core]* — `src/compiler/evaluator_primitives_mutation.cpp`
@@ -735,7 +732,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (365)
+### Core builtins (must remain primitive) (362)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -752,7 +749,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `apply` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `apply-fix` — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `arena-offset` — `src/compiler/evaluator_primitives_misc.cpp`
-- `arena-render-frame-reset` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:adaptive-compact` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:auto-compact-threshold` — `src/compiler/evaluator_primitives_memory.cpp`
 - `arena:compact` — `src/compiler/evaluator_primitives_memory.cpp`
@@ -987,8 +983,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `register-predicate!` — `src/compiler/evaluator_primitives_query_workspace.cpp`
 - `register-strategy!` — `src/compiler/evaluator_primitives_agent.cpp`
 - `remainder` — `src/compiler/evaluator_primitives_math.cpp`
-- `render-hotpath-enter` — `src/compiler/evaluator_primitives_memory.cpp`
-- `render-hotpath-exit` — `src/compiler/evaluator_primitives_memory.cpp`
 - `reply` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `resource:quota-check` — `src/compiler/evaluator_primitives_obs_eval.cpp`
 - `resource:quota-set` — `src/compiler/evaluator_primitives_obs_eval.cpp`

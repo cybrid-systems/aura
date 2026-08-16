@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**74** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**73** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -24,7 +24,6 @@
 | `std/csv` | `csv-parse` `csv->rows` `csv->table` `csv-select` `csv-filter` `csv-header` `column-names` | csv.aura — CSV parsing and generation |
 | `std/data` | `make-trie` `trie-insert` `trie-search` `trie-prefix?` `trie-keys` | Aura standard data structures library |
 | `std/datetime` | `;` `Core` `timestamp` `timestamp-ms` `steady-ms` `timestamp->year` `timestamp->month` `timestamp->day` … (+20) | datetime.aura — Date and time utilities |
-| `std/eda` | `;` `Issue` `#1012` `helper` `eda:strcat` `IR` `constructors` `make-eda:module` … (+260) | — |
 | `std/edsl-test-harness` | `section` `it` `describe` `report` `summary` `total-pass` `total-fail` `reset-totals` … (+2) | Declarative-ish helpers for pure-Aura self-tests without quoting |
 | `std/encoding` | `hex-encode` `hex-decode` `base64-encode` `base64-decode` | lib/std/encoding.aura — Encoding utilities |
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
@@ -87,7 +86,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (497 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (494 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 

@@ -2634,8 +2634,7 @@ add_dependencies(all_test_issue_targets test_scheduler_gc_defer_pending_panic_st
 
 
 # Issue #2625/#2626: render3d:* / tui:* / terminal:* / voxel / TUI stack removed (camera, volume, raycast,
-# shade, frame, demo_voxel_3d, test_render3d_primitives). Pixel framebuffer
-# and TUI terminal paths remain.
+# shade, frame, demo_voxel_3d, test_render3d_primitives, src/tui, lib/std/eda).
 
 aura_issue_test_link_light(test_mutation_typed_audit_batch)
 add_dependencies(all_test_issue_targets test_mutation_typed_audit_batch)

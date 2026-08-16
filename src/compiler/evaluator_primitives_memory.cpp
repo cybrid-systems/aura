@@ -809,60 +809,6 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return build_hash(kv);
         });
 
-    // ── Issue #1315 Phase 1: render-frame arena lifecycle ──
-    // (arena-render-frame-reset) — quick per-frame boundary for TUI loops.
-    // Phase 1: temp_arena_ reset when safe + metrics; full time-boxed compact
-    // is follow-up. #1320: also sync soft-gate counters for Agent policy.
-    add("arena-render-frame-reset", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (ev.any_active_mutation_boundary()) {
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->render_frame_reset_deferred.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        // Issue #1357: record inter-reset frame time into histogram.
-        ev.mark_render_frame_boundary();
-        std::int64_t reclaimed = 0;
-        // Issue #1355: auto-commit any leftover lightweight frames at frame boundary.
-        if (ev.workspace_flat_ && ev.workspace_flat_->render_lightweight_active()) {
-            const auto n = ev.workspace_flat_->commit_all_render_lightweight_checkpoints();
-            reclaimed += static_cast<std::int64_t>(n);
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-                m->mutation_lightweight_frame_commit_total.fetch_add(static_cast<std::uint64_t>(n),
-                                                                     std::memory_order_relaxed);
-                m->mutation_lightweight_commit_total.fetch_add(static_cast<std::uint64_t>(n),
-                                                               std::memory_order_relaxed);
-            }
-        }
-        if (ev.temp_arena_) {
-            // O(1) reset of temp arena used for frame scratch.
-            ev.temp_arena_->reset();
-            reclaimed = reclaimed > 0 ? reclaimed : 1;
-        }
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->render_frame_reset_total.fetch_add(1, std::memory_order_relaxed);
-            m->render_frame_reset_reclaimed.fetch_add(static_cast<std::uint64_t>(reclaimed),
-                                                      std::memory_order_relaxed);
-            // Mirror process-wide soft-gate / defrag policy counters.
-            m->arena_compact_soft_gated_render.store(
-                aura::core::arena_policy::compact_soft_gated_render_total.load(
-                    std::memory_order_relaxed),
-                std::memory_order_relaxed);
-            m->arena_defrag_attempted_total.store(
-                aura::core::arena_policy::defrag_attempted_total.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
-            // Sync lightweight counters from FlatAST.
-            if (ev.workspace_flat_) {
-                m->mutation_lightweight_total.store(ev.workspace_flat_->lightweight_total(),
-                                                    std::memory_order_relaxed);
-                m->mutation_lightweight_commit_total.store(
-                    ev.workspace_flat_->lightweight_commit_total(), std::memory_order_relaxed);
-                m->mutation_lightweight_rollback_total.store(
-                    ev.workspace_flat_->lightweight_rollback_total(), std::memory_order_relaxed);
-            }
-        }
-        return make_int(reclaimed);
-    });
-
     // Issue #1355: Agent/test query for lightweight checkpoint stats.
     ObservabilityPrims::register_stats_impl(
         "query:mutation-lightweight-stats", [&ev](const auto&) -> EvalValue {
@@ -894,19 +840,6 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             return types::make_string(sidx);
         });
 
-    // Issue #1355: test hooks for render hot path enter/exit (thin wrappers).
-    add("render-hotpath-enter", [&ev](const auto&) -> EvalValue {
-        ev.enter_render_hotpath();
-        return make_bool(true);
-    });
-    add("render-hotpath-exit", [&ev](const auto&) -> EvalValue {
-        ev.exit_render_hotpath();
-        return make_bool(true);
-    });
-    ObservabilityPrims::register_stats_impl("render-hotpath-depth", [](const auto&) -> EvalValue {
-        return make_int(
-            static_cast<std::int64_t>(aura::core::arena_policy::g_render_hotpath_depth));
-    });
     // Issue #1355: int probes for Agent/tests.
     ObservabilityPrims::register_stats_impl(
         "mutation-lightweight-total", [&ev](const auto&) -> EvalValue {
@@ -1064,23 +997,6 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                 static_cast<std::int64_t>(ft.total_frames.load(std::memory_order_relaxed)));
         });
 
-    ObservabilityPrims::register_stats_impl(
-        "query:render-arena-frame-stats", [&ev](const auto&) -> EvalValue {
-            auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            auto load = [](const std::atomic<std::uint64_t>& a) {
-                return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
-            };
-            // Minimal hash: reuse string_heap + FlatHashTable via pair list of ints
-            // through existing pattern — return a 3-tuple pair chain as simple ints
-            // via string report for Phase 1 simplicity.
-            auto resets = m ? load(m->render_frame_reset_total) : 0;
-            auto deferred = m ? load(m->render_frame_reset_deferred) : 0;
-            auto reclaimed = m ? load(m->render_frame_reset_reclaimed) : 0;
-            auto sidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(std::format("resets={} deferred={} reclaimed={} schema=1315",
-                                                  resets, deferred, reclaimed));
-            return types::make_string(sidx);
-        });
     // (arena:defrag-requested?) — query the defrag request flag.
     // Returns #t if a defrag was requested and not yet acted on,
     // #f otherwise. Foundation for fiber-coordinated defrag —

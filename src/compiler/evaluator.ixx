@@ -6979,7 +6979,7 @@ public:
         }
     }
 
-    // Issue #1357: mark frame boundary for histogram (called from arena-render-frame-reset).
+    // Issue #1357: mark frame boundary for histogram (C++ render-frame hook).
     void mark_render_frame_boundary() noexcept {
         const auto now = std::chrono::steady_clock::now();
         if (last_frame_mark_.time_since_epoch().count() != 0) {

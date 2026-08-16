@@ -30,13 +30,10 @@ class TestBindingClassify(unittest.TestCase):
         self.assertTrue(self.m.is_prod("src/compiler/evaluator.ixx"))
         self.assertTrue(self.m.is_prod("src/compiler/service.ixx"))
         self.assertFalse(self.m.is_prod("src/core/ast.ixx"))
-        # #1454 TUI protected
-        # Issue #2626: evaluator_primitives_tui.cpp removed
-        self.assertTrue(self.m.is_prod("lib/std/tui/canvas.aura"))
-        self.assertTrue(
-            self.m.is_prod("examples/cyber_cat.aura")
-        )  # path is a pattern test case (file may not exist after Anqi 2026-07-19 demo cleanup)
-        self.assertTrue(self.m.is_prod("src/tui/tui_runtime.hh"))
+        # #2626: TUI / examples / src/tui retired — no longer production-bound.
+        self.assertFalse(self.m.is_prod("lib/std/tui/canvas.aura"))
+        self.assertFalse(self.m.is_prod("src/tui/tui_runtime.hh"))
+        self.assertFalse(self.m.is_prod("lib/std/eda.aura"))
 
     def test_test_paths(self):
         self.assertTrue(self.m.is_test("tests/core/test_arena_compact_hook_concurrent.cpp"))

@@ -10,6 +10,8 @@ present surface — this gate now locks that removal:
   AC3: helper template may remain for residual render: tools (optional)
   AC4: no tests/renderer tree
   AC5: build.py still wires this check (regression fence)
+  AC6: src/tui/ and lib/std/eda.aura are gone
+  AC7: no render-hotpath-enter / render-hotpath-exit / arena-render-frame-reset add()
 
 Usage:
   python3 scripts/coverage/checks/check_register_render_hot_prim_coverage.py
@@ -26,6 +28,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parents[3]
 
 ADD_TUI_RE = re.compile(r'\badd\(\s*"(tui:[^"]+|terminal:[^"]+)"')
+ADD_RENDER_HOT_RE = re.compile(r'\badd\(\s*"(arena-render-frame-reset|render-hotpath-enter|render-hotpath-exit)"')
 
 
 def _read(rel: str) -> str:
@@ -50,6 +53,10 @@ def check() -> list[str]:
     _must(not renderer.exists(), "AC4: src/renderer/ must be gone (#2625/#2626)", fails)
     tests_renderer = REPO / "tests/renderer"
     _must(not tests_renderer.exists(), "AC4: tests/renderer/ must be gone (#2625/#2626)", fails)
+    tui_dir = REPO / "src/tui"
+    _must(not tui_dir.exists(), "AC6: src/tui/ must be deleted", fails)
+    eda_aura = REPO / "lib/std/eda.aura"
+    _must(not eda_aura.is_file(), "AC6: lib/std/eda.aura must be deleted", fails)
 
     # Scan prim registration TUs for residual tui:/terminal: add()
     scan_roots = [
@@ -64,6 +71,8 @@ def check() -> list[str]:
             text = path.read_text(encoding="utf-8", errors="replace")
             for m in ADD_TUI_RE.finditer(text):
                 fails.append(f"AC2: residual {m.group(1)!r} in {path.relative_to(REPO)}")
+            for m in ADD_RENDER_HOT_RE.finditer(text):
+                fails.append(f"AC7: residual {m.group(1)!r} in {path.relative_to(REPO)}")
 
     build = _read("build.py")
     _must(

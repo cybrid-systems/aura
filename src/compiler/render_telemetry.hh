@@ -161,19 +161,6 @@ struct NamedPrimAgg {
 
 // Fixed set of render-critical names for compact query (Phase 1).
 inline constexpr const char* kTrackedRenderPrims[] = {
-    "terminal-set-cell",
-    "terminal-set-cell-rgb",
-    "terminal-present-batch",
-    "terminal-present",
-    "make-terminal-buffer",
-    "terminal-diff-update",
-    "tui:cell",
-    "tui:present",
-    "tui:draw-batch",    // #2134
-    "tui:fill-rect",     // #2134
-    "tui:present-batch", // #2134
-    "tui:present-dirty", // #2214
-    "tui:read-event",
     "+",
     "-",
     "*",

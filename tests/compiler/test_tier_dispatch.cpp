@@ -58,24 +58,13 @@ int main() {
         CHECK(hits1 >= hits0, "hot_dispatch_hits non-decreasing after hot prims");
     }
 
-    // Render hot path + hot prim: hits_render may increase
-    {
-        (void)cs.eval("(render-hotpath-enter)");
-        (void)cs.eval("(+ 1 1)");
-        (void)cs.eval("(render-hotpath-exit)");
-        auto s = cs.eval("(engine:metrics \"query:prim-dispatch-stats\")");
-        CHECK(s && is_string(*s), "stats after render hotpath");
-    }
-
-    // #2626: terminal-* / tui:* hot prims retired.
+    // #2626: render-hotpath-enter/exit + terminal/tui hot prims retired.
 
     // Cold fallback probe: lookup of unknown name doesn't crash
     {
         const auto cold0 = ival(cs, "(prim-cold-dispatch-fallback)");
-        (void)cs.eval("(render-hotpath-enter)");
         // Unknown symbol in call position may error, not use lookup the same way
         (void)cs.eval("(if #f (this-is-not-a-real-primitive) 1)");
-        (void)cs.eval("(render-hotpath-exit)");
         const auto cold1 = ival(cs, "(prim-cold-dispatch-fallback)");
         CHECK(cold1 >= cold0, "cold_dispatch_fallback non-decreasing");
     }
