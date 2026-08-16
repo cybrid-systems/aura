@@ -286,7 +286,7 @@ static void ac6_source_wiring() {
     auto low = read_file("src/compiler/lowering.ixx");
     auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     auto svc = read_file("src/compiler/service.ixx");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = ::aura::test::aura_query_prims_source();
     CHECK(!low.empty() && low.find("source_marker") != std::string::npos, "lowering stamps marker");
     CHECK(low.find("provenance") != std::string::npos, "lowering stamps provenance");
     CHECK(low.find("source_ast_node_id") != std::string::npos, "lowering stamps AST node id");
@@ -299,7 +299,7 @@ static void ac6_source_wiring() {
           "service restore");
     CHECK(svc.find("macro_ir_attr_cache_") != std::string::npos, "durable IR attr cache");
     CHECK(svc.find("note_macro_ir_attrs_from_module") != std::string::npos, "cache fill on lower");
-    CHECK(!q.empty() && q.find("schema-2100") != std::string::npos, "query schema-2100");
+    CHECK(!q.empty() && ::aura::test::aura_cxx_string_has(q, "schema-2100"), "query schema-2100");
 }
 
 // Issue #2177: AOT marker propagation parity (refine #2100 which was
@@ -330,14 +330,13 @@ static void ac7_aot_marker_parity_2177() {
           "AC7: lowering_impl.cpp calls aura_2177_record_aot_marker_propagated");
     CHECK(lo_contents.find("Issue #2177") != std::string::npos,
           "AC7: lowering_impl.cpp cites #2177");
-    std::ifstream eq("src/compiler/evaluator_primitives_query.cpp");
-    std::string eq_contents((std::istreambuf_iterator<char>(eq)), std::istreambuf_iterator<char>());
-    CHECK(eq_contents.find("aot-macro-marker-propagated-total") != std::string::npos,
+    const auto eq_contents = ::aura::test::aura_query_prims_source();
+    CHECK(::aura::test::aura_cxx_string_has(eq_contents, "aot-macro-marker-propagated-total"),
           "AC7: query:ir-hygiene-stats key aot-macro-marker-propagated-total");
-    CHECK(eq_contents.find("aot-macro-marker-stripped-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(eq_contents, "aot-macro-marker-stripped-total"),
           "AC7: query:ir-hygiene-stats key aot-macro-marker-stripped-total");
-    CHECK(eq_contents.find("schema-2177") != std::string::npos, "AC7: schema-2177");
-    CHECK(eq_contents.find("issue-2177") != std::string::npos, "AC7: issue-2177");
+    CHECK(::aura::test::aura_cxx_string_has(eq_contents, "schema-2177"), "AC7: schema-2177");
+    CHECK(::aura::test::aura_cxx_string_has(eq_contents, "issue-2177"), "AC7: issue-2177");
     const auto propagated = aura_2177_aot_macro_marker_propagated_total();
     const auto stripped = aura_2177_aot_macro_marker_stripped_total();
     CHECK(propagated >= 0, "AC7: propagated >= 0");
@@ -486,16 +485,20 @@ static void ac2764_4_non_macro_quiet() {
 
 static void ac2764_5_observability() {
     std::println("\n--- #2764 AC5: schema-2764 + additive keys ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto met = read_file("src/compiler/observability_metrics.h");
-    CHECK(source_has_key(q, "schema-2764"), "AC5: schema-2764");
-    CHECK(source_has_key(q, "issue-2764"), "AC5: issue-2764");
-    CHECK(source_has_key(q, "marker-ancestor-propagation-total"), "AC5: ancestor key");
-    CHECK(source_has_key(q, "multi-eval-macro-marker-preserved-total"), "AC5: multi-eval key");
-    CHECK(source_has_key(q, "propagate-marker-from-ast-wired"), "AC5: propagate wired");
-    CHECK(source_has_key(q, "inline-macro-hygiene-hard-filter-wired"), "AC5: inline wired");
+    CHECK(::aura::test::aura_cxx_string_has(q, "schema-2764"), "AC5: schema-2764");
+    CHECK(::aura::test::aura_cxx_string_has(q, "issue-2764"), "AC5: issue-2764");
+    CHECK(::aura::test::aura_cxx_string_has(q, "marker-ancestor-propagation-total"),
+          "AC5: ancestor key");
+    CHECK(::aura::test::aura_cxx_string_has(q, "multi-eval-macro-marker-preserved-total"),
+          "AC5: multi-eval key");
+    CHECK(::aura::test::aura_cxx_string_has(q, "propagate-marker-from-ast-wired"),
+          "AC5: propagate wired");
+    CHECK(::aura::test::aura_cxx_string_has(q, "inline-macro-hygiene-hard-filter-wired"),
+          "AC5: inline wired");
     // Prior surfaces preserved.
-    CHECK(source_has_key(q, "schema-2100"), "AC5: schema-2100 preserved");
+    CHECK(::aura::test::aura_cxx_string_has(q, "schema-2100"), "AC5: schema-2100 preserved");
     CHECK(source_has_key(q, "schema-2177") || q.find("2177") != std::string::npos,
           "AC5: schema-2177 lineage");
     CHECK(met.find("ir_marker_ancestor_propagation_total") != std::string::npos ||

@@ -68,7 +68,7 @@ int run_test_must_deopt_before_next_call() {
         auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
         auto eval = read_file("src/compiler/evaluator_eval_flat.cpp");
         auto met = read_file("src/compiler/observability_metrics.h");
-        auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+        auto q = ::aura::test::aura_query_prims_source();
         CHECK(rt.find("Issue #2128") != std::string::npos, "runtime #2128");
         CHECK(rt.find("g_closure_must_deopt") != std::string::npos, "must_deopt vector");
         CHECK(rt.find("MustDeoptBeforeNextCall") != std::string::npos ||
@@ -76,7 +76,7 @@ int run_test_must_deopt_before_next_call() {
               "must_deopt path");
         CHECK(eval.find("must_deopt_before_next_call") != std::string::npos, "TW apply path");
         CHECK(met.find("must_deopt_before_next_call_total") != std::string::npos, "metrics");
-        CHECK(q.find("schema-2128") != std::string::npos, "query schema");
+        CHECK(::aura::test::aura_cxx_string_has(q, "schema-2128"), "query schema");
     }
 
     // ── AC1: flag → force deopt on aura_closure_call ──

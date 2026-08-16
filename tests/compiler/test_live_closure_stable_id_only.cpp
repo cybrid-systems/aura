@@ -206,7 +206,7 @@ static void ac5_source_and_gate() {
     std::println("\n--- AC5: source-cite contract + gate ---");
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto sec = read_file("src/compiler/security_defaults.hh");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto cmake = read_file("CMakeLists.txt");
     const auto build = read_file("build.py");
     const auto script =
@@ -226,8 +226,9 @@ static void ac5_source_and_gate() {
     CHECK(sec.find("Issue #2369") != std::string::npos, "AC5: production defaults cite #2369");
     CHECK(sec.find("aura_set_remap_name_fallback_enabled(0)") != std::string::npos,
           "AC5: production forces fallback off");
-    CHECK(q.find("schema-2369") != std::string::npos, "AC5: query schema");
-    CHECK(q.find("stable-func-id-sole-primary-wired") != std::string::npos, "AC5: wired key");
+    CHECK(::aura::test::aura_cxx_string_has(q, "schema-2369"), "AC5: query schema");
+    CHECK(::aura::test::aura_cxx_string_has(q, "stable-func-id-sole-primary-wired"),
+          "AC5: wired key");
     CHECK(cmake.find("test_live_closure_stable_id_only") != std::string::npos, "AC5: cmake");
     CHECK(build.find("check_live_closure_stable_id_only_2369") != std::string::npos,
           "AC5: build script");

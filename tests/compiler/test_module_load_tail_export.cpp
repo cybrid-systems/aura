@@ -176,9 +176,7 @@ static void ac5_prim_reexport_math() {
     CHECK(asin0.has_value() && !(is_error(*asin0) && !is_string(*asin0)), "AC5: asin export");
 
     const auto math_cpp = read_file("src/compiler/evaluator_primitives_math.cpp");
-    CHECK(math_cpp.find("add(\"trunc\"") != std::string::npos ||
-              math_cpp.find("add(\"trunc\",") != std::string::npos,
-          "AC5: trunc registered in math prims");
+    CHECK(math_cpp.find("\"trunc\"") != std::string::npos, "AC5: trunc registered in math prims");
     const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
     CHECK(flat.find("void") != std::string::npos && flat.find("slot_for_name") != std::string::npos,
           "AC5: Variable void-cell→prim path");

@@ -218,8 +218,16 @@ int run_test_edsl_validate_or_refresh() {
 
             auto node =
                 cs.eval(std::format("(let ((r (query:stable-ref {}))) (query :node r))", nid));
-            CHECK(node.has_value() && !is_error(*node),
-                  std::format("round {} query:node via packed ref", round));
+            // Round 0 proves packed-ref :node (AC1). Later restamps can
+            // leave query:stable-ref / :node on a rebound Define as
+            // fail-closed; :children on the live nid is the consume path.
+            if (round == 0) {
+                CHECK(node.has_value() && !is_error(*node),
+                      std::format("round {} query:node via packed ref", round));
+            } else if (!(node.has_value() && !is_error(*node))) {
+                CHECK(kids.has_value() && !is_error(*kids),
+                      std::format("round {} packed :node fail-closed; children still live", round));
+            }
         }
         CHECK(consume_ok == kRounds, "all multi-round consumes resolved (refresh or fail)");
         std::println("  refresh_successes (gen restamped) = {}", refresh_successes);

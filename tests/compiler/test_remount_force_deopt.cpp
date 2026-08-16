@@ -253,7 +253,7 @@ static void ac4_source_cite() {
     const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
     const auto hh = read_file("src/compiler/aura_jit_bridge.h");
     const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = ::aura::test::aura_query_prims_source();
     const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
     const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
     const auto cmake = read_file("CMakeLists.txt");
@@ -289,8 +289,8 @@ static void ac4_source_cite() {
         CHECK(remap_body.find("remount_or_force_deopt_unlocked") != std::string::npos,
               "AC4: reemit does not use divergent bare remount fail path alone");
     }
-    CHECK(q.find("schema-2503") != std::string::npos, "AC4: schema-2503 on query surface");
-    CHECK(q.find("remount-or-force-deopt-wired") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "schema-2503"), "AC4: schema-2503 on query surface");
+    CHECK(::aura::test::aura_cxx_string_has(q, "remount-or-force-deopt-wired"),
           "AC4: remount-or-force-deopt-wired sentinel");
     CHECK(stub.find("aura_remount_or_force_deopt") != std::string::npos, "AC4: weak stub present");
     CHECK(cmake.find("test_remount_force_deopt") != std::string::npos, "AC4: cmake target");
@@ -328,10 +328,11 @@ static void ac4_source_cite() {
         CHECK(body.find("RemountFailReason::Ok") == std::string::npos,
               "AC5/#2894: no Ok store on success path in remount body");
     }
-    CHECK(q.find("schema-2894") != std::string::npos, "AC5/#2894: schema-2894 query surface");
-    CHECK(q.find("last-remount-fail-reason") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "schema-2894"),
+          "AC5/#2894: schema-2894 query surface");
+    CHECK(::aura::test::aura_cxx_string_has(q, "last-remount-fail-reason"),
           "AC5/#2894: last-remount-fail-reason key");
-    CHECK(q.find("remount-fail-reason-wired") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "remount-fail-reason-wired"),
           "AC5/#2894: remount-fail-reason-wired sentinel");
     CHECK(obs.find("schema-2894") != std::string::npos, "AC5/#2894: schema-2894 obs_eval surface");
     CHECK(stub.find("aura_last_remount_fail_reason") != std::string::npos,
