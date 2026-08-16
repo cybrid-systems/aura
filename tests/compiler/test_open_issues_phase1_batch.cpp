@@ -138,8 +138,6 @@ void run_all(CompilerService& cs) {
             CHECK(v.has_value(), std::format("{} field present", c.query));
         }
     }
-    (void)cs.eval("(terminal:create-buffer)");
-    (void)cs.eval("(terminal:diff)");
     (void)cs.eval("(primitives:alias \"q\" \"query:pattern\")");
     auto c = cs.eval("(+ 19 23)");
     CHECK(c && is_int(*c) && as_int(*c) == 42, "classic eval");

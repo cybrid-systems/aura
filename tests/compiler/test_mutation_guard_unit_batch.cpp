@@ -3108,16 +3108,13 @@ int run_1645_1649_hygiene_counters_smoke() {
 
 namespace aura_mut_run_wave46_435 {
 using aura::ast::NodeTag;
-using aura::compiler::CompilerService;
 using aura::test::g_failed;
 using aura::test::g_passed;
 int run_435_sv_ir_phases_smoke() {
     std::println("\n=== #435: SV IR Interface/Modport phases smoke ===");
     CHECK(static_cast<int>(NodeTag::Interface) > 0, "Interface");
     CHECK(static_cast<int>(NodeTag::Modport) > 0, "Modport");
-    CompilerService cs;
-    auto e = cs.eval("(eda:emit-interface)");
-    CHECK(e.has_value() || true, "eda:emit-interface optional");
+    // #2629: eda:* primitives retired; tag presence is the remaining smoke.
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave46_435
@@ -3176,21 +3173,13 @@ int run_345_generation_stress_soft_smoke() {
 // Wave 47 (#1957): mutation_dirty — final unbundled SV/EDA + concepts smokes
 namespace aura_mut_run_wave47_284 {
 using aura::ast::NodeTag;
-using aura::compiler::CompilerService;
 using aura::test::g_failed;
 using aura::test::g_passed;
 int run_284_sv_interface_eda_smoke() {
     std::println("\n=== #284: SV interface/modport EDA emit smoke ===");
     CHECK(static_cast<int>(NodeTag::Interface) > 0, "Interface tag");
     CHECK(static_cast<int>(NodeTag::Modport) > 0, "Modport tag");
-    CompilerService cs;
-    // EDA primitives may be gated; soft reachability
-    auto i = cs.eval("(eda:interface?)");
-    (void)i;
-    auto e = cs.eval("(eda:emit-interface)");
-    CHECK(e.has_value() || true, "eda:emit-interface surface");
-    auto v = cs.eval("(eda:emit-verilog)");
-    CHECK(v.has_value() || true, "eda:emit-verilog surface");
+    // #2629: eda:* primitives retired; tag presence is the remaining smoke.
     return g_failed ? 1 : 0;
 }
 } // namespace aura_mut_run_wave47_284

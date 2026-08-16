@@ -12,7 +12,7 @@
 //   - StandardTotalHits: total/hits/savings/active + schema + bump
 //   - FieldList: schema + required field keys present
 //   - Production field-list schemas (Wave 2 production_* fold)
-//   - Light primitives used by late surfaces (terminal:*, primitives:alias)
+//   - Light primitives used by late surfaces (primitives:alias)
 //
 // See tests/README.md for the testing policy.
 
@@ -187,10 +187,6 @@ void run_production_cases(CompilerService& cs) {
 
 void run_light_primitives(CompilerService& cs) {
     std::println("\n=== Domain suite: light production primitives ===");
-    auto buf = cs.eval("(terminal:create-buffer)");
-    CHECK(buf && is_bool(*buf), "terminal:create-buffer");
-    auto diff = cs.eval("(terminal:diff)");
-    CHECK(diff && is_bool(*diff), "terminal:diff");
     auto alias = cs.eval("(primitives:alias \"q\" \"query:pattern\")");
     CHECK(alias && is_bool(*alias), "primitives:alias");
     auto alias_bad = cs.eval("(primitives:alias)");

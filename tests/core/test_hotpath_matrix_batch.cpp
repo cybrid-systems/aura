@@ -236,10 +236,8 @@ static void run_hygiene_dirty(CompilerService& cs) {
     expect_schema(cs, "query:terminal-render-production-stats", 824);
     CHECK(href(cs, "query:terminal-render-production-stats", "module-active") == 1,
           "module-active");
-    auto clr = cs.eval("(terminal:clear)");
-    CHECK(clr && is_bool(*clr), "terminal:clear");
-    auto pres = cs.eval("(terminal:present)");
-    CHECK(pres && is_bool(*pres), "terminal:present");
+    ev.bump_term_render_clear();
+    ev.bump_term_render_present();
     CHECK(href(cs, "query:terminal-render-production-stats", "clear-total") >= 1, "clear-total");
 
     std::println("\n=== Render FFI + hotpath (#825/#826) ===");

@@ -9,8 +9,8 @@
 // file (originally between imports and the namespace opening);
 // definitions live in src/serve/fiber.cpp at global scope.
 //
-// Issue #1971: 7 terminal:* names (Phase-A deprecated no-ops, #1351) are
-// See docs/terminal-domain.md.
+// Issue #2626: terminal:* / tui:* public prims removed (was #1971 Phase-A
+// deprecated no-ops). Do not re-register those prefixes.
 
 module;
 
@@ -8397,11 +8397,7 @@ void ObservabilityPrims::register_jit_p58(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 part 59 (orig lines 18572-18664)
 void ObservabilityPrims::register_jit_p59(PrimRegistrar add, Evaluator& ev) {
 
-    // Issue #1971 / #1351: terminal:* Phase-A deprecated no-ops. #2626
-    // dropped the AURA_ENABLE_TERMINAL body; keep the two names the
-    // schema-matrix light surface still calls (SlimSurface ceiling).
-    add("terminal:create-buffer", [](const auto&) -> EvalValue { return make_bool(false); });
-    add("terminal:diff", [](const auto&) -> EvalValue { return make_bool(false); });
+    // Issue #2626: terminal:* removed (was AURA_ENABLE_TERMINAL / #1971 no-ops).
     // Issue #830: query:pass-shape-epoch-stats
     ObservabilityPrims::register_stats_impl(
         "query:pass-shape-epoch-stats", [&ev](const auto&) -> EvalValue {

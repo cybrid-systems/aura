@@ -10,9 +10,7 @@ import aura.compiler.service;
 import aura.compiler.value;
 
 using aura::compiler::CompilerService;
-using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
-using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
 
@@ -69,14 +67,7 @@ int main() {
         CHECK(s && is_string(*s), "stats after render hotpath");
     }
 
-    // terminal-set-cell is hot (RENDER_PRIMITIVE_META)
-    {
-        auto id = cs.eval("(make-terminal-buffer 2 1)");
-        CHECK(id && is_int(*id) && as_int(*id) >= 0, "make-terminal-buffer (hot)");
-        auto ok = cs.eval(std::format("(terminal-set-cell {} 0 0 65 1 0)", as_int(*id)));
-        CHECK(ok && is_bool(*ok), "terminal-set-cell (hot)");
-        CHECK(ival(cs, "(stats:get \"prim-hot-table-size\")") >= 5, "hot table still populated");
-    }
+    // #2626: terminal-* / tui:* hot prims retired.
 
     // Cold fallback probe: lookup of unknown name doesn't crash
     {

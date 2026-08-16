@@ -26,7 +26,6 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
-using aura::compiler::types::is_pair;
 using aura::compiler::types::is_void;
 
 namespace {
@@ -81,17 +80,7 @@ static void ac_1123_1140() {
         CHECK(r2 && is_void(*r2), "format non-string → void");
     }
 
-    // #1135/#1136/#1140 — no-ops deprecated in #1351 (still bool, now #f)
-    {
-        CHECK(cs.eval("(terminal:present)") && is_bool(*cs.eval("(terminal:present)")),
-              "terminal:present");
-        auto b = cs.eval("(terminal:present-delta)");
-        CHECK(b && is_bool(*b) && !as_bool(*b), "terminal:present-delta deprecated → #f");
-        auto c = cs.eval("(terminal:create-buffer)");
-        CHECK(c && is_bool(*c) && !as_bool(*c), "terminal:create-buffer deprecated → #f");
-        auto d = cs.eval("(terminal:diff)");
-        CHECK(d && is_bool(*d) && !as_bool(*d), "terminal:diff deprecated → #f");
-    }
+    // #1135/#1136/#1140 — terminal:* retired with #2626 (no public no-ops).
 
     // #1139
     {
@@ -1236,33 +1225,7 @@ static void ac_1311_1315() {
               "issue-1315");
     }
 
-    // #1313: terminal buffer + set-cell + diff
-    {
-        auto id = cs.eval("(make-terminal-buffer 4 2)");
-        CHECK(id && is_int(*id) && as_int(*id) >= 0, "make-terminal-buffer");
-        auto bid = as_int(*id);
-        auto ok = cs.eval(std::format("(terminal-set-cell {} 0 0 65)", bid));
-        CHECK(ok && is_bool(*ok), "terminal-set-cell");
-        auto id2 = cs.eval("(make-terminal-buffer 4 2)");
-        CHECK(id2 && is_int(*id2), "second buffer");
-        auto bid2 = as_int(*id2);
-        (void)cs.eval(std::format("(terminal-set-cell {} 0 0 66)", bid2));
-        auto diff = cs.eval(std::format("(terminal-diff-update {} {})", bid, bid2));
-        CHECK(diff && is_int(*diff) && as_int(*diff) >= 1, "terminal-diff-update changed");
-        auto creates =
-            href(cs, "query:production-sweep-1311-1315-stats", "terminal-buffer-creates");
-        CHECK(creates >= 2, "terminal buffer creates counted");
-    }
-
-    // #1314: present-batch writes bytes
-    {
-        auto id = cs.eval("(make-terminal-buffer 2 1)");
-        CHECK(id && is_int(*id), "buf for present");
-        auto n = cs.eval(std::format("(terminal-present-batch {})", as_int(*id)));
-        CHECK(n && is_int(*n) && as_int(*n) >= 0, "terminal-present-batch");
-        auto samples = href(cs, "query:production-sweep-1311-1315-stats", "render-hotpath-samples");
-        CHECK(samples >= 1, "render hotpath sampled");
-    }
+    // #1313/#1314: make-terminal-buffer / terminal-* retired with #2626.
 
     // #1315: arena-render-frame-reset + stats
     {
@@ -1303,45 +1266,14 @@ static void ac_1316_1320() {
         CHECK(href(cs, Q, "render-deopt-throttle-window-ms") == 500, "deopt window 500ms");
     }
 
-    // #1316: deopt throttle — first probe applies, rapid second is throttled
+    // #1316/#1317: render-jit-deopt-probe + terminal-* prims retired with #2626.
     {
-        auto a1 = cs.eval("(render-jit-deopt-probe)");
-        CHECK(a1 && is_int(*a1) && as_int(*a1) >= 1, "first deopt probe applies");
-        auto a2 = cs.eval("(render-jit-deopt-probe)");
-        CHECK(a2 && is_int(*a2), "second deopt probe returns int");
-        auto throttled = href(cs, Q, "render-jit-deopt-throttled");
-        CHECK(throttled >= 1, "second probe throttled within 500ms");
         auto st = cs.eval("(engine:metrics \"query:render-jit-stability-stats\")");
         // #1563: structured hash (schema 1563); still reachable under same name.
         CHECK(st && is_hash(*st), "query:render-jit-stability-stats hash (#1563)");
         auto s =
             cs.eval("(hash-ref (engine:metrics \"query:render-jit-stability-stats\") \"schema\")");
         CHECK(s && is_int(*s) && as_int(*s) == 1563, "stability schema 1563");
-        auto thr = cs.eval(
-            "(hash-ref (engine:metrics \"query:render-jit-stability-stats\") \"deopt-throttled\")");
-        CHECK(thr && is_int(*thr) && as_int(*thr) >= 1, "stability stats deopt-throttled");
-    }
-
-    // #1317: terminal primitives + obs queries
-    {
-        auto id = cs.eval("(make-terminal-buffer 3 2)");
-        CHECK(id && is_int(*id) && as_int(*id) >= 0, "make-terminal-buffer");
-        auto bid = as_int(*id);
-        auto ok = cs.eval(std::format("(terminal-set-cell {} 0 0 65)", bid));
-        CHECK(ok && is_bool(*ok), "terminal-set-cell");
-        auto id2 = cs.eval("(make-terminal-buffer 3 2)");
-        CHECK(id2 && is_int(*id2), "second buffer");
-        (void)cs.eval(std::format("(terminal-set-cell {} 0 0 66)", as_int(*id2)));
-        auto diff = cs.eval(std::format("(terminal-diff-update {} {})", bid, as_int(*id2)));
-        CHECK(diff && is_int(*diff) && as_int(*diff) >= 1, "terminal-diff-update");
-        auto tds = cs.eval("(engine:metrics \"query:terminal-diff-stats\")");
-        CHECK(tds && is_string(*tds), "query:terminal-diff-stats");
-        auto present = cs.eval(std::format("(terminal-present-batch {})", bid));
-        CHECK(present && is_int(*present) && as_int(*present) >= 0, "terminal-present-batch");
-        auto aot = href(cs, Q, "render-jit-aot-prefer-hits");
-        CHECK(aot >= 1, "present samples aot prefer");
-        auto obs = href(cs, Q, "render-obs-query-hits");
-        CHECK(obs >= 1, "render obs query hits");
     }
 
     // #1318: dual-emit bridge counter is non-negative (may be 0 if no lower yet)
@@ -1555,81 +1487,9 @@ static void ac_1331_1343() {
         CHECK(href(cs, Q, "tui-stdlib-active") == 1, "stdlib (#1334-5)");
         CHECK(href(cs, Q, "tui-sync-output-active") == 1, "sync output (#1342)");
         CHECK(href(cs, Q, "tui-mouse-scaffold-active") == 1, "mouse (#1343)");
-        // examples/ removed per Anqi 2026-07-19 directive (aura philosophy,
-        // no demos). The TUI primitives (tui:init/cell/present/etc.) and
-        // mouse/sync/output scaffolding are still verified below; only the
-        // demo-specific meta checks (cyber cat + games demos) are dropped.
+        // #2626: tui:* primitives, lib/std/tui, and examples retired.
+        // Sweep query flags stay as historical schema; no prim/file ACs.
         CHECK(href(cs, Q, "issue-1343") == 1343, "issue-1343");
-    }
-
-    // #1332/#1333: init → cell → present → frame-ansi
-    {
-        auto ok = cs.eval("(tui:init \"test\" 16 8)");
-        CHECK(ok && is_bool(*ok), "tui:init returns bool");
-
-        auto sz = cs.eval("(tui:size)");
-        CHECK(sz && is_pair(*sz), "tui:size is pair");
-
-        auto cell = cs.eval("(tui:cell 2 3 \"A\" 16711680 0 0)");
-        CHECK(cell && is_bool(*cell), "tui:cell");
-
-        auto g = cs.eval("(tui:get-cell 2 3)");
-        CHECK(g && is_pair(*g), "tui:get-cell");
-
-        auto p = cs.eval("(tui:present)");
-        CHECK(p, "tui:present");
-
-        auto ansi = cs.eval("(tui:frame-ansi)");
-        CHECK(ansi && is_string(*ansi), "tui:frame-ansi string");
-
-        auto inits = href(cs, Q, "tui-init-total");
-        CHECK(inits >= 1, "init counted");
-        auto presents = href(cs, Q, "tui-present-total");
-        CHECK(presents >= 1, "present counted");
-        auto writes = href(cs, Q, "tui-cell-writes");
-        CHECK(writes >= 1, "cell writes counted");
-        auto sync = href(cs, Q, "tui-sync-output-frames");
-        CHECK(sync >= 1, "CSI 2026 sync frames (#1342)");
-
-        auto sh = cs.eval("(tui:shutdown)");
-        CHECK(sh, "tui:shutdown");
-    }
-
-    // #1342 half-block pixel
-    {
-        (void)cs.eval("(tui:init \"px\" 8 4)");
-        auto px = cs.eval("(tui:pixel 1 1 16711680 255)");
-        CHECK(px && is_bool(*px), "tui:pixel");
-        auto hb = href(cs, Q, "tui-half-block-pixels");
-        CHECK(hb >= 1, "half-block counted");
-        (void)cs.eval("(tui:shutdown)");
-    }
-
-    // #1343 mouse + inject-key event
-    {
-        (void)cs.eval("(tui:init \"ev\" 8 4)");
-        auto m = cs.eval("(tui:mouse 1)");
-        CHECK(m && is_bool(*m), "tui:mouse");
-        auto me = href(cs, Q, "tui-mouse-enable-total");
-        CHECK(me >= 1, "mouse enable counted");
-        (void)cs.eval("(tui:inject-key \"q\")");
-        auto e = cs.eval("(tui:read-event 0)");
-        CHECK(e && is_pair(*e), "read-event after inject");
-        (void)cs.eval("(tui:shutdown)");
-    }
-
-    // Demo / stdlib files exist
-    {
-        CHECK(file_exists("lib/std/tui/canvas.aura"), "canvas.aura");
-        CHECK(file_exists("lib/std/tui/sprite.aura"), "sprite.aura");
-        CHECK(file_exists("lib/std/tui/input.aura"), "input.aura");
-        CHECK(file_exists("lib/std/tui/run.aura"), "run.aura");
-        CHECK(file_exists("lib/std/tui/scene.aura"), "scene.aura");
-        CHECK(file_exists("lib/std/tui/anim.aura"), "anim.aura");
-        CHECK(file_exists("examples/cyber_cat.aura"), "cyber_cat.aura");
-        CHECK(file_exists("examples/snake.aura"), "snake.aura");
-        CHECK(file_exists("examples/tetris.aura"), "tetris.aura");
-        CHECK(file_exists("src/tui/tui_runtime.hh"), "tui_runtime.hh");
     }
 
     {

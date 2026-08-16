@@ -6,7 +6,7 @@
 //   #821 jit-fiber-exception-stats
 //   #822 l2-specialization-deopt-stats
 //   #823 opcode-coverage-deopt-stats
-//   #824 terminal-render-production-stats + terminal:* primitives
+//   #824 terminal-render-production-stats (terminal:* prims retired #2626)
 //   #825 render-ffi-buffer-stats
 //   #826 render-hotpath-stats
 //   #827 shape-value-hotpath-contracts-stats
@@ -111,20 +111,14 @@ static void run_matrix(CompilerService& cs) {
     CHECK(href(cs, "query:opcode-coverage-deopt-stats", "coverage-hits") >= 1, "coverage-hits");
     CHECK(href(cs, "query:opcode-coverage-deopt-stats", "per-fn-deopt") >= 1, "per-fn-deopt");
 
-    std::println("\n--- #824 terminal-render-production-stats + terminal:* ---");
+    std::println("\n--- #824 terminal-render-production-stats ---");
     check_schema(cs, "query:terminal-render-production-stats", 824);
     CHECK(href(cs, "query:terminal-render-production-stats", "module-active") == 1,
           "module-active");
-    auto clr = cs.eval("(terminal:clear)");
-    CHECK(clr && is_bool(*clr), "terminal:clear");
-    auto draw = cs.eval("(terminal:draw-batch 100)");
-    CHECK(draw && is_bool(*draw), "terminal:draw-batch");
-    auto pres = cs.eval("(terminal:present)");
-    CHECK(pres && is_bool(*pres), "terminal:present");
-    auto dirty = cs.eval("(terminal:mark-dirty-region)");
-    CHECK(dirty && is_bool(*dirty), "terminal:mark-dirty-region");
-    auto delta = cs.eval("(terminal:present-delta)");
-    CHECK(delta && is_bool(*delta), "terminal:present-delta");
+    ev.bump_term_render_clear();
+    ev.bump_term_render_draw_batch();
+    ev.bump_term_render_present();
+    ev.bump_term_render_dirty_region();
     CHECK(href(cs, "query:terminal-render-production-stats", "clear-total") >= 1, "clear-total");
     CHECK(href(cs, "query:terminal-render-production-stats", "present-total") >= 1,
           "present-total");
@@ -145,10 +139,10 @@ static void run_matrix(CompilerService& cs) {
     std::println("\n--- #826 render-hotpath-stats ---");
     check_schema(cs, "query:render-hotpath-stats", 826);
     CHECK(href(cs, "query:render-hotpath-stats", "hotpath-active") == 1, "hotpath-active");
-    // dirty/delta already bumped by terminal:mark-dirty-region / present-delta
-    CHECK(href(cs, "query:render-hotpath-stats", "dirty-hits") >= 1, "dirty-hits from terminal");
-    CHECK(href(cs, "query:render-hotpath-stats", "present-delta") >= 1,
-          "present-delta from terminal");
+    ev.bump_render_hp_dirty_hit();
+    ev.bump_render_hp_present_delta();
+    CHECK(href(cs, "query:render-hotpath-stats", "dirty-hits") >= 1, "dirty-hits");
+    CHECK(href(cs, "query:render-hotpath-stats", "present-delta") >= 1, "present-delta");
     ev.bump_render_hp_jit_coverage();
     ev.bump_render_hp_mutation_impact();
     CHECK(href(cs, "query:render-hotpath-stats", "jit-coverage") >= 1, "jit-coverage");
