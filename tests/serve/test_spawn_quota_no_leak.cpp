@@ -198,9 +198,13 @@ int run_test_spawn_quota_no_leak() {
         std::println("\n--- AC3: nullptr after consume releases arena ---");
         // Contract locked in source + accounting unit: try_consume then
         // release restores gauge (same as spawn_agent_with_mailbox !f path).
-        const auto src = read_file("src/orch/agent_spawn.h");
+        const auto src = aura::test::aura_read_repo_file("src/orch/agent_spawn.h");
         CHECK(!src.empty(), "agent_spawn.h readable");
-        CHECK(src.find("release_agent_arena(mem_cost)") != std::string::npos, "AC3: release on !f");
+        // !f path releases the arena reservation (arg list grew a tenant
+        // id; match the call + the nullptr-after-consume branch).
+        CHECK(src.find("if (!f)") != std::string::npos &&
+                  src.find("release_agent_arena(") != std::string::npos,
+              "AC3: release on !f");
         CHECK(src.find("finalize_spawn_quota_reject") != std::string::npos, "AC3: finalize helper");
         CHECK(src.find("kSpawnQuotaNoLeakIssue") != std::string::npos ||
                   src.find("2155") != std::string::npos,

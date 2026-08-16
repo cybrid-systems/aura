@@ -27,14 +27,9 @@ aura_jit_prim_dispatch(std::int64_t prim_id, std::int64_t* args, std::int32_t ar
     return 0;
 }
 
-// Issue #2370 / CI link: hot_update_registry.cpp references
-// aura_get_storm_eval_context (defined strongly in
-// spec_jit_controller.cpp). test_concurrent links
-// hot_update_registry + aura_jit_bridge but not SpecJIT
-// controller — without a weak fallback, link fails with
-// undefined reference. Strong definitions (controller /
-// bridge_stub) still win when present.
-extern "C" __attribute__((weak)) void aura_set_storm_eval_context(void* /*eval_ptr*/) noexcept {}
-extern "C" __attribute__((weak)) void* aura_get_storm_eval_context(void) noexcept {
-    return nullptr;
-}
+// Do not stub aura_set/get_storm_eval_context here. This TU is in
+// aura_jit_test_objects (DT_NEEDED first for full-JIT tests); a weak
+// no-op in the first DSO wins ELF search over the strong TLS in
+// spec_jit_controller.cpp (aura_test_objects) and breaks #2370 PerEval
+// isolation. Light-link binaries keep the weak fallback in
+// aura_jit_bridge_stub.cpp.
