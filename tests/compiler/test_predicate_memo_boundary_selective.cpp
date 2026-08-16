@@ -205,7 +205,7 @@ static void ac6_source_wiring() {
     std::println("\n--- AC6: source wiring #2104 ---");
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = aura::test::aura_query_prims_source();
     auto met = read_file("src/compiler/observability_metrics.h");
     CHECK(!impl.empty() && impl.find("Issue #2104") != std::string::npos, "impl #2104");
     CHECK(impl.find("dirty_var_names") != std::string::npos, "dirty_var_names collection");
@@ -264,7 +264,7 @@ static void ac9_phase2_source_wiring() {
     std::println("\n--- AC9: source wiring #2285 ---");
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
     auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = aura::test::aura_query_prims_source();
     CHECK(!impl.empty() && impl.find("Issue #2285") != std::string::npos, "impl cites #2285");
     CHECK(impl.find("affected_names") != std::string::npos,
           "affected_names collection in infer_flat_partial");
