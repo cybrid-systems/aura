@@ -303,9 +303,9 @@ static void ac2703_4_query_keys_added() {
     CHECK(q.find("query:cone-outside-goal-drop") != std::string::npos ||
               q.find("cone-outside-goal-drop-total") != std::string::npos,
           "AC4: query primitive / counter surfaced");
-    CHECK(q.find("cone-outside-goal-drop-soft-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "cone-outside-goal-drop-soft-total"),
           "AC4: soft counter surfaced");
-    CHECK(q.find("cone-outside-goal-drop-wired") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "cone-outside-goal-drop-wired"),
           "AC4: wired sentinel surfaced");
     CHECK(q.find("schema-2703") != std::string::npos, "AC4: schema-2703");
     CHECK(q.find("issue-2703") != std::string::npos, "AC4: issue-2703");
@@ -389,9 +389,9 @@ static void ac2704_4_query_keys_added() {
     CHECK(q.find("query:occurrence-empty-after-fence") != std::string::npos ||
               q.find("occurrence-empty-after-fence-total") != std::string::npos,
           "AC4: query primitive / counter surfaced");
-    CHECK(q.find("occurrence-empty-after-fence-soft-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-empty-after-fence-soft-total"),
           "AC4: soft counter surfaced");
-    CHECK(q.find("occurrence-empty-after-fence-wired") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-empty-after-fence-wired"),
           "AC4: wired sentinel surfaced");
     CHECK(q.find("schema-2704") != std::string::npos, "AC4: schema-2704");
     CHECK(q.find("issue-2704") != std::string::npos, "AC4: issue-2704");
@@ -520,9 +520,9 @@ static void ac2716_4_additive_no_regression() {
 static void ac2716_5_query_keys_added() {
     std::println("\n--- #2716 AC5: additive query keys ---");
     const auto q = ::aura::test::aura_query_prims_source();
-    CHECK(q.find("occurrence-hard-face-full-solve-recover-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-hard-face-full-solve-recover-total"),
           "AC5: query exposes occurrence-hard-face-full-solve-recover-total");
-    CHECK(q.find("occurrence-hard-face-full-solve-recover-wired") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-hard-face-full-solve-recover-wired"),
           "AC5: query exposes occurrence-hard-face-full-solve-recover-wired");
     CHECK(q.find("schema-2716") != std::string::npos, "AC5: schema-2716");
     CHECK(q.find("issue-2716") != std::string::npos, "AC5: issue-2716");
@@ -589,9 +589,9 @@ static void ac2750_2_typechecker_wires_recover() {
 static void ac2750_3_query_keys() {
     std::println("\n--- #2750 AC3: query keys additive ---");
     const auto q = ::aura::test::aura_query_prims_source();
-    CHECK(q.find("occurrence-hard-face-recover-success-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-hard-face-recover-success-total"),
           "AC3: recover-success key");
-    CHECK(q.find("occurrence-hard-face-recover-fail-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-hard-face-recover-fail-total"),
           "AC3: recover-fail key");
     CHECK(q.find("schema-2750") != std::string::npos, "AC3: schema-2750");
     CHECK(q.find("schema-2716") != std::string::npos, "AC3: schema-2716 preserved");
@@ -730,7 +730,7 @@ static void ac2909_4_schema_and_publish_wire() {
           "AC4: issue stamp");
     CHECK(impl.find("publish_cone_outside_goal_drop") != std::string::npos,
           "AC4: infer_flat_partial publishes outside drop");
-    CHECK(q.find("cone-truncate-force-closure-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "cone-truncate-force-closure-total"),
           "AC4: force-closure query key");
     CHECK(q.find("schema-2909") != std::string::npos, "AC4: schema-2909");
     // Lineage preserved

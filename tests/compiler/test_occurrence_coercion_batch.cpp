@@ -4,6 +4,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/coercion_provenance_policy.hh"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 
@@ -16,7 +17,9 @@ static void reset_member_face() {
     // Members that apply production defaults leave Forbidden tree-walker
     // and Full audit armed; later set-code / eval / let then hard-fail.
     aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_coercion_provenance_miss_policy_for_test();
 }
 
 extern int run_test_adt_exhaustiveness_audit();

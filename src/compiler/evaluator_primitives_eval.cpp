@@ -754,7 +754,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
     // workspace skip the O(N) tree walk entirely. Latency drops from
     // ~20us to ~1us in the cache-hit case.
     add("typecheck-current", [&ev](const auto&) {
-        std::shared_lock<std::shared_mutex> rlock(ev.workspace_mtx_);
+        // #3082: MutationBoundary already holds workspace_mtx_ uniquely.
+        // Re-taking a shared_lock on the same non-recursive mutex is EDEADLK
+        // (`Resource deadlock avoided`) — same reason agent.cpp uses
+        // run_typecheck_no_lock() mid-boundary.
+        std::shared_lock<std::shared_mutex> rlock;
+        if (ev.mutation_boundary_depth() == 0 && !ev.mutation_boundary_held())
+            rlock = std::shared_lock<std::shared_mutex>(ev.workspace_mtx_);
         ev.coverage_counters_[1]++;
         if (!ev.workspace_flat_ || !ev.workspace_pool_) {
             auto eidx = ev.string_heap_.size();

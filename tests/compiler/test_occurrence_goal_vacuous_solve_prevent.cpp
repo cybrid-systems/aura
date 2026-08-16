@@ -192,7 +192,7 @@ static void ac6_schema_and_linter() {
     CHECK(q.find("schema-2647") != std::string::npos, "AC6: query schema-2647");
     CHECK(q.find("occurrence-goal-forced-reverify-total") != std::string::npos,
           "AC6: query key forced-reverify");
-    CHECK(q.find("occurrence-goal-vacuous-solve-prevented-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "occurrence-goal-vacuous-solve-prevented-total"),
           "AC6: query key vacuous-prevented");
     CHECK(!lint.empty(), "AC6: coverage linter present");
     CHECK(lint.find("#2647") != std::string::npos, "AC6: linter cites #2647");

@@ -22,6 +22,7 @@
 //   #2911 AC5: extend this suite (#81967)
 //   #2911 AC6: decision table + linter; no docs/design/*
 
+#include "compiler/coercion_provenance_policy.hh"
 #include "compiler/type_linear_commit_health.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "test_harness.hpp"
@@ -34,6 +35,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.coercion_map;
 import aura.compiler.service;
 import aura.compiler.type_checker;
 import aura.compiler.value;
@@ -84,6 +86,14 @@ static std::string read_file(const char* path) {
 static std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(
         std::format("(hash-ref (engine:metrics \"query:type-linear-commit-health\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+static std::int64_t href_proof(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") \"{}\")", key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -198,6 +208,12 @@ static void ac3_happy_path() {
     // Live query vacuous face
     reset_for_test();
     apply_dev_audit_defaults();
+    aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+    // Prior persist members leave soft-skip samples; loss_bp >= 500
+    // overlays force-reason 9 (evidence-loss) while still allowing commit.
+    // Only zero skip — keep complete/elided so later health members stay
+    // vacuous-healthy (completeness_bp not 0/0).
+    aura::compiler::g_coercion_soft_incomplete_skip_total.store(0, std::memory_order_relaxed);
     CompilerService cs;
     CHECK(href(cs, "readiness-bp") == 10000, "AC3: live readiness-bp 10000");
     CHECK(href(cs, "would-allow-commit") == 1, "AC3: live would-allow-commit");
@@ -259,19 +275,21 @@ static void ac2697_1_proof_queryable() {
     std::println("\n--- #2697 AC1: query:last-type-linear-commit-proof fields ---");
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
-    CHECK(href(cs, "type-linear-commit-proof-wired") == 1,
+    CHECK(href_proof(cs, "type-linear-commit-proof-wired") == 1,
           "AC1: type-linear-commit-proof-wired sentinel == 1");
-    CHECK(href(cs, "type-linear-commit-proof-readiness-bp") >= 0, "AC1: readiness-bp queryable");
-    CHECK(href(cs, "type-linear-commit-proof-would-allow-commit") >= 0,
+    CHECK(href_proof(cs, "type-linear-commit-proof-readiness-bp") >= 0,
+          "AC1: readiness-bp queryable");
+    CHECK(href_proof(cs, "type-linear-commit-proof-would-allow-commit") >= 0,
           "AC1: would-allow-commit queryable (0/1)");
-    CHECK(href(cs, "type-linear-commit-proof-linear-ok") >= 0, "AC1: linear-ok queryable (0/1)");
-    CHECK(href(cs, "type-linear-commit-proof-occurrence-consistent") >= 0,
+    CHECK(href_proof(cs, "type-linear-commit-proof-linear-ok") >= 0,
+          "AC1: linear-ok queryable (0/1)");
+    CHECK(href_proof(cs, "type-linear-commit-proof-occurrence-consistent") >= 0,
           "AC1: occurrence-consistent queryable (0/1)");
-    CHECK(href(cs, "type-linear-commit-proof-defuse-or-epoch-stamp") >= 0,
+    CHECK(href_proof(cs, "type-linear-commit-proof-defuse-or-epoch-stamp") >= 0,
           "AC1: defuse-or-epoch-stamp queryable");
-    CHECK(href(cs, "type-linear-commit-proof-last-stamp") >= 0, "AC1: last-stamp queryable");
-    CHECK(href(cs, "schema-2697") == 2697, "AC1: schema-2697 sentinel");
-    CHECK(href(cs, "issue-2697") == 2697, "AC1: issue-2697 sentinel");
+    CHECK(href_proof(cs, "type-linear-commit-proof-last-stamp") >= 0, "AC1: last-stamp queryable");
+    CHECK(href_proof(cs, "schema-2697") == 2697, "AC1: schema-2697 sentinel");
+    CHECK(href_proof(cs, "issue-2697") == 2697, "AC1: issue-2697 sentinel");
 }
 
 // ── Issue #2697 AC4: #2613 health query additive — not replaced ──
@@ -281,7 +299,7 @@ static void ac2697_4_additive_facade_to_2613() {
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
     CHECK(href(cs, "schema-2613") == 2613,
           "AC4: schema-2613 retained (#2613 health query not replaced)");
-    CHECK(href(cs, "type-linear-commit-proof-wired") == 1,
+    CHECK(href_proof(cs, "type-linear-commit-proof-wired") == 1,
           "AC4: #2697 proof additive on top of #2613");
 }
 
@@ -385,7 +403,7 @@ static void ac2717_5_additive_no_regression() {
     CHECK(q.find("schema-2697") != std::string::npos, "AC5: schema-2697 preserved");
     CHECK(tma.find("g_type_linear_commit_proof_stamped_total") != std::string::npos,
           "AC5: new stamped-total counter declared (additive)");
-    CHECK(q.find("type-linear-commit-proof-stamped-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "type-linear-commit-proof-stamped-total"),
           "AC5: new stamped-total queryable");
     CHECK(q.find("schema-2717") != std::string::npos, "AC5: schema-2717 sentinel");
     CHECK(q.find("issue-2717") != std::string::npos, "AC5: issue-2717 sentinel");
@@ -475,9 +493,9 @@ static void ac2758_3_last_counts_queryable() {
           "AC3: last live_goal_count atomic");
     CHECK(tma.find("g_last_proof_linear_root_count") != std::string::npos,
           "AC3: last linear_root_count atomic");
-    CHECK(q.find("type-linear-commit-proof-live-goal-count") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "type-linear-commit-proof-live-goal-count"),
           "AC3: query exposes live-goal-count");
-    CHECK(q.find("type-linear-commit-proof-linear-root-count") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "type-linear-commit-proof-linear-root-count"),
           "AC3: query exposes linear-root-count");
     CHECK(q.find("last_proof_live_goal_count_v_read") != std::string::npos ||
               q.find("last_proof_linear_root_count_v_read") != std::string::npos,
@@ -494,9 +512,9 @@ static void ac2758_4_additive_no_regression() {
           "AC4: #2613 health preserved");
     CHECK(q.find("schema-2697") != std::string::npos, "AC4: schema-2697 preserved");
     CHECK(q.find("schema-2717") != std::string::npos, "AC4: schema-2717 preserved");
-    CHECK(q.find("type-linear-commit-proof-stamped-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "type-linear-commit-proof-stamped-total"),
           "AC4: #2717 stamped-total preserved");
-    CHECK(q.find("type-linear-commit-proof-counts-filled-total") != std::string::npos,
+    CHECK(::aura::test::aura_cxx_string_has(q, "type-linear-commit-proof-counts-filled-total"),
           "AC4: counts-filled-total present");
     CHECK(q.find("schema-2758") != std::string::npos, "AC4: schema-2758");
     CHECK(q.find("issue-2758") != std::string::npos, "AC4: issue-2758");
@@ -769,6 +787,9 @@ static void ac2897_3_quiet_cheap() {
     std::println("\n--- #2897 AC3: Soft quiet path cheap (zeros / no CS walk) ---");
     reset_for_test();
     apply_dev_audit_defaults();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::reset_type_linear_proof_same_transaction_counters_for_test();
+    typed_audit::clear_proof_goal_truth_for_test();
     const auto snap = capture_type_linear_evolution_snapshot();
     // Quiet default: last-proof gauges 0, outcome Quiet.
     CHECK(snap.last_proof_outcome == 0, "2897 AC3: Quiet outcome default");

@@ -888,6 +888,7 @@ static void ac3082_1_nested_success_never_persists() {
 
 static void ac3082_2_nested_query_inflight() {
     std::println("\n--- #3082 AC2: nested open / nested success → query in-flight ---");
+    aura::compiler::lock_order::reset_tls_for_test();
     unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_dev_audit_defaults();
     CompilerService svc;
@@ -1563,6 +1564,7 @@ static void ac2995_1_soft_empty_pure_loads() {
 
 static void ac2995_2_production_face_one_shot_recover() {
     std::println("\n--- #2995 AC2: production + empty-after-fence → one recover ---");
+    aura::compiler::lock_order::reset_tls_for_test();
     apply_production_audit_defaults();
     reset_occurrence_commit_health_for_test();
     clear_occurrence_empty_after_fence_for_test();
@@ -1590,6 +1592,7 @@ static void ac2995_2_production_face_one_shot_recover() {
 
 static void ac2995_4_fingerprint_after_persist() {
     std::println("\n--- #2995 AC4: post-persist fingerprint matches live goals ---");
+    aura::compiler::lock_order::reset_tls_for_test();
     unsetenv("AURA_OCCURRENCE_PERSIST");
     apply_production_audit_defaults();
     reset_occurrence_commit_health_for_test();
@@ -1737,22 +1740,35 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac2995_5_fence_same_ensure();
     ac2995_6_query_keys();
     ac2995_7_source_cite();
-    // #2995 acquire workspace/type locks; TLS depth can desync from the
-    // actual mutex so #3004 then hits pthread EDEADLK. Clear depth first.
     aura::compiler::lock_order::reset_tls_for_test();
-    std::println("\n=== #3004 persist + Full audit atomic with query:type ===");
-    ac3004_1_authority_after_persist();
-    ac3004_2_soft_no_durable();
-    ac3004_3_discard_provisional_on_fail();
-    ac3004_4_schema_and_lineage();
-    ac3004_5_source_and_linter();
+    try {
+        std::println("\n=== #3004 persist + Full audit atomic with query:type ===");
+        ac3004_1_authority_after_persist();
+        ac3004_2_soft_no_durable();
+        ac3004_3_discard_provisional_on_fail();
+        ac3004_4_schema_and_lineage();
+        ac3004_5_source_and_linter();
+    } catch (const std::exception& ex) {
+        std::println("  #3004 threw: {}", ex.what());
+        CHECK(false, "#3004 persist audit atomic (EDEADLK)");
+        aura::compiler::lock_order::reset_tls_for_test();
+        apply_dev_audit_defaults();
+    }
     std::println("\n=== #3082 mid/nested MutationBoundary occurrence provisional ===");
     ac3082_1_nested_success_never_persists();
-    ac3082_2_nested_query_inflight();
-    ac3082_3_outermost_persist_unchanged();
-    ac3082_4_soft_no_nested_zero_extra();
-    ac3082_5_nested_fail_inflight_outer_abort_discards();
-    ac3082_6_schema_and_linter();
+    aura::compiler::lock_order::reset_tls_for_test();
+    try {
+        ac3082_2_nested_query_inflight();
+        ac3082_3_outermost_persist_unchanged();
+        ac3082_4_soft_no_nested_zero_extra();
+        ac3082_5_nested_fail_inflight_outer_abort_discards();
+        ac3082_6_schema_and_linter();
+    } catch (const std::exception& ex) {
+        std::println("  #3082 threw: {}", ex.what());
+        CHECK(false, "#3082 nested typecheck (EDEADLK)");
+        aura::compiler::lock_order::reset_tls_for_test();
+        apply_dev_audit_defaults();
+    }
     std::println("\n=== #3032 rehydrate-miss invalidates linear_fast_path + deopt ===");
     ac3032_1_prod_miss_invalidates_fast_path();
     ac3032_2_soft_observe_only();
