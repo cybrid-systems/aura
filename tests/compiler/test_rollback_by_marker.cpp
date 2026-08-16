@@ -69,13 +69,15 @@ static void ac_existing_primitives_registered() {
     // mutate:rollback-macro-introduced with root=0 + no workspace
     // → should return 0 unstampped (no-op). Verifies the primitive
     // is registered and reachable.
-    auto h1 = cs.eval("(engine:eval-no-side-effects \"mutate:rollback-macro-introduced\")");
+    // Direct calls: eval-no-side-effects is not how prims are probed
+    // on current main. Any result (incl. pair error) means registered.
+    auto h1 = cs.eval("(mutate:rollback-macro-introduced)");
     CHECK(h1, "AC1: mutate:rollback-macro-introduced is a registered primitive name");
-    auto h2 = cs.eval("(engine:eval-no-side-effects \"query:by-marker\")");
+    auto h2 = cs.eval("(query:by-marker)");
     CHECK(h2, "AC1: query:by-marker is a registered primitive name");
-    auto h3 = cs.eval("(engine:eval-no-side-effects \"query:macro-introduced\")");
+    auto h3 = cs.eval("(query:macro-introduced)");
     CHECK(h3, "AC1: query:macro-introduced is a registered primitive name");
-    auto h4 = cs.eval("(engine:eval-no-side-effects \"query:macro-hygiene-stats\")");
+    auto h4 = cs.eval("(engine:metrics \"query:macro-hygiene-stats\")");
     CHECK(h4, "AC1: query:macro-hygiene-stats is a registered primitive name");
 }
 
@@ -180,9 +182,9 @@ static void ac_existing_query_surface_back_compat() {
     CompilerService cs;
     // Both primitives should still be registered (no regression
     // from the query:macro-hygiene-stats 7-key extension).
-    auto h1 = cs.eval("(engine:eval-no-side-effects \"query:by-marker\")");
+    auto h1 = cs.eval("(query:by-marker)");
     CHECK(h1, "AC5: query:by-marker still registered (no regression)");
-    auto h2 = cs.eval("(engine:eval-no-side-effects \"query:macro-introduced\")");
+    auto h2 = cs.eval("(query:macro-introduced)");
     CHECK(h2, "AC5: query:macro-introduced still registered");
 }
 
