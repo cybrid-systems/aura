@@ -1173,6 +1173,12 @@ void HotUpdateRegistry::reset_region_storm_windows_for_test() noexcept {
 void HotUpdateRegistry::test_pump_deopt_for_region(std::uint64_t region, std::uint64_t n) noexcept {
     if (n == 0)
         return;
+    // Region 0 is the process-global window (AC2 Global mode).
+    if (region == 0) {
+        for (std::uint64_t i = 0; i < n; ++i)
+            on_stale_deopt();
+        return;
+    }
     const auto threshold = deopt_storm_threshold_.load(std::memory_order_relaxed);
     const auto window_ms = deopt_storm_window_ms_.load(std::memory_order_relaxed);
     if (window_ms == 0 || threshold == 0)
@@ -1206,9 +1212,16 @@ bool HotUpdateRegistry::feed_region_deopt_locked(RegionWindow& w, std::uint64_t 
     if (start == 0 || now < start || (now - start) >= window_ms) {
         w.window_start_ms_.store(now, std::memory_order_relaxed);
         w.window_count_.store(n, std::memory_order_relaxed);
-        w.soft_throttled_.store(false, std::memory_order_relaxed);
-        w.hard_throttled_.store(false, std::memory_order_relaxed);
-        return false;
+        // Batch pump / first-window n may already be >= threshold
+        // (test_pump_deopt_for_region(A, 5) with threshold 3).
+        const bool trip = n >= threshold;
+        w.soft_throttled_.store(trip, std::memory_order_relaxed);
+        w.hard_throttled_.store(n >= hard_thr, std::memory_order_relaxed);
+        if (trip) {
+            deopt_storm_region_detected_total_.fetch_add(1, std::memory_order_relaxed);
+            deopt_storm_region_last_id_.store(region, std::memory_order_relaxed);
+        }
+        return trip;
     }
     const auto cnt = w.window_count_.fetch_add(n, std::memory_order_relaxed) + n;
     if (cnt < threshold)

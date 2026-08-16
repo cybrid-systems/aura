@@ -882,7 +882,7 @@ private:
         std::atomic<bool> soft_throttled_{false};
         std::atomic<bool> hard_throttled_{false};
     };
-    std::atomic<std::uint8_t> storm_isolation_mode_{0}; // StormIsolation enum
+    std::atomic<std::uint8_t> storm_isolation_mode_{2}; // PerEval (#2683)
     // Issue #2274: cap overflow counter — bumped when region_windows_.size()
 
     // >= kStormIsolationRegionCap on insert. Lets Agents distinguish "many

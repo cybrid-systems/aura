@@ -147,7 +147,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_security_audit_unify",
     "test_security_event_wal_replay",
     "test_solve_delta_unresolved_export",
-    "test_storm_isolation",
+    # test_storm_isolation greened inside test_shape_soa_storm_batch
     # test_concurrent is discovered as a ninja target by the issues
     # runner (name starts with test_) but is a multi-minute stress
     # binary with a 60s default timeout → rc=124 under jobs=4.
@@ -184,7 +184,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_contracts",
     "test_dead_coercion_pipeline_wire",
     "test_depth_safe_mutation_boundary_steal",
-    "test_dirty_aware_shape_linear_passes",
+    # test_dirty_aware_shape_linear_passes greened inside shape_soa_storm_batch
     "test_hotpath_matrix_batch",
     "test_instr_level_relower_pass",
     "test_isolation_audit_mid",
@@ -200,7 +200,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_query_epoch_contract",
     "test_root_remap_pin_contract_unified",
     "test_safepoint_mutation",
-    "test_soa_dirty_aware_pipeline",
+    # test_soa_dirty_aware_pipeline greened inside shape_soa_storm_batch
     # test_ast_concurrency: solo 232/0; parallel flake → serial recovery
     # test_macro_hygiene_limits: clone_macro_body depth_limit
     # check trips on hard MAX_HYGIENE_DEPTH=1024 runtime_cap=3 — pre-existing
@@ -276,6 +276,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_ast_concurrency (solo) + test_linear_misc_batch (face reset +
     # light-link C epoch). fiber_orch_* / linear_ownership / mutation_hold
     # still SIGSEGV/SIGABRT.
+    # Batch 6 reemit/storm: greened test_shape_soa_storm_batch (14/0).
+    # test_reemit_production_default_defer_v2 still not compile-fixed.
     "test_epoch_invariant_misc_batch",
     "test_ir_closure_jit_misc_batch",
     "test_jit_macro_introduced_preserve",
@@ -285,7 +287,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_orch_agent_batch",
     "test_security_capability_batch",
     "test_serve_legacy_issue_batch",
-    "test_shape_soa_storm_batch",
+    # test_shape_soa_storm_batch greened: PerEval default (#2683), region
+    # pump trips on first-window n>=threshold, Global pump uses process window.
 }
 
 _print_lock = Lock()

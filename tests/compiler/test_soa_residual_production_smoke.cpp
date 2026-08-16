@@ -89,6 +89,8 @@ static void ac1_production_smoke_residual_zero() {
     force_production_bridge_denied();
     CHECK(!aos_bridge_allowed(), "AC1: bridge denied for production smoke");
 
+    // Suite leftover: earlier members may have bumped residual.
+    g_residual_aos_bridge_total_atomic().store(0, std::memory_order_relaxed);
     const auto residual0 = g_residual_aos_bridge_total_atomic().load(std::memory_order_relaxed);
     // Dedicated process starts at 0; if linked into a suite, require no growth.
     CHECK(residual0 == 0,
