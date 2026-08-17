@@ -1706,6 +1706,12 @@ inline void reset_type_linear_proof_cleared_on_abort_for_test() noexcept {
     g_type_linear_proof_cleared_on_abort_observe_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3091 / #3016: declared before abort-clear / proof-build (those
+// inlines sit above the #3016 helper block). noted=true even when mid==0.
+inline thread_local std::uint64_t g_tls_boundary_audit_mid = 0;
+inline thread_local bool g_tls_boundary_audit_noted = false;
+inline std::atomic<std::uint64_t> g_last_stamped_audit_mid{0};
+
 // Purpose: drop last TypeLinearCommitProof + densify-pending inject on abort
 // Pre: call after abort_restore_dual_topology / hard force-rollback
 // Post: stamp=0, would_allow=0, linear_ok=0, outcome=Reject when a face
@@ -2556,9 +2562,6 @@ inline thread_local EnforcementLinkKind g_tls_enforcement_link = EnforcementLink
 // (volume metric only). noted=true even when mid==0 (production refuse)
 // so stamp sites do not re-resolve and double-count refused_total.
 inline constexpr int kBoundaryAuditMidIssue = 3016;
-inline thread_local std::uint64_t g_tls_boundary_audit_mid = 0;
-inline thread_local bool g_tls_boundary_audit_noted = false;
-inline std::atomic<std::uint64_t> g_last_stamped_audit_mid{0};
 
 inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
     g_tls_boundary_audit_mid = mid;

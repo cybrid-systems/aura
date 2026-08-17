@@ -2277,7 +2277,7 @@ private:
         if (slot != nullptr) {
             // Slot rewrite path: densify will rewrite *slot when the
             // intermediate moves. Observe as densify-visible (#2935).
-            register_external_root_slot_for_densify_(slot);
+            register_external_root_slot_for_densify(slot);
             intermediate_creates_.push_back(p);
             aura::core::lifetime::note_general_object_create_auto_wire();
             g_intermediate_create_with_cover_total.fetch_add(1, std::memory_order_relaxed);
