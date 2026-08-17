@@ -1042,9 +1042,7 @@ coerced_nodes_tracker_take() noexcept;
 // and treating `nullptr) {` as a compound expression initializer.
 // Same fix pattern as the ubsan-smoke / asan-build gates; no semantic
 // change (defaults preserved, linkage unchanged).
-export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map,
-                                      DeadCoercionAstStats* stats_out = nullptr,
-                                      CoercionMap* map_mut = nullptr) {
+export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map, DeadCoercionAstStats* stats_out = nullptr, CoercionMap* map_mut = nullptr) {
     DeadCoercionAstStats local_stats;
     auto& s = stats_out ? *stats_out : local_stats;
     s = {};
