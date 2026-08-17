@@ -109,17 +109,22 @@ def check_export_sites(rel_path: str, site_keyword: str, restamp_lag_regex: str,
         if strict:
             failures.append(f"{rel_path}: export site {site_keyword!r} not found")
         return failures
-    # Find the block for this site (search a small window after the keyword
-    # for the restamp-lag error path).
-    idx = text.find(site_keyword)
-    window = text[idx : idx + 4000]  # generous window for nested error paths
-    if not re.search(restamp_lag_regex, window) and strict:
+    # Find all occurrences of the keyword. The actual add() body may not be the
+    # first match (header comment, doc reference, error message text may precede).
+    # We try each anchor in order; if any of them has the restamp-lag error in
+    # its 4000-char window, the export site is wired correctly.
+    found_anchor = False
+    for idx in (m.start() for m in re.finditer(re.escape(site_keyword), text)):
+        candidate = text[idx : idx + 4000]
+        if re.search(restamp_lag_regex, candidate):
+            found_anchor = True
+            break
+    if not found_anchor and strict:
         failures.append(
             f"{rel_path}: export site {site_keyword!r} does not return "
             f"restamp-lag structured error (regex {restamp_lag_regex!r})"
         )
     return failures
-
 
 def _self_test() -> int:
     """Validate the linter regex / structure against fixture text."""
