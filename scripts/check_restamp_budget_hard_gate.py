@@ -126,13 +126,15 @@ def _self_test() -> int:
     fixture_infra = """
     // ast.ixx
     mutable std::atomic<std::uint32_t> restamp_last_budget_exceeded_{0};
+    mutable std::atomic<std::uint64_t> restamp_budget_exceeded_total_{0};
+    [[nodiscard]] bool restamp_last_budget_exceeded() const noexcept;
     std::uint64_t restamp_budget_exceeded_total() const noexcept;
     // workspace_epoch.hh
     inline void force_query_epoch_stale_from_restamp_budget() noexcept;
     // evaluator_fiber_mutation.cpp
     if (r.budget_exceeded) {
         aura::ast::g_unified_restamp_torn_visible_total.fetch_add(1);
-        if (production)
+        if (production && typed_audit::production_defaults_active())
             aura::core::force_query_epoch_stale_from_restamp_budget();
     }
     // evaluator_security.cpp

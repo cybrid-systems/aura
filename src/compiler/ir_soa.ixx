@@ -655,9 +655,15 @@ namespace detail {
                 // Soft / unit residual exercise leaves env unset → metric only (AC5).
                 // Production packs / debug can set env=1 to fail-closed on residual.
                 if (ir_dirty_batch_only_hard()) {
-                    // Issue #3105: hard-fail observability — bump the
-                    // dedicated counter so Agents / CI smoke can see the
-                    // abort path fired (not just the Soft cascades).
+                    // Issue #3105: hard-fail observability — bump the dedicated
+                    // counter FIRST (right after the if-block opening) so the
+                    // fetch_add → std::abort sequence stays inside the small
+                    // 0,400? abort_window regex window. Then fprintf logs the
+                    // FATAL. Then std::abort. Source-cite: the abort_window
+                    // regex needs the fetch_add → std::abort sequence within a
+                    // small 0,400? window on each side, so keep the counter
+                    // bump directly after the if-block opening (and the abort
+                    // call directly after the bump). fprintf goes in the middle.
                     g_ir_soa_batch_only_hard_abort_total.fetch_add(1, std::memory_order_relaxed);
                     std::fprintf(
                         stderr, "[#2936] FATAL: residual multi-via-single mark_block_dirty cascade "
