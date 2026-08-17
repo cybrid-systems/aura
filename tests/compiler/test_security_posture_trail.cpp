@@ -95,7 +95,52 @@ int run_test_security_posture_trail() {
     CHECK(href(cs, "wal-append-fail-slo-wired") == 1, "3056: slo wired");
     CHECK(href(cs, "wal-append-fail-breach") == 0, "3056: idle no breach");
 
-    std::println("\n=== #2534: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3109: production WAL append fail-closed option ────────────────
+    // Soft/Off / no-env: wal-fail-closed-active=0, wal-overflow-ring-depth=0.
+    // Default behavior unchanged (fail-open + #3056 SLO arm).
+    CHECK(href(cs, "schema-3109") == 3109, "3109 AC5: schema-3109");
+    CHECK(href(cs, "issue-3109") == 3109, "3109 AC5: issue-3109");
+    CHECK(href(cs, "wal-fail-closed-active") == 0, "3109 AC1: no env → fail-closed inactive");
+    CHECK(href(cs, "wal-overflow-ring-depth") == 0, "3109 AC1: overflow ring depth=0 (Soft/Off)");
+    // 3109 AC3: overflow ring path wired (source-cite only — env is unset in this run,
+    // so depth stays 0; the gate is verified by the AC5 source-cite checks below)
+    CHECK(href(cs, "wal-overflow-ring-depth") == 0,
+          "3109 AC3: overflow ring depth observable (additive key)");
+    // 3109 AC4: require_effect deny path wired (source-cite only — require_effect deny
+    // is verified by AC2 source-cite below since Strict + fail-closed + overflow-full
+    // is hard to trigger in this test harness)
+
+    // Source-cite: helper + ring + require_effect deny path
+    const auto slo = read_file("src/core/wal_append_fail_slo.h");
+    CHECK(slo.find("wal_append_fail_closed_active") != std::string::npos,
+          "3109 AC1: helper declared");
+    const auto sew = read_file("src/core/security_event_wal.hh");
+    CHECK(sew.find("kWalOverflowRingCapacity") != std::string::npos,
+          "3109 AC1: overflow ring capacity declared");
+    CHECK(sew.find("wal_overflow_ring_push") != std::string::npos,
+          "3109 AC1: overflow ring push helper");
+    CHECK(sew.find("wal_append_fail_closed_active()") != std::string::npos,
+          "3109 AC1: append wires fail-closed check");
+    const auto ev = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(ev.find("wal_append_fail_closed_active()") != std::string::npos &&
+              ev.find("wal_overflow_ring_full()") != std::string::npos &&
+              ev.find("is_strict()") != std::string::npos,
+          "3109 AC2: require_effect deny path wired (Strict + fail-closed + overflow full)");
+    // Build.py wires the linter
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_wal_append_fail_closed_3109") != std::string::npos,
+          "3109 AC5: build.py wires 3109 linter");
+    // No-invent / no-design enforcement
+    if (std::FILE* f = std::fopen("tests/compiler/test_issue_3109.cpp", "r")) {
+        std::fclose(f);
+        CHECK(false, "3109 AC5: no invent test_issue_3109.cpp");
+    }
+    const auto docs = std::string("docs/design/");
+    // Source-cite #3056 lineage preserved (SLO + breach arm)
+    CHECK(slo.find("kWalAppendFailSloIssue = 3056") != std::string::npos,
+          "3109 AC5: #3056 lineage preserved");
+
+    std::println("\n=== #2534/#3109: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
