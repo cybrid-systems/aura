@@ -85,8 +85,8 @@ def main() -> int:
     # just log). Source-cite: the abort path in note_single_mark_for_residual
     # must increment the dedicated counter before std::abort.
     abort_window = re.search(
-        r"ir_dirty_batch_only_hard\(\)\s*\{[^}]{0,400}?g_ir_soa_batch_only_hard_abort_total\.fetch_add\("
-        r"[^}]{0,400}?std::abort\(\)",
+        r"if \(ir_dirty_batch_only_hard\(\)\)\s*\{[^}]{0,2000}?g_ir_soa_batch_only_hard_abort_total\.fetch_add\("
+        r"[^}]{0,2000}?std::abort\(\)",
         soa,
         re.DOTALL,
     )

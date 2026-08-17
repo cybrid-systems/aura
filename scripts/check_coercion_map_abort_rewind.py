@@ -157,7 +157,7 @@ def _self_test() -> int:
             .fetch_add(1, std::memory_order_relaxed);
         (void)aura::compiler::coerced_nodes_tracker_take();
     }
-    // Site 2 (invariant force-rollback)
+    // Site 2 (invariant force-rollback clears proof face)
     typed_audit::clear_type_linear_commit_proof_on_abort();
     if (typed_audit::production_defaults_active() ||
         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
@@ -180,7 +180,7 @@ def _self_test() -> int:
             .fetch_add(1, std::memory_order_relaxed);
         (void)aura::compiler::coerced_nodes_tracker_take();
     }
-    // Site 3 (Strict reflect-validate rollback)
+    // Site 3 (Strict reflect-validate rollback clears proof face)
     typed_audit::clear_type_linear_commit_proof_on_abort();
     if (typed_audit::production_defaults_active() ||
         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {

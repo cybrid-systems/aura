@@ -117,8 +117,19 @@ def _self_test() -> int:
     };
     inline QueryResultFreshness query_result_is_fresh_with_refs(...);
     inline constexpr int kQueryResultFullProvenanceIssue = 3103;
+    inline void push_match_full(QueryResultMatch& m, ...);
     inline std::atomic<std::uint64_t> g_query_result_full_provenance_total;
+    inline std::atomic<std::uint64_t> g_query_result_full_provenance_fresh_hits_total;
+    inline std::atomic<std::uint64_t> g_query_result_full_provenance_stale_total;
+    inline std::atomic<std::uint64_t> g_query_result_full_provenance_tenant_mismatch_total;
+    inline std::atomic<std::uint64_t> g_query_result_full_provenance_fiber_mismatch_total;
+    inline std::atomic<std::uint64_t> g_query_result_full_provenance_cow_mismatch_total;
     inline void note_query_result_full_provenance();
+    inline void note_query_result_full_provenance_fresh_hit();
+    inline void note_query_result_full_provenance_stale();
+    inline void note_query_result_full_provenance_tenant_mismatch();
+    inline void note_query_result_full_provenance_fiber_mismatch();
+    inline void note_query_result_full_provenance_cow_mismatch();
     """
     fixture_impl = """
     inline QueryResultFreshness query_result_is_fresh_with_refs(...) {
