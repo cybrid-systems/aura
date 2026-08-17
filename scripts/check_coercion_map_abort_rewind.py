@@ -22,22 +22,18 @@
 from __future__ import annotations
 
 import argparse
-import os
-import re
 import sys
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_TARGETS: Tuple[str, ...] = (
-    "src/compiler/evaluator_mutation_boundary.cpp",
-)
+DEFAULT_TARGETS: tuple[str, ...] = ("src/compiler/evaluator_mutation_boundary.cpp",)
 
 # ── required call patterns per abort site ──────────────────────────────────
 # Each tuple is the literal call that must appear at every abort site.
 # Order: AC1 cone rewind → AC2 take + force-dirty → AC3 invalidate gen →
 # AC4 commit_readiness clear → AC5 production gate / soft observe.
-REQUIRED_CALLS: Tuple[str, ...] = (
+REQUIRED_CALLS: tuple[str, ...] = (
     "truncate_type_cone_to_size(cp.coercion_cone_size_at_entry)",
     "aura::compiler::coerced_nodes_tracker_take()",
     "aura::compiler::dirty::force_dead_coercion_elim_into_cone",
@@ -51,7 +47,7 @@ REQUIRED_CALLS: Tuple[str, ...] = (
 # for these phrases and verifies the required calls appear AFTER the
 # anchor but BEFORE the next major boundary / return. We use a window
 # of up to N lines after each anchor to bound the search.
-ABORT_SITE_ANCHORS: Tuple[str, ...] = (
+ABORT_SITE_ANCHORS: tuple[str, ...] = (
     # Site 1: post topology restore (failure path)
     "typed_audit::clear_type_linear_commit_proof_on_abort()",
     # Site 2: invariant force-rollback
@@ -92,9 +88,9 @@ def _slice_after(text: str, idx: int, max_lines: int) -> str:
     return text[line_start:end_line_start]
 
 
-def check_file(path: Path, *, strict: bool) -> List[str]:
+def check_file(path: Path, *, strict: bool) -> list[str]:
     """Return a list of failure messages (empty = OK)."""
-    failures: List[str] = []
+    failures: list[str] = []
     if not path.exists():
         failures.append(f"{path}: file not found")
         return failures
@@ -110,24 +106,17 @@ def check_file(path: Path, *, strict: bool) -> List[str]:
             # The anchor may be slightly different at site 2/3 (the
             # comments use a different phrasing). Accept the variant.
             if strict:
-                failures.append(
-                    f"{path}: abort-site anchor not found: {anchor!r}"
-                )
+                failures.append(f"{path}: abort-site anchor not found: {anchor!r}")
             continue
         found_sites += 1
         window = _slice_after(text, idx, ABORT_SITE_WINDOW_LINES)
         for required in REQUIRED_CALLS:
-            if required not in window:
-                if strict:
-                    failures.append(
-                        f"{path}: abort site (anchor={anchor!r}) missing required call: {required!r}"
-                    )
+            if required not in window and strict:
+                failures.append(f"{path}: abort site (anchor={anchor!r}) missing required call: {required!r}")
     # We expect at least 3 abort sites (the 3 rewind blocks); fail loudly
     # if we see fewer (a regression in production/Full coverage).
     if found_sites < 3 and strict:
-        failures.append(
-            f"{path}: only {found_sites} abort-site anchor(s) found, expected 3"
-        )
+        failures.append(f"{path}: only {found_sites} abort-site anchor(s) found, expected 3")
     return failures
 
 
@@ -203,7 +192,6 @@ def _self_test() -> int:
     }
     """
     # Confirm each required call is found at least once per anchor.
-    from io import StringIO
 
     class _TmpFile:
         def __init__(self, txt: str) -> None:
@@ -257,12 +245,9 @@ def main(argv: Sequence[str]) -> int:
         return _self_test()
 
     targets: Iterable[Path]
-    if args.targets:
-        targets = (Path(t) for t in args.targets)
-    else:
-        targets = (REPO_ROOT / t for t in DEFAULT_TARGETS)
+    targets = (Path(t) for t in args.targets) if args.targets else (REPO_ROOT / t for t in DEFAULT_TARGETS)
 
-    failures: List[str] = []
+    failures: list[str] = []
     for target in targets:
         target = target if target.is_absolute() else REPO_ROOT / target
         failures.extend(check_file(target, strict=args.strict))
