@@ -2070,10 +2070,9 @@ int run_test_steal_complete_restamp_txn() {
         const auto ev_fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
         CHECK(ev_fiber_mut.find("revalidate_held_ref_after_steal()") != std::string::npos,
               "3111 AC1: post-steal revalidate call wired into steal-complete strong def");
-        CHECK(
-            ev_fiber_mut.find("aura::core::security_event_wal::revalidate_held_ref_after_steal") !=
-                std::string::npos,
-            "3111 AC1: scoped to security_event_wal namespace");
+        CHECK(ev_fiber_mut.find("aura::serve::mf_mailbox::revalidate_held_ref_after_steal") !=
+                  std::string::npos,
+              "3111 AC1: scoped to mf_mailbox namespace");
         // AC2: Soft / sandbox=off gated — production_defaults_active() check present
         CHECK(ev_fiber_mut.find("typed_audit::production_defaults_active()") != std::string::npos,
               "3111 AC2: production gate preserved (Soft/Off zero-cost)");

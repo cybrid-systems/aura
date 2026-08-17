@@ -12,9 +12,10 @@
 #   hardened the gates).
 #
 # This linter enforces BOTH preconditions going forward:
-#   1. import aura.compiler.ir_cache_pure; present in hot_update_registry.cpp
+#   1. no import of aura.compiler.ir_cache_pure in this non-module TU
+#      (test_concurrent compiles it without that BMI)
 #   2. extern "C" void aura_clear_partial_relower_threshold_force(void);
-#      forward-declared before the line 1409 call site
+#      forward-declared before the storm-exit call site
 #
 # Usage:
 #   python3 scripts/check_hot_update_registry_2902.py --strict
@@ -51,11 +52,11 @@ def check_file(path: Path = TARGET, *, strict: bool = True) -> list[str]:
         failures.append(f"{path}: empty file")
         return failures
 
-    # 1. import statement
-    if not IMPORT_PATTERN.search(text):
+    # 1. this TU must not import ir_cache_pure (light binaries have no BMI)
+    if IMPORT_PATTERN.search(text):
         failures.append(
-            f"{path}: missing 'import aura.compiler.ir_cache_pure;' "
-            "(required for partial_relower_threshold_forced_atomic visibility)"
+            f"{path}: must not 'import aura.compiler.ir_cache_pure;' "
+            "(test_concurrent / other light binaries compile this TU without that module)"
         )
 
     # 2. forward decl for the C-linkage function
@@ -91,31 +92,28 @@ def _self_test() -> int:
     """Validate the linter regex / structure against fixture text."""
     fixture_ok = """
 #include "compiler/foo.h"
-import aura.compiler.ir_cache_pure; // Issue #2902
 
 extern "C" void aura_clear_partial_relower_threshold_force(void);
 
 namespace aura::compiler {
 void some_func() {
     aura_clear_partial_relower_threshold_force();
-    auto& x = partial_relower_threshold_forced_atomic();
 }
 }
 """
-    fixture_missing_import = """
+    fixture_has_import = """
+import aura.compiler.ir_cache_pure;
 extern "C" void aura_clear_partial_relower_threshold_force(void);
 namespace aura::compiler {
 void some_func() { aura_clear_partial_relower_threshold_force(); }
 }
 """
     fixture_missing_fwd = """
-import aura.compiler.ir_cache_pure;
 namespace aura::compiler {
 void some_func() { aura_clear_partial_relower_threshold_force(); }
 }
 """
     fixture_fwd_after_call = """
-import aura.compiler.ir_cache_pure;
 namespace aura::compiler {
 void some_func() { aura_clear_partial_relower_threshold_force(); }
 }
@@ -135,7 +133,7 @@ extern "C" void aura_clear_partial_relower_threshold_force(void) {}
     fails: list[str] = []
     for label, txt, should_fail in [
         ("ok", fixture_ok, False),
-        ("missing_import", fixture_missing_import, True),
+        ("has_import", fixture_has_import, True),
         ("missing_fwd", fixture_missing_fwd, True),
         ("fwd_after_call", fixture_fwd_after_call, True),
     ]:
@@ -172,7 +170,7 @@ def main(argv: list[str]) -> int:
         for line in failures:
             print(f"  {line}")
         return 1
-    print("OK: hot_update_registry.cpp #2902 source-cite gate (import + forward-decl present)")
+    print("OK: hot_update_registry.cpp #2902 source-cite gate (no module import + forward-decl)")
     return 0
 
 

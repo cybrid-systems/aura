@@ -386,7 +386,8 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
                                std::uint64_t ref_tenant) noexcept {
     // #3109: fail-closed deny at entry (Strict + overflow ring full; production+env only).
     if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
-        ::aura::core::security_event_wal::wal_overflow_ring_full() && is_strict())
+        ::aura::core::security_event_wal::wal_overflow_ring_full() &&
+        ::aura::core::sandbox::is_strict())
         return false;
     if (req_bits != 0) {
         if (!check_workspace_isolation(/*target=*/capability_tenant_id_,

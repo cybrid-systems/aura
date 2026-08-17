@@ -21,6 +21,8 @@ import aura.compiler.service;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.value;
 
+extern "C" void aura_clear_partial_relower_threshold_force(void);
+
 namespace {
 
 using aura::compiler::avg_full_relower_cost_ns;

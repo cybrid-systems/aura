@@ -27,10 +27,11 @@ module;
 #include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
 #include "core/lifetime_consistency_proof.hh" // Issue #2888: unified proof header
 #include "core/flatast_restamp.hh"            // Issue #3019: unified restamp counters
-#include "core/security_event_wal.hh" // Issue #2839: IsolationDeny SE on fiber principal mismatch
-#include "core/workspace_epoch.hh"    // Issue #2839: Mutation epoch mid for SE
-#include "core/capability_model.hh"   // Issue #3048: session grant steal/abort revoke
-#include <algorithm>                  // Issue #2189: remove_if for pin table invalidate
+#include "core/security_event_wal.hh"  // Issue #2839: IsolationDeny SE on fiber principal mismatch
+#include "serve/multi_fiber_mailbox.h" // Issue #3111: revalidate_held_ref_after_steal
+#include "core/workspace_epoch.hh"     // Issue #2839: Mutation epoch mid for SE
+#include "core/capability_model.hh"    // Issue #3048: session grant steal/abort revoke
+#include <algorithm>                   // Issue #2189: remove_if for pin table invalidate
 #include <cassert>
 #include <chrono>
 #include <cstdio>   // Issue #2956: hard-abort fprintf
@@ -3674,7 +3675,7 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Quiet path: zero new cost (single atomic load on
     // held_ref_post_steal_check_total).
     if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr) {
-        ::aura::core::security_event_wal::revalidate_held_ref_after_steal();
+        ::aura::serve::mf_mailbox::revalidate_held_ref_after_steal();
     }
 }
 

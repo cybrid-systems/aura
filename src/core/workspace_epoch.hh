@@ -1,14 +1,6 @@
 // workspace_epoch.hh — Issue #1964 cycle 2a–2d / Issue #2039
 // Unified workspace epoch vocabulary + process-global storage for the
 // two process-scoped epochs (Mutation + Bridge).
-
-// Issue #3103: forward-declared for the schema-2 is_fresh_with_refs free
-// function (declared below; implementation in
-// evaluator_primitives_query_workspace.cpp which already includes both
-// this header + FlatAST). Layout-only header stays FlatAST-free.
-namespace aura::ast {
-class FlatAST;
-}
 //
 // ## Final ownership model (cycle 2d / #2039)
 //
@@ -618,8 +610,11 @@ enum class QueryResultFreshness {
     SoftOnlyNoProvenance = 6, // schema-1 layout-only matches (no ref stamp)
 };
 
+// `flat` is the live FlatAST (void* so this layout-only header does not
+// forward-declare aura::ast::FlatAST — that collides with the module
+// export in TUs that `import aura.core.ast` and include this header).
 [[nodiscard]] QueryResultFreshness
-query_result_is_fresh_with_refs(const QueryResult& qr, const aura::ast::FlatAST& flat,
+query_result_is_fresh_with_refs(const QueryResult& qr, const void* flat,
                                 std::uint64_t current_tenant_id = 0,
                                 std::uint64_t current_fiber_id = 0) noexcept;
 

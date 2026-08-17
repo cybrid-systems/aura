@@ -26,3 +26,7 @@ extern "C" __attribute__((weak)) void aura_set_storm_eval_context(void* /*eval_p
 extern "C" __attribute__((weak)) void* aura_get_storm_eval_context(void) noexcept {
     return nullptr;
 }
+
+// Strong definition lives in ir_cache_pure.ixx (full-module binaries).
+// test_concurrent does not compile that module.
+extern "C" __attribute__((weak)) void aura_clear_partial_relower_threshold_force(void) {}

@@ -57,6 +57,9 @@ extern "C" int aura_hot_update_storm_exit_force_full_active(void);
 // fully exited. Wired from HotUpdateRegistry::storm_exit_force_full_active
 // under production/Full (Soft/Off stays zero-cost — the flag was never
 // forced there). Atomic_bool relaxed store; one cheap call.
+//
+// Defined here (not in hot_update_registry.cpp) so light binaries such
+// as test_concurrent can compile that TU without importing this module.
 extern "C" void aura_clear_partial_relower_threshold_force(void);
 
 export namespace aura::compiler {
@@ -887,6 +890,17 @@ inline std::atomic<bool>& partial_relower_threshold_forced_atomic() noexcept {
     static std::atomic<bool> forced{false};
     return forced;
 }
+
+} // namespace aura::compiler
+
+export {
+    extern "C" void aura_clear_partial_relower_threshold_force(void) {
+        aura::compiler::partial_relower_threshold_forced_atomic().store(false,
+                                                                        std::memory_order_relaxed);
+    }
+}
+
+export namespace aura::compiler {
 
 // Rolling cost history (process-wide; pure decision still reads only thr).
 inline std::atomic<std::uint64_t>& partial_relower_cost_ns_sum_atomic() noexcept {

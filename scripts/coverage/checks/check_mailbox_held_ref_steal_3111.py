@@ -52,7 +52,7 @@ def main() -> int:
     must("revalidate_held_ref_after_steal()", "AC1 revalidate helper in multi_fiber_mailbox.h", mfbh)
     must("bump_held_ref_stale_after_steal()", "AC1 bump helper in multi_fiber_mailbox.h", mfbh)
     must(
-        "aura::core::security_event_wal::revalidate_held_ref_after_steal",
+        "aura::serve::mf_mailbox::revalidate_held_ref_after_steal",
         "AC1 call site in evaluator_fiber_mutation.cpp (steal-complete strong def)",
         ev_fiber_mut,
     )
