@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 833 | Preferred destination suites |
-| **Total scanned** | **833** | |
+| `tests/core/test_*.cpp` | 835 | Preferred destination suites |
+| **Total scanned** | **835** | |
 
 ### Related artifacts
 
@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 244 | 244 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 245 | 245 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 83 | 83 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -313,6 +313,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp`
 - `tests/compiler/test_coercion_dual_require.cpp`
 - `tests/compiler/test_coercion_evidence_loss_slo.cpp`
+- `tests/compiler/test_coercion_map_abort_rewind.cpp`
 - `tests/compiler/test_coercion_prov_slo.cpp`
 - `tests/compiler/test_coercion_provenance_fast_strict.cpp`
 - `tests/compiler/test_coercion_provenance_miss_force_audit.cpp`
@@ -537,6 +538,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_issue_1993.cpp`
 - `tests/compiler/test_issue_3095.cpp`
 - `tests/compiler/test_issue_3096.cpp`
+- `tests/compiler/test_issue_3097.cpp`
 - `tests/compiler/test_issues_809_817_batch.cpp`
 - `tests/compiler/test_issues_819_829_batch.cpp`
 - `tests/compiler/test_jit_aot_hot_update_unit_batch.cpp`
@@ -1144,13 +1146,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (244)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (245)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (244)
+#### domain/ (245)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1193,6 +1195,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp` (—) [domain_suite, theme_compiler] — test_coercion_dead_elim_castop_flow_zerooverhead.cpp
 - `tests/compiler/test_coercion_dual_require.cpp` (—) [domain_suite, theme_compiler] — AC1: Production / dual-require + incomplete dual → drop, counter++, no node
 - `tests/compiler/test_coercion_evidence_loss_slo.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → skip insert; soft_incomplete_skip advances
+- `tests/compiler/test_coercion_map_abort_rewind.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_coercion_map_abort_rewind.cpp —
 - `tests/compiler/test_coercion_prov_slo.cpp` (—) [domain_suite, theme_compiler] — AC1: production + miss storm → bp < SLO → force pending; consume forces audit
 - `tests/compiler/test_coercion_provenance_fast_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: both fields set at add → chain_walk_total does not increase (fast path)
 - `tests/compiler/test_coercion_provenance_miss_force_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit
@@ -1754,13 +1757,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (134)
+### `observability` — Observability / metrics / query:*-stats (135)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (134)
+#### domain/ (135)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1814,6 +1817,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_ir_metadata_interpreter_jit_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #403/#506/#570/#598 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_ir_soa_layout_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: generation advance after stamp → resume mismatch + fence hit
 - `tests/compiler/test_isolation_stamp_resolve.cpp` (—) [domain_suite, theme_compiler] — AC1: export_ref / export_ref_safe stamp tenant + fiber (Phase A mandate)
+- `tests/compiler/test_issue_3097.cpp` (#3097) [domain_suite, theme_compiler] — AC1: deferred_hybrid_pending_upper_bound_ counts pending edges
 - `tests/compiler/test_let_poly_solve_delta.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#745/#798 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_boundary_consistency.cpp` (—) [domain_suite, theme_compiler] — Issue #1568 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_live_closure_walk.cpp` (—) [domain_suite, theme_compiler] — Issue #1557/#1568/#1596/#1659/#1895 (#1978 renamed): issue# moved from filename to header.
