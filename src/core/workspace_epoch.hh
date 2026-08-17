@@ -1,6 +1,14 @@
 // workspace_epoch.hh — Issue #1964 cycle 2a–2d / Issue #2039
 // Unified workspace epoch vocabulary + process-global storage for the
 // two process-scoped epochs (Mutation + Bridge).
+
+// Issue #3103: forward-declared for the schema-2 is_fresh_with_refs free
+// function (declared below; implementation in
+// evaluator_primitives_query_workspace.cpp which already includes both
+// this header + FlatAST). Layout-only header stays FlatAST-free.
+namespace aura::ast {
+class FlatAST;
+}
 //
 // ## Final ownership model (cycle 2d / #2039)
 //
@@ -403,9 +411,42 @@ inline void reset_query_epoch_metrics_for_test() noexcept {
 // via SafePCVSpan keep-alive on the children_stable path; match gens still
 // validated when a FlatAST is supplied to is_fresh_with_refs).
 
+// Issue #3103: schema-2 QueryResultMatch carries the full StableNodeRef
+// provenance that production multi-tenant / COW / wrap / concurrent fiber
+// checks need to validate Agent multi-round memory. Fields:
+//   node_id (4)                       — StableNodeRef.id (was the only field
+//                                        in schema-1 layout-only matches)
+//   tenant_id (4)                     — tenant isolation token
+//   fiber_id (4)                      — fiber isolation token
+//   mutation_id_at_capture (4)        — mutation epoch at capture time
+//   generation (2)                    — StableNodeRef.gen
+//   wrap_epoch (2)                    — StableNodeRef.wrap_epoch
+//   cow_epoch_at_capture (2)          — StableNodeRef.cow_epoch_at_capture
+//   boundary_pinned (1)               — SafePCVSpan pin path
+//   reserved (1)                      — padding to align to 4
+// Schema-1 readers (pre-#3103) ignore the trailing 18 bytes; schema-2
+// readers check schema_marker == wrap_epoch != 0 (cheap discriminator) and
+// gate validation on tenant_id / fiber_id / cow_epoch_at_capture /
+// mutation_id_at_capture when set.
 struct QueryResultMatch {
     std::uint32_t node_id = 0;
+    std::uint32_t tenant_id = 0;
+    std::uint32_t fiber_id = 0;
+    std::uint32_t mutation_id_at_capture = 0;
     std::uint16_t generation = 0;
+    std::uint16_t wrap_epoch = 0;
+    std::uint16_t cow_epoch_at_capture = 0;
+    std::uint8_t boundary_pinned = 0;
+    std::uint8_t reserved = 0; // alignment pad (schema-version bit space)
+
+    // Issue #3103: schema-2 marker. True iff the trailing provenance fields
+    // were captured at capture time (via :as-query-result / :query-result #t).
+    // Layout-only schema-1 matches leave wrap_epoch == 0 + cow_epoch == 0 +
+    // tenant_id == 0, so this naturally returns false for them.
+    [[nodiscard]] constexpr bool has_full_provenance() const noexcept {
+        return wrap_epoch != 0 || cow_epoch_at_capture != 0 || tenant_id != 0 || fiber_id != 0 ||
+               mutation_id_at_capture != 0;
+    }
 };
 
 struct QueryResult {
@@ -432,11 +473,34 @@ struct QueryResult {
         return is_fresh(current_mutation_epoch(), flat_generation);
     }
 
-    bool push_match(std::uint32_t node_id, std::uint16_t generation) noexcept {
+    bool push_match(std::uint32_t node_id, std::uint16_t generation, std::uint16_t wrap_epoch = 0,
+                    std::uint16_t cow_epoch_at_capture = 0, std::uint32_t tenant_id = 0,
+                    std::uint32_t fiber_id = 0, std::uint32_t mutation_id_at_capture = 0,
+                    std::uint8_t boundary_pinned = 0) noexcept {
         if (match_count >= kMaxInlineMatches)
             return false;
-        matches[match_count++] = QueryResultMatch{node_id, generation};
+        matches[match_count++] = QueryResultMatch{node_id,
+                                                  tenant_id,
+                                                  fiber_id,
+                                                  mutation_id_at_capture,
+                                                  generation,
+                                                  wrap_epoch,
+                                                  cow_epoch_at_capture,
+                                                  boundary_pinned,
+                                                  /*reserved=*/0};
         return true;
+    }
+
+    // Issue #3103: capture-time stamping overload. Builds a schema-2
+    // QueryResultMatch with the full StableNodeRef provenance. Production
+    // Agent loops use this from :as-query-result / :query-result #t finish
+    // paths. Soft / single-tenant bare path keeps the 2-arg push_match.
+    bool push_match_full(std::uint32_t node_id, std::uint16_t generation, std::uint16_t wrap_epoch,
+                         std::uint16_t cow_epoch_at_capture, std::uint32_t tenant_id,
+                         std::uint32_t fiber_id, std::uint32_t mutation_id_at_capture,
+                         std::uint8_t boundary_pinned) noexcept {
+        return push_match(node_id, generation, wrap_epoch, cow_epoch_at_capture, tenant_id,
+                          fiber_id, mutation_id_at_capture, boundary_pinned);
     }
 };
 
@@ -458,6 +522,68 @@ inline std::atomic<std::uint32_t>& g_query_result_wired() noexcept {
     return v;
 }
 inline constexpr int kQueryResultIssue = 2933;
+inline constexpr int kQueryResultFullProvenanceIssue = 3103;
+
+// Issue #3103: full-provenance path observability (additive; production/Full
+// keeps the schema-1 Soft counters untouched). Bumped at capture-time when
+// :as-query-result / :query-result #t stamps a schema-2 match, and at
+// is_fresh_with_refs validation time on the full-provenance path.
+inline std::atomic<std::uint64_t>& g_query_result_full_provenance_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_full_provenance_fresh_hits_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_full_provenance_stale_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_full_provenance_tenant_mismatch_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_full_provenance_fiber_mismatch_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint64_t>& g_query_result_full_provenance_cow_mismatch_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+inline std::atomic<std::uint32_t>& g_query_result_full_provenance_wired() noexcept {
+    static std::atomic<std::uint32_t> v{1};
+    return v;
+}
+
+inline void note_query_result_full_provenance() noexcept {
+    g_query_result_full_provenance_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_full_provenance_fresh_hit() noexcept {
+    g_query_result_full_provenance_fresh_hits_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_full_provenance_stale() noexcept {
+    g_query_result_full_provenance_stale_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_full_provenance_tenant_mismatch() noexcept {
+    g_query_result_full_provenance_tenant_mismatch_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_full_provenance_fiber_mismatch() noexcept {
+    g_query_result_full_provenance_fiber_mismatch_total().fetch_add(1, std::memory_order_relaxed);
+}
+inline void note_query_result_full_provenance_cow_mismatch() noexcept {
+    g_query_result_full_provenance_cow_mismatch_total().fetch_add(1, std::memory_order_relaxed);
+}
+
+inline void reset_query_result_full_provenance_for_test() noexcept {
+    g_query_result_full_provenance_total().store(0, std::memory_order_relaxed);
+    g_query_result_full_provenance_fresh_hits_total().store(0, std::memory_order_relaxed);
+    g_query_result_full_provenance_stale_total().store(0, std::memory_order_relaxed);
+    g_query_result_full_provenance_tenant_mismatch_total().store(0, std::memory_order_relaxed);
+    g_query_result_full_provenance_fiber_mismatch_total().store(0, std::memory_order_relaxed);
+    g_query_result_full_provenance_cow_mismatch_total().store(0, std::memory_order_relaxed);
+}
 
 inline void note_query_result_created() noexcept {
     g_query_result_created_total().fetch_add(1, std::memory_order_relaxed);
@@ -469,9 +595,34 @@ inline void note_query_result_stale() noexcept {
     g_query_result_stale_total().fetch_add(1, std::memory_order_relaxed);
 }
 
-// Check freshness of a QueryResult; bumps fresh/stale metrics.
-// strict_fail: when true (query_epoch_strict or caller forces), stale
-// returns false; when false, still bumps stale metric but returns true
+// Issue #3103: full-provenance freshness validator. Returns the reason
+// the QueryResult is not fresh (or Fresh). Production Agent loops opt
+// into the schema-2 path via :as-query-result / :query-result #t and
+// rely on this to refuse silent rebinds under multi-tenant / COW /
+// wrap / concurrent fiber contention. The header stays layout-only —
+// the implementation is in evaluator_primitives_query_workspace.cpp
+// which already includes both this header + FlatAST.
+//
+// tenant_id / fiber_id are passed in (default 0 = skip tenant/fiber
+// check, Soft path) because they live on the Evaluator, not FlatAST.
+// Pass the live Evaluator::capability_tenant_id() + the live fiber_id
+// under production defaults to enforce multi-tenant / concurrent-fiber
+// isolation; pass 0 to opt into the Soft single-tenant path.
+enum class QueryResultFreshness {
+    Fresh = 0,
+    StaleByEpoch = 1,         // mutation_epoch + flat generation advanced
+    InvalidTenant = 2,        // tenant_id mismatch (multi-tenant isolation)
+    InvalidFiber = 3,         // fiber_id mismatch (concurrent fiber steal)
+    InvalidCowLayer = 4,      // cow_epoch_at_capture vs live cow_epoch
+    InvalidMutation = 5,      // mutation_id_at_capture vs live mutation_epoch
+    SoftOnlyNoProvenance = 6, // schema-1 layout-only matches (no ref stamp)
+};
+
+[[nodiscard]] QueryResultFreshness
+query_result_is_fresh_with_refs(const QueryResult& qr, const aura::ast::FlatAST& flat,
+                                std::uint64_t current_tenant_id = 0,
+                                std::uint64_t current_fiber_id = 0) noexcept;
+
 // only if epoch-fresh (Agents always get accurate is_fresh).
 [[nodiscard]] inline bool query_result_check_fresh(const QueryResult& qr,
                                                    std::uint64_t flat_generation) noexcept {
