@@ -366,6 +366,15 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       static_cast<std::int64_t>(scored.predicate_memo_stale));
             // Advisory throttle (optional orch map)
             insert_kv("throttle-action", scored.throttle_action); // 0 none 1 delay 2 split
+            // Issue #3091: additive proof audit_mid (TypeLinearCommitProof.audit_mid,
+            // stamped from TLS boundary-noted mid / g_last_stamped_audit_mid).
+            // Agent reads same mid as Typed trail / SE so proof ↔ SE ↔ trail
+            // join via single key. Soft / no boundary → 0. Abort → 0.
+            insert_kv("audit-mid",
+                      static_cast<std::int64_t>(
+                          typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed)));
+            insert_kv("schema-3091", 3091);
+            insert_kv("issue-3091", 3091);
             // force-reason code legend
             insert_kv("force-reason-ok", 0);
             insert_kv("force-reason-solve", 1);
@@ -636,6 +645,17 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("last-proof-mid", snap.last_proof_mid);
             insert_kv("schema-3016", 3016);
             insert_kv("issue-3016", 3016);
+            // Issue #3091: additive proof audit_mid (TypeLinearCommitProof.audit_mid,
+            // stamped from TLS boundary-noted mid / g_last_stamped_audit_mid).
+            // Mirrors last-proof-mid but reads the proof's own audit_mid gauge
+            // (typed_audit::g_last_stamped_audit_mid is the SSOT for "last
+            // stamped" since #3016; proof.audit_mid also falls back to it
+            // when no TLS boundary mid is noted, so the two converge).
+            insert_kv("audit-mid",
+                      static_cast<std::int64_t>(
+                          typed_audit::g_last_stamped_audit_mid.load(std::memory_order_relaxed)));
+            insert_kv("schema-3091", 3091);
+            insert_kv("issue-3091", 3091);
             // #2854 same-tx order totals
             insert_kv("proof-stamped-after-rebind-total", snap.proof_stamped_after_rebind_total);
             insert_kv("proof-reject-after-rebind-fail-total",

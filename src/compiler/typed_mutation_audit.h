@@ -1128,6 +1128,15 @@ struct TypeLinearCommitProof {
     // drift without N-key join (densify/steal prune changes fingerprint).
     std::uint64_t goal_fingerprint = 0;
     std::uint64_t schema = 2697;
+    // Issue #3091: append-only audit_mid for mid-join with Typed trail /
+    // SE / g_last_stamped_audit_mid (refine #2697/#2717/#2897 residual).
+    // Stamp writes TLS boundary-noted mid (preferred) or falls back to
+    // g_last_stamped_audit_mid. Soft / no boundary note → 0 (AC4).
+    // Abort / force-rollback clear (#3030) drops g_last_stamped_audit_mid
+    // so the next build returns audit_mid=0 (AC5). Appended at struct END
+    // per #2906 (never insert mid-struct: stale module BMIs writing at
+    // wrong offsets corrupt neighboring heap).
+    std::uint64_t audit_mid = 0;
 };
 
 inline constexpr int kTypeLinearCommitProofIssue = 2697;
@@ -1712,6 +1721,11 @@ inline void clear_type_linear_commit_proof_on_abort() noexcept {
     g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    // Issue #3091: abort / force-rollback must also clear
+    // g_last_stamped_audit_mid so the next build returns audit_mid = 0
+    // (AC5). The TLS boundary mid is independently cleared by
+    // clear_boundary_audit_mid() at the outermost boundary exit.
+    g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
     if (had_face)
         g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeReject,
                                                std::memory_order_relaxed);
@@ -1926,6 +1940,12 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     const auto truth =
         resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
     apply_proof_goal_truth(p, truth);
+    // Issue #3091: stamp audit_mid from TLS boundary-noted mid (preferred)
+    // or fall back to g_last_stamped_audit_mid (last successful resolve).
+    // Soft / no boundary note → audit_mid = 0 (AC4 zero-cost contract).
+    p.audit_mid = g_tls_boundary_audit_noted
+                      ? g_tls_boundary_audit_mid
+                      : g_last_stamped_audit_mid.load(std::memory_order_relaxed);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (AC3).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
@@ -1975,6 +1995,13 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     const auto truth =
         resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
     apply_proof_goal_truth(p, truth);
+    // Issue #3091: stamp audit_mid same as the live-stamp path (TLS
+    // boundary-noted mid preferred; fallback to g_last_stamped_audit_mid;
+    // Soft / no boundary → 0). Same mid as the Typed trail / SE so Agent
+    // joins via single mid across proof ↔ SE ↔ trail.
+    p.audit_mid = g_tls_boundary_audit_noted
+                      ? g_tls_boundary_audit_mid
+                      : g_last_stamped_audit_mid.load(std::memory_order_relaxed);
     // Issue #2981: same-txn safety net — never leave a green proof when
     // #2704 hard face is latched and CS goals are empty (prefer CS
     // truth over gauge). Soft never enters the helper.

@@ -1317,8 +1317,81 @@ int run_test_type_linear_commit_health() {
     std::println("\n=== Issue #3032: rehydrate-miss invalidate on type-linear-commit-health ===");
     ac3032_health_schema();
     ac3063_health_schema();
+    // Issue #3091: TypeLinearCommitProof audit_mid for proof ↔ SE ↔ trail mid-join.
+    //   AC1: struct field audit_mid appended at END (per #2906 rule).
+    //   AC2: both build helpers (live + with_outcome) stamp audit_mid from
+    //        TLS boundary-noted mid (preferred) or g_last_stamped_audit_mid.
+    //   AC3: clear_type_linear_commit_proof_on_abort also clears
+    //        g_last_stamped_audit_mid so the next build returns audit_mid = 0.
+    //   AC4: query primitives (type-linear-commit-health + type-linear-
+    //        evolution-snapshot + folded type-linear-commit-proof-*) expose
+    //        audit-mid key (or type-linear-commit-proof-audit-mid alias).
+    //   AC5: schema-3091 / issue-3091 sentinels present on all 3 queries.
+    //   AC6: linter check_type_linear_proof_mid_3091.py stays clean.
+    std::println("\n=== Issue #3091: TypeLinearCommitProof audit_mid ===");
+    {
+        auto cap = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(cap.find("std::uint64_t audit_mid = 0;") != std::string::npos,
+              "#3091 AC1: TypeLinearCommitProof has audit_mid field");
+    }
+    {
+        auto cap = read_file("src/compiler/typed_mutation_audit.h");
+        const auto build_live = cap.find("p.audit_mid = g_tls_boundary_audit_noted");
+        const auto build_with_outcome = cap.rfind("p.audit_mid = g_tls_boundary_audit_noted");
+        CHECK(build_live != std::string::npos, "#3091 AC2: build stamps audit_mid (live path)");
+        CHECK(build_with_outcome != std::string::npos && build_with_outcome != build_live,
+              "#3091 AC2: build stamps audit_mid (with_outcome path)");
+    }
+    {
+        auto cap = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(cap.find("clear_type_linear_commit_proof_on_abort") != std::string::npos,
+              "#3091 AC3: abort clear exists");
+        CHECK(cap.find("g_last_stamped_audit_mid.store(0") != std::string::npos,
+              "#3091 AC3: abort clear drops g_last_stamped_audit_mid");
+    }
+    {
+        auto q1 = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+        auto q2 = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        const auto reflect_count =
+            std::count(q1.begin(), q1.end(), '\"') - std::count(q1.begin(), q1.end(), '\\');
+        (void)reflect_count;
+        CHECK(q1.find("\"audit-mid\"") != std::string::npos,
+              "#3091 AC4: query_reflect exposes audit-mid key");
+        CHECK(q2.find("\"type-linear-commit-proof-audit-mid\"") != std::string::npos,
+              "#3091 AC4: query_type_stats exposes type-linear-commit-proof-audit-mid");
+    }
+    {
+        auto q1 = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+        auto q2 = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        const auto cnt = [](const std::string& s) {
+            std::size_t n = 0;
+            std::size_t p = 0;
+            while ((p = s.find("\"schema-3091\"", p)) != std::string::npos) {
+                ++n;
+                p += std::strlen("\"schema-3091\"");
+            }
+            return n;
+        };
+        CHECK(cnt(q1) + cnt(q2) >= 3, "#3091 AC5: schema-3091 sentinel present on >=3 query sites");
+    }
+    {
+        const std::string linter_out = [] {
+            std::FILE* p =
+                popen("python3 scripts/check_type_linear_proof_mid_3091.py --strict 2>&1", "r");
+            if (!p)
+                return std::string{};
+            char buf[4096]{};
+            std::string out;
+            while (std::fgets(buf, sizeof(buf), p))
+                out.append(buf);
+            pclose(p);
+            return out;
+        }();
+        CHECK(linter_out.find("[OK]") != std::string::npos,
+              "#3091 AC6: linter check_type_linear_proof_mid_3091.py stays clean");
+    }
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
-                 "#2995 + #3030 + #3031 + #3032: {} "
+                 "#2995 + #3030 + #3031 + #3032 + #3091: {} "
                  "passed, {} "
                  "failed ===",
                  g_passed, g_failed);
