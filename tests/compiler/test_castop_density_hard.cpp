@@ -292,6 +292,118 @@ static void ac3084_5_schema_and_linter() {
           "3084 AC5: no docs/design/");
 }
 
+// ── #3107: Soft residual on a hot function → force-relower ────────────
+//
+// Closes the "Soft MustDeopt-only" window where leftover CastOp could
+// still execute before the deopt barrier fires under AI multi-round
+// mutate (canary / AURA_SANDBOX=off). Production path unchanged
+// (#3046 / #3084 — density-keep + force-JIT/relower). Soft path now
+// bumps a separate g_hot_residual_soft_relower_total counter when the
+// caller has identified a specific hot function (fn_name provided); the
+// existing aura_jit_batch_deopt_for call (already in the Soft branch)
+// is the force-relower mechanism — we just track it separately so
+// production-soak / agent-self-modify gates can observe.
+
+static void ac3107_1_soft_residual_force_relower() {
+    std::println("\n--- #3107 AC1: Production path unchanged (#3046/#3084) ---");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("kCastOpHotResidualSoftRelowerIssue = 3107") != std::string::npos,
+          "3107 AC1: issue stamp #3107");
+    CHECK(pol.find("g_hot_residual_soft_relower_total") != std::string::npos,
+          "3107 AC1: new additive counter");
+    // Production branch unchanged: density-keep + force-JIT/relower
+    CHECK(pol.find("g_hot_residual_density_keep_total") != std::string::npos,
+          "3107 AC1: Production density-keep unchanged");
+    CHECK(pol.find("on_force_jit_for_reason(AotReloadFail::Other)") != std::string::npos,
+          "3107 AC1: Production force-JIT path unchanged");
+    // Soft branch: when fn_name is provided, bump the new counter AND
+    // call aura_jit_batch_deopt_for (the force-relower mechanism).
+    CHECK(pol.find("g_hot_residual_soft_relower_total.fetch_add(1") != std::string::npos,
+          "3107 AC1: Soft bump on fn_name");
+    CHECK(pol.find("aura_jit_batch_deopt_for(fn_name, 0)") != std::string::npos,
+          "3107 AC1: aura_jit_batch_deopt_for retained as force-relower mechanism");
+}
+
+static void ac3107_2_hot_fn_force_relower() {
+    std::println("\n--- #3107 AC2: Soft hot-function force-relower (via fn_name) ---");
+    // Soft branch must still mark MustDeopt (belt-and-suspenders) AND
+    // additionally bump the soft-relower counter + call deopt batch.
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("g_hot_residual_soft_must_deopt_total") != std::string::npos,
+          "3107 AC2: Soft MustDeopt counter unchanged");
+    CHECK(pol.find("g_hot_residual_soft_must_deopt_pending") != std::string::npos,
+          "3107 AC2: Soft MustDeopt pending flag unchanged");
+    // Verify the counter actually bumps under Soft path with fn_name.
+    // Use note_hot_residual_nonidentity_castops with leftover>0, soft
+    // (production_override=0), and fn_name set.
+    const auto before = aura::compiler::castop_density::g_hot_residual_soft_relower_total.load(
+        std::memory_order_relaxed);
+    aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
+        /*leftover=*/3, /*m=*/nullptr, /*production_override=*/0, /*fn_name=*/"hot_fn_3107");
+    const auto after = aura::compiler::castop_density::g_hot_residual_soft_relower_total.load(
+        std::memory_order_relaxed);
+    CHECK(after > before,
+          "3107 AC2: Soft fn_name residual bumps g_hot_residual_soft_relower_total");
+    // And MustDeopt counter also bumps (belt-and-suspenders).
+    const auto md_before =
+        aura::compiler::castop_density::g_hot_residual_soft_must_deopt_total.load(
+            std::memory_order_relaxed);
+    aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
+        /*leftover=*/1, /*m=*/nullptr, /*production_override=*/0, /*fn_name=*/"hot_fn_3107_md");
+    const auto md_after = aura::compiler::castop_density::g_hot_residual_soft_must_deopt_total.load(
+        std::memory_order_relaxed);
+    CHECK(md_after > md_before, "3107 AC2: Soft fn_name residual also bumps MustDeopt counter");
+}
+
+static void ac3107_3_quiet_zero_cost() {
+    std::println("\n--- #3107 AC3: Quiet leftover==0 zero-cost ---");
+    const auto before = aura::compiler::castop_density::g_hot_residual_soft_relower_total.load(
+        std::memory_order_relaxed);
+    // leftover=0 → returns 0 immediately, no counter bump.
+    const auto ret = aura::compiler::castop_density::note_hot_residual_nonidentity_castops(
+        /*leftover=*/0);
+    CHECK(ret == 0, "3107 AC3: leftover==0 returns 0");
+    const auto after = aura::compiler::castop_density::g_hot_residual_soft_relower_total.load(
+        std::memory_order_relaxed);
+    CHECK(after == before, "3107 AC3: leftover==0 does not bump soft-relower counter");
+}
+
+static void ac3107_4_additive_counter_only() {
+    std::println("\n--- #3107 AC4: additive counter only, no new dirty bits ---");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    // The diff must be only additive (one new std::atomic counter + one
+    // new std::atomic wired flag + one new constexpr issue stamp + the
+    // Soft-branch fetch_add). No new permanent dirty bits on Quiet path.
+    CHECK(pol.find("g_hot_residual_soft_relower_total") != std::string::npos,
+          "3107 AC4: additive counter");
+    CHECK(pol.find("g_hot_residual_soft_relower_wired{1}") != std::string::npos,
+          "3107 AC4: additive wired flag");
+    CHECK(pol.find("kCastOpHotResidualSoftRelowerIssue = 3107") != std::string::npos,
+          "3107 AC4: additive issue stamp");
+}
+
+static void ac3107_5_schema_and_linter() {
+    std::println("\n--- #3107 AC5: schema + linter + no invent ---");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("kCastOpHotResidualSoftRelowerIssue = 3107") != std::string::npos,
+          "3107 AC5: issue stamp");
+    const auto lint = read_file("scripts/coverage/checks/check_hot_residual_soft_relower_3107.py");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("Issue #3107") != std::string::npos,
+          "3107 AC5: 3107 linter exists");
+    CHECK(build.find("check_hot_residual_soft_relower_3107") != std::string::npos,
+          "3107 AC5: build.py wires 3107 linter");
+    CHECK(read_file("tests/compiler/test_issue_3107.cpp").empty(),
+          "3107 AC5: no invent test_issue_3107 (per #81967)");
+    CHECK(read_file("docs/design/3107-hot-residual-soft-relower.md").empty(),
+          "3107 AC5: no docs/design/ (per #1655)");
+    // Lineage: 3046 + 3084 must still pass (counter names preserved).
+    CHECK(pol.find("kCastOpHotResidualNonidentityIssue = 3046") != std::string::npos,
+          "3107 AC5: #3046 lineage preserved");
+    CHECK(pol.find("kCastOpHotResidualSoftMustDeoptIssue = 3084") != std::string::npos,
+          "3107 AC5: #3084 lineage preserved");
+}
+
 } // namespace
 
 int run_test_castop_density_hard() {
@@ -307,7 +419,12 @@ int run_test_castop_density_hard() {
     ac3084_3_quiet_zero();
     ac3084_4_blame_default_unchanged();
     ac3084_5_schema_and_linter();
-    std::println("\n=== #2358/#3046/#3084: {} passed, {} failed ===", g_passed, g_failed);
+    ac3107_1_soft_residual_force_relower();
+    ac3107_2_hot_fn_force_relower();
+    ac3107_3_quiet_zero_cost();
+    ac3107_4_additive_counter_only();
+    ac3107_5_schema_and_linter();
+    std::println("\n=== #2358/#3046/#3084/#3107: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
