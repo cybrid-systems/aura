@@ -2610,8 +2610,8 @@ extern "C" int aura_hot_update_storm_exit_force_full_active(void) {
 // flag lives in ir_cache_pure.ixx (declaration + storage); this shim
 // calls its accessor. Forward declared in ir_cache_pure.ixx.
 extern "C" void aura_clear_partial_relower_threshold_force(void) {
-    aura::compiler::partial_relower_threshold_forced_atomic().store(
-        false, std::memory_order_relaxed);
+    aura::compiler::partial_relower_threshold_forced_atomic().store(false,
+                                                                    std::memory_order_relaxed);
 }
 
 // Issue #2017: C entry for compact-env-frames / other module-partition callers.

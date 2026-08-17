@@ -169,8 +169,8 @@ static void ac3101_storm_exit_clears_force() {
           "3101 AC1: clear accessor defined in hot_update_registry.cpp");
     // AC1: storm_exit_force_full_active calls the clear under production
     // (ShouldHardRejectSoftSibling gate — Soft/Off stays zero-cost).
-    CHECK(hur.find("aura_clear_partial_relower_threshold_force()") != std::string::npos
-              && hur.find("should_hard_reject_soft_sibling") != std::string::npos,
+    CHECK(hur.find("aura_clear_partial_relower_threshold_force()") != std::string::npos &&
+              hur.find("should_hard_reject_soft_sibling") != std::string::npos,
           "3101 AC1: storm_exit_force_full_active hook wired under production only");
     // AC3: set_partial_relower_threshold still freezes for unit tests (no regression).
     set_partial_relower_threshold(4);
@@ -179,13 +179,15 @@ static void ac3101_storm_exit_clears_force() {
     // AC1: clear accessor resets forced to false (Option C defense).
     aura_clear_partial_relower_threshold_force();
     CHECK(!partial_relower_threshold_is_forced(), "3101 AC1: clear accessor unforceded");
-    CHECK(get_partial_relower_threshold() == 4, "3101 AC1: clear does NOT reset thr value (preserves explicit override)");
+    CHECK(get_partial_relower_threshold() == 4,
+          "3101 AC1: clear does NOT reset thr value (preserves explicit override)");
     // After clear, adaptive may re-tighten (default reset removes forced + restores default thr).
     reset_partial_relower_threshold_for_test();
     CHECK(!partial_relower_threshold_is_forced(), "3101 AC1: reset clears forced");
     // AC2: Soft / Off stays zero-cost — the storm_exit_force_full_active hook
     // is gated on should_hard_reject_soft_sibling (production_only).
-    CHECK(hur.find("if (aura::compiler::typed_audit::should_hard_reject_soft_sibling())") != std::string::npos,
+    CHECK(hur.find("if (aura::compiler::typed_audit::should_hard_reject_soft_sibling())") !=
+              std::string::npos,
           "3101 AC2: clear hook gated on production/Full (Soft/Off zero-cost)");
     // AC5: existing metrics distinguish correct full vs thrashing — reuse
     // partial_relower_storm_forced_full_total + storm_exit_force_full_active
