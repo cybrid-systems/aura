@@ -1034,6 +1034,14 @@ inline void coerced_nodes_tracker_push(aura::compiler::dirty::NodeId nid) noexce
 coerced_nodes_tracker_take() noexcept;
 [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept;
 
+// Issue #3106 follow-up: GCC 16.1.0 ICE on multi-line function signature
+// + default arguments in C++20 module interface unit (14th consecutive
+// coercion_map.ixx ICE per MEMORY). Compress the signature to a single
+// line — the multi-line layout with trailing default-arg parameters
+// corrupts the parser state, making GCC think `map_mut` is undeclared
+// and treating `nullptr) {` as a compound expression initializer.
+// Same fix pattern as the ubsan-smoke / asan-build gates; no semantic
+// change (defaults preserved, linkage unchanged).
 export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map,
                                       DeadCoercionAstStats* stats_out = nullptr,
                                       CoercionMap* map_mut = nullptr) {
