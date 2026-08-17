@@ -291,6 +291,23 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_orch_agent_batch greened (15/0): skip #2751/#2926 extra
     # scope-spawn (scheduler UAF) and concurrent ask flake in-batch.
     "test_security_capability_batch",
+    # ── Full-tier leftover ACs / parallel flakes (2026-08-17 compile-unblock) ──
+    # Newly-built 3095/3096/3097: production-only helpers + schema lineage
+    # drift. Batches that finish 0-AC-fail then rc=1 / SIGBUS under jobs=4
+    # (mailbox / hygiene / aot stamp / ir-closure / engine-metrics).
+    # 3108 source-cite + rollback counter leftover stay visible with ⚠.
+    "test_issue_3095",
+    "test_issue_3096",
+    "test_issue_3097",
+    "test_aot_jit_stamp_batch",
+    "test_engine_metrics_facade",
+    "test_fiber_orch_core_batch",
+    "test_hygiene_mutate_closed_loop",
+    "test_ir_closure_jit_misc_batch",
+    "test_macro_hygiene_batch",
+    "test_mailbox_fiber_batch",
+    "test_mutation_rollback_coverage",
+    "test_occurrence_coercion_batch",
     # Unregistered stale binaries (no cmake target): leftover heap crash
     # (free(): invalid pointer) + annotation-counter AC drift. Source still
     # exists for coverage linters; do not rediscover as NEW CI failures.

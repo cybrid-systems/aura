@@ -379,13 +379,21 @@ int main(int argc, char* argv[]) {
     aura_runtime_require_production_abi_c();
 
     // Issue #3098: production multi-worker Ready must refuse Soft fall-through.
-    // AND-s strong ABI + production_defaults_active. Closes the residual
-    // configuration hole where multi-worker processes were silently
-    // falling through to Soft residual arms under sandbox=off or
-    // !production_defaults_active. Single-worker / Soft unit / light-link
-    // callers use the single-worker variant above (returns true under
-    // Soft without abort).
-    aura_runtime_require_production_multi_worker_c();
+    // AND-s strong ABI + production_defaults_active. Only for actual
+    // multi-worker entries (--serve-async / --worker-threads /
+    // --concurrent-metrics). CLI eval / P0 / Soft sandbox stay on the
+    // single-worker ABI check above (returns true under Soft without abort).
+    bool multi_worker_entry = false;
+    for (int i = 1; i < argc; ++i) {
+        const std::string_view a(argv[i]);
+        if (a == "--serve-async" || a == "--concurrent-metrics" || a == "--serve-async-bench" ||
+            a == "--worker-threads" || a.starts_with("--worker-threads=")) {
+            multi_worker_entry = true;
+            break;
+        }
+    }
+    if (multi_worker_entry)
+        aura_runtime_require_production_multi_worker_c();
 
     // ── Crash handler: print backtrace on fatal signal ────────────
     // ── Crash handler: print backtrace on fatal signal ────────────

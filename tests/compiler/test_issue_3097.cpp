@@ -58,7 +58,7 @@ static CompilerMetrics* metrics_of(CompilerService& cs) {
 // that target `name` (caller == name OR callee == name) when armed.
 // Empty queue / armed == 0 → 0 (zero-cost Soft path).
 static void ac1_helper_counts_pending_edges(CompilerService& cs) {
-    auto& reg = cs.service();
+    auto& reg = cs;
     // Drain first to ensure clean state.
     reg.public_drain_deferred_hybrid_cascade();
     // AC3: empty queue → helper returns 0 (cheap armed load).
@@ -95,16 +95,16 @@ static void ac4_existing_counters_preserved(CompilerService& cs) {
     auto* m = metrics_of(cs);
     const auto reject_before =
         m ? m->dep_graph_edge_reject_stale_total.load(std::memory_order_relaxed) : 0;
-    cs.service().public_note_stale_dep_reject("x", "y");
-    cs.service().public_note_stale_dep_reject("x",
-                                              "y"); // duplicate: counts again (no dedup at inject)
+    cs.public_note_stale_dep_reject("x", "y");
+    cs.public_note_stale_dep_reject("x",
+                                    "y"); // duplicate: counts again (no dedup at inject)
     const auto reject_after =
         m ? m->dep_graph_edge_reject_stale_total.load(std::memory_order_relaxed) : 0;
     CHECK(
         reject_after >= reject_before + 2,
         "AC4: dep_graph_edge_reject_stale_total bumps per stale reject (3067 contract preserved)");
     // Drain — hybrid_deferred_cascade_total still bumps (existing #3067).
-    cs.service().public_drain_deferred_hybrid_cascade();
+    cs.public_drain_deferred_hybrid_cascade();
     // The drain bumps per-unique-callee (bump count == unique callees).
     // After 2 rejects for ("x","y"), there's 1 unique callee ("y").
     // Just verify it's >= 1 (or 0 if drain didn't fire because empty /

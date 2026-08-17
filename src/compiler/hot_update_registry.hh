@@ -158,6 +158,14 @@ public:
     // Soft / idle residual==0 → one/two loads, no counter. Never reemits.
     void observe_residual_force_stale() noexcept;
     void reset_residual_force_observe_for_test() noexcept;
+    // Issue #3096 test isolation: stamp force-JIT mask / exhaust retry
+    // without on_force_jit_for_reason side effects.
+    void force_jit_stamp_for_test(std::uint64_t mask) noexcept {
+        force_jit_regions_mask_.store(mask, std::memory_order_relaxed);
+    }
+    void exhaust_retry_for_test() noexcept {
+        exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
+    }
     void note_reemit_success_coverage(std::uint64_t covered_force_jit_bits) noexcept;
     // Issue #2895 / #2949: partial re-promote (clear only force_mask ∩
     // last_success). Effective policy via resolve (env + sticky +

@@ -8,8 +8,7 @@
 #include "compiler/lock_order_audit.h"      // Issue #2316: lock-order audit wire
 #include "compiler/observability_metrics.h" // CompilerMetrics for #2604 auto-drain bumps
 #include "compiler/runtime_shared.h"        // storm C ABI register
-
-import aura.compiler.ir_cache_pure; // Issue #2902: partial_relower_threshold_forced_atomic
+#include "compiler/typed_mutation_audit.h"  // #3101 should_hard_reject_soft_sibling
 
 #include <chrono>
 #include <cstdlib> // Issue #2236: std::getenv for AURA_STORM_ISOLATION resolver
@@ -33,9 +32,8 @@ extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
 // Issue #2949: production_defaults_active probe (strong in
 // typed_mutation_audit_hooks; weak no-op in fiber.cpp).
 extern "C" int aura_production_defaults_active_probe() noexcept;
-// Issue #2902: forward-decl for aura_clear_partial_relower_threshold_force
-// (defined later in this TU at the extern "C" definition site; called from
-// HotUpdateRegistry::should_force_full at the top of the file).
+// Issue #2902 / #3101: defined in ir_cache_pure.ixx so this non-module
+// TU (also compiled into test_concurrent) does not import that module.
 extern "C" void aura_clear_partial_relower_threshold_force(void);
 
 namespace aura::compiler {
@@ -712,13 +710,11 @@ extern "C" std::uint64_t aura_hot_update_residual_force_auto_heal_total(void) {
 // Stamp force_jit_regions_mask_ directly for test isolation (avoids
 // pulling in AotReloadFail enum + side-effects from on_force_jit_for_reason).
 extern "C" void aura_hot_update_force_jit_stamp_for_test(std::uint64_t mask) noexcept {
-    auto& reg = aura::compiler::hot_update_registry();
-    reg.force_jit_regions_mask_.store(mask, std::memory_order_relaxed);
+    aura::compiler::hot_update_registry().force_jit_stamp_for_test(mask);
 }
 // Set exhausted retry budget == 0 (the auto-heal gate requires this).
 extern "C" void aura_hot_update_exhaust_retry_for_test(void) noexcept {
-    aura::compiler::hot_update_registry().exhausted_min_dirty_retry_attempts_left_.store(
-        0, std::memory_order_relaxed);
+    aura::compiler::hot_update_registry().exhaust_retry_for_test();
 }
 // Reset storm state (storm_active → None, hard_storm_active → 0) so the
 // auto-heal gate's storm check passes. Reuses the existing
@@ -2635,18 +2631,6 @@ extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void) {
 extern "C" int aura_hot_update_storm_exit_force_full_active(void) {
     return aura::compiler::hot_update_registry().storm_exit_force_full_active() ? 1 : 0;
 }
-// Issue #3101: clear the partial_relower_threshold_forced flag so the
-// adaptive threshold can re-tighten from cost history once the storm has
-// fully exited. C-linkage accessor called from
-// storm_exit_force_full_active on storm entry->exit transition (under
-// production/Full). One cheap atomic_bool relaxed store. The actual
-// flag lives in ir_cache_pure.ixx (declaration + storage); this shim
-// calls its accessor. Forward declared in ir_cache_pure.ixx.
-extern "C" void aura_clear_partial_relower_threshold_force(void) {
-    aura::compiler::partial_relower_threshold_forced_atomic().store(false,
-                                                                    std::memory_order_relaxed);
-}
-
 // Issue #2017: C entry for compact-env-frames / other module-partition callers.
 extern "C" void aura_hot_update_notify_epoch_bump(std::uint64_t epoch) {
     aura::compiler::hot_update_registry().notify_epoch_bump(epoch);

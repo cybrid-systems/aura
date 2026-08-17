@@ -239,7 +239,8 @@ int run_test_cache_stamp_restamp_contract() {
         // Soft path: production_defaults=0 → probe returns false.
         // These are static source-cite checks (no env side-effects).
         // Source-cite the existing production gate in allow_query_stable_ref_export.
-        const auto allow_block = = evsec_full.substr(evsec.find("allow_query_stable_ref_export"));
+        const auto allow_block =
+            evsec_full.substr(evsec_full.find("allow_query_stable_ref_export"));
         CHECK(allow_block.find("should_hard_reject_soft_sibling") != std::string::npos,
               "3100 AC1: existing allow_query_stable_ref_export gate is production-only");
         CHECK(allow_block.find("restamp_last_budget_exceeded") != std::string::npos,
