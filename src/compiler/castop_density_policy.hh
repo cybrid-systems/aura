@@ -196,6 +196,16 @@ inline std::atomic<std::uint32_t> g_hot_residual_nonidentity_wired{1};
 inline std::atomic<std::uint64_t> g_hot_residual_soft_must_deopt_total{0};
 inline std::atomic<std::uint32_t> g_hot_residual_soft_must_deopt_pending{0};
 inline std::atomic<std::uint32_t> g_hot_residual_soft_must_deopt_wired{1};
+// Issue #3107: Soft residual on a function with fn_name (caller has
+// identified a specific hot function) → force-relower before next call
+// (via aura_jit_batch_deopt_for which triggers a deopt batch and forces
+// re-enter on next call). Closes the "Soft MustDeopt-only" window where
+// leftover CastOp could still execute before the deopt barrier fires
+// under AI multi-round mutate (canary / AURA_SANDBOX=off). Additive
+// counter only (AC4); leftover==0 path unchanged (AC3).
+inline constexpr int kCastOpHotResidualSoftRelowerIssue = 3107;
+inline std::atomic<std::uint64_t> g_hot_residual_soft_relower_total{0};
+inline std::atomic<std::uint32_t> g_hot_residual_soft_relower_wired{1};
 
 [[nodiscard]] inline bool hot_residual_soft_must_deopt_pending() noexcept {
     return g_hot_residual_soft_must_deopt_pending.load(std::memory_order_acquire) != 0;
@@ -213,9 +223,20 @@ inline std::size_t note_hot_residual_nonidentity_castops(std::size_t leftover,
         // Soft: observe + MustDeopt. Do not density-keep / relower.
         g_hot_residual_soft_must_deopt_total.fetch_add(1, std::memory_order_relaxed);
         g_hot_residual_soft_must_deopt_pending.store(1, std::memory_order_release);
-        if (fn_name && fn_name[0] != '\0')
+        if (fn_name && fn_name[0] != '\0') {
+            // Issue #3107 AC2: Soft residual on a function identified by
+            // name → force-relower before the next call. The caller has
+            // narrowed the residual to a specific hot function; under AI
+            // multi-round mutate (canary / AURA_SANDBOX=off) the leftover
+            // CastOp cannot be allowed to execute before MustDeopt fires.
+            // aura_jit_batch_deopt_for schedules a deopt batch that
+            // forces re-enter + re-lower on the next call to fn_name
+            // (existing mechanism, just now tracked separately from the
+            // global on_stale_deopt path). Additive counter only — no
+            // new dirty bits on Quiet path (leftover==0, AC3/AC4).
+            g_hot_residual_soft_relower_total.fetch_add(1, std::memory_order_relaxed);
             (void)aura_jit_batch_deopt_for(fn_name, 0);
-        else
+        } else
             hot_update_registry().on_stale_deopt();
         return leftover;
     }

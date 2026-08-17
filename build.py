@@ -3342,6 +3342,23 @@ def cmd_lint():
             "Issue #3084 Soft residual MustDeopt linter failed — run python3 scripts/coverage/checks/check_hot_residual_soft_must_deopt_3084.py"
         )
         return r
+    # Issue #3107: Soft residual on a hot function (caller identified via
+    # fn_name) bumps g_hot_residual_soft_relower_total AND triggers the
+    # existing aura_jit_batch_deopt_for force-relower mechanism. Closes
+    # the "Soft MustDeopt-only" window where leftover CastOp could still
+    # execute before the deopt barrier fires under AI multi-round mutate
+    # (canary / AURA_SANDBOX=off). Production path unchanged (#3046 /
+    # #3084 — density-keep + force-JIT/relower). Additive counter only.
+    hr3107_script = COVERAGE_CHECKS / "check_hot_residual_soft_relower_3107.py"
+    if not hr3107_script.exists():
+        fail(f"missing {hr3107_script}")
+        return 1
+    r = run([sys.executable, str(hr3107_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3107 Soft residual force-relower linter failed — run python3 scripts/coverage/checks/check_hot_residual_soft_relower_3107.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
