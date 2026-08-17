@@ -114,6 +114,33 @@ std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
     return n;
 }
 
+// Issue #3112: production-only facade for hard invalidate. Sole entry
+// under production_defaults_active() for service.ixx mark_define_dirty +
+// invalidate_function (and audit-clean call sites elsewhere). Routes
+// through decide_and_reemit so the centralized AotReloadConsistencyProof
+// fail-stamp + owner-scope filtering + region mask are always taken
+// under production multi-eval. Soft / Off: caller should use the
+// lightweight direct path (zero cost). Returns true if the facade was
+// taken (production + reemit routed through decide_and_reemit).
+bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReason reason) noexcept {
+    if (aura_production_defaults_active_probe() == 0) {
+        // Soft / Off / non-production: caller should use the direct path.
+        // Returning false lets the caller fall through to the legacy
+        // dirty / dual-epoch / dep-graph teardown body (zero-cost contract
+        // preserved per #3012 / #3043).
+        return false;
+    }
+    (void)name; // Reserved for future scoped reemit / audit log wiring.
+    // decide_and_reemit is the canonical production reemit entry; it
+    // forwards to aura_reemit_aot_for_dirty (the low-level C ABI which
+    // owns storm / Defer / SoftEnter / owner / provider-not-wired gates)
+    // and stamps last_reemit_success_region_mask for only_covered
+    // re-promote (#2895). The decide_and_reemit body never re-emits
+    // when force-JIT bits are idle (early-exit at the ABI level).
+    decide_and_reemit(aura_get_aot_defuse_version(), reason);
+    return true;
+}
+
 void HotUpdateRegistry::on_reemit_pipeline_call(std::uint64_t candidates,
                                                 std::uint64_t successes) noexcept {
     reemit_pipeline_calls_.fetch_add(1, std::memory_order_relaxed);

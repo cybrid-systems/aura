@@ -270,6 +270,24 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         }
     }
 
+    // Issue #3112: production + mutate-driven dirty → forward to HotUpdateRegistry
+    // facade (decide_and_reemit) so the centralized AotReloadConsistencyProof
+    // fail-stamp + owner-scope filtering + region mask are always taken under
+    // production multi-eval. Soft / Off / non-production keep the lightweight
+    // direct path (zero-cost contract preserved per #3012 / #3043).
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        HotUpdateRegistry::g_dual_track_bypass_prevented_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
+                name.c_str(), HotUpdateRegistry::ReemitReason::ResidualForceHeal)) {
+            // Facade took ownership: bump the "facade took ownership" counter
+            // (distinct from "entered forwarding"). Direct path below is the
+            // Soft / Off fallback only — skipped here.
+            HotUpdateRegistry::g_dual_track_bypass_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
+
     // Issue #2131: GcCoordScope PrePin → Cascade → PostAudit around soft dirty.
     gc_coord::Scope gc_coord_scope(gc_coord::Path::SoftDirty);
 
@@ -741,6 +759,23 @@ void CompilerService::invalidate_function(const std::string& name) {
     // dep_graph teardown below. Replaces the historical hand-rolled
     // bump_bridge_epoch + defuse + aot sequence that could desync
     // with the soft path.
+    // Issue #3112: production + hard invalidate → forward to HotUpdateRegistry
+    // facade (hard_invalidate_via_facade) so the centralized
+    // AotReloadConsistencyProof fail-stamp + owner-scoped filtering + region
+    // mask are always taken under production multi-eval. Soft / Off keep the
+    // lightweight direct path (zero-cost contract preserved per #3012 / #3043).
+    if (aura::compiler::typed_audit::production_defaults_active()) {
+        HotUpdateRegistry::g_dual_track_bypass_prevented_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
+                name.c_str(), HotUpdateRegistry::ReemitReason::ResidualForceHeal)) {
+            // Facade took ownership: bump the "facade took ownership" counter
+            // (distinct from "entered forwarding"). Direct path below is the
+            // Soft / Off fallback only — skipped here.
+            HotUpdateRegistry::g_dual_track_bypass_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
     // Issue #2951 / #2841 / #2744: hard invalidate under production
     // multi-eval prefers owner-scoped stale-slot invalidate (no peer
     // force-stale of g_aot_table_epoch). Soft / sandbox=off / env
