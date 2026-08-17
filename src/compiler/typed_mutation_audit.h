@@ -2158,6 +2158,21 @@ inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_tota
 // Issue #2750: true recover success/fail (distinct from #2716 reject-arm bump).
 inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_success_total{0};
 inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_fail_total{0};
+// Issue #3108: post-recover re-gate on solve_status==0 (anti half-green after
+// occurrence hard-face recover). The existing per-face guards
+// (`if (recovered && in.solve_status != 0) recovered = false;`) are local;
+// some fall-through paths (line 2406 direct `if` usage, future faces) may
+// still allow recovered==true under CONFLICT/TIMEOUT. The
+// `g_occurrence_recover_not_solved_total` counter tracks every time the
+// re-gate forces a recovered->false flip, so production-soak /
+// agent-self-modify gates can observe the half-green residual.
+//
+// Quiet path (no recover attempted) stays zero extra atomics: the bump
+// lives inside the `if (recovered && in.solve_status != 0)` branch which
+// is cold (only fires when a recover hook returns true under non-SOLVED).
+inline constexpr int kOccurrenceRecoverNotSolvedIssue = 3108;
+inline std::atomic<std::uint64_t> g_occurrence_recover_not_solved_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_recover_not_solved_wired{1};
 // Issue #2909: force-closure counters (must be before commit_readiness).
 // Full definitions / accessors also live near #2703 face section.
 inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_attempt_total{0};
@@ -2303,8 +2318,14 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
                 recovered = g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx);
             // Issue #2962: recover must leave SOLVED (solve_status==0). A
             // hook that returns true under CONFLICT/TIMEOUT is half-green.
-            if (recovered && in.solve_status != 0)
+            // Issue #3108: bump occurrence_recover_not_solved_total when the
+            // re-gate flips recovered->false (additive counter, AC4; no new
+            // dirty bits on Quiet path because the bump is inside the cold
+            // `recovered && solve_status != 0` branch).
+            if (recovered && in.solve_status != 0) {
                 recovered = false;
+                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+            }
             if (recovered) {
                 g_cone_truncate_force_closure_total.fetch_add(1, std::memory_order_relaxed);
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
@@ -2365,8 +2386,11 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
             if (g_occurrence_full_solve_recover_fn != nullptr)
                 recovered = g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx);
             // Issue #2962: SOLVED-only (solve_status==0) after recover.
-            if (recovered && in.solve_status != 0)
+            // Issue #3108: same re-gate + counter bump as block 1.
+            if (recovered && in.solve_status != 0) {
                 recovered = false;
+                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
+            }
             if (recovered) {
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
                                                                        std::memory_order_relaxed);

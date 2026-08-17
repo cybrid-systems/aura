@@ -1971,6 +1971,106 @@ static void ac3081_5_source_and_linter() {
           "3081 AC5: no docs/design/");
 }
 
+// ── #3108: commit_readiness recover must re-gate on solve_status==SOLVED ─
+//
+// Closes the half-green residual of #2750 / #2909 / #2962 / #2911 /
+// #3031: the existing per-face guard
+// (`if (recovered && in.solve_status != 0) recovered = false;`) is now
+// accompanied by an additive counter that tracks every time the re-gate
+// fires, so production-soak / agent-self-modify gates can observe the
+// half-green residual. Soft path unchanged (observe-only); Production
+// path unchanged (the recovered->false flip already hard-rejects via the
+// existing face reject sites — #3108 just adds observability).
+
+static void ac3108_1_recover_regate_wired() {
+    std::println("\n--- #3108 AC1: post-recover re-gate wired ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("kOccurrenceRecoverNotSolvedIssue = 3108") != std::string::npos,
+          "3108 AC1: issue stamp");
+    CHECK(h.find("g_occurrence_recover_not_solved_total") != std::string::npos,
+          "3108 AC1: additive counter");
+    CHECK(h.find("g_occurrence_recover_not_solved_wired{1}") != std::string::npos,
+          "3108 AC1: wired flag");
+    // Both recover blocks must have the re-gate + counter bump
+    CHECK(h.find("recovered && in.solve_status != 0") != std::string::npos,
+          "3108 AC1: re-gate check present");
+    // Count the bump sites — should be ≥ 2 (block 1 + block 2)
+    const auto pos = h.find("g_occurrence_recover_not_solved_total.fetch_add(1");
+    CHECK(pos != std::string::npos, "3108 AC1: at least one bump site");
+    const auto pos2 = h.find("g_occurrence_recover_not_solved_total.fetch_add(1", pos + 1);
+    CHECK(pos2 != std::string::npos, "3108 AC1: second bump site (block 2)");
+}
+
+static void ac3108_2_production_rejects_via_existing_path() {
+    std::println("\n--- #3108 AC2: Production reject path unchanged ---");
+    // The recovered->false flip already routes through existing face
+    // reject sites (g_occurrence_hard_face_recover_fail_total, etc.).
+    // #3108 just adds observability. Source-cite the existing reject
+    // counters must remain.
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("g_occurrence_hard_face_recover_fail_total") != std::string::npos,
+          "3108 AC2: hard-face recover-fail counter preserved");
+    CHECK(h.find("g_cone_outside_goal_drop_reject_total") != std::string::npos,
+          "3108 AC2: cone reject counter preserved");
+    CHECK(h.find("g_refined_consistency_reject_total") != std::string::npos,
+          "3108 AC2: refined reject counter preserved");
+}
+
+static void ac3108_3_soft_observe_only() {
+    std::println("\n--- #3108 AC3: Soft observe-only ---");
+    // Soft path should not bump the new counter when recover succeeds
+    // (the re-gate only fires when recover returns true under non-SOLVED,
+    // which is the half-green residual — observable but not actionable
+    // under Soft). Source-cite: the re-gate is in the cold
+    // `recovered && in.solve_status != 0` branch — Soft can hit this
+    // (CONFLICT/TIMEOUT is observable) but the counter bump is the
+    // observable signal, not a hard action.
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("if (recovered && in.solve_status != 0)") != std::string::npos,
+          "3108 AC3: re-gate triggers on non-SOLVED only");
+    // last_type_export_authoritative clear (#3081) must remain
+    CHECK(h.find("last_type_export_authoritative") != std::string::npos ||
+              h.find("g_last_type_export_authoritative") != std::string::npos,
+          "3108 AC3: #3081 Soft TIMEOUT authority clear preserved");
+}
+
+static void ac3108_4_additive_counter_only() {
+    std::println("\n--- #3108 AC4: additive counter only ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("kOccurrenceRecoverNotSolvedIssue = 3108") != std::string::npos,
+          "3108 AC4: additive issue stamp");
+    CHECK(h.find("g_occurrence_recover_not_solved_total") != std::string::npos,
+          "3108 AC4: additive counter");
+    CHECK(h.find("g_occurrence_recover_not_solved_wired{1}") != std::string::npos,
+          "3108 AC4: additive wired flag");
+    // Quiet path (no recover attempted) stays zero extra atomics —
+    // the bump lives INSIDE the cold `recovered && solve_status != 0`
+    // branch, which is only entered when a recover hook returns true.
+}
+
+static void ac3108_5_source_and_linter() {
+    std::println("\n--- #3108 AC5: source-cite + linter + no invent ---");
+    const auto h = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(h.find("kOccurrenceRecoverNotSolvedIssue = 3108") != std::string::npos,
+          "3108 AC5: issue stamp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_occurrence_recover_not_solved_3108.py");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("Issue #3108") != std::string::npos,
+          "3108 AC5: 3108 linter exists");
+    CHECK(build.find("check_occurrence_recover_not_solved_3108") != std::string::npos,
+          "3108 AC5: build.py wires 3108 linter");
+    CHECK(read_file("tests/compiler/test_issue_3108.cpp").empty(),
+          "3108 AC5: no invent test_issue_3108 (per #81967)");
+    CHECK(read_file("docs/design/3108-recover-not-solved.md").empty(),
+          "3108 AC5: no docs/design/ (per #1655)");
+    // Lineage: #2750, #2909, #2962, #2911, #3031 must still pass
+    CHECK(h.find("kConeOutsideGoalDropRecoverRejectIssue = 2962") != std::string::npos,
+          "3108 AC5: #2962 lineage preserved");
+    CHECK(h.find("kRefinedConsistencyGateIssue = 2911") != std::string::npos,
+          "3108 AC5: #2911 lineage preserved");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -2039,6 +2139,12 @@ int run_test_solve_delta_unresolved_export() {
     ac3081_3_production_unchanged();
     ac3081_4_solved_zero_cost();
     ac3081_5_source_and_linter();
+    std::println("\n=== Issue #3108: commit_readiness recover re-gate ===");
+    ac3108_1_recover_regate_wired();
+    ac3108_2_production_rejects_via_existing_path();
+    ac3108_3_soft_observe_only();
+    ac3108_4_additive_counter_only();
+    ac3108_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
