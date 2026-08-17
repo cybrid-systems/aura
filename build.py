@@ -796,6 +796,23 @@ def cmd_lint():
             "Issue #3043 Soft-observe hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_soft_observe_3043.py"
         )
         return r
+    # Issue #3106: harden-armed Soft-observe hot contract (sampled RECORD +
+    # fail-closed std::abort on false HOT_CHECK under HARDEN). Closes the
+    # Soft-only window of #3043 under AI multi-round mutate (Value as_*,
+    # SoA view_at, dirty mark/cascade). Production-soak / agent-self-modify
+    # presets arm harden via -DAURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE_HARDEN
+    # (compile flag) or AURA_HOT_HARDEN=1 (runtime probe); the linter
+    # enforces the source-cite contract.
+    hc3106_script = COVERAGE_CHECKS / "check_hot_contract_harden_3106.py"
+    if not hc3106_script.exists():
+        fail(f"missing {hc3106_script}")
+        return 1
+    r = run([sys.executable, str(hc3106_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3106 harden-armed hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_3106.py"
+        )
+        return r
     # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.

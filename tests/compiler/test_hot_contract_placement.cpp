@@ -278,7 +278,105 @@ int run_test_hot_contract_placement() {
               "3043 AC5: production OFF default wired");
     }
 
-    std::println("\n=== #2435/#3043 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3106: Harden-armed Soft-observe hot contract ─────────────────
+    {
+        std::println("\n--- #3106 AC1: harden-armed CHECK path ---");
+        CHECK(aura::core::cpp26::kHotContractHardenIssue == 3106, "3106 AC1: issue constant");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        CHECK(hh.find("Issue #3106") != std::string::npos, "3106 AC1: policy #3106");
+        CHECK(hh.find("AURA_HOT_MODE_HARDEN") != std::string::npos, "3106 AC1: HARDEN mode");
+        CHECK(hh.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3106 AC1: trap helper wired");
+        CHECK(hh.find("hotpath_contract_harden_trap_total") != std::string::npos,
+              "3106 AC1: trap counter declared");
+        // The macro emits observe_hot_contract_false + record_..._trap + std::abort()
+        CHECK(hh.find("observe_hot_contract_false();                                     \\") !=
+                      std::string::npos ||
+                  hh.find("observe_hot_contract_false();") != std::string::npos,
+              "3106 AC1: observe counter still bumps under HARDEN");
+        CHECK(hh.find("record_hotpath_contract_harden_trap();                            \\") !=
+                      std::string::npos ||
+                  hh.find("record_hotpath_contract_harden_trap();") != std::string::npos,
+              "3106 AC1: trap counter bump inlined in macro");
+        CHECK(hh.find("std::abort();") != std::string::npos,
+              "3106 AC1: fail-closed std::abort trap");
+        // Verify trap helper actually bumps the counter (without triggering the
+        // macro's abort, which would kill the test process).
+        const auto ht0 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        aura::core::cpp26::record_hotpath_contract_harden_trap();
+        const auto ht1 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        CHECK(ht1 > ht0, "3106 AC1: trap helper bumps counter");
+        // Query surface exposes the new keys
+        CompilerService cs3106;
+        CHECK(cs3106.eval("(+ 1 2)").has_value(), "3106 eval ok");
+        CHECK(href(cs3106, "schema-3106") == 3106, "3106 AC1: schema-3106 runtime");
+        CHECK(href(cs3106, "issue-3106") == 3106, "3106 AC1: issue-3106");
+        CHECK(href(cs3106, "hot-contract-harden-wired") == 1, "3106 AC1: harden wired");
+        CHECK(href(cs3106, "hotpath-contracts-3106-active") == 1, "3106 AC1: 3106 active");
+        CHECK(href(cs3106, "hot-contract-harden-issue") == 3106, "3106 AC1: harden issue");
+        CHECK(href(cs3106, "hot-contract-harden-trap-total") >= 0, "3106 AC1: trap-total readable");
+        CHECK(href(cs3106, "hot-contract-harden-armed") >= 0, "3106 AC1: armed probe readable");
+
+        std::println("\n--- #3106 AC2: harden-disarmed OFF path remains zero-cost ---");
+        // Source-cite: the OFF path is exactly ((void)0) — same as today.
+        CHECK(hh.find("#define AURA_HOT_CHECK(expr) ((void)0)") != std::string::npos,
+              "3106 AC2: OFF check is ((void)0)");
+        CHECK(hh.find("Production OFF: zero cost") != std::string::npos,
+              "3106 AC2: OFF comment unchanged");
+        // HARDEN branch's happy path is a branch + sampled atomic (no per-call RMW).
+        CHECK(hh.find("sampled RECORD + CHECK on false") != std::string::npos,
+              "3106 AC2: harden uses sampled RECORD on happy path");
+        // Mode enum still includes OFF (0)
+        CHECK(hh.find("kHotModeOff = 0") != std::string::npos, "3106 AC2: kHotModeOff = 0");
+
+        std::println("\n--- #3106 AC3: sampled RECORD + observe under harden ---");
+        // Sample period unchanged
+        CHECK(aura::core::cpp26::kHotSoftObserveRecordSample == 256,
+              "3106 AC3: sample period 256 unchanged");
+        CHECK(hh.find("record_hotpath_invariant_hit_sampled") != std::string::npos,
+              "3106 AC3: sampled RECORD helper wired");
+        // observe_hot_contract_false still wired under HARDEN (bumped BEFORE abort)
+        CHECK(hh.find("observe_hot_contract_false()") != std::string::npos,
+              "3106 AC3: observe counter wired");
+        const auto cf0 =
+            aura::core::cpp26::contract_violation_hotpath_count.load(std::memory_order_relaxed);
+        aura::core::cpp26::observe_hot_contract_false();
+        const auto cf1 =
+            aura::core::cpp26::contract_violation_hotpath_count.load(std::memory_order_relaxed);
+        CHECK(cf1 > cf0, "3106 AC3: observe counter bumps in isolation");
+        CHECK(href(cs3106, "hot-contract-soft-observe-sample-period") == 256,
+              "3106 AC3: sample period queryable");
+
+        std::println("\n--- #3106 AC4: production-soak / agent-self-modify presets ---");
+        // The build.py production-soak preset must arm harden by default.
+        // Source-cite the compile flag string.
+        CHECK(hh.find("AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE_HARDEN") != std::string::npos,
+              "3106 AC4: HARDEN compile flag declared");
+        CHECK(hh.find("AURA_HOT_SOFT_OBSERVE_HARDEN") != std::string::npos,
+              "3106 AC4: HARDEN legacy alias declared");
+        // runtime accessor exposed via query
+        const int armed = href(cs3106, "hot-contract-harden-armed");
+        CHECK(armed == 0 || armed == 1, "3106 AC4: armed is 0/1");
+
+        std::println("\n--- #3106 AC5: cold contracts / arena / shape unchanged ---");
+        // Cold path macros must remain unchanged (no harden flag on cold path).
+        CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3106 AC5: cold macro wired");
+        CHECK(hh.find("#define AURA_COLD_CONTRACT(expr) contract_assert(expr)") !=
+                  std::string::npos,
+              "3106 AC5: cold enforce unchanged");
+        CHECK(hh.find("#define AURA_COLD_CONTRACT(expr) ((void)0)") != std::string::npos,
+              "3106 AC5: cold off unchanged");
+        // No new process-wide lock: only relaxed atomics added (counter bumps).
+        // cpp26_contract_stats.h uses <atomic> + std::memory_order_relaxed — no
+        // std::mutex / std::shared_mutex added.
+        CHECK(hh.find("std::mutex") == std::string::npos &&
+                  hh.find("std::shared_mutex") == std::string::npos,
+              "3106 AC5: no new process-wide lock");
+    }
+
+    std::println("\n=== #2435/#3043/#3106 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

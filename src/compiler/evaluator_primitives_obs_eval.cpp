@@ -9665,6 +9665,27 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                 "hot-contract-false-total",
                 static_cast<std::int64_t>(aura::core::cpp26::contract_violation_hotpath_count.load(
                     std::memory_order_relaxed)));
+            // Issue #3106: harden-armed soft-observe (sampled RECORD + fail-closed
+            // trap on false CHECK). Closes the Soft-only window of #3043 under
+            // AI multi-round mutate (Value as_*, SoA view_at, dirty mark/cascade).
+            insert_kv("schema-3106", 3106);
+            insert_kv("issue-3106", 3106);
+            insert_kv("hot-contract-harden-issue",
+                      static_cast<std::int64_t>(aura::core::cpp26::kHotContractHardenIssue));
+            insert_kv("hot-contract-harden-wired",
+                      static_cast<std::int64_t>(aura::core::cpp26::hot_contract_harden_wired.load(
+                          std::memory_order_relaxed)));
+            insert_kv(
+                "hotpath-contracts-3106-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_3106_active.load(
+                    std::memory_order_relaxed)));
+            insert_kv("hot-contract-harden-trap-total",
+                      static_cast<std::int64_t>(
+                          aura::core::cpp26::hotpath_contract_harden_trap_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv(
+                "hot-contract-harden-armed",
+                static_cast<std::int64_t>(aura::core::cpp26::hot_contract_harden_armed() ? 1 : 0));
             insert_kv("hot-contract-soft-observe-sample-period",
                       static_cast<std::int64_t>(aura::core::cpp26::kHotSoftObserveRecordSample));
             insert_kv("hot-contracts-mode-env",
