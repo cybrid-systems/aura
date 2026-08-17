@@ -1008,6 +1008,21 @@ export struct DeadCoercionAstStats {
 // skipped or elided). When `stats_out` is non-null, fills
 // applied / eliminated / skipped_stale. When `map_mut` is
 // non-null, bumps map_mut->mark_eliminated for identity skips.
+
+// Issue #3102: forward declarations for the per-boundary TLS tracker.
+// apply_coercion_map (below) calls coerced_nodes_tracker_push at the
+// end of its body; the definitions sit below the function. Without
+// these forward decls the call is unresolved (gcc emits "was not
+// declared in this scope"). Definitions are at the bottom of the file
+// (after apply_coercion_map) where they have access to the TLS + the
+// emit-set helpers.
+export inline void coerced_nodes_tracker_enter_boundary() noexcept;
+export inline void coerced_nodes_tracker_exit_boundary() noexcept;
+export inline void coerced_nodes_tracker_push(aura::compiler::dirty::NodeId nid) noexcept;
+export [[nodiscard]] inline std::vector<aura::compiler::dirty::NodeId>
+coerced_nodes_tracker_take() noexcept;
+export [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept;
+
 export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map,
                                       DeadCoercionAstStats* stats_out = nullptr,
                                       CoercionMap* map_mut = nullptr) {

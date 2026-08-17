@@ -21,8 +21,6 @@
 
 #include "test_harness.hpp"
 
-#include "compiler/coercion_map.ixx"
-#include "compiler/dirty_propagation.ixx"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
 
