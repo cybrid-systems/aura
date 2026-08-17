@@ -1,0 +1,67 @@
+{
+  "issue": 3112,
+  "title": "Issue #3112: Close residual dual-track \u2014 production invalidate/reemit routes through HotUpdateRegistry facade (owner-scope + AotReloadConsistencyProof stamp).",
+  "ok": "OK: Issue #3112 dual-track facade closure \u2014 all 5 AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "hard_invalidate_via_facade",
+        "g_dual_track_bypass_prevented_total",
+        "g_dual_track_bypass_total",
+        "Issue #3112"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "hard_invalidate_via_facade",
+        "aura_production_defaults_active_probe",
+        "decide_and_reemit",
+        "Issue #3112"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "hard_invalidate_via_facade",
+        "g_dual_track_bypass_prevented_total",
+        "g_dual_track_bypass_total",
+        "production_defaults_active",
+        "Issue #3112"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "scripts/check_dual_track_facade_3112.py",
+      "contains": [
+        "BRIDGE_SYMBOLS",
+        "WHITELIST",
+        "_is_weak_stub",
+        "--strict"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_compiler_hot_update_facade.cpp",
+      "contains": [
+        "ac1_facade_ownership_matches_production",
+        "ac2_atomic_counters_no_lost_updates",
+        "ac3_concurrent_facade_no_crash",
+        "ac4_linter_strict_clean",
+        "ac5_decide_and_reemit_wired"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_compiler_hot_update_facade",
+        "Issue #3112"
+      ]
+    }
+  ]
+}

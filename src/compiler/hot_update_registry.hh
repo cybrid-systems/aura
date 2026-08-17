@@ -111,6 +111,14 @@ public:
     };
     [[nodiscard]] std::uint64_t decide_and_reemit(std::uint64_t defuse_version,
                                                   ReemitReason reason) noexcept;
+
+    // Issue #3112: production-only facade for hard invalidate. Routes through
+    // decide_and_reemit so the centralized AotReloadConsistencyProof fail-stamp
+    // + owner-scope filtering + region mask are always taken under production.
+    // Soft / Off: caller should use the lightweight direct path (zero cost).
+    // Returns true if the facade was taken (production + reemit triggered).
+    [[nodiscard]] bool hard_invalidate_via_facade(const char* name, ReemitReason reason) noexcept;
+
     // Issue #2012: atomic AOT reload success / rollback bookkeeping.
     void on_reload_success() noexcept;
     // Issue #2502: after force-JIT demotion, auto re-promote when a
@@ -179,6 +187,12 @@ public:
     // #2855 force-drain surface.
     [[nodiscard]] static std::uint64_t force_drain_deadline_ms() noexcept;
     [[nodiscard]] static std::uint64_t reemit_deferred_force_drain_deadline_hit_env_read() noexcept;
+    // Issue #3112: dual-track bypass prevention counters. Bumped when a
+    // production path would have invoked mark_define_dirty / invalidate_function
+    // directly without going through hard_invalidate_via_facade. Soft stays
+    // silent (no facade forced). additive-only, no new query key.
+    inline static std::atomic<std::uint64_t> g_dual_track_bypass_prevented_total{0};
+    inline static std::atomic<std::uint64_t> g_dual_track_bypass_total{0};
     inline static std::atomic<std::uint64_t> g_force_drain_deadline_hit_total_{
         0}; // mirrors deadline_hit_total_; force gate
     // Issue #2855 process-wide atomics (static members; mirror deadline_hit).

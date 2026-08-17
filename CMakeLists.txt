@@ -2337,6 +2337,17 @@ aura_add_issue_test(test_issue_3097)
 aura_issue_test_link_light(test_issue_3097)
 add_dependencies(all_test_issue_targets test_issue_3097)
 
+# Issue #3112: production invalidate/reemit must route through
+# HotUpdateRegistry facade (owner-scope + AotReloadConsistencyProof stamp).
+# Audit linter + regression test pins the dual-track closure: facade is
+# atomic, race-free under concurrent threads, callable in any state,
+# linter --strict stays clean post-ship. Soft / Off zero-cost preserved.
+# Test home: tests/compiler/test_compiler_hot_update_facade.cpp (issue
+# number in banner + scripts/coverage/manifests/3112.json per HOMES.md).
+aura_add_issue_test(test_compiler_hot_update_facade)
+aura_issue_test_link_light(test_compiler_hot_update_facade)
+add_dependencies(all_test_issue_targets test_compiler_hot_update_facade)
+
 # Issue #596 / #2765: Guard + panic + reflect closed-loop + Guard success-path
 # auto_validate / hygiene_validate (#2765 residual). Prefer-existing suite.
 aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)
