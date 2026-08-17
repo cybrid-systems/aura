@@ -1090,8 +1090,18 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv("type-linear-commit-proof-wired",
                           static_cast<std::int64_t>(
                               g_type_linear_commit_proof_wired.load(std::memory_order_relaxed)));
+                // Issue #3091: additive proof audit_mid (TypeLinearCommitProof.audit_mid,
+                // stamped from TLS boundary-noted mid / g_last_stamped_audit_mid).
+                // Reads g_last_stamped_audit_mid as the SSOT for "last stamped"
+                // (proof.audit_mid either == TLS boundary mid when noted, or
+                // == g_last_stamped_audit_mid when not).
+                insert_kv("type-linear-commit-proof-audit-mid",
+                          static_cast<std::int64_t>(typed_audit::g_last_stamped_audit_mid.load(
+                              std::memory_order_relaxed)));
                 insert_kv("schema-2697", 2697);
                 insert_kv("issue-2697", 2697);
+                insert_kv("schema-3091", 3091);
+                insert_kv("issue-3091", 3091);
                 // Issue #2717: stamp TypeLinearCommitProof on
                 // boundary + composite commit (close #2697
                 // residual). The existing #2697 surface stays
