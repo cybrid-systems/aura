@@ -45,8 +45,8 @@ import aura.compiler.value;
 
 namespace {
 
-using aura::compiler::CompilerService;
 using aura::compiler::CompilerMetrics;
+using aura::compiler::CompilerService;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -96,11 +96,13 @@ static void ac4_existing_counters_preserved(CompilerService& cs) {
     const auto reject_before =
         m ? m->dep_graph_edge_reject_stale_total.load(std::memory_order_relaxed) : 0;
     cs.service().public_note_stale_dep_reject("x", "y");
-    cs.service().public_note_stale_dep_reject("x", "y"); // duplicate: counts again (no dedup at inject)
+    cs.service().public_note_stale_dep_reject("x",
+                                              "y"); // duplicate: counts again (no dedup at inject)
     const auto reject_after =
         m ? m->dep_graph_edge_reject_stale_total.load(std::memory_order_relaxed) : 0;
-    CHECK(reject_after >= reject_before + 2,
-          "AC4: dep_graph_edge_reject_stale_total bumps per stale reject (3067 contract preserved)");
+    CHECK(
+        reject_after >= reject_before + 2,
+        "AC4: dep_graph_edge_reject_stale_total bumps per stale reject (3067 contract preserved)");
     // Drain — hybrid_deferred_cascade_total still bumps (existing #3067).
     cs.service().public_drain_deferred_hybrid_cascade();
     // The drain bumps per-unique-callee (bump count == unique callees).

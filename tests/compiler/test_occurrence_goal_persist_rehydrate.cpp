@@ -1445,12 +1445,14 @@ static void ac3099_1_re_sample_in_try_skip() {
     // #3063 arm. Acquires acquire-load pair with release fetch_add in
     // invalidate_fast_path_before_steal_densify_restamp.
     const auto re_sample_section = tma.substr(re_sample_pos, 1200);
-    CHECK(re_sample_section.find("g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire)") !=
-              std::string::npos,
-          "3099 AC1: re-sample acquire load on invalidate_gen");
-    CHECK(re_sample_section.find("g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)") !=
-              std::string::npos,
-          "3099 AC1: re-sample relaxed load on green_bind_gen");
+    CHECK(
+        re_sample_section.find("g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire)") !=
+            std::string::npos,
+        "3099 AC1: re-sample acquire load on invalidate_gen");
+    CHECK(
+        re_sample_section.find("g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)") !=
+            std::string::npos,
+        "3099 AC1: re-sample relaxed load on green_bind_gen");
     CHECK(re_sample_section.find("g_linear_ir_fastpath_skip_blocked_total.fetch_add") !=
               std::string::npos,
           "3099 AC1: re-sample bumps existing blocked counter (no new middle key)");

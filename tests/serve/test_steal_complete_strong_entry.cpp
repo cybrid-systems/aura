@@ -273,8 +273,8 @@ int run_test_steal_complete_strong_entry() {
                 std::println("\n--- #3098 AC2: production multi-worker ok path ---");
                 clear_production_abi_selfcheck_for_test();
                 unsetenv("AURA_SANDBOX");
-                aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-                    .store(1, std::memory_order_relaxed);
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(1, std::memory_order_relaxed);
                 const auto ok0 =
                     g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed);
                 const auto fail0 =
@@ -287,10 +287,11 @@ int run_test_steal_complete_strong_entry() {
                 CHECK(g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed) ==
                           fail0,
                       "3098 AC2: fail_total unchanged (no abort)");
-                CHECK(g_production_abi_selfcheck_last_fail_bits.load(std::memory_order_relaxed) == 0,
+                CHECK(g_production_abi_selfcheck_last_fail_bits.load(std::memory_order_relaxed) ==
+                          0,
                       "3098 AC2: last_fail_bits cleared to 0 on success");
-                aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-                    .store(0, std::memory_order_relaxed);
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(0, std::memory_order_relaxed);
                 clear_production_abi_selfcheck_for_test();
             }
 
@@ -300,24 +301,19 @@ int run_test_steal_complete_strong_entry() {
                 const auto main_c = read_file("src/main.cpp");
                 const auto hh = read_file("src/serve/runtime_production_abi.h");
                 const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
-                CHECK(cpp.find("aura_runtime_require_production_multi_worker") !=
-                          std::string::npos,
-                  "3098 AC4: cpp defines multi_worker");
-                CHECK(cpp.find("kProductionAbiSelfcheckFailBitDefaults") !=
-                          std::string::npos,
-                  "3098 AC4: cpp uses bit 4 for defaults missing");
-                CHECK(cpp.find("multi-worker Ready self-check failed (#3098") !=
-                          std::string::npos,
-                  "3098 AC4: cpp FATAL message cites #3098");
-                CHECK(hh.find("aura_runtime_require_production_multi_worker") !=
-                          std::string::npos,
-                  "3098 AC4: hh declares multi_worker");
-                CHECK(hh.find("kProductionAbiSelfcheckFailBitDefaults") !=
-                          std::string::npos,
-                  "3098 AC4: hh defines bit 4 constant");
+                CHECK(cpp.find("aura_runtime_require_production_multi_worker") != std::string::npos,
+                      "3098 AC4: cpp defines multi_worker");
+                CHECK(cpp.find("kProductionAbiSelfcheckFailBitDefaults") != std::string::npos,
+                      "3098 AC4: cpp uses bit 4 for defaults missing");
+                CHECK(cpp.find("multi-worker Ready self-check failed (#3098") != std::string::npos,
+                      "3098 AC4: cpp FATAL message cites #3098");
+                CHECK(hh.find("aura_runtime_require_production_multi_worker") != std::string::npos,
+                      "3098 AC4: hh declares multi_worker");
+                CHECK(hh.find("kProductionAbiSelfcheckFailBitDefaults") != std::string::npos,
+                      "3098 AC4: hh defines bit 4 constant");
                 CHECK(main_c.find("aura_runtime_require_production_multi_worker_c") !=
                           std::string::npos,
-                  "3098 AC4: main.cpp wires multi-worker Ready check after ABI check");
+                      "3098 AC4: main.cpp wires multi-worker Ready check after ABI check");
                 // Order: single-worker ABI check → multi-worker Ready check
                 const auto single_pos = main_c.find("aura_runtime_require_production_abi_c");
                 const auto multi_pos =
@@ -333,14 +329,15 @@ int run_test_steal_complete_strong_entry() {
                 const auto hh = read_file("src/serve/runtime_production_abi.h");
                 CHECK(hh.find("aura_runtime_require_production_multi_worker_c") !=
                           std::string::npos,
-                  "3098 AC5: C-linkage accessor declared");
+                      "3098 AC5: C-linkage accessor declared");
                 CHECK(read_file("tests/serve/test_issue_3098.cpp").empty(),
                       "3098 AC5: no invent test file (extend #81967 lineage)");
             }
         }
     }
 
-    std::println("\n=== #2377 + #2955 + #3098 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2377 + #2955 + #3098 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

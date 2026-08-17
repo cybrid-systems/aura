@@ -5499,7 +5499,7 @@ public:
         // Cheap walk: O(pending) string compares. Pending edges are bounded
         // by the reject window, not the workspace size.
         lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
-                                                             lock_order::Level::DepGraph);
+                                                              lock_order::Level::DepGraph);
         std::size_t targeted = 0;
         for (const auto& [caller_name, callee_name] : deferred_hybrid_edges_) {
             if (caller_name == name || callee_name == name)

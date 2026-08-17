@@ -210,7 +210,8 @@ int run_test_cache_stamp_restamp_contract() {
               "3100 AC1: query_stable_hard_reject_torn defined in evaluator_security.cpp");
         // AC1: probe combines production_defaults + over-budget flag.
         // (Avoid env side-effects — use source-cite only.)
-        const auto defn_block = evsec.substr(evsec.find("Evaluator::query_stable_hard_reject_torn()"));
+        const auto defn_block =
+            evsec.substr(evsec.find("Evaluator::query_stable_hard_reject_torn()"));
         CHECK(defn_block.find("should_hard_reject_soft_sibling") != std::string::npos,
               "3100 AC1: probe uses production defaults gate (should_hard_reject_soft_sibling)");
         CHECK(defn_block.find("restamp_last_budget_exceeded") != std::string::npos,
@@ -226,8 +227,8 @@ int run_test_cache_stamp_restamp_contract() {
               "3100 AC4: existing torn-reject counter reused");
         CHECK(evsec_full.find("record_query_stable_ref_restamp_lag_prevented") != std::string::npos,
               "3100 AC4: existing lag-prevented counter reused");
-        CHECK(evsec_full.find("restamp-budget-exceeded-total") == std::string::npos
-              || om.find("restamp_budget_exceeded_total") != std::string::npos,
+        CHECK(evsec_full.find("restamp-budget-exceeded-total") == std::string::npos ||
+                  om.find("restamp_budget_exceeded_total") != std::string::npos,
               "3100 AC4: restamp-budget-exceeded-total already surfaces in observability");
         // AC6: no docs/design/* + no invent test_issue_3100.cpp.
         CHECK(read_file("docs/design/3100-query-stable-torn-reject.md").empty(),
