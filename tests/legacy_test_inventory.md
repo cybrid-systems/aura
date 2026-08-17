@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 836 | Preferred destination suites |
-| **Total scanned** | **836** | |
+| `tests/core/test_*.cpp` | 837 | Preferred destination suites |
+| **Total scanned** | **837** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 246 | 246 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 247 | 247 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
@@ -829,6 +829,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_rest_param_hygiene.cpp`
 - `tests/compiler/test_rest_param_hygiene_self_evo.cpp`
 - `tests/compiler/test_rest_param_nested_qq_hygiene.cpp`
+- `tests/compiler/test_restamp_budget_hard_gate.cpp`
 - `tests/core/test_restamp_lazy_align_atomic.cpp`
 - `tests/core/test_restamp_sla_observability.cpp`
 - `tests/core/test_restore_children_structural_lock.cpp`
@@ -1147,13 +1148,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (246)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (247)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (246)
+#### domain/ (247)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1350,6 +1351,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_require_effect_live_mid.cpp` (—) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges.cpp` (—) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
 - `tests/compiler/test_residual_gc_defer_assert.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0
+- `tests/compiler/test_restamp_budget_hard_gate.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_restamp_budget_hard_gate.cpp --
 - `tests/core/test_restamp_sla_observability.cpp` (—) [large, obs_named, domain_suite, theme_core] — AC1: After forced wrap, query surface reports restamp-us / nodes /
 - `tests/core/test_restricted_unset_principal.cpp` (—) [domain_suite, theme_core] — AC1: Restricted + tenant=0 + Mutate side-effect → deny + IsolationDeny
 - `tests/core/test_sandbox_mode_atomic.cpp` (—) [domain_suite, theme_core] — AC1: sandbox_mode is atomic-backed (AtomicEffectSandboxMode)
