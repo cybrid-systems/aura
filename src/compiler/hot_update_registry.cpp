@@ -611,7 +611,7 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         residual_force_observe_age_.store(0, std::memory_order_relaxed);
         residual_force_observe_last_mask_.store(0, std::memory_order_relaxed);
         // Issue #3096: idle mask → reset auto-heal cap (next residual
-    // generation starts fresh).
+        // generation starts fresh).
         residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
         return;
     }
@@ -620,7 +620,7 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         residual_force_observe_last_mask_.store(residual, std::memory_order_relaxed);
         residual_force_observe_age_.store(1, std::memory_order_relaxed);
         // Issue #3096: mask changed → next auto-heal fires for this new
-    // generation (cap reset).
+        // generation (cap reset).
         residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
         return;
     }
@@ -629,10 +629,10 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
     if (age >= kStaleExits) {
         residual_force_stale_observe_total_.fetch_add(1, std::memory_order_relaxed);
         // Issue #3096: do NOT reset age here — the auto-heal check below
-    // needs accumulating age. The existing observe counter bump is
-    // rate-limited per 32 BoundaryExits (matches #3026 contract); the
-    // auto-heal threshold (kAutoHealExits=256) is a separate gate that
-    // only fires after 8 stale observations without recovery.
+        // needs accumulating age. The existing observe counter bump is
+        // rate-limited per 32 BoundaryExits (matches #3026 contract); the
+        // auto-heal threshold (kAutoHealExits=256) is a separate gate that
+        // only fires after 8 stale observations without recovery.
     }
     // Issue #3096: production-only bounded auto-heal gate.
     constexpr std::uint64_t kAutoHealExits = 256;
