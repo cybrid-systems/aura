@@ -126,6 +126,7 @@ def check_export_sites(rel_path: str, site_keyword: str, restamp_lag_regex: str,
         )
     return failures
 
+
 def _self_test() -> int:
     """Validate the linter regex / structure against fixture text."""
     fixture_infra = """
