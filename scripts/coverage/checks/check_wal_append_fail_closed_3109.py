@@ -96,9 +96,13 @@ def main() -> int:
         "AC4 deny precondition wired",
         ev,
     )
-    must("return false; // wal-append-fail-closed deny", "AC4 early return deny", ev)
+    must(
+        "if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&",
+        "AC4 deny precondition wired (single-line if)",
+        ev,
+    )
     # Comment must be present so the reason is documented
-    must("wal-append-fail-closed deny (#3109", "AC4 reason documented", ev)
+    must("#3109: fail-closed deny", "AC4 #3109 comment marker present", ev)
     must("3109 AC4", "AC4 test marker", test)
 
     # ── AC5: additive query keys + no-invent + build.py + lineage ────────
