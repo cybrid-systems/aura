@@ -148,6 +148,57 @@ static void ac4_force_threshold_hook() {
     CHECK(!partial_relower_threshold_is_forced(), "unforced");
 }
 
+// ── Issue #3101: production-storm-exit must clear partial_relower_threshold_forced
+// so the adaptive threshold can re-tighten from cost history (Option A +
+// Option C defense). Otherwise the forced flag freezes the threshold at a
+// storm-era value and the force-full exit window ending flips back to a
+// now-stale partial → oscillation under high-freq self-mod. Explicit
+// set_partial_relower_threshold for unit tests still freezes (AC3).
+static void ac3101_storm_exit_clears_force() {
+    std::println("\n--- #3101: storm-exit clear path + set compatibility ---");
+    reset_partial_relower_threshold_for_test();
+    // AC1 source-cite: aura_clear_partial_relower_threshold_force is the
+    // Option C clear accessor (one cheap atomic_bool relaxed store).
+    // Forward declared in ir_cache_pure.ixx (line ~57 just under
+    // aura_hot_update_storm_exit_force_full_active).
+    const auto irc = read_file("src/compiler/ir_cache_pure.ixx");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(irc.find("aura_clear_partial_relower_threshold_force") != std::string::npos,
+          "3101 AC1: C-linkage clear accessor declared in ir_cache_pure.ixx");
+    CHECK(hur.find("aura_clear_partial_relower_threshold_force()") != std::string::npos,
+          "3101 AC1: clear accessor defined in hot_update_registry.cpp");
+    // AC1: storm_exit_force_full_active calls the clear under production
+    // (ShouldHardRejectSoftSibling gate — Soft/Off stays zero-cost).
+    CHECK(hur.find("aura_clear_partial_relower_threshold_force()") != std::string::npos
+              && hur.find("should_hard_reject_soft_sibling") != std::string::npos,
+          "3101 AC1: storm_exit_force_full_active hook wired under production only");
+    // AC3: set_partial_relower_threshold still freezes for unit tests (no regression).
+    set_partial_relower_threshold(4);
+    CHECK(partial_relower_threshold_is_forced(), "3101 AC3: set still forces");
+    CHECK(get_partial_relower_threshold() == 4, "3101 AC3: thr=4 from set");
+    // AC1: clear accessor resets forced to false (Option C defense).
+    aura_clear_partial_relower_threshold_force();
+    CHECK(!partial_relower_threshold_is_forced(), "3101 AC1: clear accessor unforceded");
+    CHECK(get_partial_relower_threshold() == 4, "3101 AC1: clear does NOT reset thr value (preserves explicit override)");
+    // After clear, adaptive may re-tighten (default reset removes forced + restores default thr).
+    reset_partial_relower_threshold_for_test();
+    CHECK(!partial_relower_threshold_is_forced(), "3101 AC1: reset clears forced");
+    // AC2: Soft / Off stays zero-cost — the storm_exit_force_full_active hook
+    // is gated on should_hard_reject_soft_sibling (production_only).
+    CHECK(hur.find("if (aura::compiler::typed_audit::should_hard_reject_soft_sibling())") != std::string::npos,
+          "3101 AC2: clear hook gated on production/Full (Soft/Off zero-cost)");
+    // AC5: existing metrics distinguish correct full vs thrashing — reuse
+    // partial_relower_storm_forced_full_total + storm_exit_force_full_active
+    // (no new middle counter).
+    CHECK(irc.find("partial_relower_storm_forced_full_total_atomic") != std::string::npos,
+          "3101 AC5: existing storm_forced_full_total counter reused");
+    // AC6: no docs/design/* + no invent test_issue_3101.cpp.
+    CHECK(read_file("docs/design/3101-partial-relower-threshold-storm-exit.md").empty(),
+          "3101 AC6: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3101.cpp").empty(),
+          "3101 AC6: no invent test_issue_3101 (extend #2127 lineage)");
+}
+
 static void ac5_regression_pure() {
     std::println("\n--- AC5: pure overloads + source wiring ---");
     CHECK(should_partial_relower(3, 4), "pure thr4");
@@ -238,6 +289,7 @@ int run_test_adaptive_partial_relower_threshold() {
     ac3_query_surface();
     ac4_force_threshold_hook();
     ac5_regression_pure();
+    ac3101_storm_exit_clears_force();
     ac2248_agent_driven_adaptive_thr();
     reset_partial_relower_threshold_for_test();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
