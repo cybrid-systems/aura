@@ -1693,6 +1693,14 @@ aura_issue_test_link_light(test_coercion_dead_elim_castop_flow_zerooverhead)
 # invalidate gen + commit_readiness clear). Soft/Quiet zero-cost.
 aura_add_issue_test(test_coercion_map_abort_rewind)
 aura_issue_test_link_light(test_coercion_map_abort_rewind)
+# Issue #3103: QueryResult full-provenance path (schema-2). QueryResultMatch
+# extended with tenant_id / fiber_id / mutation_id_at_capture / wrap_epoch /
+# cow_epoch_at_capture / boundary_pinned. push_match_full overload +
+# has_full_provenance discriminator + query_result_is_fresh_with_refs
+# validator (multi-tenant / COW / wrap / concurrent-fiber checks). Soft/Quiet
+# stays at schema-1 (no ref stamp).
+aura_add_issue_test(test_query_result_full_provenance)
+aura_issue_test_link_light(test_query_result_full_provenance)
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_refinement_closed_loop)
 aura_issue_test_link_light(test_refinement_closed_loop)

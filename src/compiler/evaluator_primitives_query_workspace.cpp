@@ -2267,7 +2267,90 @@ void register_workspace_query_primitives(
             bool have_pattern = false;
             std::size_t pattern_string_idx = 0;
             bool include_macro_introduced = false;
-            // Issue #2933: opt-in QueryResult binding (default bare list).
+            // Issue #3103: schema-2 finish-path stamping helper. When the caller opted
+            // into :as-query-result / :query-result (as_query_result = true), each match
+            // in the QueryResult is rebuilt as a full StableNodeRef via make_stamped_ref
+            // and stamped with the live tenant / fiber / wrap / cow via
+            // stamp_query_stable_ref_export. The captured fields are then packed into
+            // the schema-2 QueryResultMatch so is_fresh_with_refs can refuse silent
+            // rebinds under production defaults. Soft / single-tenant bare path
+            // leaves the layout-only schema-1 fields alone.
+            inline void stamp_query_result_full_provenance(
+                aura::core::QueryResult & qr, Evaluator & ev, const aura::ast::FlatAST& flat,
+                aura::ast::FlatAST::StableNodeRef& scratch_ref) noexcept {
+                if (qr.match_count == 0)
+                    return;
+                if (!qr.matches[0].has_full_provenance())
+                    return; // already layout-only (schema-1), skip
+                // Compact: stamp once into the first slot, then copy the captured
+                // fields into every match. All matches in a single QueryResult share
+                // the same capture-time tenant/fiber/cow (one query primitive call),
+                // so this preserves the production invariants without per-match work.
+                for (std::size_t i = 0; i < qr.match_count; ++i) {
+                    scratch_ref = ev.make_stamped_ref(qr.matches[i].node_id);
+                    const auto observed_gen = qr.matches[i].generation;
+                    if (observed_gen != 0)
+                        scratch_ref.gen = observed_gen;
+                    ev.stamp_query_stable_ref_export(scratch_ref);
+                    qr.matches[i].wrap_epoch = scratch_ref.wrap_epoch;
+                    qr.matches[i].cow_epoch_at_capture = scratch_ref.cow_epoch;
+                    qr.matches[i].tenant_id = scratch_ref.tenant_id;
+                    qr.matches[i].fiber_id = scratch_ref.fiber_id;
+                    qr.matches[i].mutation_id_at_capture =
+                        static_cast<std::uint32_t>(aura::core::current_mutation_epoch());
+                    qr.matches[i].boundary_pinned = 0; // SafePCVSpan path sets via pinned flag
+                }
+                aura::core::note_query_result_full_provenance();
+                (void)flat; // reserved for future per-workspace COW check
+            }
+
+            // Issue #3103: full-provenance freshness validator (free function — declared
+            // in core/workspace_epoch.hh, implemented here because the header stays
+            // layout-only). Walks each match, checks epoch + (when has_full_provenance())
+            // tenant / fiber / cow_epoch / mutation_id_at_capture against live state.
+            // Default 0 for current_tenant_id / current_fiber_id skips those checks
+            // (Soft single-tenant path).
+            inline aura::core::QueryResultFreshness query_result_is_fresh_with_refs(
+                const aura::core::QueryResult& qr, const aura::ast::FlatAST& flat,
+                std::uint64_t current_tenant_id, std::uint64_t current_fiber_id) noexcept {
+                if (!qr.is_fresh_live(flat.generation()))
+                    return aura::core::QueryResultFreshness::StaleByEpoch;
+                // Soft single-tenant: schema-1 matches stay Soft-only (no provenance
+                // validation possible). Production Agent loops opt in via the schema-2
+                // path which stamps wrap_epoch / cow_epoch / tenant / fiber /
+                // mutation_id at capture time.
+                if (qr.match_count == 0)
+                    return aura::core::QueryResultFreshness::Fresh;
+                if (!qr.matches[0].has_full_provenance())
+                    return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
+                const auto live_mutation = aura::core::current_mutation_epoch();
+                const auto live_cow = flat.workspace_cow_epoch();
+                for (std::size_t i = 0; i < qr.match_count; ++i) {
+                    const auto& m = qr.matches[i];
+                    if (current_tenant_id != 0 && m.tenant_id != 0 &&
+                        m.tenant_id != current_tenant_id) {
+                        aura::core::note_query_result_full_provenance_tenant_mismatch();
+                        return aura::core::QueryResultFreshness::InvalidTenant;
+                    }
+                    if (current_fiber_id != 0 && m.fiber_id != 0 &&
+                        m.fiber_id != current_fiber_id) {
+                        aura::core::note_query_result_full_provenance_fiber_mismatch();
+                        return aura::core::QueryResultFreshness::InvalidFiber;
+                    }
+                    if (m.cow_epoch_at_capture != 0 && live_cow != 0 &&
+                        m.cow_epoch_at_capture != live_cow) {
+                        aura::core::note_query_result_full_provenance_cow_mismatch();
+                        return aura::core::QueryResultFreshness::InvalidCowLayer;
+                    }
+                    if (m.mutation_id_at_capture != 0 && live_mutation != 0 &&
+                        static_cast<std::uint64_t>(m.mutation_id_at_capture) != live_mutation) {
+                        return aura::core::QueryResultFreshness::InvalidMutation;
+                    }
+                }
+                return aura::core::QueryResultFreshness::Fresh;
+            }
+
+            // Issue #3103: opt-in QueryResult binding (default bare list).
             bool as_query_result = false;
             // Issue #289 / #481 / #1374: nested-arity / Kleene-star ellipsis.
             // Default (#t) is Kleene (`...` consumes 0..N consecutive
