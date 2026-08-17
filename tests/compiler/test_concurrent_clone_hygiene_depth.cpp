@@ -299,8 +299,66 @@ int run_test_concurrent_clone_hygiene_depth() {
         CHECK(aura_macro_clone_steal_abort_total_v_read() >= 0, "3028 AC5: steal-abort v_read");
     }
 
-    std::println("\n=== #2806 + #3028 concurrent clone hygiene depth: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    // Issue #3094: shared name_map pointer concurrent top-level clone reject.
+    // Additive to #3028 same-flat reject per #81967. Extends existing suite
+    // (no new test_issue_3094.cpp).
+    //   AC1: claim_name_map_clone / release_name_map_clone helpers present
+    //        (parallel to g_same_flat_slots #3028 pattern).
+    //   AC2: g_macro_clone_name_map_shared_reject_total counter declared.
+    //   AC3: ConcurrentCloneGuard has the production-only name_map claim
+    //        (gated on is_sandbox_active() for Soft/Off zero-cost).
+    //   AC4: reject reason code 4 = hygiene-name-map-shared.
+    //   AC5: no docs/design/3094-* (per #1655) + no test_issue_3094.cpp.
+    std::println("\n=== Issue #3094: shared name_map ownership ===");
+    {
+        const auto src = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(src.find("bool claim_name_map_clone(const void* m)") != std::string::npos,
+              "#3094 AC1: claim_name_map_clone helper present");
+        CHECK(src.find("void release_name_map_clone(const void* m)") != std::string::npos,
+              "#3094 AC1: release_name_map_clone helper present");
+        CHECK(src.find("g_name_map_slots[") != std::string::npos,
+              "#3094 AC1: g_name_map_slots side table present");
+    }
+    {
+        const auto src = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(src.find("g_macro_clone_name_map_shared_reject_total") != std::string::npos,
+              "#3094 AC2: shared-reject counter declared");
+        CHECK(src.find("g_macro_clone_name_map_shared_reject_total{0}") != std::string::npos,
+              "#3094 AC2: counter initialized to 0");
+    }
+    {
+        const auto src = read_file("src/compiler/macro_expansion.cpp");
+        // The claim must be inside ConcurrentCloneGuard, gated on
+        // is_sandbox_active() for Soft/Off zero-cost.
+        const auto guard_pos = src.find("struct ConcurrentCloneGuard");
+        const auto guard_end = guard_pos != std::string::npos
+                                   ? src.find("\n    } concurrent_guard", guard_pos)
+                                   : std::string::npos;
+        if (guard_pos != std::string::npos && guard_end != std::string::npos) {
+            const auto body = src.substr(guard_pos, guard_end - guard_pos);
+            CHECK(body.find("claim_name_map_clone") != std::string::npos,
+                  "#3094 AC3: guard calls claim_name_map_clone");
+            CHECK(body.find("is_sandbox_active()") != std::string::npos,
+                  "#3094 AC3: claim gated on is_sandbox_active() (Soft/Off zero-cost)");
+            CHECK(body.find("rejected_shared_name_map") != std::string::npos,
+                  "#3094 AC3: guard has rejected_shared_name_map field");
+        }
+    }
+    {
+        const auto src = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(src.find("g_macro_clone_last_reject_reason.store(4") != std::string::npos,
+              "#3094 AC4: reject reason code 4 = hygiene-name-map-shared");
+    }
+    {
+        const std::ifstream docs_probe("docs/design/3094-shared-name-map.md");
+        const std::ifstream test_probe("tests/compiler/test_issue_3094.cpp");
+        CHECK(!docs_probe.good(), "#3094 AC5: no docs/design/3094-* (per #1655)");
+        CHECK(!test_probe.good(), "#3094 AC5: no test_issue_3094.cpp (per #81934)");
+    }
+
+    std::println(
+        "\n=== #2806 + #3028 + #3094 concurrent clone hygiene depth: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
