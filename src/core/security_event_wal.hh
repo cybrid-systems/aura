@@ -96,12 +96,12 @@ struct WalOverflowRecord {
     std::string reason;      // failure reason (e.g. "fwrite_miss")
 };
 
-inline WalOverflowRecord (&wal_overflow_ring_storage()) [kWalOverflowRingCapacity] noexcept {
+inline WalOverflowRecord* wal_overflow_ring_storage() noexcept {
     // Process-local storage (header ODR-safe via inline). Sized at
     // kWalOverflowRingCapacity; head + count are atomic to allow push
     // from the WAL append path (under std::lock_guard) and read from
-    // query:security-posture without synchronization. Returns an array
-    // reference so wal_overflow_ring_push can index ring[h % capacity].
+    // query:security-posture without synchronization. Pointer to the
+    // static array so wal_overflow_ring_push can index ring[h % capacity].
     static WalOverflowRecord buf[kWalOverflowRingCapacity]{};
     return buf;
 }
@@ -120,16 +120,14 @@ inline std::atomic<std::uint32_t>& wal_overflow_ring_count() noexcept {
 // wal_append_fail_closed_active() returns true (production + env).
 // Thread-safe under WAL's std::lock_guard.
 inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
-    auto& ring = wal_overflow_ring_storage();
+    auto* ring = wal_overflow_ring_storage();
     const auto h = wal_overflow_ring_head().fetch_add(1, std::memory_order_relaxed);
     ring[h % kWalOverflowRingCapacity] = rec;
     // Cap count at capacity (head wraps but count saturates).
     auto& cnt = wal_overflow_ring_count();
-    const auto prev = cnt.load(std::memory_order_relaxed);
-    if (prev < kWalOverflowRingCapacity) {
-        cnt.compare_exchange_strong(const_cast<std::uint32_t&>(prev), prev + 1,
-                                    std::memory_order_relaxed);
-    }
+    auto expected = cnt.load(std::memory_order_relaxed);
+    if (expected < kWalOverflowRingCapacity)
+        cnt.compare_exchange_strong(expected, expected + 1, std::memory_order_relaxed);
 }
 
 [[nodiscard]] inline std::uint32_t wal_overflow_ring_depth() noexcept {
