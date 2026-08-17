@@ -2406,6 +2406,19 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     if (jr.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
         production_reclaimed_must_wait()) {
         h.must_wait_reclaimed = true;
+        // Issue #3110: auto-wait to close the host-forget cleanup window.
+        // Hosts that store the handle in a vector / hand it to another
+        // component must not have to remember a second wait_reclaimed_body
+        // call (closes the #2661 host footgun on the C++ path; Aura
+        // language path already auto-injects via #3051/#3087). 50ms
+        // production default (kProductionWaitReclaimedMsDefault); Soft /
+        // sandbox=off / unset production_reclaimed_must_wait stays false
+        // here (AC3 zero cost). Timeout preserves #2661 no-early-free.
+        auto wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault);
+        jr.wait_us += wr3110.wait_us;
+        h.wait_reclaimed_used = true;
+        h.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout);
+        h.must_wait_reclaimed = false; // auto-waited, clear flag (host sees false)
     }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
@@ -2507,6 +2520,17 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         if (local.status == serve::JoinStatus::Reclaimed && !policy.wait_reclaimed_ms.has_value() &&
             production_reclaimed_must_wait()) {
             a.must_wait_reclaimed = true;
+            // Issue #3110: auto-wait to close the host-forget cleanup window
+            // (span variant — mirrors the single-handle join_agent fix).
+            // Each Reclaimed handle in the batch gets its own short wait so
+            // a single non-yielding sibling cannot pin every reservation.
+            // Soft / sandbox=off / unset production_reclaimed_must_wait stays
+            // zero cost (AC3). Timeout preserves #2661 no-early-free.
+            auto wr3110 = wait_reclaimed_body(a, kProductionWaitReclaimedMsDefault);
+            jr.wait_us += wr3110.wait_us;
+            a.wait_reclaimed_used = true;
+            a.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout);
+            a.must_wait_reclaimed = false; // auto-waited, clear flag
         }
         if (local.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
             auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);

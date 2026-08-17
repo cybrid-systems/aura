@@ -2171,6 +2171,83 @@ int run_test_join_drain_reclaim() {
         }
     }
 
+    // ── #3110: Production C++ join auto-wait (close host-forget window) ──
+    // Closes the C++ host contract gap: join_agent / join_agents now perform
+    // a short ensure_reclaimed_cleanup (50 ms production default) inline
+    // when production + JoinStatus::Reclaimed + wait_reclaimed_ms unset,
+    // instead of just setting must_wait_reclaimed and trusting the host.
+    // Soft / sandbox=off: zero extra wait (AC3); explicit wait unchanged (AC2);
+    // timeout preserves #2661 no-early-free (AC4); reuse wait_reclaimed_* counters (AC5).
+    {
+        std::println("\n--- #3110 AC1-AC7: production join auto-wait ---");
+        const auto spawn3110 = read_file("src/orch/agent_spawn.h");
+        const auto test3110_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+        const auto build3110 = read_file("build.py");
+
+        // AC1: join_agent auto-wait when Reclaimed + unset wait + production.
+        CHECK(spawn3110.find("Issue #3110: auto-wait to close the host-forget cleanup window") !=
+                  std::string::npos,
+              "3110 AC1: join_agent auto-wait comment marker");
+        CHECK(
+            spawn3110.find("wr3110 = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault)") !=
+                std::string::npos,
+            "3110 AC1: join_agent auto-wait calls wait_reclaimed_body(50ms default)");
+        // AC2: explicit wait path unchanged (existing wr/wait_reclaimed_used/wait_reclaimed_timeout
+        // set).
+        CHECK(spawn3110.find("policy.wait_reclaimed_ms.has_value()") != std::string::npos,
+              "3110 AC2: explicit wait_reclaimed_ms path preserved");
+        // AC3: Soft / Off → flag false (must_wait_reclaimed not set) — covered by AC1 auto-wait
+        // branch being gated by production_reclaimed_must_wait() (same #3012 gate).
+        CHECK(spawn3110.find("production_reclaimed_must_wait()") != std::string::npos,
+              "3110 AC3: production_reclaimed_must_wait() gate preserved");
+        // AC4: timeout preserves #2661 no-early-free (wait_reclaimed_timeout flag wired).
+        CHECK(spawn3110.find(
+                  "wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout)") !=
+                  std::string::npos,
+              "3110 AC4: timeout wired into wait_reclaimed_timeout flag");
+        // AC5: reuse wait_reclaimed_used/timeout counters (no new metric key).
+        CHECK(spawn3110.find("wait_reclaimed_used = true") != std::string::npos &&
+                  spawn3110.find("wait_reclaimed_total") == std::string::npos,
+              "3110 AC5: reuse wait_reclaimed_used, no new metric key");
+        // AC6: test_join_drain_reclaim.cpp covers #3110 (this AC block) — no new
+        // test_issue_*.cpp per #81967.
+        CHECK(test3110_self.find("3110 AC1") != std::string::npos,
+              "3110 AC6: existing test file cites #3110");
+        std::ifstream invent_3110("tests/orch/test_issue_3110.cpp");
+        if (!invent_3110.good())
+            invent_3110.open("../tests/orch/test_issue_3110.cpp");
+        CHECK(!invent_3110.good(),
+              "3110 AC6: no tests/orch/test_issue_3110.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design_3110 = "docs/design";
+        std::error_code ec_3110;
+        if (std::filesystem::is_directory(docs_design_3110, ec_3110)) {
+            for (const auto& entry :
+                 std::filesystem::directory_iterator(docs_design_3110, ec_3110)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3110-") == std::string::npos,
+                      std::string("3110 AC7: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+        // AC7: source-cite + linter wired + lineage preserved.
+        CHECK(spawn3110.find("kProductionWaitReclaimedMsDefault = 50") != std::string::npos,
+              "3110 AC7: 50ms default preserved (#3051/#3087 lineage)");
+        const auto lint3110 = read_file("scripts/coverage/checks/check_join_drain_reclaim_3110.py");
+        CHECK(!lint3110.empty() && lint3110.find("Issue #3110") != std::string::npos,
+              "3110 AC7: 3110 linter exists");
+        CHECK(build3110.find("check_join_drain_reclaim_3110") != std::string::npos,
+              "3110 AC7: build.py wires 3110 linter");
+        // join_agents span variant: same auto-wait pattern.
+        CHECK(
+            spawn3110.find("wr3110 = wait_reclaimed_body(a, kProductionWaitReclaimedMsDefault)") !=
+                std::string::npos,
+            "3110 AC7: join_agents span variant auto-wait also wired");
+        // Lineage: #2661 / #2924 / #3012 / #3051 / #3087 preserved.
+        CHECK(spawn3110.find("wait_reclaimed_body(") != std::string::npos,
+              "3110 AC7: #2924 wait_reclaimed_body helper preserved");
+        CHECK(spawn3110.find("complete_agent_join_cleanup") != std::string::npos,
+              "3110 AC7: #2661 complete_agent_join_cleanup preserved");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

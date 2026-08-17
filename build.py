@@ -3396,6 +3396,22 @@ def cmd_lint():
             "Issue #3109 WAL append fail-closed linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_closed_3109.py"
         )
         return r
+    # Issue #3110: Production C++ join auto-wait (close host-forget cleanup
+    # window). join_agent / join_agents auto-wait via wait_reclaimed_body
+    # (50 ms production default) when production + Reclaimed + unset wait,
+    # instead of just setting must_wait_reclaimed and trusting the host.
+    # Soft / sandbox=off stays zero cost (production_reclaimed_must_wait()
+    # gate); explicit wait path unchanged; timeout preserves #2661 no-early-free.
+    jd3110_script = COVERAGE_CHECKS / "check_join_drain_reclaim_3110.py"
+    if not jd3110_script.exists():
+        fail(f"missing {jd3110_script}")
+        return 1
+    r = run([sys.executable, str(jd3110_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3110 join drain reclaim auto-wait linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3110.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
