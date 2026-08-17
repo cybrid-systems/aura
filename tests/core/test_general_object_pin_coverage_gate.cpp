@@ -625,6 +625,59 @@ int run_test_general_object_pin_coverage_gate() {
     ac3053_coverage_gate_cite();
     ac3055_coverage_gate_cite();
     ac3057_coverage_gate_cite();
+    // Issue #3093: cover-aware intermediate create (slot / pin / EXEMPT
+    // triad) closes the #3017 residual — value-only auto-wire is
+    // observability only, not safe cover. Additive to existing
+    // #2496/#2596/#2597 coverage gate per #81967.
+    //   AC1: source-cite note_intermediate_create_with_cover_ helper on
+    //        ASTArena (slot / EXEMPT / value-only triad).
+    //   AC2: counter declarations
+    //        (g_intermediate_create_value_only_total +
+    //        g_intermediate_create_with_cover_total) on arena.ixx.
+    //   AC3: helper has all three branches (slot / EXEMPT / value-only).
+    //   AC4: no docs/design/3093-* (per #1655).
+    //   AC5: no test_issue_3093.cpp (per #81934).
+    std::println("\n=== Issue #3093: cover-aware intermediate create ===");
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        CHECK(arena.find("void note_intermediate_create_with_cover_(void* p, void** slot,"
+                         " const char* reason)") != std::string::npos,
+              "#3093 AC1: ASTArena::note_intermediate_create_with_cover_ helper present");
+    }
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        CHECK(arena.find("g_intermediate_create_with_cover_total") != std::string::npos,
+              "#3093 AC2: g_intermediate_create_with_cover_total counter declared");
+        CHECK(arena.find("g_intermediate_create_value_only_total") != std::string::npos,
+              "#3093 AC2: g_intermediate_create_value_only_total counter declared");
+        CHECK(arena.find("intermediate_create_with_cover_total_v_read") != std::string::npos,
+              "#3093 AC2: v_read function present (query exposure)");
+    }
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        const auto helper_pos = arena.find("void note_intermediate_create_with_cover_(");
+        const auto helper_end =
+            helper_pos != std::string::npos ? arena.find("\n    }", helper_pos) : std::string::npos;
+        if (helper_pos != std::string::npos && helper_end != std::string::npos) {
+            const auto body = arena.substr(helper_pos, helper_end - helper_pos);
+            CHECK(body.find("slot != nullptr") != std::string::npos,
+                  "#3093 AC3: helper has slot branch (register_external_root_slot_for_densify_)");
+            CHECK(body.find("reason != nullptr") != std::string::npos,
+                  "#3093 AC3: helper has EXEMPT branch (erase_intermediate_create_)");
+            CHECK(body.find("note_intermediate_create_auto_wire_(p)") != std::string::npos,
+                  "#3093 AC3: helper has value-only fallback (backward compat)");
+        }
+    }
+    {
+        // AC4: no docs/design/3093-* (per #1655)
+        const std::ifstream docs_probe("docs/design/3093-cover-triad.md");
+        CHECK(!docs_probe.good(), "#3093 AC4: no docs/design/3093-* (per #1655)");
+    }
+    {
+        // AC5: no test_issue_3093.cpp (per #81934)
+        const std::ifstream test_probe("tests/core/test_issue_3093.cpp");
+        CHECK(!test_probe.good(), "#3093 AC5: no test_issue_3093.cpp (per #81934)");
+    }
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
