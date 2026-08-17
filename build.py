@@ -3359,6 +3359,26 @@ def cmd_lint():
             "Issue #3107 Soft residual force-relower linter failed — run python3 scripts/coverage/checks/check_hot_residual_soft_relower_3107.py"
         )
         return r
+    # Issue #3108: commit_readiness recover must re-gate on solve_status==0
+    # (anti half-green after occurrence hard-face recover). Closes the
+    # residual of #2750 / #2909 / #2962 / #2911 / #3031 — existing per-face
+    # guards (`if (recovered && in.solve_status != 0) recovered = false;`)
+    # now bump an additive counter (`g_occurrence_recover_not_solved_total`)
+    # so production-soak / agent-self-modify gates can observe the
+    # half-green residual. Production reject path unchanged
+    # (recovered->false flip already routes through existing face reject
+    # sites). Soft observe-only. Quiet path zero extra atomics (bump lives
+    # inside the cold `recovered && solve_status != 0` branch).
+    rn3108_script = COVERAGE_CHECKS / "check_occurrence_recover_not_solved_3108.py"
+    if not rn3108_script.exists():
+        fail(f"missing {rn3108_script}")
+        return 1
+    r = run([sys.executable, str(rn3108_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3108 commit_readiness recover re-gate linter failed — run python3 scripts/coverage/checks/check_occurrence_recover_not_solved_3108.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
