@@ -1235,7 +1235,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_followups.cpp` (—) [followup, domain_suite, theme_compiler] — (mutation-log:diff / dirty:summary /
 - `tests/compiler/test_full_strategy_partial_recovery.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2029; partial_recovery_* counters + boundary path
 - `tests/core/test_gc_defer_mutation_hold.cpp` (—) [domain_suite, theme_core] — AC1: During outermost Guard body, should_defer_destructive_gc()==true
-- `tests/compiler/test_grant_bound_mid_force.cpp` (—) [small, domain_suite, theme_compiler] — AC1: Restricted grant → bound_mutation_id != 0
+- `tests/compiler/test_grant_bound_mid_force.cpp` (—) [domain_suite, theme_compiler] — AC1: Restricted grant → bound_mutation_id != 0
 - `tests/compiler/test_grant_epoch_fiber_bind.cpp` (—) [domain_suite, theme_compiler] — AC1: Grant always carries non-zero grant_epoch matching mutation epoch
 - `tests/compiler/test_grant_epoch_invalidation.cpp` (—) [domain_suite, theme_compiler] — Issue #2074 — mutation-bound CapabilityGrant + epoch invalidation
 - `tests/core/test_guard_dtor_batch_metrics.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #1747 (#1978 renamed): issue# moved from filename to header.
