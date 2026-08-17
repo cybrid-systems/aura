@@ -1678,6 +1678,23 @@ enum class LinearFastPathExitAction : std::uint8_t {
                                                                         std::memory_order_relaxed);
         return false;
     }
+    // Issue #3099: residual close — re-sample invalidate_gen after ok
+    // returns true. linear_fast_path_ok() already checks gen (acquire pairs
+    // with invalidate_fast_path_before_steal_densify_restamp release
+    // fetch_add). The re-sample closes the window where a concurrent
+    // densify/steal restamp on another fiber advances gen between the ok
+    // check and the actual elision — half-green linear state under
+    // high-frequency mutate + fiber steal. Acquire pairs with the release
+    // fetch_add. Quiet path → one extra acquire load (zero extra work).
+    // Mismatch → blocked + production counter (reuse existing surfaces).
+    if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
+        g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)) {
+        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(
+                1, std::memory_order_relaxed);
+        return false;
+    }
     g_linear_ir_fastpath_skip_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
