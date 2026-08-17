@@ -197,6 +197,14 @@ export inline constexpr int kIrSoaMultiViaSingleBanIssue = 2774;
 export inline constexpr int kSchemaResidualMultiViaSingleProductionSmoke = 2936;
 export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_cascades_total{0};
 export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_marks_total{0};
+// Issue #3105: hard-fail observability — bumps when AURA_IR_DIRTY_BATCH_ONLY=1
+// fires std::abort on a residual multi-via-single cascade (streak >= 2 on same
+// function without intervening batch API). Production source-cite gate ensures
+// the abort path is armed. The abort path also implies failure (no return
+// path); Soft/test paths still bump g_ir_soa_residual_multi_via_single_cascades_total
+// + g_ir_soa_residual_multi_via_single_marks_total above.
+export inline std::atomic<std::uint64_t> g_ir_soa_batch_only_hard_abort_total{0};
+export inline constexpr int kIrSoaBatchOnlyHardAbortIssue = 3105;
 // Issue #2936: production-smoke-wired sentinel (additive observability).
 export inline std::atomic<std::uint64_t>&
 g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {
@@ -647,6 +655,10 @@ namespace detail {
                 // Soft / unit residual exercise leaves env unset → metric only (AC5).
                 // Production packs / debug can set env=1 to fail-closed on residual.
                 if (ir_dirty_batch_only_hard()) {
+                    // Issue #3105: hard-fail observability — bump the
+                    // dedicated counter so Agents / CI smoke can see the
+                    // abort path fired (not just the Soft cascades).
+                    g_ir_soa_batch_only_hard_abort_total.fetch_add(1, std::memory_order_relaxed);
                     std::fprintf(
                         stderr, "[#2936] FATAL: residual multi-via-single mark_block_dirty cascade "
                                 "(use mark_blocks_dirty / mark_blocks_dirty_bits_only / "
