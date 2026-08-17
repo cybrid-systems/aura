@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections.abc import Iterable, Sequence
 from pathlib import Path
@@ -110,8 +111,20 @@ def check_file(path: Path, *, strict: bool) -> list[str]:
             continue
         found_sites += 1
         window = _slice_after(text, idx, ABORT_SITE_WINDOW_LINES)
+        # Normalize by removing ALL whitespace before the substring check.
+        # clang-format wraps long calls onto two lines and inserts a space
+        # after the function name and before the argument (i.e.
+        # "truncate_type_cone_to_size (\n    cp.coercion_cone_size_at_entry )").
+        # A simple "collapse whitespace" pass would leave spaces around the
+        # parens and still not match the human-readable required string
+        # "truncate_type_cone_to_size(cp.coercion_cone_size_at_entry)".
+        # Stripping all whitespace handles both single-line + wrapped forms
+        # uniformly. The source-cite intent is "is this call present in the
+        # abort site block?" not "is it formatted a specific way?".
+        window_normalized = re.sub(r"\s+", "", window)
         for required in REQUIRED_CALLS:
-            if required not in window and strict:
+            required_normalized = re.sub(r"\s+", "", required)
+            if required_normalized not in window_normalized and strict:
                 failures.append(f"{path}: abort site (anchor={anchor!r}) missing required call: {required!r}")
     # We expect at least 3 abort sites (the 3 rewind blocks); fail loudly
     # if we see fewer (a regression in production/Full coverage).
