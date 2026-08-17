@@ -1206,6 +1206,28 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     return true;
 }
 
+// Issue #3100: shared restamp-status probe (the issue body's
+// 'shared restamp-status probe used by query:*-stable'). Returns
+// true under production_defaults_active + last restamp over budget
+// for this workspace/evaluator. Soft/Off/sandbox=off returns false
+// (metric/soft observe allowed per AC2). Reuses the existing
+// restamp_last_budget_exceeded_ flag maintained by
+// unified_restamp_after_boundary + ast_impl.cpp
+// restamp_eager_after_boundary_locked (already set when the budget
+// is exceeded). One cheap production_defaults load + one flag load
+// on quiet path (under-budget → false early); over-budget path is a
+// single positive load + early-return. Exposed for query:*-stable
+// sites that previously bypassed allow_query_stable_ref_export
+// (e.g., internal restamp consumers reading the gate directly).
+bool Evaluator::query_stable_hard_reject_torn() const noexcept {
+    if (!typed_audit::should_hard_reject_soft_sibling())
+        return false;
+    auto* ws = workspace_flat_;
+    if (!ws)
+        return false;
+    return ws->restamp_last_budget_exceeded();
+}
+
 // Issue #2960: query Agent export — remake brace-init residuals, stamp tenant+fiber,
 // count stamped / unstamped_prevented (target 0 residual under production).
 // Issue #3000: production restamp-lag reject (null ref; do not stamp-green).

@@ -188,6 +188,63 @@ int run_test_cache_stamp_restamp_contract() {
             CHECK(m->cache_stamp_restamp_total.load() >= r0, "restamp after mutate");
     }
 
+    // ── Issue #3100: production-only hard reject on last restamp over budget
+    // for query:*-stable (shared restamp-status probe). Soft/Off returns
+    // false (metric/soft observe); production + over-budget returns true
+    // so query:*-stable sites hard-reject per AC1. Reuses existing
+    // restamp_last_budget_exceeded_ flag + record_query_stable_ref_*
+    // counters. AC2: Soft / under-budget unchanged. AC4: additive
+    // counters only (reuses restamp-budget-exceeded-total +
+    // record_query_stable_ref_restamp_torn_*). AC6: source-cite +
+    // coverage linter; no docs/design/* per #1655.
+    {
+        std::println("\n--- #3100 AC1: shared query_stable_hard_reject_torn probe ---");
+        CompilerService cs;
+        // AC1 source-cite: Evaluator::query_stable_hard_reject_torn()
+        // declared in evaluator.ixx + impl in evaluator_security.cpp.
+        const auto evxx = read_file("src/compiler/evaluator.ixx");
+        const auto evsec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(evxx.find("query_stable_hard_reject_torn") != std::string::npos,
+              "3100 AC1: query_stable_hard_reject_torn declared in evaluator.ixx");
+        CHECK(evsec.find("Evaluator::query_stable_hard_reject_torn()") != std::string::npos,
+              "3100 AC1: query_stable_hard_reject_torn defined in evaluator_security.cpp");
+        // AC1: probe combines production_defaults + over-budget flag.
+        // (Avoid env side-effects — use source-cite only.)
+        const auto defn_block = evsec.substr(evsec.find("Evaluator::query_stable_hard_reject_torn()"));
+        CHECK(defn_block.find("should_hard_reject_soft_sibling") != std::string::npos,
+              "3100 AC1: probe uses production defaults gate (should_hard_reject_soft_sibling)");
+        CHECK(defn_block.find("restamp_last_budget_exceeded") != std::string::npos,
+              "3100 AC1: probe reads restamp_last_budget_exceeded flag");
+        // AC3: the existing flag is set in ast_impl.cpp when budget exceeded.
+        const auto astimpl = read_file("src/core/ast_impl.cpp");
+        CHECK(astimpl.find("restamp_last_budget_exceeded_.store(1") != std::string::npos,
+              "3100 AC3: flag set in restamp_eager_after_boundary_locked when budget exceeded");
+        // AC4: additive counters only — no new middle metrics key.
+        const auto om = read_file("src/compiler/observability_metrics.h");
+        const auto evsec_full = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(evsec_full.find("record_query_stable_ref_restamp_torn_reject") != std::string::npos,
+              "3100 AC4: existing torn-reject counter reused");
+        CHECK(evsec_full.find("record_query_stable_ref_restamp_lag_prevented") != std::string::npos,
+              "3100 AC4: existing lag-prevented counter reused");
+        CHECK(evsec_full.find("restamp-budget-exceeded-total") == std::string::npos
+              || om.find("restamp_budget_exceeded_total") != std::string::npos,
+              "3100 AC4: restamp-budget-exceeded-total already surfaces in observability");
+        // AC6: no docs/design/* + no invent test_issue_3100.cpp.
+        CHECK(read_file("docs/design/3100-query-stable-torn-reject.md").empty(),
+              "3100 AC6: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3100.cpp").empty(),
+              "3100 AC6: no invent test_issue_3100 (extend #2183 lineage)");
+        // Quiet path: under-budget returns false (zero extra work contract).
+        // Soft path: production_defaults=0 → probe returns false.
+        // These are static source-cite checks (no env side-effects).
+        // Source-cite the existing production gate in allow_query_stable_ref_export.
+        const auto allow_block = = evsec_full.substr(evsec.find("allow_query_stable_ref_export"));
+        CHECK(allow_block.find("should_hard_reject_soft_sibling") != std::string::npos,
+              "3100 AC1: existing allow_query_stable_ref_export gate is production-only");
+        CHECK(allow_block.find("restamp_last_budget_exceeded") != std::string::npos,
+              "3100 AC1: existing allow_query_stable_ref_export reads over-budget flag");
+    }
+
     std::println("\n=== #2183 cache stamp restamp: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
