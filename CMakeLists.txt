@@ -2292,6 +2292,17 @@ aura_add_issue_test(test_issue_3095)
 aura_issue_test_link_light(test_issue_3095)
 add_dependencies(all_test_issue_targets test_issue_3095)
 
+# Issue #3096: production-only bounded auto-heal when residual force
+# bits age past threshold with exhausted retry budget (refine #3026
+# / #2952 / #2601 / #2895). After 256 BoundaryExits with
+# residual_force_mask != 0 + exhausted_min_dirty_retry_attempts_left == 0
+# + not storm active, observe_residual_force_stale() drives one bounded
+# min-dirty / coverage-verify pass via maybe_coverage_verify_min_dirty.
+# Soft / Off is zero-cost (early-returned before auto-heal check).
+aura_add_issue_test(test_issue_3096)
+aura_issue_test_link_light(test_issue_3096)
+add_dependencies(all_test_issue_targets test_issue_3096)
+
 # Issue #596 / #2765: Guard + panic + reflect closed-loop + Guard success-path
 # auto_validate / hygiene_validate (#2765 residual). Prefer-existing suite.
 aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)
