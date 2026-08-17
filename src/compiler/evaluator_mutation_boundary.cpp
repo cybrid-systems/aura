@@ -76,6 +76,13 @@ module;
 #include "orch/security_schedule_gate.h"     // Issue #2630: evaluate_security_schedule admit
 #include "compiler/mutation_concurrency_health.hh" // Issue #2985: health admit gate
 
+// Issue #3102: import aura.compiler.dirty_propagation. The 3 abort sites plus
+// boundary enter call aura::compiler::dirty::truncate_type_cone_to_size plus
+// force_dead_coercion_elim_into_cone plus bump_dead_coercion_decision_invalidate.
+// Every other .cpp in this project already imports it. Without this import
+// the aura.compiler.dirty namespace is undeclared and the ASAN build fails.
+import aura.compiler.dirty_propagation;
+
 #include <cassert>
 #include <chrono>
 #include <cstdlib>
