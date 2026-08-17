@@ -1016,12 +1016,23 @@ export struct DeadCoercionAstStats {
 // declared in this scope"). Definitions are at the bottom of the file
 // (after apply_coercion_map) where they have access to the TLS + the
 // emit-set helpers.
-export inline void coerced_nodes_tracker_enter_boundary() noexcept;
-export inline void coerced_nodes_tracker_exit_boundary() noexcept;
-export inline void coerced_nodes_tracker_push(aura::compiler::dirty::NodeId nid) noexcept;
-export [[nodiscard]] inline std::vector<aura::compiler::dirty::NodeId>
+//
+// #3106 CI asan-build fix: removed `export` from these forward decls.
+// The matching definitions at the bottom of the file are `inline` only
+// (module-internal helpers for apply_coercion_map), not `export inline`.
+// Declaring the prototypes with `export inline` while defining them
+// `inline` produces a C++20 module linkage mismatch; GCC 16.1.0 emits
+// a cascade that mis-parses apply_coercion_map's parameter list
+// ('map_mut' at line 1028 reported as "not declared in this scope").
+// Dropping `export` from the decls aligns them with the defs (module
+// internal) and unblocks the ASAN build. Functions remain visible to
+// apply_coercion_map in the same interface unit.
+inline void coerced_nodes_tracker_enter_boundary() noexcept;
+inline void coerced_nodes_tracker_exit_boundary() noexcept;
+inline void coerced_nodes_tracker_push(aura::compiler::dirty::NodeId nid) noexcept;
+[[nodiscard]] inline std::vector<aura::compiler::dirty::NodeId>
 coerced_nodes_tracker_take() noexcept;
-export [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept;
+[[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept;
 
 export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map,
                                       DeadCoercionAstStats* stats_out = nullptr,
