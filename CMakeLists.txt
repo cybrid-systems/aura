@@ -1701,6 +1701,17 @@ aura_issue_test_link_light(test_coercion_map_abort_rewind)
 # stays at schema-1 (no ref stamp).
 aura_add_issue_test(test_query_result_full_provenance)
 aura_issue_test_link_light(test_query_result_full_provenance)
+# Issue #3104: restamp-budget hard-gate under production defaults.
+# unified_restamp_after_boundary sets restamp_last_budget_exceeded_ +
+# bumps g_unified_restamp_torn_visible_total + calls
+# force_query_epoch_stale_from_restamp_budget under production_defaults_active
+# when budget exceeded. Evaluator::allow_query_stable_ref_export +
+# stamp_query_stable_ref_export + query_stable_hard_reject_torn short-circuit
+# query:*-stable / as-stable-ref / ensure-ref export under production + torn.
+# Soft / unlimited budget / sandbox=off paths keep current degrade behavior
+# (metrics only).
+aura_add_issue_test(test_restamp_budget_hard_gate)
+aura_issue_test_link_light(test_restamp_budget_hard_gate)
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_refinement_closed_loop)
 aura_issue_test_link_light(test_refinement_closed_loop)
