@@ -29,7 +29,7 @@
 //   AURA_COLD_CONTRACT(expr)    — cold-edge enforce (debug/enforce only)
 //   AURA_HOT_CHECK_CONSTEXPR    — constexpr-friendly column bounds (hot)
 //
-// Three tiers (Issue #2435 AC1 + #3043 Soft-observe):
+// Three tiers (Issue #2435 AC1 + #3043 Soft-observe + #3106 Harden-armed):
 //   * Enforce — -DAURA_CONTRACTS_HOT_MODE_ENFORCE / -DAURA_CONTRACTS_ENFORCE
 //       or debug (!NDEBUG) without OFF/OBSERVE override:
 //         RECORD (every call) + CHECK → contract_assert  (fail-closed)
@@ -38,12 +38,21 @@
 //       -DAURA_CONTRACTS_OBSERVE:
 //         sampled RECORD + CHECK → observe_hot_contract_false() only
 //         (metrics, no abort). Sample period avoids per-call atomic RMW.
+//   * Soft-observe + Harden — -DAURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE_HARDEN /
+//       -DAURA_HOT_SOFT_OBSERVE_HARDEN (Issue #3106, AC1-AC3):
+//         sampled RECORD + CHECK on false → observe_hot_contract_false()
+//         AND record_hotpath_contract_harden_trap() AND std::abort()
+//         (fail-closed trap). Sample period still applies (AC3); happy
+//         path remains a branch + sampled atomic (no per-call RMW, AC2).
 //   * Off — -DAURA_CONTRACTS_HOT_MODE_OFF or production (NDEBUG) default:
 //         RECORD + CHECK → no-op  (zero cost on happy path)
 //
 // Env AURA_CONTRACTS_HOT_MODE=soft|observe|off|enforce is Agent-visible
 // intent on query:cpp26-contracts-stats (hot-contracts-mode-env). It does
 // not change compile-time OFF macros, so production default stays zero-cost.
+// Env AURA_HOT_HARDEN=1|on|true is a runtime armed-state probe (Issue
+// #3106 AC4); compile-time HARDEN flag overrides env for the actual trap
+// dispatch (macro expansion is compile-time).
 //
 // Do NOT scatter bare contract_assert on new absolute-hot accessors —
 // use AURA_HOT_CHECK / AURA_HOT_CHECK_CONSTEXPR so interpreter/JIT walks
@@ -57,10 +66,19 @@
 #include <cstdlib>
 #include <cstring>
 
-// ── Hot mode preprocessor selection (Issue #2435) ───────────────────────
-// Priority: explicit HOT_MODE_* > ENFORCE/OBSERVE legacy flags > NDEBUG.
+// ── Hot mode preprocessor selection (Issue #2435 / #3106) ──────────────
+// Priority: ENFORCE > HARDEN-armed SOFT_OBSERVE (#3106) > plain SOFT_OBSERVE
+// (#3043) > legacy OBSERVE aliases > explicit OFF > NDEBUG-default Enforce
+// (debug) > NDEBUG-default Off (production).
 #if defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) || defined(AURA_CONTRACTS_ENFORCE)
 #define AURA_HOT_MODE_ENFORCE 1
+#elif defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE_HARDEN) || defined(AURA_HOT_SOFT_OBSERVE_HARDEN)
+// Issue #3106: harden-armed soft-observe. Keeps Soft-observe sampled
+// RECORD path for metrics, turns a false CHECK into a fail-closed trap
+// (observe_hot_contract_false + record_hotpath_contract_harden_trap +
+// std::abort). Implies SOFT_OBSERVE on so RECORD stays sampled.
+#define AURA_HOT_MODE_SOFT_OBSERVE 1
+#define AURA_HOT_MODE_HARDEN 1
 #elif defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE) || defined(AURA_HOT_SOFT_OBSERVE) ||           \
     defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) || defined(AURA_CONTRACTS_OBSERVE)
 // Issue #3043: Soft-observe is the production-optional metrics-only tier.
@@ -89,17 +107,27 @@ inline constexpr int kHotContractUnifyIssue = 2142;
 inline constexpr int kHotContractPlacementIssue = 2435;
 // Issue #3043: Soft-observe tier (metrics, no abort) + sampled RECORD.
 inline constexpr int kHotContractSoftObserveIssue = 3043;
+// Issue #3106: Soft-observe + Harden-armed tier (sampled RECORD + fail-
+// closed trap on false CHECK). Closes the Soft-only window of #3043 under
+// AI multi-round mutate (Value as_*, SoA view_at, dirty mark/cascade).
+inline constexpr int kHotContractHardenIssue = 3106;
 // Soft-observe RECORD sample period (power of two). Acceptable upper
-// bound vs OFF: one relaxed atomic per this many RECORD sites.
+// bound vs OFF: one relaxed atomic per this many RECORD sites. Applies to
+// both plain Soft-observe (#3043) and Harden-armed Soft-observe (#3106
+// AC3 — sample period still works under harden).
 inline constexpr std::uint32_t kHotSoftObserveRecordSample = 256;
 
-// Hot-mode enum for query surface (0=off, 1=observe, 2=enforce).
+// Hot-mode enum for query surface (0=off, 1=observe, 2=enforce,
+// 3=harden-armed soft-observe, #3106).
 inline constexpr int kHotModeOff = 0;
 inline constexpr int kHotModeObserve = 1;
 inline constexpr int kHotModeEnforce = 2;
+inline constexpr int kHotModeSoftenObserveHarden = 3;
 
 #if defined(AURA_HOT_MODE_ENFORCE)
 inline constexpr int kHotContractsMode = kHotModeEnforce;
+#elif defined(AURA_HOT_MODE_HARDEN)
+inline constexpr int kHotContractsMode = kHotModeSoftenObserveHarden;
 #elif defined(AURA_HOT_MODE_OBSERVE)
 inline constexpr int kHotContractsMode = kHotModeObserve;
 #else
@@ -161,6 +189,12 @@ inline std::atomic<std::uint64_t> value_as_star_contracts_active{1};
 inline std::atomic<std::uint64_t> shape_bit_test_contracts_active{1};
 inline std::atomic<std::uint64_t> flatast_get_type_contracts_active{1};
 inline std::atomic<std::uint64_t> contract_violation_hotpath_count{0};
+// Issue #3106: harden-armed soft-observe wired (compile-time optional;
+// default OFF). Soft observe counter increments AND harden-trap counter
+// increments AND std::abort fires on a false HOT_CHECK under harden.
+inline std::atomic<std::uint64_t> hot_contract_harden_wired{1};
+inline std::atomic<std::uint64_t> hotpath_contracts_3106_active{1};
+inline std::atomic<std::uint64_t> hotpath_contract_harden_trap_total{0};
 // Issue #1466: hot-path consteval invariant hits — bumped each time a
 // new consteval invariant is added. Mirrors kConstevalChecksTotal but
 // observable at runtime via (query:cpp26-contracts-stats).
@@ -192,6 +226,17 @@ inline void observe_hot_contract_false() noexcept {
     record_contract_violation_hotpath();
 }
 
+// Issue #3106: harden-armed CHECK false path — observe counter bump plus
+// a dedicated harden-trap counter bump (so Agents can see how often the
+// fail-closed trap would have fired without crashing the process when
+// testing under a non-fatal harness). The actual std::abort() is emitted
+// inline by the AURA_HOT_CHECK macro under AURA_HOT_MODE_HARDEN so the
+// trap is inlined at the call site (no extra layer on the absolute-hot
+// path).
+inline void record_hotpath_contract_harden_trap() noexcept {
+    hotpath_contract_harden_trap_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Soft-observe RECORD: thread-local sample, not a per-call atomic RMW.
 inline void record_hotpath_invariant_hit_sampled() noexcept {
     static thread_local std::uint32_t n = 0;
@@ -201,6 +246,35 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 
 [[nodiscard]] inline int current_hot_contracts_mode() noexcept {
     return kHotContractsMode;
+}
+
+// Issue #3106 AC4: hot-contract-harden-armed probe. Compile-time true
+// when AURA_HOT_MODE_HARDEN is set (the macro emits the trap inline).
+// Otherwise reads the env AURA_HOT_HARDEN at first call and caches the
+// result (relaxed atomic, no per-call syscall). Env values "1", "on",
+// "true" (case-insensitive) arm; anything else leaves it disarmed. The
+// probe is observable via query:cpp26-contracts-stats so production-soak
+// / agent-self-modify gates can assert harden is armed under their
+// preset without re-deriving the compile flag.
+[[nodiscard]] inline bool hot_contract_harden_armed() noexcept {
+#if defined(AURA_HOT_MODE_HARDEN)
+    return true;
+#else
+    static std::atomic<int> cached{-1};
+    int v = cached.load(std::memory_order_relaxed);
+    if (v >= 0)
+        return v != 0;
+    int parsed = 0;
+    if (const char* e = std::getenv("AURA_HOT_HARDEN")) {
+        if (std::strcmp(e, "1") == 0 || std::strcmp(e, "on") == 0 || std::strcmp(e, "true") == 0 ||
+            std::strcmp(e, "ON") == 0 || std::strcmp(e, "TRUE") == 0 || std::strcmp(e, "On") == 0 ||
+            std::strcmp(e, "True") == 0)
+            parsed = 1;
+    }
+    int expected = -1;
+    cached.compare_exchange_strong(expected, parsed, std::memory_order_relaxed);
+    return cached.load(std::memory_order_relaxed) != 0;
+#endif
 }
 
 // Cold-path env peek (query / startup). Does not change OFF macros.
@@ -238,9 +312,24 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 #define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit()
 #endif
 
-// Hot CHECK — enforce / observe / ignore per hot mode.
+// Hot CHECK — enforce / harden-armed / observe / ignore per hot mode.
+// Issue #3106: when AURA_HOT_MODE_HARDEN is set, a false CHECK bumps
+// the Soft observe counter (so the metrics story is preserved under the
+// new fail-closed trap), bumps the harden-trap counter (so Agents can
+// see how often the trap would fire), then std::abort()s. Happy path is
+// the same branch + sampled RECORD as plain Soft-observe (no extra
+// atomic RMW per call).
 #if defined(AURA_HOT_MODE_ENFORCE)
 #define AURA_HOT_CHECK(expr) contract_assert(expr)
+#elif defined(AURA_HOT_MODE_HARDEN)
+#define AURA_HOT_CHECK(expr)                                                                       \
+    do {                                                                                           \
+        if (!(expr)) {                                                                             \
+            ::aura::core::cpp26::observe_hot_contract_false();                                     \
+            ::aura::core::cpp26::record_hotpath_contract_harden_trap();                            \
+            std::abort();                                                                          \
+        }                                                                                          \
+    } while (0)
 #elif defined(AURA_HOT_MODE_OBSERVE)
 #define AURA_HOT_CHECK(expr)                                                                       \
     do {                                                                                           \
