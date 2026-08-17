@@ -580,6 +580,36 @@ export inline std::atomic<std::uint64_t> g_moving_incomplete_remap_sticky_densif
 inline constexpr int kMovingExternalRootRemapIssue = 2837;
 inline constexpr int kMovingStickyDensifyOffAutoClearIssue = 2905;
 
+// Issue #3093: cover-aware intermediate create counter. Bumped once per
+// cover-aware call (slot OR pin OR EXEMPT triad). Production paths should
+// hit this counter; value-only fallback (g_intermediate_create_value_only_total)
+// should be 0 in production. Agent dashboards surface the cover-vs-value-only
+// ratio to verify caller compliance with the slot/pin/EXEMPT triad.
+export inline std::atomic<std::uint64_t> g_intermediate_create_with_cover_total{0};
+
+inline constexpr int kIntermediateCreateWithCoverIssue = 3093;
+
+// Issue #3093: value-only auto-wire counter. Bumped when a caller falls
+// through to note_intermediate_create_auto_wire_ (value-only prep per #3017
+// — observability only, not safe cover). Production paths should NOT hit
+// this counter; if it grows, the caller is missing the cover declaration
+// (slot / pin / EXEMPT). has_unpinned_intermediate_creates_() still
+// fail-closes correctly (safety preserved), but the caller has no remap
+// path — recovery is sticky-off + Agent re-registration.
+export inline std::atomic<std::uint64_t> g_intermediate_create_value_only_total{0};
+
+[[nodiscard]] inline std::uint64_t intermediate_create_with_cover_total_v_read() noexcept {
+    return g_intermediate_create_with_cover_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t intermediate_create_value_only_total_v_read() noexcept {
+    return g_intermediate_create_value_only_total.load(std::memory_order_relaxed);
+}
+
+inline void reset_intermediate_create_with_cover_for_test() noexcept {
+    g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
+    g_intermediate_create_value_only_total.store(0, std::memory_order_relaxed);
+}
+
 export inline void clear_moving_incomplete_remap_sticky_densify_off() noexcept {
     g_moving_incomplete_remap_sticky_densify_off.store(0, std::memory_order_release);
 }
@@ -2211,12 +2241,62 @@ private:
     // plus #2775 prep-root set so #2935 known-root inventory can see the
     // intermediate as densify-visible. Not a LifetimePin — live pins
     // would trip live_pin_count() and block all Moving.
+    //
+    // Issue #3093: value-only prep is OBSERVABILITY only, not safe cover
+    // (#3017). Callers that allocate intermediate buffers and stash the
+    // raw `void*` in a non-registered location (stack local, non-slot field,
+    // temporary) should declare cover via `note_intermediate_create_with_cover_`
+    // (slot / pin / EXEMPT triad). This fallback is kept for backward compat
+    // but bumps `g_intermediate_create_value_only_total` so #3093 linter can
+    // flag production call sites that don't declare cover.
     void note_intermediate_create_auto_wire_(void* p) noexcept {
         if (!p)
             return;
         intermediate_creates_.push_back(p);
         aura::core::lifetime::note_general_object_create_auto_wire();
         register_external_root_for_densify(p);
+        g_intermediate_create_value_only_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #3093: cover-aware intermediate create. Caller declares the
+    // cover path explicitly per the slot / pin / EXEMPT triad:
+    //   - slot != null → register_external_root_slot_for_densify(slot)
+    //     (rewrite path: densify updates *slot alongside the canary list).
+    //     Still observes the intermediate as densify-visible (#2935
+    //     known-root inventory).
+    //   - reason != null → caller EXEMPTs with a stable reason string
+    //     (`GENERAL_OBJECT_PIN_EXEMPT(reason)` at the call site + this
+    //     helper marks the intermediate as exempt so inventory does not
+    //     false-block densify).
+    //   - both null → fallback to value-only auto-wire (backward compat;
+    //     bumps g_intermediate_create_value_only_total for #3093 linter).
+    // Quiet path: required-off / Soft / null p → no extra work.
+    void note_intermediate_create_with_cover_(void* p, void** slot, const char* reason) noexcept {
+        if (!p)
+            return;
+        if (slot != nullptr) {
+            // Slot rewrite path: densify will rewrite *slot when the
+            // intermediate moves. Observe as densify-visible (#2935).
+            register_external_root_slot_for_densify_(slot);
+            intermediate_creates_.push_back(p);
+            aura::core::lifetime::note_general_object_create_auto_wire();
+            g_intermediate_create_with_cover_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (reason != nullptr) {
+            // EXEMPT path: caller declares the intermediate will not
+            // survive a densify window. Remove from intermediate_creates_
+            // so has_unpinned_intermediate_creates_() does not false-block.
+            (void)reason; // reason is documented at the call site via
+            // GENERAL_OBJECT_PIN_EXEMPT(reason) macro (linter-enforced).
+            erase_intermediate_create_(p);
+            g_intermediate_create_with_cover_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        // Value-only fallback (value-only prep per #3017 — observability
+        // only, not safe cover). Bumped to value-only counter so the #3093
+        // linter can flag production call sites that don't declare cover.
+        note_intermediate_create_auto_wire_(p);
     }
 
     // Issue #3053: try_allocate / allocate_checked / create share
