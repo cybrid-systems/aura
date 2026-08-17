@@ -103,6 +103,11 @@ public:
         StormClear = 4,
         ResidualPipeline = 5,
         CoverageVerify = 6,
+        // Issue #3096: production-only bounded auto-heal when residual
+        // force bits age past threshold with exhausted retry budget.
+        // Drives maybe_coverage_verify_min_dirty (single seed + decide
+        // gate); respects resolve_force_jit_repromote_only_covered.
+        ResidualForceHeal = 7,
     };
     [[nodiscard]] std::uint64_t decide_and_reemit(std::uint64_t defuse_version,
                                                   ReemitReason reason) noexcept;
@@ -132,6 +137,15 @@ public:
     // Issue #3026: residual = force & ~last_success (agent-actionable bits).
     [[nodiscard]] std::uint64_t residual_force_mask() const noexcept;
     [[nodiscard]] std::uint64_t residual_force_stale_observe_total() const noexcept;
+    // Issue #3096: production-only bounded auto-heal when residual force
+    // bits age past threshold with exhausted retry budget. Lifetime
+    // counter (auto-heal fired) + per-mask-generation cap flag (set to
+    // residual mask at fire time; reset on mask change in
+    // observe_residual_force_stale). Soft / Off is early-returned in
+    // observe_residual_force_stale before the auto-heal check, so these
+    // counters stay at 0 under Soft / Off (zero-cost contract).
+    [[nodiscard]] std::uint64_t residual_force_auto_heal_total() const noexcept;
+    [[nodiscard]] std::uint64_t residual_force_auto_heal_last_mask() const noexcept;
     // Production-only observe: age residual bits across BoundaryExits.
     // Soft / idle residual==0 → one/two loads, no counter. Never reemits.
     void observe_residual_force_stale() noexcept;
@@ -760,6 +774,14 @@ private:
     // Soft / Off never ages. Production ages residual across BoundaryExits
     // and bumps residual_force_stale_observe_total_ every N exits (32).
     std::atomic<std::uint64_t> residual_force_stale_observe_total_{0};
+    // Issue #3096: production-only bounded auto-heal state. Lifetime
+    // counter (auto-heal fired) + per-mask-generation cap flag (set to
+    // residual mask at fire time; reset on mask change in
+    // observe_residual_force_stale). Soft / Off is early-returned in
+    // observe_residual_force_stale before the auto-heal check, so both
+    // stay at 0 under Soft / Off (zero-cost contract preserved).
+    std::atomic<std::uint64_t> residual_force_auto_heal_total_{0};
+    std::atomic<std::uint64_t> residual_force_auto_heal_last_mask_{0};
     std::atomic<std::uint64_t> residual_force_observe_age_{0};
     std::atomic<std::uint64_t> residual_force_observe_last_mask_{0};
     std::atomic<std::uint8_t> force_jit_repromote_only_covered_bits_{0};
@@ -1229,6 +1251,9 @@ extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
 // Issue #3026: residual force mask + stale-observe (no auto-reemit).
 extern "C" std::uint64_t aura_hot_update_residual_force_mask(void);
 extern "C" std::uint64_t aura_hot_update_residual_force_stale_observe_total(void);
+// Issue #3096: production-only bounded auto-heal lifetime counter
+// (refine #3026). 0 under Soft / Off (zero-cost contract).
+extern "C" std::uint64_t aura_hot_update_residual_force_auto_heal_total(void);
 extern "C" void aura_hot_update_observe_residual_force_stale(void);
 extern "C" void aura_hot_update_reset_residual_force_observe_for_test(void);
 
@@ -1339,6 +1364,12 @@ struct aura_reload_recovery_snapshot {
     std::int64_t residual_force_observe_wired; // 1 when #3026 linked
     std::int64_t schema_3026;
     std::int64_t issue_3026;
+    // Issue #3096: production-only bounded auto-heal (refine #3026).
+    // Appended — existing snapshot field offsets unchanged.
+    std::int64_t residual_force_auto_heal_total;
+    std::int64_t residual_force_auto_heal_wired; // 1 when #3096 linked
+    std::int64_t schema_3096;
+    std::int64_t issue_3096;
 };
 void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recovery_snapshot* out);
 

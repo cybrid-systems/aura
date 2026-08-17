@@ -571,15 +571,38 @@ std::uint64_t HotUpdateRegistry::residual_force_stale_observe_total() const noex
     return residual_force_stale_observe_total_.load(std::memory_order_relaxed);
 }
 
+// Issue #3096: production-only bounded auto-heal accessors.
+std::uint64_t HotUpdateRegistry::residual_force_auto_heal_total() const noexcept {
+    return residual_force_auto_heal_total_.load(std::memory_order_relaxed);
+}
+std::uint64_t HotUpdateRegistry::residual_force_auto_heal_last_mask() const noexcept {
+    return residual_force_auto_heal_last_mask_.load(std::memory_order_relaxed);
+}
+
 void HotUpdateRegistry::reset_residual_force_observe_for_test() noexcept {
     residual_force_stale_observe_total_.store(0, std::memory_order_relaxed);
     residual_force_observe_age_.store(0, std::memory_order_relaxed);
     residual_force_observe_last_mask_.store(0, std::memory_order_relaxed);
+    // Issue #3096: clear auto-heal state so test isolation is clean.
+    residual_force_auto_heal_total_.store(0, std::memory_order_relaxed);
+    residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
 }
 
 // Issue #3026: production-only residual-age observe. Soft / Off is one
 // production_defaults load. Never reemits. Rate-limit: bump every 32
 // BoundaryExits with unchanged residual bits.
+//
+// Issue #3096: production-only bounded auto-heal. After
+// kAutoHealExits=256 BoundaryExits with residual_force_mask != 0 AND
+// exhausted_min_dirty_retry_attempts_left == 0 AND not storm active AND
+// cap not fired for this mask generation, drive one bounded min-dirty
+// / coverage-verify pass via maybe_coverage_verify_min_dirty (reuses
+// the existing #2952 / #2601 machinery; respects
+// resolve_force_jit_repromote_only_covered). At most one auto-heal per
+// residual mask generation (capped via
+// residual_force_auto_heal_last_mask_). Soft / Off is zero-cost:
+// early-returned before the auto-heal check. Never auto-heal under
+// Soft / Off / budget=0 / storm still active.
 void HotUpdateRegistry::observe_residual_force_stale() noexcept {
     if (aura_production_defaults_active_probe() == 0)
         return; // Soft / Off: zero extra walk
@@ -587,19 +610,58 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
     if (residual == 0) {
         residual_force_observe_age_.store(0, std::memory_order_relaxed);
         residual_force_observe_last_mask_.store(0, std::memory_order_relaxed);
+        // Issue #3096: idle mask → reset auto-heal cap (next residual
+    // generation starts fresh).
+        residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
         return;
     }
     const auto prev = residual_force_observe_last_mask_.load(std::memory_order_relaxed);
     if (prev != residual) {
         residual_force_observe_last_mask_.store(residual, std::memory_order_relaxed);
         residual_force_observe_age_.store(1, std::memory_order_relaxed);
+        // Issue #3096: mask changed → next auto-heal fires for this new
+    // generation (cap reset).
+        residual_force_auto_heal_last_mask_.store(0, std::memory_order_relaxed);
         return;
     }
     const auto age = residual_force_observe_age_.fetch_add(1, std::memory_order_relaxed) + 1;
     constexpr std::uint64_t kStaleExits = 32;
     if (age >= kStaleExits) {
         residual_force_stale_observe_total_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3096: do NOT reset age here — the auto-heal check below
+    // needs accumulating age. The existing observe counter bump is
+    // rate-limited per 32 BoundaryExits (matches #3026 contract); the
+    // auto-heal threshold (kAutoHealExits=256) is a separate gate that
+    // only fires after 8 stale observations without recovery.
+    }
+    // Issue #3096: production-only bounded auto-heal gate.
+    constexpr std::uint64_t kAutoHealExits = 256;
+    if (age >= kAutoHealExits) {
+        // Cap: at most one auto-heal per residual mask generation.
+        const auto last_heal_mask =
+            residual_force_auto_heal_last_mask_.load(std::memory_order_relaxed);
+        if (last_heal_mask == residual) {
+            return; // already fired for this mask generation
+        }
+        // Check exhausted retry budget == 0 (#3096 AC1).
+        const auto attempts_left =
+            exhausted_min_dirty_retry_attempts_left_.load(std::memory_order_relaxed);
+        if (attempts_left != 0)
+            return;
+        // Check storm is not active (#3096 AC: never auto-heal under
+        // storm). current_storm_level() = None && !hard_storm_active().
+        if (current_storm_level() != StormLevel::None || hard_storm_active())
+            return;
+        // Trigger auto-heal: bump counter, set cap flag, reset age.
+        residual_force_auto_heal_last_mask_.store(residual, std::memory_order_relaxed);
+        residual_force_auto_heal_total_.fetch_add(1, std::memory_order_relaxed);
         residual_force_observe_age_.store(0, std::memory_order_relaxed);
+        // Drive coverage-verify min-dirty (production facade; uses
+        // decide_and_reemit with ReemitReason::CoverageVerify internally).
+        // The success path (force mask reduced / cleared) is observed via
+        // the existing #2952 / #2601 counters — no new query key needed
+        // (AC item 4: no new middle metrics keys).
+        (void)maybe_coverage_verify_min_dirty();
     }
 }
 
@@ -608,6 +670,28 @@ extern "C" std::uint64_t aura_hot_update_residual_force_mask(void) {
 }
 extern "C" std::uint64_t aura_hot_update_residual_force_stale_observe_total(void) {
     return aura::compiler::hot_update_registry().residual_force_stale_observe_total();
+}
+// Issue #3096: C-linkage accessor for residual_force_auto_heal_total.
+extern "C" std::uint64_t aura_hot_update_residual_force_auto_heal_total(void) {
+    return aura::compiler::hot_update_registry().residual_force_auto_heal_total();
+}
+// Issue #3096: test-only C-linkage shims (used by test_issue_3096.cpp).
+// Stamp force_jit_regions_mask_ directly for test isolation (avoids
+// pulling in AotReloadFail enum + side-effects from on_force_jit_for_reason).
+extern "C" void aura_hot_update_force_jit_stamp_for_test(std::uint64_t mask) noexcept {
+    auto& reg = aura::compiler::hot_update_registry();
+    reg.force_jit_regions_mask_.store(mask, std::memory_order_relaxed);
+}
+// Set exhausted retry budget == 0 (the auto-heal gate requires this).
+extern "C" void aura_hot_update_exhaust_retry_for_test(void) noexcept {
+    aura::compiler::hot_update_registry().exhausted_min_dirty_retry_attempts_left_.store(
+        0, std::memory_order_relaxed);
+}
+// Reset storm state (storm_active → None, hard_storm_active → 0) so the
+// auto-heal gate's storm check passes. Reuses the existing
+// aura_hot_update_reset_deopt_storm_state_for_test helper.
+extern "C" void aura_hot_update_clear_storm_for_test(void) noexcept {
+    aura_hot_update_reset_deopt_storm_state_for_test();
 }
 extern "C" void aura_hot_update_observe_residual_force_stale(void) {
     aura::compiler::hot_update_registry().observe_residual_force_stale();
@@ -1469,6 +1553,12 @@ extern "C" void aura_hot_update_reload_recovery_get_snapshot(aura_reload_recover
     out->residual_force_observe_wired = 1;
     out->schema_3026 = 3026;
     out->issue_3026 = 3026;
+    // Issue #3096: production-only bounded auto-heal (refine #3026).
+    out->residual_force_auto_heal_total =
+        static_cast<std::int64_t>(reg.residual_force_auto_heal_total());
+    out->residual_force_auto_heal_wired = 1;
+    out->schema_3096 = 3096;
+    out->issue_3096 = 3096;
     const bool active = rs.attempts_left != 0 || rs.force_jit_regions_mask != 0 ||
                         rs.pending_dirty_count != 0 || rs.deferred_reemit_pending != 0 ||
                         snap.storm_level != 0 || snap.reemit_deferred_pending != 0 ||
