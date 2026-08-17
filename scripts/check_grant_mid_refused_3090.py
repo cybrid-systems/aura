@@ -82,23 +82,17 @@ FORBIDDEN_PATTERNS: tuple[re.Pattern[str], ...] = (
 REQUIRED_PATTERNS: tuple[tuple[str, re.Pattern[str], int], ...] = (
     (
         "pre-lock refuse gate",
-        re.compile(
-            r"fail_closed\s*&&\s*prov\.mutation_id\s*==\s*0"
-        ),
+        re.compile(r"fail_closed\s*&&\s*prov\.mutation_id\s*==\s*0"),
         1,  # at least once
     ),
     (
         "refuse counter fetch_add",
-        re.compile(
-            r"capability_grant_mid_refused_total\.fetch_add"
-        ),
+        re.compile(r"capability_grant_mid_refused_total\.fetch_add"),
         2,  # grant + grant_macro_self_evo
     ),
     (
         "SE reason 'grant-mid-refused'",
-        re.compile(
-            r'"grant-mid-refused"'
-        ),
+        re.compile(r'"grant-mid-refused"'),
         2,  # grant + grant_macro_self_evo
     ),
 )
@@ -140,9 +134,7 @@ def scan(path: Path) -> dict:
         count = len(pat.findall(stripped))
         presence.append({"label": label, "count": count, "min": min_count})
         if count < min_count:
-            missing.append(
-                f"{label}: found {count}, need >= {min_count}"
-            )
+            missing.append(f"{label}: found {count}, need >= {min_count}")
     return {
         "file": str(path.relative_to(ROOT)),
         "forbidden_hits": forbidden_hits,
@@ -174,9 +166,7 @@ def main(argv: list[str]) -> int:
         if result["forbidden_hits"]:
             print(f"[FAIL] {rel}: forbidden anti-patterns reintroduced:")
             for h in result["forbidden_hits"]:
-                print(
-                    f"  line {h['line']}: {h['match']}"
-                )
+                print(f"  line {h['line']}: {h['match']}")
                 print(f"    pattern: {h['pattern']}")
         if result["missing"]:
             print(f"[FAIL] {rel}: missing required patterns:")
@@ -184,8 +174,7 @@ def main(argv: list[str]) -> int:
                 print(f"  {m}")
         if result["ok"]:
             print(
-                f"[OK] {rel}: #3090 regression guard clean "
-                f"(no forbidden patterns; all required presence checks pass)"
+                f"[OK] {rel}: #3090 regression guard clean (no forbidden patterns; all required presence checks pass)"
             )
 
     if args.strict and not result["ok"]:
