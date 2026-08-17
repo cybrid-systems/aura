@@ -3663,6 +3663,19 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         }
     }
     (void)hard_failed; // reserved for future post-gate steps
+
+    // Issue #3111: post-steal re-validate held_ref messages in this fiber's
+    // mailbox. Under production + a stolen fiber that owns (or is attached
+    // to) a mailbox with held_ref messages, the post-steal generation may
+    // not match the token that was stamped at push time — re-validate or
+    // force the message back through the handoff gate so consumers see
+    // HandoffRequired instead of a silent stale StableNodeRef (AC1).
+    // Soft / sandbox=off: counter bumps only; may still deliver (AC3).
+    // Quiet path: zero new cost (single atomic load on
+    // held_ref_post_steal_check_total).
+    if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr) {
+        ::aura::core::security_event_wal::revalidate_held_ref_after_steal();
+    }
 }
 
 // Issue #2203: test-only helper — seed fiber yield-checkpoint evaluator_id

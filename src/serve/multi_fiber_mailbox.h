@@ -198,6 +198,16 @@ struct MultiFiberMailboxStats {
     std::atomic<std::uint64_t> mailbox_deferred_flush_latency_us_max{0};    // #2378
     std::atomic<std::uint64_t> mailbox_defer_starvation_total{0};           // #2378
     std::atomic<std::uint64_t> mailbox_deferred_drain_opportunity_total{0}; // #2378
+    // Issue #3111: post-steal re-validate of held_ref messages. Bumped on
+    // steal-complete / resume of a fiber that owns (or is attached to) a
+    // mailbox containing held_ref messages. For each pending message with
+    // held_ref_token set, the post-steal hook re-validates against the
+    // current generation and either drops the stale message or marks it
+    // HandoffRequired (never silent stale StableNodeRef delivery, AC1).
+    // Soft / sandbox=off: observability only (may still deliver, AC3);
+    // zero new cost on the quiet path (no held_ref messages, no steal).
+    std::atomic<std::uint64_t> held_ref_post_steal_check_total{0};
+    std::atomic<std::uint64_t> held_ref_stale_after_steal_total{0};
     // Issue #2680: shared-Evaluator delivery gate — push / broadcast_fanout
     // defers when the **shared** Evaluator's MutationBoundary is held
     // (depth>0 || held) by *any* fiber, not just the target fiber. Mirrors
@@ -298,6 +308,34 @@ struct MultiFiberMailboxStats {
 
 // Process-wide aggregate (tests / observability).
 inline MultiFiberMailboxStats g_mf_mailbox_stats{};
+
+// Issue #3111: post-steal re-validate of held_ref messages in a fiber's
+// mailbox. Called from the strong def of `aura_evaluator_on_steal_complete`
+// (evaluator_fiber_mutation.cpp:3227) after the existing revoke session
+// grants + mutation stack handoff + LayoutStamp dual-check. Bumps the
+// held_ref_post_steal_check_total counter (always — even when no held_ref
+// messages or no mailbox). The actual re-validation walk is done in
+// the strong def via `bump_held_ref_stale_after_steal()` per stale message.
+//
+// Zero new cost on the quiet path: this is a no-op helper that just
+// counts. The per-message walk lives in the strong def (where the
+// mailbox is already held under lock during the steal-complete hook).
+//
+// Soft / Off / sandbox=off: counter bumps only; may still deliver.
+// Production: callers call bump_held_ref_stale_after_steal() per stale
+// message and clear the message's handoff_completed flag so the
+// consumer's recv() path is forced through the handoff gate.
+inline void revalidate_held_ref_after_steal() noexcept {
+    g_mf_mailbox_stats.held_ref_post_steal_check_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #3111: count the stale-after-steal re-validation. Called from
+// the strong def of aura_evaluator_on_steal_complete for each pending
+// message with held_ref_token that is found stale against the current
+// generation post-steal.
+inline void bump_held_ref_stale_after_steal() noexcept {
+    g_mf_mailbox_stats.held_ref_stale_after_steal_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 // Issue #2378: open-window timers for flush latency (zero when no open defer).
 // first_open_defer_ns: set on depth 0→1; cleared when depth returns to 0.

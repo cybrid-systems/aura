@@ -3412,6 +3412,23 @@ def cmd_lint():
             "Issue #3110 join drain reclaim auto-wait linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3110.py"
         )
         return r
+    # Issue #3111: production mailbox post-steal re-validate of held_ref
+    # messages. Close the Fiber steal × held_ref / handoff_completed
+    # consistency residual. Soft / sandbox=off: counter bumps only (may
+    # still deliver). Production gate via typed_audit::production_defaults_active()
+    # preserved. Reuse existing handoff_reject / steal_complete counters;
+    # no new process-global registry. Quiet path zero new cost
+    # (single atomic load on held_ref_post_steal_check_total).
+    mh3111_script = COVERAGE_CHECKS / "check_mailbox_held_ref_steal_3111.py"
+    if not mh3111_script.exists():
+        fail(f"missing {mh3111_script}")
+        return 1
+    r = run([sys.executable, str(mh3111_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3111 mailbox held_ref post-steal revalidate linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3111.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

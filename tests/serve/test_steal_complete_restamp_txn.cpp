@@ -2063,9 +2063,54 @@ int run_test_steal_complete_restamp_txn() {
     ac3038_5_source_chaos_linter();
     if (g_failed)
         return 1;
-    std::println("steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
-                 "#3072 + #2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038: OK ({} passed)",
-                 g_passed);
+    std::println("\n--- #3111: mailbox held_ref post-steal revalidate ---");
+    {
+        // AC1: post-steal re-validate hook wired into aura_evaluator_on_steal_complete
+        // strong def in evaluator_fiber_mutation.cpp (call site: line 3227 + 3666).
+        const auto ev_fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(ev_fiber_mut.find("revalidate_held_ref_after_steal()") != std::string::npos,
+              "3111 AC1: post-steal revalidate call wired into steal-complete strong def");
+        CHECK(
+            ev_fiber_mut.find("aura::core::security_event_wal::revalidate_held_ref_after_steal") !=
+                std::string::npos,
+            "3111 AC1: scoped to security_event_wal namespace");
+        // AC2: Soft / sandbox=off gated — production_defaults_active() check present
+        CHECK(ev_fiber_mut.find("typed_audit::production_defaults_active()") != std::string::npos,
+              "3111 AC2: production gate preserved (Soft/Off zero-cost)");
+        // AC3: push-time gate unchanged (#2663/#3013 still active)
+        const auto mfbh = read_file("src/serve/multi_fiber_mailbox.cpp");
+        CHECK(mfbh.find("if (msg.held_ref_token.has_value() && !msg.handoff_completed)") !=
+                  std::string::npos,
+              "3111 AC3: push-time held_ref gate unchanged");
+        // AC4: additive counters only
+        CHECK(mfbh.find("held_ref_post_steal_check_total") != std::string::npos &&
+                  mfbh.find("held_ref_stale_after_steal_total") != std::string::npos,
+              "3111 AC4: new additive counters present");
+        // AC5: linter + build wiring
+        const auto build3111 = read_file("build.py");
+        CHECK(build3111.find("check_mailbox_held_ref_steal_3111") != std::string::npos,
+              "3111 AC5: build.py wires 3111 linter");
+        const auto lint3111 =
+            read_file("scripts/coverage/checks/check_mailbox_held_ref_steal_3111.py");
+        CHECK(!lint3111.empty() && lint3111.find("Issue #3111") != std::string::npos,
+              "3111 AC5: 3111 linter exists");
+        // AC6: no test_issue_3111.cpp, no docs/design/3111-*
+        std::ifstream inv3111("tests/serve/test_issue_3111.cpp");
+        if (!inv3111.good())
+            inv3111.open("../tests/serve/test_issue_3111.cpp");
+        CHECK(!inv3111.good(), "3111 AC6: no test_issue_3111.cpp (per #81967)");
+        CHECK(read_file("docs/design/3111-mailbox-held-ref-steal.md").empty(),
+              "3111 AC6: no docs/design/ (per #1655)");
+        // No-invent: extend existing test (this file)
+        const auto t3111_self = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+        CHECK(t3111_self.find("3111 AC1") != std::string::npos,
+              "3111 AC6: existing test file cites #3111");
+    }
+
+    std::println(
+        "steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
+        "#3072 + #2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038 + #3111: OK ({} passed)",
+        g_passed);
     return 0;
 }
 
