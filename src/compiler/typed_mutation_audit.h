@@ -1691,8 +1691,8 @@ enum class LinearFastPathExitAction : std::uint8_t {
         g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)) {
         g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
         if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
-            g_linear_fast_path_elide_blocked_production_total.fetch_add(
-                1, std::memory_order_relaxed);
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
         return false;
     }
     g_linear_ir_fastpath_skip_total.fetch_add(1, std::memory_order_relaxed);
@@ -1721,6 +1721,39 @@ type_linear_proof_cleared_on_abort_observe_total_v_read() noexcept {
 inline void reset_type_linear_proof_cleared_on_abort_for_test() noexcept {
     g_type_linear_proof_cleared_on_abort_total.store(0, std::memory_order_relaxed);
     g_type_linear_proof_cleared_on_abort_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3102 AC4: coercion commit_readiness clear on abort. Sibling of
+// clear_type_linear_commit_proof_on_abort — paired with the proof clear
+// so any post-abort commit cannot stamp green on a stale coercion view.
+// Soft bumps the observe counter; Production/Full bumps the real counter.
+// Quiet (no abort) → zero cost.
+inline constexpr int kCoercionCommitReadinessClearedOnAbortIssue = 3102;
+inline std::atomic<std::uint64_t> g_coercion_commit_readiness_cleared_on_abort_total{0};
+inline std::atomic<std::uint64_t> g_coercion_commit_readiness_cleared_on_abort_observe_total{0};
+inline std::atomic<std::uint32_t> g_coercion_commit_readiness_cleared_on_abort_wired{1};
+
+[[nodiscard]] inline std::uint64_t
+coercion_commit_readiness_cleared_on_abort_total_v_read() noexcept {
+    return g_coercion_commit_readiness_cleared_on_abort_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+coercion_commit_readiness_cleared_on_abort_observe_total_v_read() noexcept {
+    return g_coercion_commit_readiness_cleared_on_abort_observe_total.load(
+        std::memory_order_relaxed);
+}
+inline void reset_coercion_commit_readiness_cleared_on_abort_for_test() noexcept {
+    g_coercion_commit_readiness_cleared_on_abort_total.store(0, std::memory_order_relaxed);
+    g_coercion_commit_readiness_cleared_on_abort_observe_total.store(0, std::memory_order_relaxed);
+}
+
+inline void clear_coercion_commit_readiness_on_abort() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard)
+        g_coercion_commit_readiness_cleared_on_abort_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_coercion_commit_readiness_cleared_on_abort_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
 }
 
 // Issue #3091 / #3016: declared before abort-clear / proof-build (those

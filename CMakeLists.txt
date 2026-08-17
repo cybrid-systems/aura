@@ -1688,6 +1688,11 @@ aura_issue_test_link_light(test_dirty_reason_verification_propagation)
 # Issue #611: CoercionMap deferred + DCE + CastOp type_tag zero-overhead flow
 aura_add_issue_test(test_coercion_dead_elim_castop_flow_zerooverhead)
 aura_issue_test_link_light(test_coercion_dead_elim_castop_flow_zerooverhead)
+# Issue #3102: CoercionMap + DeadCoercion not atomic with AST abort restore.
+# production/Full abort rewind (cone truncate + forced-dirty + decision
+# invalidate gen + commit_readiness clear). Soft/Quiet zero-cost.
+aura_add_issue_test(test_coercion_map_abort_rewind)
+aura_issue_test_link_light(test_coercion_map_abort_rewind)
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_refinement_closed_loop)
 aura_issue_test_link_light(test_refinement_closed_loop)

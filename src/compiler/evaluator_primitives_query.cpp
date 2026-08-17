@@ -775,6 +775,68 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 static_cast<std::int64_t>(aura_unstamp_macro_introduced_total_v_read()));
         });
 
+    // Issue #3102: AC1 — CoercionMap abort rewind counter (production/Full).
+    // Bumped once per abort path that successfully rewound the type-cone
+    // writeback and force-dirtied the coerced nodes. Quiet (no abort /
+    // no boundary) → 0.
+    ObservabilityPrims::register_stats_impl(
+        "query:coercion-map-abort-rewind-total", [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                aura::compiler::g_coercion_map_abort_rewind_total.load(std::memory_order_relaxed)));
+        });
+
+    // Issue #3102: AC5 — CoercionMap abort rewind observe counter (Soft).
+    // Bumped once per abort path under Soft (no production/Full gate).
+    ObservabilityPrims::register_stats_impl(
+        "query:coercion-map-abort-rewind-observe-total",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                aura::compiler::g_coercion_map_abort_rewind_observe_total.load(
+                    std::memory_order_relaxed)));
+        });
+
+    // Issue #3102: AC2 — CoercionMap abort forced-dirty counter. Bumped
+    // by the number of coerced nodes force-dirtied into the type cone.
+    ObservabilityPrims::register_stats_impl(
+        "query:coercion-map-abort-forced-dirty-total",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                aura::compiler::g_coercion_map_abort_forced_dirty_total.load(
+                    std::memory_order_relaxed)));
+        });
+
+    // Issue #3102: AC3 — DeadCoercion decision invalidate gen (monotonic).
+    // Consulted by DeadCoercionPass at run() — bumps force a full-scan.
+    ObservabilityPrims::register_stats_impl(
+        "query:dead-coercion-decision-invalidate-gen",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                aura::compiler::dirty::dead_coercion_decision_invalidate_gen()));
+        });
+
+    // Issue #3102: AC3 — DeadCoercion decision invalidate counter (cumulative).
+    ObservabilityPrims::register_stats_impl(
+        "query:dead-coercion-decision-invalidate-total",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                aura::compiler::dirty::dead_coercion_decision_invalidate_total()));
+        });
+
+    // Issue #3102: AC4 — Coercion commit_readiness cleared-on-abort counter
+    // (production/Full). Sibling of type_linear_commit_proof cleared.
+    ObservabilityPrims::register_stats_impl(
+        "query:coercion-commit-readiness-cleared-on-abort-total",
+        [](std::span<const EvalValue> a) -> EvalValue {
+            (void)a;
+            return make_int(static_cast<std::int64_t>(
+                typed_audit::coercion_commit_readiness_cleared_on_abort_total_v_read()));
+        });
+
     // Issue #2098 / #2239: query:macro-schema-cache-dirty-stamp-stats.
     // Surfaces the per-cloned-subtree schema-cache + dirty/provenance
     // stamp counter (clone_macro_body walk visibility for rest-param +

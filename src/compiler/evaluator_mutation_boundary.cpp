@@ -335,7 +335,15 @@ void Evaluator::enter_mutation_boundary() {
         cp.audit_mid = audit_mid;
         typed_audit::note_boundary_audit_mid(audit_mid);
     }
+    // Issue #3102: AC1 — capture the type-cone size at boundary enter so
+    // the abort path can truncate the post-apply cone (rewind) and re-add
+    // coerced nodes (force-dirty). Quiet (no abort) → unused.
+    cp.coercion_cone_size_at_entry = aura::compiler::dirty::last_type_cone_ast().size();
     active_mutation_stack().push_back(std::move(cp));
+    // Issue #3102: AC2 — open the per-boundary TLS tracker so apply_coercion_map
+    // pushes nodes that the abort path can consume + force-dirty. depth>0
+    // is the gate; Soft/Quiet (no boundary) keeps depth=0 → zero cost.
+    aura::compiler::coerced_nodes_tracker_enter_boundary();
     const std::size_t depth = active_mutation_stack().size();
     // Issue #3066: nested / atomic_batch pins one join mid for SE + typed.
     if (depth > 1 || bump_suppressed_at_entry)
@@ -408,6 +416,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     stack.pop_back();
     if (stack.empty())
         typed_audit::clear_boundary_audit_mid();
+    // Issue #3102: AC5 — boundary exit (success or abort) decays the TLS
+    // depth. For abort, coerced_nodes_tracker_take() at the abort site
+    // already emptied the vector; this call just drops the depth so the
+    // outermost exit clears the tracker. For success, the vector is
+    // discarded (boundary succeeded → no dirty re-mark). Nested boundaries
+    // decrement by 1; the outermost exit (depth 1→0) clears.
+    aura::compiler::coerced_nodes_tracker_exit_boundary();
     // Issue #2920 SSOT: FlatAST is authoritative after structural mutate.
     // Invalidate set-code text cache when this flat actually mutated so
     // JIT/serialize cannot re-parse pre-mutate source. set-code swaps in a
@@ -502,6 +517,33 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Issue #3030: drop stale TypeLinearCommitProof / linear_fast_path
         // face so post-abort Move/Drop cannot elide on a pre-abort stamp.
         typed_audit::clear_type_linear_commit_proof_on_abort();
+        // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind.
+        // Production/Full: truncate the type cone to entry size, force-dirty
+        // coerced nodes, bump DeadCoercion decision invalidate gen, and
+        // clear coercion commit_readiness. Soft: bump observe counter only.
+        if (typed_audit::production_defaults_active() ||
+            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+            // AC1: truncate the type cone to entry size.
+            aura::compiler::dirty::truncate_type_cone_to_size(cp.coercion_cone_size_at_entry);
+            // AC2: force-dirty coerced nodes for the next incremental typecheck.
+            auto coerced = aura::compiler::coerced_nodes_tracker_take();
+            if (!coerced.empty()) {
+                const auto added =
+                    aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
+                aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
+                    added, std::memory_order_relaxed);
+            }
+            // AC3: bump DeadCoercion decision invalidate gen (drops stale IR).
+            aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+            // AC4: clear coercion commit_readiness on abort (sibling of proof clear).
+            typed_audit::clear_coercion_commit_readiness_on_abort();
+            aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        } else {
+            aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+            (void)aura::compiler::coerced_nodes_tracker_take(); // discard
+        }
         last_boundary_rollback_stats_ = stats;
         // Invalidate the def-use index — the workspace state
         // is now different from what the index reflects.
@@ -1143,6 +1185,29 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 abort_ir_cache_force_dirty_fn_();
                             // Issue #3030: invariant force-rollback clears proof face.
                             typed_audit::clear_type_linear_commit_proof_on_abort();
+                            // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind
+                            // (production/Full). Soft path bumps the observe counter.
+                            if (typed_audit::production_defaults_active() ||
+                                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                                aura::compiler::dirty::truncate_type_cone_to_size(
+                                    cp.coercion_cone_size_at_entry);
+                                auto coerced = aura::compiler::coerced_nodes_tracker_take();
+                                if (!coerced.empty()) {
+                                    const auto added =
+                                        aura::compiler::dirty::force_dead_coercion_elim_into_cone(
+                                            coerced);
+                                    aura::compiler::g_coercion_map_abort_forced_dirty_total
+                                        .fetch_add(added, std::memory_order_relaxed);
+                                }
+                                aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+                                typed_audit::clear_coercion_commit_readiness_on_abort();
+                                aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                            } else {
+                                aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                (void)aura::compiler::coerced_nodes_tracker_take();
+                            }
                             last_boundary_rollback_stats_ = stats;
                             defuse_index_ = nullptr;
                             // Issue #2105: leave txn_dirty set until outermost clean exit,
@@ -1231,6 +1296,28 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         abort_ir_cache_force_dirty_fn_();
                     // Issue #3030: Strict reflect-validate rollback clears proof face.
                     typed_audit::clear_type_linear_commit_proof_on_abort();
+                    // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind
+                    // (production/Full). Soft path bumps the observe counter.
+                    if (typed_audit::production_defaults_active() ||
+                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                        aura::compiler::dirty::truncate_type_cone_to_size(
+                            cp.coercion_cone_size_at_entry);
+                        auto coerced = aura::compiler::coerced_nodes_tracker_take();
+                        if (!coerced.empty()) {
+                            const auto added =
+                                aura::compiler::dirty::force_dead_coercion_elim_into_cone(coerced);
+                            aura::compiler::g_coercion_map_abort_forced_dirty_total.fetch_add(
+                                added, std::memory_order_relaxed);
+                        }
+                        aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+                        typed_audit::clear_coercion_commit_readiness_on_abort();
+                        aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else {
+                        aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        (void)aura::compiler::coerced_nodes_tracker_take();
+                    }
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
                     if (!nested_boundary)

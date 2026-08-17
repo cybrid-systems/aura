@@ -63,6 +63,12 @@ inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_partial_runs{0};
 inline std::atomic<std::uint64_t> dead_coercion_dirty_cone_cast_sites_scanned{0};
 // Issue #2556: full-module / no-cone DCE runs (regression counter for AC2).
 inline std::atomic<std::uint64_t> dead_coercion_full_scan_runs{0};
+// Issue #3102: AC3 — DeadCoercion decision invalidate bumps on abort path.
+// DeadCoercionPass consults g_dead_coercion_decision_invalidate_gen at run()
+// and forces a full-scan when the gen has changed (drops stale IR CastOp
+// decisions keyed off the pre-abort type view).
+inline std::atomic<std::uint64_t> dead_coercion_ir_decision_invalidate_total{0};
+inline std::atomic<std::uint64_t> dead_coercion_ir_decision_invalidate_observe_total{0};
 // Issue #3007: Production post-mutate / hot-fn residual identity CastOp
 // sweep. Soft keeps #2556 cone-skip + density-policy CastOps.
 inline constexpr int kDeadCoercionHotResidualIssue = 3007;
@@ -573,6 +579,16 @@ public:
     void run(aura::ir::IRModule& m) pre(valid_soa_view(m) && pipeline_epoch_consistent()) {
         note_pass_run(PassKind::DeadCoercion, false);
         dead_coercion_pipeline_runs_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3102: AC3 — DeadCoercion decision invalidate gen. If the
+        // gen has changed since last_run_gen_, force full-scan (drops stale
+        // IR CastOp decisions keyed off the pre-abort type view). Quiet
+        // (gen unchanged) → zero cost.
+        const auto cur_gen = aura::compiler::dirty::dead_coercion_decision_invalidate_gen();
+        if (cur_gen != last_run_gen_) {
+            last_run_gen_ = cur_gen;
+            dead_coercion_ir_decision_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+            block_dirty_pred_ = BlockDirtyPred{}; // force full-scan path
+        }
         // Issue #2556: when a type∪IR dirty cone is wired (block_dirty_pred_),
         // peel per-function so DCE never walks cone-external CastOps on
         // large modules after local typed_mutate. No cone → full scan (AC2).
@@ -742,6 +758,10 @@ private:
     bool error_ = false;
     std::size_t last_eliminated_ = 0;
     std::size_t last_narrow_hits_ = 0;
+    // Issue #3102: AC3 — last seen DeadCoercion decision invalidate gen.
+    // When the gen bumps on the abort path, run() forces a full-scan and
+    // updates last_run_gen_ so subsequent runs use the fresh baseline.
+    std::uint64_t last_run_gen_ = 0;
 };
 
 static_assert(aura::compiler::Pass<DeadCoercionPass>, "DeadCoercionPass must satisfy Pass (#2025)");

@@ -730,6 +730,43 @@ inline std::size_t force_residual_castop_blocks_into_cone(std::span<const NodeId
     return n;
 }
 
+// Issue #3102 AC1: truncate the last type cone to a previously-captured
+// entry size. Pops the trailing entries that were appended during the
+// mutation boundary (the #3065 persistence path). Returns the entries
+// truncated (0 when the cone already smaller than the bound — defensive).
+// Soft/Quiet: caller may pass zero (no-op when cone already empty).
+inline std::size_t truncate_type_cone_to_size(std::size_t entry_size) noexcept {
+    if (t_last_type_cone_ast.size() <= entry_size)
+        return 0;
+    const auto removed = t_last_type_cone_ast.size() - entry_size;
+    t_last_type_cone_ast.resize(entry_size);
+    return removed;
+}
+
+// Issue #3102 AC3: DeadCoercion decision invalidate gen. Monotonic counter
+// bumped on the abort path when coerced nodes were force-dirtied.
+// DeadCoercionPass consults at run() — if the gen has changed since
+// last_run_gen_, the pass forces a full-scan (drops stale IR CastOp
+// decisions keyed off the pre-abort type view). Quiet → no bumps.
+inline std::atomic<std::uint64_t> g_dead_coercion_decision_invalidate_gen{0};
+inline std::atomic<std::uint64_t> g_dead_coercion_decision_invalidate_total{0};
+
+inline void bump_dead_coercion_decision_invalidate() noexcept {
+    g_dead_coercion_decision_invalidate_gen.fetch_add(1, std::memory_order_relaxed);
+    g_dead_coercion_decision_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t dead_coercion_decision_invalidate_gen() noexcept {
+    return g_dead_coercion_decision_invalidate_gen.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t dead_coercion_decision_invalidate_total() noexcept {
+    return g_dead_coercion_decision_invalidate_total.load(std::memory_order_relaxed);
+}
+
+inline void reset_dead_coercion_decision_invalidate_for_test() noexcept {
+    g_dead_coercion_decision_invalidate_gen.store(0, std::memory_order_relaxed);
+    g_dead_coercion_decision_invalidate_total.store(0, std::memory_order_relaxed);
+}
+
 // Sync multi-function block dirty matrix [func][block] into DirtySet.
 inline void sync_from_block_dirty_matrix(DirtySet& dest,
                                          const std::vector<std::vector<std::uint8_t>>& per_func) {
