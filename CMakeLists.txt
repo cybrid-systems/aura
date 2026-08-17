@@ -2303,6 +2303,16 @@ aura_add_issue_test(test_issue_3096)
 aura_issue_test_link_light(test_issue_3096)
 add_dependencies(all_test_issue_targets test_issue_3096)
 
+# Issue #3097: hybrid deferred edges lag impact_upper_bound
+# (refine #3067 / #2034 / #2110 / dual DepGraph). Production partial
+# decision (impact_upper_bound_for_entry_) folds pending deferred hybrid
+# edges contribution before should_partial_relower_impact_checked —
+# closes the dual-DepGraph race lag under concurrent fiber / lockless
+# mutate. Soft / Off is zero-cost (early exit on armed == 0).
+aura_add_issue_test(test_issue_3097)
+aura_issue_test_link_light(test_issue_3097)
+add_dependencies(all_test_issue_targets test_issue_3097)
+
 # Issue #596 / #2765: Guard + panic + reflect closed-loop + Guard success-path
 # auto_validate / hygiene_validate (#2765 residual). Prefer-existing suite.
 aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)

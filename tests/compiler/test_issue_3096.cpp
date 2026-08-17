@@ -77,8 +77,9 @@ static void ac1_production_auto_heal_fires(CompilerService& cs) {
         aura_hot_update_observe_residual_force_stale();
     }
     const auto heal_after = aura_hot_update_residual_force_auto_heal_total();
-    CHECK(heal_after >= heal_before + 1,
-          "AC1: residual_force_auto_heal_total bumped after age >= 256 with exhausted retry budget");
+    CHECK(
+        heal_after >= heal_before + 1,
+        "AC1: residual_force_auto_heal_total bumped after age >= 256 with exhausted retry budget");
 }
 
 // AC3: One auto-heal per residual mask generation. After the first fire,
@@ -125,8 +126,8 @@ static void ac4_existing_observe_counter_preserved(CompilerService& cs) {
         aura_hot_update_observe_residual_force_stale();
     }
     const auto stale_after = aura_hot_update_residual_force_stale_observe_total();
-    CHECK(stale_after >= stale_before + 1,
-          "AC4: residual_force_stale_observe_total still bumps at kStaleExits=32 (3026 contract preserved)");
+    CHECK(stale_after >= stale_before + 1, "AC4: residual_force_stale_observe_total still bumps at "
+                                           "kStaleExits=32 (3026 contract preserved)");
 }
 
 // AC5: C-linkage accessor surfaces.

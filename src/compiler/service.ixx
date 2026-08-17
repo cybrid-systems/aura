@@ -5477,7 +5477,35 @@ public:
                 continue; // already dirty — no under-estimate here
             ++uncovered;
         }
-        return uncovered + scope.cross_fn_indirect_hits + scope.unresolved_callee_hits;
+        return uncovered + scope.cross_fn_indirect_hits + scope.unresolved_callee_hits +
+               deferred_hybrid_pending_upper_bound_(name);
+    }
+    // Issue #3097: production-only bounded upper-bound contribution from
+    // pending deferred hybrid edges that target this define (caller ==
+    // name OR callee == name). Closes the dual-DepGraph race lag where
+    // NodeId edges lag the string graph under concurrent mutate / fiber
+    // / lockless batch — record_dependency rejects and queues, drain
+    // happens at cascade end, but the partial consult can observe a
+    // stale impact_upper_bound_for_entry_ between reject and drain.
+    // Soft / Off: zero-cost early exit on armed == 0 (cheap load); when
+    // armed but Soft / Off, also early-exit so Soft stays zero-cost.
+    std::size_t deferred_hybrid_pending_upper_bound_(const std::string& name) const noexcept {
+        if (deferred_hybrid_armed_.load(std::memory_order_acquire) == 0)
+            return 0;
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return 0;
+        // Issue #3067: deferred_hybrid_edges_ is mutated under
+        // dep_graph_mtx_ write (in record_dependency) — read under shared.
+        // Cheap walk: O(pending) string compares. Pending edges are bounded
+        // by the reject window, not the workspace size.
+        lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
+                                                             lock_order::Level::DepGraph);
+        std::size_t targeted = 0;
+        for (const auto& [caller_name, callee_name] : deferred_hybrid_edges_) {
+            if (caller_name == name || callee_name == name)
+                ++targeted;
+        }
+        return targeted;
     }
 
     // Issue #2133: build [func][block] instruction counts for DefineDirtyMaskView.
@@ -11781,6 +11809,11 @@ public:
         metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
     }
     void public_drain_deferred_hybrid_cascade() { drain_deferred_hybrid_cascade_(); }
+    // Issue #3097: test hook for deferred_hybrid_pending_upper_bound_.
+    std::size_t
+    public_deferred_hybrid_pending_upper_bound_for_test(const std::string& name) const noexcept {
+        return deferred_hybrid_pending_upper_bound_(name);
+    }
     void public_drop_node_dep_mirror_edge(const std::string& caller, const std::string& callee) {
         lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
                                                                lock_order::Level::DepGraph);
