@@ -266,6 +266,17 @@ struct SecurityEventWal {
             g_security_event_wal_metrics().security_event_wal_append_fail_total.fetch_add(
                 1, std::memory_order_relaxed);
             ::aura::core::wal_slo::note_wal_append_fail();
+            // Issue #3109: same fail-closed overflow ring capture as fwrite_miss path.
+            if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
+                WalOverflowRecord ovr{};
+                ovr.mid = rec.seq;
+                ovr.tenant_id = 0;
+                ovr.fiber_id = 0;
+                ovr.epoch = 0;
+                ovr.op = std::string("security_event_wal_append");
+                ovr.reason = std::string("inject_fail");
+                wal_overflow_ring_push(ovr);
+            }
             return false;
         }
         const auto n = std::fwrite(&rec, 1, sizeof(rec), fp);
@@ -273,6 +284,20 @@ struct SecurityEventWal {
             g_security_event_wal_metrics().security_event_wal_append_fail_total.fetch_add(
                 1, std::memory_order_relaxed);
             ::aura::core::wal_slo::note_wal_append_fail();
+            // Issue #3109: if production + fail-closed env set, push the
+            // lost record to the process-local overflow ring so mid can
+            // join from ring replay (does NOT replace WAL replay — only
+            // captures the trail for in-process recovery).
+            if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
+                WalOverflowRecord ovr{};
+                ovr.mid = rec.seq;
+                ovr.tenant_id = 0;
+                ovr.fiber_id = 0;
+                ovr.epoch = 0;
+                ovr.op = std::string("security_event_wal_append");
+                ovr.reason = std::string("fwrite_miss");
+                wal_overflow_ring_push(ovr);
+            }
             return false;
         }
         ::aura::core::wal_slo::note_wal_append_ok();
@@ -454,6 +479,73 @@ struct SecurityEventWalStatsSnapshot {
     int phase = kSecurityEventWalPhase;
     int issue = kSecurityEventWalIssue;
 };
+
+// Issue #3109: production WAL append fail-closed option (SE + mutation
+// audit trail integrity). Process-local overflow ring (capacity 256) that
+// captures events lost to fwrite fail when AURA_WAL_APPEND_FAIL_CLOSED
+// is set AND production_defaults_active(). Soft/Off / no-env: zero cost
+// (overflow ring never written, AC1). Mid can join from overflow ring
+// for in-process replay; it does NOT replace durable WAL replay
+// (process-local only, crash recovery path unchanged per #2225).
+inline constexpr std::uint32_t kWalOverflowRingCapacity = 256;
+
+struct WalOverflowRecord {
+    std::uint64_t mid;       // mutation_id (or SE id)
+    std::uint32_t tenant_id; // tenant (or 0 for SE)
+    std::uint64_t fiber_id;  // fiber / eval context
+    std::uint64_t epoch;     // snapshot / audit epoch
+    std::string op;          // operation name (e.g. "require_effect")
+    std::string reason;      // failure reason (e.g. "fwrite_miss")
+};
+
+inline WalOverflowRecord& wal_overflow_ring_storage() noexcept {
+    // Process-local storage (header ODR-safe via inline). Sized at
+    // kWalOverflowRingCapacity; head + count are atomic to allow push
+    // from the WAL append path (under std::lock_guard) and read from
+    // query:security-posture without synchronization.
+    static WalOverflowRecord buf[kWalOverflowRingCapacity]{};
+    return *buf;
+}
+
+inline std::atomic<std::uint32_t>& wal_overflow_ring_head() noexcept {
+    static std::atomic<std::uint32_t> h{0};
+    return h;
+}
+
+inline std::atomic<std::uint32_t>& wal_overflow_ring_count() noexcept {
+    static std::atomic<std::uint32_t> c{0};
+    return c;
+}
+
+// Push one record to the overflow ring. Called only when
+// wal_append_fail_closed_active() returns true (production + env).
+// Thread-safe under WAL's std::lock_guard.
+inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
+    auto& ring = wal_overflow_ring_storage();
+    const auto h = wal_overflow_ring_head().fetch_add(1, std::memory_order_relaxed);
+    ring[h % kWalOverflowRingCapacity] = rec;
+    // Cap count at capacity (head wraps but count saturates).
+    auto& cnt = wal_overflow_ring_count();
+    const auto prev = cnt.load(std::memory_order_relaxed);
+    if (prev < kWalOverflowRingCapacity) {
+        cnt.compare_exchange_strong(const_cast<std::uint32_t&>(prev), prev + 1,
+                                    std::memory_order_relaxed);
+    }
+}
+
+[[nodiscard]] inline std::uint32_t wal_overflow_ring_depth() noexcept {
+    const auto c = wal_overflow_ring_count().load(std::memory_order_relaxed);
+    return c < kWalOverflowRingCapacity ? c : kWalOverflowRingCapacity;
+}
+
+[[nodiscard]] inline bool wal_overflow_ring_full() noexcept {
+    return wal_overflow_ring_depth() >= kWalOverflowRingCapacity;
+}
+
+inline void wal_overflow_ring_clear_for_test() noexcept {
+    wal_overflow_ring_head().store(0, std::memory_order_relaxed);
+    wal_overflow_ring_count().store(0, std::memory_order_relaxed);
+}
 
 [[nodiscard]] inline SecurityEventWalStatsSnapshot snapshot_security_event_wal_stats() noexcept {
     auto& m = g_security_event_wal_metrics();

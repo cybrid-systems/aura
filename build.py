@@ -3379,6 +3379,23 @@ def cmd_lint():
             "Issue #3108 commit_readiness recover re-gate linter failed — run python3 scripts/coverage/checks/check_occurrence_recover_not_solved_3108.py"
         )
         return r
+    # Issue #3109: production WAL append fail-closed option (SE + mutation
+    # audit trail integrity). Thin helper + process-local overflow ring
+    # (256 entries) + require_effect deny path (Strict + fail-closed +
+    # overflow full). Soft/Off / no-env: zero new cost (fail-closed env
+    # ignored); default: today's fail-open + #3056 SLO arm unchanged.
+    # Additive query keys (wal-fail-closed-active, wal-overflow-ring-depth,
+    # schema-3109, issue-3109); no new capability model.
+    wfc3109_script = COVERAGE_CHECKS / "check_wal_append_fail_closed_3109.py"
+    if not wfc3109_script.exists():
+        fail(f"missing {wfc3109_script}")
+        return 1
+    r = run([sys.executable, str(wfc3109_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3109 WAL append fail-closed linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_closed_3109.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

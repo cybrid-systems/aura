@@ -384,6 +384,17 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // window after #2658 for paths outside `mutate:force`.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
+    // Issue #3109: production WAL append fail-closed — when overflow ring
+    // is full AND we're in Strict mode (is_strict()), deny the new side
+    // effect at the entry so we don't half-write a body that the trail
+    // can't cover. Soft/Off + Restricted: still allow (overflow ring
+    // captured, degraded posture via #3056). The env + production gate
+    // is in wal_append_fail_closed_active() — returns false in Soft/Off
+    // so this branch is zero-cost outside production + Strict + fail-closed.
+    if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
+        ::aura::core::security_event_wal::wal_overflow_ring_full() && is_strict()) {
+        return false; // wal-append-fail-closed deny (#3109; reason stable, auditable)
+    }
     if (req_bits != 0) {
         if (!check_workspace_isolation(/*target=*/capability_tenant_id_,
                                        /*ref_tenant=*/ref_tenant, req_bits, op))

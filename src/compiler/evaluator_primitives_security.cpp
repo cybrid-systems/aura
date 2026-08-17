@@ -4470,6 +4470,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("wal-append-fail-slo-wired", 1);
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
+                // Issue #3109: production WAL append fail-closed option. Additive
+                // query keys (don't change existing key semantics). Soft/Off /
+                // no-env: wal-fail-closed-active=0, wal-overflow-ring-depth=0.
+                insert_kv("wal-fail-closed-active",
+                          static_cast<std::int64_t>(
+                              ::aura::core::wal_slo::wal_append_fail_closed_active() ? 1 : 0));
+                insert_kv("wal-overflow-ring-depth",
+                          static_cast<std::int64_t>(
+                              ::aura::core::security_event_wal::wal_overflow_ring_depth()));
+                insert_kv("schema-3109", 3109);
+                insert_kv("issue-3109", 3109);
             }
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -5053,6 +5064,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("wal-append-fail-slo-wired", 1);
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
+                // Issue #3109: production WAL append fail-closed option. Additive
+                // query keys (don't change existing key semantics). Soft/Off /
+                // no-env: wal-fail-closed-active=0, wal-overflow-ring-depth=0.
+                insert_kv("wal-fail-closed-active",
+                          static_cast<std::int64_t>(
+                              ::aura::core::wal_slo::wal_append_fail_closed_active() ? 1 : 0));
+                insert_kv("wal-overflow-ring-depth",
+                          static_cast<std::int64_t>(
+                              ::aura::core::security_event_wal::wal_overflow_ring_depth()));
+                insert_kv("schema-3109", 3109);
+                insert_kv("issue-3109", 3109);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });

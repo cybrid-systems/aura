@@ -210,4 +210,29 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
 
 } // namespace aura::core::wal_slo
 
+
+// Issue #3109: production WAL append fail-closed option (SE + mutation
+// audit trail integrity). Thin helper — only effective when
+// AURA_WAL_APPEND_FAIL_CLOSED env is set AND production_defaults_active().
+// Soft/Off / no-env: helper returns false → today's fail-open behavior
+// preserved (zero new cost, AC1). Caller pattern:
+//   if (wal_append_fail_closed_active()) wal_overflow_ring_push(rec);
+// Falls back to fail-open + #3056 SLO arm when env unset / non-production.
+[[nodiscard]] inline bool wal_append_fail_closed_active() noexcept {
+    const char* e = std::getenv("AURA_WAL_APPEND_FAIL_CLOSED");
+    if (e == nullptr || e[0] == '\0')
+        return false;
+    const bool parsed =
+        (std::strcmp(e, "1") == 0 || std::strcmp(e, "true") == 0 || std::strcmp(e, "on") == 0 ||
+         std::strcmp(e, "TRUE") == 0 || std::strcmp(e, "ON") == 0 || std::strcmp(e, "True") == 0 ||
+         std::strcmp(e, "On") == 0 || std::strcmp(e, "yes") == 0 || std::strcmp(e, "YES") == 0 ||
+         std::strcmp(e, "Yes") == 0);
+    if (!parsed)
+        return false;
+    // Only effective when production_defaults_active() is true (AC2:
+    // production-only). Forward-declared here to avoid pulling the
+    // typed_audit.h dependency into this header (thin helper per issue).
+    namespace typed_audit = ::aura::compiler::typed_audit;
+    return typed_audit::production_defaults_active();
+}
 #endif // AURA_CORE_WAL_APPEND_FAIL_SLO_H
