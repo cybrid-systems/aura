@@ -60,9 +60,9 @@ static std::int64_t hygiene_key(CompilerService& cs, std::string_view key) {
 
 static void ac1_source() {
     std::println("\n--- AC1: source cites #2020 + primitives ---");
-    auto src = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto src = aura::test::aura_query_prims_source();
     auto obs = read_file("src/compiler/evaluator_primitives_observability.cpp");
-    CHECK(!src.empty(), "evaluator_primitives_query.cpp readable");
+    CHECK(!src.empty(), "query/reflect prims readable");
     CHECK(src.find("Issue #2020") != std::string::npos, "cites #2020");
     CHECK(src.find("reflect:hygiene-stats") != std::string::npos, "reflect:hygiene-stats");
     CHECK(src.find("reflect:provenance-blame") != std::string::npos, "reflect:provenance-blame");

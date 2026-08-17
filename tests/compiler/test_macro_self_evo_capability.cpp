@@ -172,8 +172,9 @@ static void ac4_grant_reduced_limits() {
     reset_all();
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
+    // #3090: Restricted/Strict refuse mid==0 TenantAdmin grants.
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(0, true, 0, 0));
+                                  make_grant_provenance(1, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 2;
     pol.max_depth = 8;
@@ -201,7 +202,7 @@ static void ac5_zero_limits_deny() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     set_mode(SandboxMode::Strict);
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(0, true, 0, 0));
+                                  make_grant_provenance(1, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 0;
     pol.max_depth = 0;
@@ -272,7 +273,7 @@ static void ac7_concurrent_strict_deny() {
     CHECK(g_macro_self_evo_denied_total.load() > denied0, "global denied grew under stress");
     // Grant + concurrent still allowed
     g_capability_registry().grant(0, "tenant-admin", Effect::TenantAdmin,
-                                  make_grant_provenance(0, true, 0, 0));
+                                  make_grant_provenance(1, true, 0, 0));
     MacroSelfEvoPolicy pol;
     pol.max_expansion_passes = 4;
     pol.max_depth = 16;

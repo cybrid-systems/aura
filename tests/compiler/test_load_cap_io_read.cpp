@@ -11,6 +11,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "core/capability_model.hh"
 
 #include <fstream>
 #include <print>
@@ -30,6 +31,14 @@ using aura::compiler::security::kCapWildcard;
 using aura::compiler::types::is_error;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static void grant_io_cap(CompilerService& cs, const char* cap) {
+    auto& ev = cs.evaluator();
+    ev.grant_capability(cap);
+    auto prov = aura::core::capability::make_grant_provenance(1, true, 0, 0);
+    aura::core::capability::g_capability_registry().grant(
+        ev.capability_tenant_id(), cap, aura::core::capability::effect_for_cap_name(cap), prov);
+}
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -71,7 +80,7 @@ static void ac2_allowed_with_io_read() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
-    ev.grant_capability(kCapIoRead);
+    grant_io_cap(cs, kCapIoRead);
     write_temp_aura("/tmp/aura_load_cap_2485.aura");
     const auto den0 = ev.capability_denial_count();
     auto r = cs.eval("(load \"/tmp/aura_load_cap_2485.aura\")");
@@ -85,7 +94,7 @@ static void ac2b_allowed_with_io() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
-    ev.grant_capability(kCapIo);
+    grant_io_cap(cs, kCapIo);
     write_temp_aura("/tmp/aura_load_cap_2485.aura");
     auto r = cs.eval("(load \"/tmp/aura_load_cap_2485.aura\")");
     CHECK(r.has_value() && !is_error(*r), "AC2b: kCapIo allows");
@@ -96,7 +105,7 @@ static void ac2c_allowed_with_wildcard() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
-    ev.grant_capability(kCapWildcard);
+    grant_io_cap(cs, kCapWildcard);
     write_temp_aura("/tmp/aura_load_cap_2485.aura");
     auto r = cs.eval("(load \"/tmp/aura_load_cap_2485.aura\")");
     CHECK(r.has_value() && !is_error(*r), "AC2c: wildcard allows");

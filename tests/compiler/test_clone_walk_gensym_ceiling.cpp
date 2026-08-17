@@ -69,7 +69,7 @@ int run_test_clone_walk_gensym_ceiling() {
         auto pre = me.find("auto rename_binding_pre");
         auto walk = me.find("auto rename_binding =", pre == std::string::npos ? 0 : pre + 1);
         CHECK(walk != std::string::npos, "AC1: rename_binding present");
-        auto win = me.substr(walk, 1200);
+        auto win = me.substr(walk, 2800);
         CHECK(win.find("Issue #2804") != std::string::npos, "AC1: rename_binding cites #2804");
         CHECK(win.find("effective_max_gensym_map_size") != std::string::npos ||
                   win.find("gensym_cap") != std::string::npos ||

@@ -64,7 +64,7 @@ static void ac1_source() {
     std::println("\n--- AC1: source cites #2036 + PCV-backed children_ ---");
     auto ast = read_file("src/core/ast.ixx");
     auto pcv = read_file("src/core/persistent_child_vector.hh");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = aura::test::aura_query_prims_source();
     CHECK(!ast.empty() && ast.find("#2036") != std::string::npos, "ast.ixx #2036");
     CHECK(ast.find("std::vector<PersistentChildVector<NodeId>> children_") != std::string::npos,
           "children_ PCV-backed");
@@ -242,7 +242,7 @@ static void ac2862_1_source_atomics() {
 
 static void ac2862_2_source_primitive() {
     std::println("\n--- #2862 AC2: source — query:children-stable-stats primitive ---");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = aura::test::aura_query_prims_source();
     CHECK(q.find("query:children-stable-stats") != std::string::npos,
           "#2862 AC2: query:children-stable-stats primitive registered");
     CHECK(q.find("schema") != std::string::npos &&
@@ -266,7 +266,7 @@ static void ac2862_3_no_docs() {
     std::println("\n--- #2862 AC3: no docs/design/ + lineage refs ---");
     CHECK(read_file("docs/design/2862-children-stable-contract.md").empty(),
           "#2862 AC3: no docs/design/2862-* per #1655");
-    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    const auto q = aura::test::aura_query_prims_source();
     CHECK(q.find("#2036") != std::string::npos && q.find("#678") != std::string::npos &&
               q.find("#655") != std::string::npos && q.find("#2861") != std::string::npos,
           "#2862 AC3: lineage refs to #2036/#678/#655/#2861");
