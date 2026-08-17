@@ -1393,6 +1393,21 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
         if (had_global || (had_shape && win > 0))
             storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
                                                    std::memory_order_release);
+        // Issue #3101: on storm exit (Both/Global → None or Shape → None
+        // with prior window), clear the partial_relower_threshold_forced
+        // flag so the adaptive threshold can re-tighten from the existing
+        // cost-history atomics. Without this clear, the forced flag
+        // freezes the threshold at a storm-era (often higher) value, and
+        // the force-full exit window ending flips back to a now-stale
+        // partial → oscillation under high-freq self-mod. Production/Full
+        // only (Soft/Off stays zero-cost — the flag was never forced
+        // there in practice).
+        if (aura::compiler::typed_audit::should_hard_reject_soft_sibling()) {
+            // C-linkage accessor declared in ir_cache_pure.ixx; the call
+            // is one cheap store (atomic_bool relaxed) when the flag was
+            // set, zero work otherwise.
+            aura_clear_partial_relower_threshold_force();
+        }
     }
     if (now != 0)
         return false;
@@ -2586,6 +2601,17 @@ extern "C" void aura_hot_update_reset_deopt_storm_state_for_test(void) {
 
 extern "C" int aura_hot_update_storm_exit_force_full_active(void) {
     return aura::compiler::hot_update_registry().storm_exit_force_full_active() ? 1 : 0;
+}
+// Issue #3101: clear the partial_relower_threshold_forced flag so the
+// adaptive threshold can re-tighten from cost history once the storm has
+// fully exited. C-linkage accessor called from
+// storm_exit_force_full_active on storm entry->exit transition (under
+// production/Full). One cheap atomic_bool relaxed store. The actual
+// flag lives in ir_cache_pure.ixx (declaration + storage); this shim
+// calls its accessor. Forward declared in ir_cache_pure.ixx.
+extern "C" void aura_clear_partial_relower_threshold_force(void) {
+    aura::compiler::partial_relower_threshold_forced_atomic().store(
+        false, std::memory_order_relaxed);
 }
 
 // Issue #2017: C entry for compact-env-frames / other module-partition callers.

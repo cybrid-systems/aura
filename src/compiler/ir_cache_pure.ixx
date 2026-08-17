@@ -52,6 +52,12 @@ import aura.compiler.dirty_propagation; // DepGraph (Issue #2179)
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 // Issue #3070: Shape/Global → None hysteresis (force-full cooldown).
 extern "C" int aura_hot_update_storm_exit_force_full_active(void);
+// Issue #3101: clear the partial_relower_threshold_forced flag so the
+// adaptive threshold can re-tighten from cost history once the storm has
+// fully exited. Wired from HotUpdateRegistry::storm_exit_force_full_active
+// under production/Full (Soft/Off stays zero-cost — the flag was never
+// forced there). Atomic_bool relaxed store; one cheap call.
+extern "C" void aura_clear_partial_relower_threshold_force(void);
 
 export namespace aura::compiler {
 
