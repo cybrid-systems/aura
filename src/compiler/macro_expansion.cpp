@@ -385,9 +385,16 @@ std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total{0};
 std::atomic<std::uint64_t> g_macro_clone_in_flight{0};
 std::atomic<std::uint64_t> g_macro_clone_concurrent_peak{0};
 // Issue #3028: same-FlatAST concurrent top-level clone reject + steal abort.
-// 0=none 1=capability 2=same-flat 3=steal-abort.
+// 0=none 1=capability 2=same-flat 3=steal-abort 4=shared-name-map (#3094).
 std::atomic<std::uint64_t> g_macro_clone_same_flat_reject_total{0};
 std::atomic<std::uint64_t> g_macro_clone_steal_abort_total{0};
+// Issue #3094: shared name_map pointer concurrent top-level clone reject.
+// Bumped when two top-level clones try to claim the same name_map under
+// production (Restricted/Strict or force_hygienic). Soft/Off zero-cost
+// (claim is gated on is_sandbox_active()). name_map clone uses the same
+// lock-free hashed-slot pattern as g_same_flat_slots (#3028) — different
+// side table keyed by the name_map pointer (lower-bit hash to a slot).
+std::atomic<std::uint64_t> g_macro_clone_name_map_shared_reject_total{0};
 std::atomic<std::uint8_t> g_macro_clone_last_reject_reason{0};
 
 namespace {
@@ -411,6 +418,44 @@ namespace {
                                          std::memory_order_acquire))
             return true;
         return expected != addr; // occupied by a different flat → allow
+    }
+
+    // Issue #3094: parallel lock-free hashed-slot for name_map pointer.
+    // Different side table keyed by name_map address (lower-bit hash).
+    // Two top-level clones sharing the same name_map pointer under
+    // production reject (stable reason 4 = hygiene-name-map-shared).
+    // Different name_maps that collide in the same slot are allowed
+    // (cross-map OK). Empty slot (==0) = unclaimed.
+    constexpr int kNameMapSlots = 16;
+    std::atomic<std::uintptr_t> g_name_map_slots[kNameMapSlots]{};
+
+    [[nodiscard]] int name_map_slot(const void* m) noexcept {
+        return static_cast<int>((reinterpret_cast<std::uintptr_t>(m) >> 4) &
+                                static_cast<std::uintptr_t>(kNameMapSlots - 1));
+    }
+
+    [[nodiscard]] bool claim_name_map_clone(const void* m) noexcept {
+        if (!m)
+            return true;
+        const auto addr = reinterpret_cast<std::uintptr_t>(m);
+        auto& slot = g_name_map_slots[name_map_slot(m)];
+        std::uintptr_t expected = 0;
+        if (slot.compare_exchange_strong(expected, addr, std::memory_order_acq_rel,
+                                         std::memory_order_acquire))
+            return true;
+        return expected != addr; // occupied by a different map → allow
+    }
+
+    void release_name_map_clone(const void* m) noexcept {
+        if (!m)
+            return;
+        const auto addr = reinterpret_cast<std::uintptr_t>(m);
+        auto& slot = g_name_map_slots[name_map_slot(m)];
+        // Only release if we still own the slot (defensive: a different
+        // map that landed in the same slot would have a different addr).
+        std::uintptr_t expected = addr;
+        slot.compare_exchange_strong(expected, 0, std::memory_order_release,
+                                     std::memory_order_relaxed);
     }
 
     void release_same_flat_clone(const aura::ast::FlatAST* t) noexcept {
@@ -1205,7 +1250,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     struct ConcurrentCloneGuard {
         bool armed = false;
         bool rejected_same_flat = false;
+        bool rejected_shared_name_map = false;
         bool claimed_flat = false;
+        bool claimed_name_map = false;
         std::uint32_t captured_fiber_id = 0;
         const aura::ast::FlatAST* target_ptr = nullptr;
         // Issue #2241: capture name_map* by value — dtor cannot touch
@@ -1231,6 +1278,26 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 return;
             }
             claimed_flat = tgt != nullptr;
+            // Issue #3094: shared name_map pointer concurrent reject.
+            // Production-only (Restricted/Strict or force_hygienic). Soft/Off
+            // zero-cost — claim is gated on is_sandbox_active(). Prevents
+            // the silent UB window where two fibers mutate the same
+            // std::unordered_map concurrently (insert/erase/lookup during
+            // rename + NameMapCheckpoint rollback erasing keys another fiber
+            // still relies on + gensym ceiling decision racing with another
+            // fiber's map size). Different maps that collide in the same
+            // slot are allowed (cross-map OK).
+            if (nm && aura::core::sandbox::is_sandbox_active() && !claim_name_map_clone(nm)) {
+                rejected_shared_name_map = true;
+                g_macro_clone_name_map_shared_reject_total.fetch_add(1, std::memory_order_relaxed);
+                g_macro_clone_last_reject_reason.store(4, std::memory_order_relaxed);
+                // Release the FlatAST claim we already took so we don't leak.
+                if (claimed_flat && target_ptr)
+                    release_same_flat_clone(target_ptr);
+                claimed_flat = false;
+                return;
+            }
+            claimed_name_map = (nm != nullptr);
             armed = true;
             const auto prev = g_macro_clone_in_flight.fetch_add(1, std::memory_order_relaxed);
             // Issue #2806: another top-level clone already in flight.
@@ -1252,6 +1319,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 bump_fiber_hygiene_on_enter(captured_fiber_id, depth);
         }
         ~ConcurrentCloneGuard() noexcept {
+            // Issue #3094: release name_map claim before FlatAST claim so
+            // another fiber blocked on the same map unblocks first.
+            if (claimed_name_map && name_map_ptr)
+                release_name_map_clone(name_map_ptr);
             if (claimed_flat && target_ptr)
                 release_same_flat_clone(target_ptr);
             if (armed) {
