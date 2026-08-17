@@ -1217,7 +1217,67 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
     // type cone). Soft/empty → helper is a no-op.
     if (!elim_ast.empty())
         (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(elim_ast);
+    // Issue #3102: AC1/AC2 — push coerced nodes into the per-boundary TLS
+    // tracker (production/Full only). The abort path consumes them and
+    // force-dirties the cone so the next incremental typecheck cannot
+    // skip restored nodes. Soft/Quiet → depth=0 → no-op.
+    if (persist_elim_cone) {
+        for (auto nid : elim_ast) {
+            coerced_nodes_tracker_push(nid);
+        }
+    }
     return s.applied;
+}
+
+// Issue #3102: per-boundary TLS tracker for AST nodes that participated in
+// apply_coercion_map (production/Full only). The mutation boundary enter
+// increments depth; abort path consumes via coerced_nodes_tracker_take()
+// and force-dirties the cone. Soft/Quiet → depth=0 → zero cost on push.
+inline thread_local std::vector<aura::compiler::dirty::NodeId> g_coerced_nodes_in_boundary_tls;
+inline thread_local std::uint64_t g_coerced_nodes_in_boundary_depth_tls = 0;
+
+// Issue #3102: AC1/AC5 — counters for the CoercionMap abort rewind path.
+// Production/Full bumps the real counters; Soft bumps the observe-only
+// counters. Quiet (no abort / no boundary) → zero cost.
+export inline std::atomic<std::uint64_t> g_coercion_map_abort_rewind_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_map_abort_rewind_observe_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_map_apply_tracker_push_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_map_abort_forced_dirty_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_map_abort_soft_observe_total{0};
+
+inline void coerced_nodes_tracker_enter_boundary() noexcept {
+    ++g_coerced_nodes_in_boundary_depth_tls;
+}
+inline void coerced_nodes_tracker_exit_boundary() noexcept {
+    if (g_coerced_nodes_in_boundary_depth_tls > 0)
+        --g_coerced_nodes_in_boundary_depth_tls;
+    if (g_coerced_nodes_in_boundary_depth_tls == 0)
+        g_coerced_nodes_in_boundary_tls.clear();
+}
+inline void coerced_nodes_tracker_push(aura::compiler::dirty::NodeId nid) noexcept {
+    if (g_coerced_nodes_in_boundary_depth_tls == 0)
+        return;
+    if (nid == 0)
+        return;
+    g_coerced_nodes_in_boundary_tls.push_back(nid);
+    g_coercion_map_apply_tracker_push_total.fetch_add(1, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::vector<aura::compiler::dirty::NodeId>
+coerced_nodes_tracker_take() noexcept {
+    auto v = std::move(g_coerced_nodes_in_boundary_tls);
+    g_coerced_nodes_in_boundary_tls.clear();
+    return v;
+}
+[[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept {
+    return g_coerced_nodes_in_boundary_tls.size();
+}
+
+inline void reset_coercion_map_abort_rewind_for_test() noexcept {
+    g_coercion_map_abort_rewind_total.store(0, std::memory_order_relaxed);
+    g_coercion_map_abort_rewind_observe_total.store(0, std::memory_order_relaxed);
+    g_coercion_map_apply_tracker_push_total.store(0, std::memory_order_relaxed);
+    g_coercion_map_abort_forced_dirty_total.store(0, std::memory_order_relaxed);
+    g_coercion_map_abort_soft_observe_total.store(0, std::memory_order_relaxed);
 }
 
 } // namespace aura::compiler

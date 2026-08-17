@@ -13449,6 +13449,11 @@ public:
         // mutation_id). Trail / SE / grant / occurrence use this — not
         // total_mutations_ (volume only). 0 = production refuse, no stamp.
         std::uint64_t audit_mid = 0;
+        // Issue #3102: AC1 — CoercionMap abort rewind baseline. Captures
+        // the size of t_last_type_cone_ast at boundary enter so the abort
+        // path can truncate the post-apply cone and re-add coerced nodes
+        // (force-dirty) under production/Full. Quiet (no abort) → unused.
+        std::size_t coercion_cone_size_at_entry = 0;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).
