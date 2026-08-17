@@ -9755,6 +9755,33 @@ public:
             m->macro_hygiene_provenance_captured_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
+    // Issue #3095: post-restore macro hygiene invariant bumpers
+    // (refine #2959 / #3033 / #2099). Three orthogonal counters so
+    // production breach rate = hard_fail / violations is a clean ratio
+    // without needing to know the global mode at read time. Always bump
+    // violations; soft / off → soft_observed; production (Restricted /
+    // Strict) → hard_fail + stable reason (last_mutate_error_).
+    void bump_macro_hygiene_invariant_post_abort_violation() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_invariant_post_abort_violations_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_hygiene_invariant_post_abort_hard_fail() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_invariant_post_abort_hard_fail_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+    void bump_macro_hygiene_invariant_post_abort_soft_observed() const noexcept {
+        if (compiler_metrics_) {
+            auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+            m->macro_hygiene_invariant_post_abort_soft_observed_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
     void bump_macro_hygiene_inliner_policy_violation() const noexcept {
         if (compiler_metrics_) {
             auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
@@ -13554,6 +13581,30 @@ public:
     [[nodiscard]] std::uint64_t get_hygiene_checkpoint_restore_success_total() const noexcept;
     [[nodiscard]] std::uint64_t get_hygiene_checkpoint_restore_fail_total() const noexcept;
     [[nodiscard]] std::uint64_t get_hygiene_checkpoint_cross_fiber_reject_total() const noexcept;
+    // Issue #3095: post-restore macro hygiene invariant getters backing
+    // (query:hygiene-checkpoint-stats) `post-abort-invariant-*` keys.
+    [[nodiscard]] std::uint64_t
+    get_macro_hygiene_invariant_post_abort_violations_total() const noexcept;
+    [[nodiscard]] std::uint64_t
+    get_macro_hygiene_invariant_post_abort_hard_fail_total() const noexcept;
+    [[nodiscard]] std::uint64_t
+    get_macro_hygiene_invariant_post_abort_soft_observed_total() const noexcept;
+    // Issue #3095: post-restore macro hygiene invariant enforcement
+    // (refine #2959 / #3033 / #2099). Called immediately after every
+    // successful abort_restore_dual_topology (and after any paired
+    // restore_metadata_columns) on the production surface to close the
+    // residual pairing gap where MacroIntroduced markers / provenance /
+    // macro_dirty_ could drift out of sync with the restored children_ /
+    // parent_ topology and the flat generation. Soft / Off: metric-only
+    // (violations + soft_observed bumped; no hard-fail, no last_mutate_error_
+    // set — zero-cost contract preserved). Production (Restricted / Strict):
+    // also bumps hard_fail + sets last_mutate_error_ to a stable reason
+    // Agents can correlate via (query:hygiene-checkpoint-stats). reason_tag
+    // is appended to the stable reason (e.g. "abort", "restore-metadata").
+    // Returns the violation count so callers can react (the existing
+    // restore_hygiene_checkpoint site forces a full restore on > 0).
+    [[nodiscard]] std::size_t
+    check_macro_hygiene_invariant_post_restore(const char* reason_tag) noexcept;
 
     // Get the current checkpoint stack depth (for testing /
     // observability). Returns 0 if the stack is empty.

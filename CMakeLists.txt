@@ -2282,6 +2282,16 @@ aura_add_issue_test(test_hygiene_mutate_closed_loop)
 aura_issue_test_link_light(test_hygiene_mutate_closed_loop)
 add_dependencies(all_test_issue_targets test_hygiene_mutate_closed_loop)
 
+# Issue #3095: post-restore macro hygiene invariant enforcement
+# (refine #2959 / #3033 / #2099). After every successful
+# abort_restore_dual_topology / restore_metadata_columns on the
+# production surface, validate_macro_hygiene_invariants() must run
+# and either pass (== 0) or hard-fail the mutation boundary with
+# a stable reason (last_mutate_error_ + 3 orthogonal counters).
+aura_add_issue_test(test_issue_3095)
+aura_issue_test_link_light(test_issue_3095)
+add_dependencies(all_test_issue_targets test_issue_3095)
+
 # Issue #596 / #2765: Guard + panic + reflect closed-loop + Guard success-path
 # auto_validate / hygiene_validate (#2765 residual). Prefer-existing suite.
 aura_add_issue_test(test_guard_panic_reflect_fiber_resume_task6)

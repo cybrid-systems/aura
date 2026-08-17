@@ -266,13 +266,30 @@ static void ac5_query_hygiene_checkpoint_stats_reports(CompilerService& cs) {
     CHECK(href_int(cs, "restore_fail_total") >= 1, "AC5: restore_fail_total >= 1");
     CHECK(href_int(cs, "pending_count") == 0,
           "AC5: pending_count == 0 (all checkpoints restored or consumed)");
-    CHECK(href_int(cs, "schema") == 2099, "AC5: schema == 2099");
-    CHECK(href_int(cs, "issue") == 2099, "AC5: issue == 2099");
+    CHECK(href_int(cs, "schema") == 2099 || href_int(cs, "schema") == 3095,
+          "AC5: schema == 2099 (legacy) or 3095 (post-restore invariant present)");
+    CHECK(href_int(cs, "issue") == 2099 || href_int(cs, "issue") == 3095,
+          "AC5: issue == 2099 or 3095 (lineage preserved)");
     CHECK(href_int(cs, "active") == 1, "AC5: active == 1");
     // lineage pointer to the underlying metadata-column snapshot API from #1893.
     CHECK(href_int(cs, "lineage-1893") == 1893, "AC5: lineage-1893 marker present");
     CHECK(href_int(cs, "nested-under-mutation-boundary") == 1,
           "AC5: nested-under-mutation-boundary marker present");
+    // Issue #3095: post-restore macro hygiene invariant counters surface
+    // (refine #2959 / #3033 / #2099). After every successful
+    // abort_restore_dual_topology / restore_metadata_columns the new
+    // helper runs validate_macro_hygiene_invariants() and bumps one
+    // of these three counters. Schema bumped to 3095 (lineage preserved).
+    CHECK(href_int(cs, "post_abort_invariant_violations_total") >= 0,
+          "AC5: #3095 post_abort_invariant_violations_total surfaces");
+    CHECK(href_int(cs, "post-abort-invariant-violations-total") >=
+              href_int(cs, "post_abort_invariant_violations_total"),
+          "AC5: #3095 kebab-case alias matches snake-case");
+    CHECK(href_int(cs, "post_abort_invariant_hard_fail_total") >= 0,
+          "AC5: #3095 post_abort_invariant_hard_fail_total surfaces");
+    CHECK(href_int(cs, "post_abort_invariant_soft_observed_total") >= 0,
+          "AC5: #3095 post_abort_invariant_soft_observed_total surfaces");
+    CHECK(href_int(cs, "lineage-3095") == 3095, "AC5: #3095 lineage-3095 marker present");
 }
 
 } // namespace

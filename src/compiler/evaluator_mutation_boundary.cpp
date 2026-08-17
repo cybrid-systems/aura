@@ -455,6 +455,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         }
         // Issue #1281 / #1502: dual restore sealed inside abort_restore_dual_topology.
         stats.children_column_restored = true;
+        // Issue #3095: post-restore macro hygiene invariant enforcement.
+        // Closes the residual pairing gap where MacroIntroduced markers /
+        // provenance / macro_dirty_ could drift out of sync with the
+        // restored children_ / parent_ topology and the flat generation
+        // (steal mid-expand + dual-topology abort + densify combined path).
+        // Soft / Off → metric-only; production → hard_fail + stable reason.
+        (void)check_macro_hygiene_invariant_post_restore("abort-failure");
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
             m->children_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
             m->parent_topology_rollback_count.fetch_add(1, std::memory_order_relaxed);
@@ -1110,6 +1117,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                     bump_edsl_nested_atomic_rollback();
                             }
                             stats.children_column_restored = true;
+                            // Issue #3095: post-restore macro hygiene invariant
+                            // enforcement (paired with #2959 dual-topology abort).
+                            (void)check_macro_hygiene_invariant_post_restore(
+                                "invariant-force-rollback");
                             if (cp.fine_rollback) {
                                 workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
                                 workspace_flat_->restore_param_columns(
@@ -1205,6 +1216,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             bump_edsl_nested_atomic_rollback();
                     }
                     stats.children_column_restored = true;
+                    // Issue #3095: post-restore macro hygiene invariant
+                    // enforcement (Strict path).
+                    (void)check_macro_hygiene_invariant_post_restore(
+                        "guard-reflect-validate-strict-rollback");
                     if (cp.fine_rollback) {
                         workspace_flat_->restore_sym_id(std::move(cp.sym_id_snapshot));
                         workspace_flat_->restore_param_columns(std::move(cp.param_snapshot));
@@ -4342,6 +4357,13 @@ bool Evaluator::restore_hygiene_checkpoint(const HygieneCheckpoint& cp) noexcept
         std::pmr::vector<std::uint32_t>(cp.meta.provenance.begin(), cp.meta.provenance.end()),
         std::pmr::vector<std::uint8_t>(cp.meta.dirty.begin(), cp.meta.dirty.end()),
         std::pmr::vector<std::uint8_t>(cp.meta.macro_dirty.begin(), cp.meta.macro_dirty.end())});
+    // Issue #3095: post-restore macro hygiene invariant enforcement
+    // (paired HygieneCheckpoint restore — metadata column restore must
+    // leave marker / provenance / macro_dirty_ consistent with the
+    // restored children_ / parent_ topology). Soft / Off → metric-only;
+    // production → hard_fail + stable reason (Agents can correlate via
+    // query:hygiene-checkpoint-stats post-abort-invariant-violations-total).
+    (void)check_macro_hygiene_invariant_post_restore("restore-metadata");
     // Bump defuse_version_ once so any reader holding a snapshot
     // across the restore sees a version mismatch and re-reads.
     defuse_version_.fetch_add(1, std::memory_order_release);
@@ -4459,6 +4481,61 @@ std::uint64_t Evaluator::get_hygiene_checkpoint_restore_fail_total() const noexc
 std::uint64_t Evaluator::get_hygiene_checkpoint_cross_fiber_reject_total() const noexcept {
     auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
     return m ? m->hygiene_checkpoint_cross_fiber_reject_total.load(std::memory_order_relaxed) : 0;
+}
+// Issue #3095: post-restore macro hygiene invariant enforcement
+// (refine #2959 / #3033 / #2099). See evaluator.ixx declaration for
+// the full contract — summary: validate post-restore, bump violations
+// always, hard_fail + stable reason under production (Restricted /
+// Strict), metric-only under Soft / Off. The helper is invoked
+// immediately after every successful abort_restore_dual_topology
+// (3 sites in this TU) and after restore_metadata_columns
+// (restore_hygiene_checkpoint body), so the marker / provenance /
+// macro_dirty_ columns stay consistent with the restored children_ /
+// parent_ topology and the flat generation.
+std::size_t Evaluator::check_macro_hygiene_invariant_post_restore(const char* reason_tag) noexcept {
+    if (!workspace_flat_)
+        return 0;
+    const auto violations = workspace_flat_->validate_macro_hygiene_invariants();
+    if (violations == 0)
+        return 0;
+    bump_macro_hygiene_invariant_post_abort_violation();
+    const bool production =
+        typed_audit::production_defaults_active() || aura::core::sandbox::is_strict();
+    if (production) {
+        bump_macro_hygiene_invariant_post_abort_hard_fail();
+        // Stable reason for Agent correlation. last_mutate_error_ is
+        // queryable via the (query:hygiene-checkpoint-stats) primitive +
+        // Agent replay. Append reason_tag so the surface can distinguish
+        // "abort" vs "restore-metadata" vs future sites without a new
+        // query key namespace.
+        if (reason_tag) {
+            last_mutate_error_ =
+                std::string("post-restore-macro-hygiene-invariant-violation:") + reason_tag;
+        } else {
+            last_mutate_error_ = "post-restore-macro-hygiene-invariant-violation";
+        }
+    } else {
+        bump_macro_hygiene_invariant_post_abort_soft_observed();
+    }
+    return violations;
+}
+std::uint64_t Evaluator::get_macro_hygiene_invariant_post_abort_violations_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->macro_hygiene_invariant_post_abort_violations_total.load(
+                   std::memory_order_relaxed)
+             : 0;
+}
+std::uint64_t Evaluator::get_macro_hygiene_invariant_post_abort_hard_fail_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->macro_hygiene_invariant_post_abort_hard_fail_total.load(std::memory_order_relaxed)
+             : 0;
+}
+std::uint64_t
+Evaluator::get_macro_hygiene_invariant_post_abort_soft_observed_total() const noexcept {
+    auto* m = static_cast<CompilerMetrics*>(compiler_metrics_);
+    return m ? m->macro_hygiene_invariant_post_abort_soft_observed_total.load(
+                   std::memory_order_relaxed)
+             : 0;
 }
 
 // ── Issue #2170: LayoutStamp / unified generation truth-source API ────
