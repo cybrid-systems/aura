@@ -1034,7 +1034,11 @@ export [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept;
 // and treating `nullptr) {` as a compound expression initializer.
 // Same fix pattern as the ubsan-smoke / asan-build gates; no semantic
 // change (defaults preserved, linkage unchanged).
-export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map, DeadCoercionAstStats* stats_out = nullptr, CoercionMap* map_mut = nullptr) {
+// clang-format off — keep one line; GCC 16 ICE on wrapped default-args.
+export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMap& map,
+                                      DeadCoercionAstStats* stats_out = nullptr,
+                                      CoercionMap* map_mut = nullptr) {
+    // clang-format on
     DeadCoercionAstStats local_stats;
     auto& s = stats_out ? *stats_out : local_stats;
     s = {};
