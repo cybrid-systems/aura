@@ -253,9 +253,94 @@ int run_test_steal_complete_strong_entry() {
             CHECK(read_file("tests/serve/test_issue_2955.cpp").empty(),
                   "2955 AC6: no invent test file");
         }
+
+        // ── Issue #3098: production multi-worker Ready must refuse Soft fall-through.
+        // AND-s strong ABI + production_defaults_active. Reuses existing
+        // production_abi_selfcheck_* counters + bit 4 (defaults missing).
+        {
+            std::println("\n=== Issue #3098: production multi-worker Ready refuses Soft ===");
+            using aura::serve::aura_runtime_require_production_multi_worker;
+            using aura::serve::g_production_abi_selfcheck_last_fail_bits;
+            using aura::serve::kProductionAbiSelfcheckFailBitDefaults;
+
+            // AC1 source-cite: bit 4 reserved for #3098 defaults missing.
+            CHECK(kProductionAbiSelfcheckFailBitDefaults == (1ull << 4),
+                  "3098 AC1: bit 4 reserved for defaults missing");
+
+            // AC2: production_defaults=1 + sandbox unset + strong markers →
+            // multi_worker returns true + ok_total +1 + last_fail_bits = 0.
+            {
+                std::println("\n--- #3098 AC2: production multi-worker ok path ---");
+                clear_production_abi_selfcheck_for_test();
+                unsetenv("AURA_SANDBOX");
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                    .store(1, std::memory_order_relaxed);
+                const auto ok0 =
+                    g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed);
+                const auto fail0 =
+                    g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed);
+                CHECK(aura_runtime_require_production_multi_worker(),
+                      "3098 AC2: production + ABI ok → multi_worker returns true");
+                CHECK(g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed) ==
+                          ok0 + 1,
+                      "3098 AC2: ok_total +1");
+                CHECK(g_production_abi_selfcheck_fail_total.load(std::memory_order_relaxed) ==
+                          fail0,
+                      "3098 AC2: fail_total unchanged (no abort)");
+                CHECK(g_production_abi_selfcheck_last_fail_bits.load(std::memory_order_relaxed) == 0,
+                      "3098 AC2: last_fail_bits cleared to 0 on success");
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+                    .store(0, std::memory_order_relaxed);
+                clear_production_abi_selfcheck_for_test();
+            }
+
+            // AC4 source-cite: existing counters reused + bit 4 + new function in main.cpp.
+            {
+                std::println("\n--- #3098 AC4 source-cite ---");
+                const auto main_c = read_file("src/main.cpp");
+                const auto hh = read_file("src/serve/runtime_production_abi.h");
+                const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
+                CHECK(cpp.find("aura_runtime_require_production_multi_worker") !=
+                          std::string::npos,
+                  "3098 AC4: cpp defines multi_worker");
+                CHECK(cpp.find("kProductionAbiSelfcheckFailBitDefaults") !=
+                          std::string::npos,
+                  "3098 AC4: cpp uses bit 4 for defaults missing");
+                CHECK(cpp.find("multi-worker Ready self-check failed (#3098") !=
+                          std::string::npos,
+                  "3098 AC4: cpp FATAL message cites #3098");
+                CHECK(hh.find("aura_runtime_require_production_multi_worker") !=
+                          std::string::npos,
+                  "3098 AC4: hh declares multi_worker");
+                CHECK(hh.find("kProductionAbiSelfcheckFailBitDefaults") !=
+                          std::string::npos,
+                  "3098 AC4: hh defines bit 4 constant");
+                CHECK(main_c.find("aura_runtime_require_production_multi_worker_c") !=
+                          std::string::npos,
+                  "3098 AC4: main.cpp wires multi-worker Ready check after ABI check");
+                // Order: single-worker ABI check → multi-worker Ready check
+                const auto single_pos = main_c.find("aura_runtime_require_production_abi_c");
+                const auto multi_pos =
+                    main_c.find("aura_runtime_require_production_multi_worker_c");
+                CHECK(single_pos != std::string::npos && multi_pos != std::string::npos &&
+                          single_pos < multi_pos,
+                      "3098 AC4: single-worker ABI check before multi-worker Ready check");
+            }
+
+            // AC5 source-cite: C-linkage accessor present (issue body #2955 lineage).
+            {
+                std::println("\n--- #3098 AC5 source-cite ---");
+                const auto hh = read_file("src/serve/runtime_production_abi.h");
+                CHECK(hh.find("aura_runtime_require_production_multi_worker_c") !=
+                          std::string::npos,
+                  "3098 AC5: C-linkage accessor declared");
+                CHECK(read_file("tests/serve/test_issue_3098.cpp").empty(),
+                      "3098 AC5: no invent test file (extend #81967 lineage)");
+            }
+        }
     }
 
-    std::println("\n=== #2377 + #2955 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2377 + #2955 + #3098 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

@@ -378,6 +378,15 @@ int main(int argc, char* argv[]) {
     // with missing strong hooks → abort (never multi-worker with weak no-ops).
     aura_runtime_require_production_abi_c();
 
+    // Issue #3098: production multi-worker Ready must refuse Soft fall-through.
+    // AND-s strong ABI + production_defaults_active. Closes the residual
+    // configuration hole where multi-worker processes were silently
+    // falling through to Soft residual arms under sandbox=off or
+    // !production_defaults_active. Single-worker / Soft unit / light-link
+    // callers use the single-worker variant above (returns true under
+    // Soft without abort).
+    aura_runtime_require_production_multi_worker_c();
+
     // ── Crash handler: print backtrace on fatal signal ────────────
     // ── Crash handler: print backtrace on fatal signal ────────────
     // CI's --emit-binary path has been hitting 2 segfaults that don't

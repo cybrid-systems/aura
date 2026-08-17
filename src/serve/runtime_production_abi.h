@@ -27,6 +27,10 @@ inline std::atomic<std::uint64_t> g_production_abi_selfcheck_fail_total{0};
 inline std::atomic<std::uint32_t> g_production_abi_selfcheck_wired{1};
 // Bit mask of last fail (bit0 steal-complete, bit1 eval-id, bit2 held, bit3 depth).
 inline std::atomic<std::uint64_t> g_production_abi_selfcheck_last_fail_bits{0};
+// Issue #3098: bit 4 set when multi-worker Ready runs under Soft /
+// sandbox=off / !production_defaults_active. Reuses the existing
+// last_fail_bits bit-mask surface (no new subsystem).
+inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitDefaults = 1ull << 4;
 
 [[nodiscard]] inline std::uint64_t production_abi_selfcheck_ok_total_v_read() noexcept {
     return g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed);
@@ -53,6 +57,17 @@ inline std::atomic<std::uint64_t> g_production_abi_selfcheck_last_fail_bits{0};
 // Idempotent for ok path (may be called from main + scheduler init).
 bool aura_runtime_require_production_abi() noexcept;
 
+// Issue #3098: production multi-worker Ready must refuse Soft fall-through.
+// AND-s strong ABI + production_defaults_active. Unlike the single-
+// worker variant above, multi-worker NEVER returns true without abort
+// when Soft (sandbox=off) / !production_defaults_active / any strong
+// marker missing. Reuses the existing last_fail_bits bit-mask (bits
+// 0-3 = ABI markers, bit 4 = defaults missing). When all good: returns
+// true + bumps ok_total. Caller is responsible for ensuring this is
+// only invoked when multi-worker / Agent denseness is requested (not
+// single-worker tests / light-link).
+bool aura_runtime_require_production_multi_worker() noexcept;
+
 // Test reset (unit isolation).
 inline void clear_production_abi_selfcheck_for_test() noexcept {
     g_production_abi_selfcheck_ok_total.store(0, std::memory_order_relaxed);
@@ -71,3 +86,5 @@ extern "C" int aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept;
 
 // C ABI entry for hosts that cannot attach aura::serve.
 extern "C" int aura_runtime_require_production_abi_c(void) noexcept;
+// Issue #3098: C-linkage accessor for multi-worker Ready self-check.
+extern "C" int aura_runtime_require_production_multi_worker_c(void) noexcept;

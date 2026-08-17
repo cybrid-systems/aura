@@ -64,8 +64,64 @@ bool aura_runtime_require_production_abi() noexcept {
     return true;
 }
 
+// Issue #3098: production multi-worker Ready self-check. AND-s strong
+// ABI markers + production_defaults_active. Unlike the single-worker
+// variant above, this function NEVER returns true without abort when
+// Soft (sandbox=off) / !production_defaults_active / any strong marker
+// missing. Closes the residual configuration hole where multi-worker
+// processes were silently falling through to Soft residual arms
+// (steal after densify miss, hold after cancel, query:*-stable pre-mutate
+// gen) when sandbox=off or production_defaults_active was false.
+//
+// Single-worker / Soft unit / light-link callers should use the
+// single-worker variant (aura_runtime_require_production_abi) which
+// returns true under Soft without abort.
+bool aura_runtime_require_production_multi_worker() noexcept {
+    std::uint64_t fail_bits = 0;
+
+    // Issue #3098 AC1: multi-worker refuses Soft fall-through.
+    // sandbox=off OR !production_defaults_active → bit 4 + abort.
+    if (sandbox_is_off()) {
+        fail_bits |= kProductionAbiSelfcheckFailBitDefaults;
+    }
+    if (aura_production_defaults_active_probe() == 0) {
+        fail_bits |= kProductionAbiSelfcheckFailBitDefaults;
+    }
+
+    // Issue #2955: existing ABI marker checks (bits 0-3).
+    if (aura_abi_strong_steal_complete_v() == 0)
+        fail_bits |= 1ull << 0;
+    if (aura_abi_strong_fiber_eval_id_v() == 0)
+        fail_bits |= 1ull << 1;
+    if (aura_abi_strong_mutation_held_v() == 0)
+        fail_bits |= 1ull << 2;
+    if (aura_abi_strong_mutation_depth_from_ptr_v() == 0)
+        fail_bits |= 1ull << 3;
+
+    if (fail_bits != 0) {
+        g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
+        g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
+        std::fprintf(stderr,
+                     "FATAL: production multi-worker Ready self-check failed (#3098 + #2955) "
+                     "fail_bits=0x%llx — multi-worker requires strong ABI + "
+                     "production_defaults_active. Soft (AURA_SANDBOX=off) / "
+                     "!production_defaults_active under multi-worker is refused.\n",
+                     static_cast<unsigned long long>(fail_bits));
+        std::fflush(stderr);
+        std::abort();
+    }
+
+    g_production_abi_selfcheck_ok_total.fetch_add(1, std::memory_order_relaxed);
+    g_production_abi_selfcheck_last_fail_bits.store(0, std::memory_order_relaxed);
+    return true;
+}
+
 } // namespace aura::serve
 
 extern "C" int aura_runtime_require_production_abi_c(void) noexcept {
     return aura::serve::aura_runtime_require_production_abi() ? 1 : 0;
+}
+// Issue #3098: C-linkage accessor for multi-worker Ready self-check.
+extern "C" int aura_runtime_require_production_multi_worker_c(void) noexcept {
+    return aura::serve::aura_runtime_require_production_multi_worker() ? 1 : 0;
 }
