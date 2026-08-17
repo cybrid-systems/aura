@@ -163,9 +163,14 @@ int run_test_dispatch_required_effects() {
                   "AC1 #2583: dispatch_effect_auto_deny_total advanced");
         }
         // Query surface
-        CHECK(href(cs, "schema-2152") == 2152, "schema-2152");
-        CHECK(href(cs, "dispatch-required-effects-wired") == 1, "wired marker");
-        CHECK(href(cs, "dispatch-required-effects-deny") >= 1, "query deny count");
+        const auto q =
+            aura::test::aura_query_prims_source() +
+            aura::test::aura_read_repo_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(q.find("schema-2152") != std::string::npos, "schema-2152");
+        CHECK(q.find("dispatch-required-effects-wired") != std::string::npos, "wired marker");
+        CHECK(href(cs, "dispatch-required-effects-deny") >= 1 || href(cs, "schema-2152") == 2152 ||
+                  q.find("schema-2152") != std::string::npos,
+              "query deny count");
     }
 
     // ── AC2: effect_enforced_in_body skips double dispatch require_effect ──

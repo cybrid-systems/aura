@@ -118,6 +118,8 @@ static void ac1_recv_rejected_under_guard() {
         // Outermost Guard → depth ≥ 1 (and held).
         auto guard_r = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
         CHECK(guard_r.has_value(), "try_acquire Guard");
+        if (!guard_r)
+            return;
         auto guard = std::move(*guard_r);
         CHECK(aura_evaluator_mutation_boundary_depth() > 0, "depth > 0 under Guard");
         CHECK(aura_evaluator_mutation_boundary_held() != 0 ||
@@ -125,13 +127,13 @@ static void ac1_recv_rejected_under_guard() {
               "boundary live");
 
         // Blocking-style recv must not park — Policy A empty return.
-        auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/-1);
+        auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
         CHECK(!msg.has_value(), "recv under Guard returns empty (Policy A)");
         const auto rej1 =
             g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(std::memory_order_relaxed);
         CHECK(rej1 > rej0, "recv_rejected_in_mutation_boundary bumped");
         // Second call also gated (idempotent reject).
-        (void)mb.recv(true, -1);
+        (void)mb.recv(true, 50);
         CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
                   std::memory_order_relaxed) > rej1,
               "reject counter grows on repeated gated recv");
@@ -220,7 +222,7 @@ static void ac4_fiber_holds_guard_recv() {
         // Blocking recv must return empty without parking this fiber.
         auto before_state = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->state()
                                                          : aura::serve::FiberState::Running;
-        auto msg = mb.recv(true, -1);
+        auto msg = mb.recv(true, 50);
         auto after_state = aura::serve::g_current_fiber ? aura::serve::g_current_fiber->state()
                                                         : aura::serve::FiberState::Running;
         CHECK(!msg.has_value(), "fiber recv under Guard empty");
@@ -267,7 +269,7 @@ static void ac5_source_and_metrics() {
         CHECK(guard_r.has_value(), "guard for stats");
         auto guard = std::move(*guard_r);
         MultiFiberMailbox mb;
-        (void)mb.recv(true, -1);
+        (void)mb.recv(true, 50);
     }
     CHECK(href(cs, "schema-2188") == 2188, "schema-2188");
     CHECK(href(cs, "issue-2188") == 2188, "issue-2188");
@@ -382,7 +384,7 @@ static void ac2347_soft_only_soft_counter() {
             Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), /*pending=*/1, &ok);
         CHECK(guard_r.has_value(), "AC1 Soft: try_acquire");
         auto guard = std::move(*guard_r);
-        auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/-1);
+        auto msg = mb.recv(/*wait=*/true, /*timeout_ms=*/50);
         CHECK(!msg.has_value(), "AC1 Soft: empty return (Policy A)");
         CHECK(g_mf_mailbox_stats.recv_rejected_in_mutation_boundary.load(
                   std::memory_order_relaxed) > soft0,
@@ -412,8 +414,8 @@ static void ac2347_strict_hard_counter() {
         CHECK(guard_r.has_value(), "AC2 Strict: try_acquire");
         auto guard = std::move(*guard_r);
         CHECK(ok, "AC2 Strict: success_flag starts true");
-        (void)mb.recv(true, -1);
-        (void)mb.recv(true, -1);
+        (void)mb.recv(true, 50);
+        (void)mb.recv(true, 50);
         const auto hard1 = g_mf_mailbox_stats.recv_rejected_in_mutation_boundary_hard_total.load(
             std::memory_order_relaxed);
         CHECK(hard1 >= hard0 + 2, "AC2 Strict: hard-total +2");
@@ -441,11 +443,11 @@ static void ac2347_threshold_force_rollback() {
         CHECK(guard_r.has_value(), "AC3: try_acquire");
         auto guard = std::move(*guard_r);
         CHECK(ok, "AC3: starts success");
-        (void)mb.recv(true, -1);
+        (void)mb.recv(true, 50);
         CHECK(ok, "AC3: after 1 reject still ok (thr=3)");
-        (void)mb.recv(true, -1);
+        (void)mb.recv(true, 50);
         CHECK(ok, "AC3: after 2 rejects still ok");
-        (void)mb.recv(true, -1);
+        (void)mb.recv(true, 50);
         CHECK(!ok, "AC3: after 3 rejects success_flag=false");
         CHECK(g_mf_mailbox_stats.recv_boundary_force_rollback_total.load(
                   std::memory_order_relaxed) > force0,

@@ -94,7 +94,7 @@ int run_test_qq_unwrap_targeted_restamp() {
         // Unwrap path must call restamp_after_qq_unwrap, not restamp_all.
         auto eim = me.find("aura::ast::NodeId expand_inner_macros");
         CHECK(eim != std::string::npos, "AC1: expand_inner_macros present");
-        auto eim_win = me.substr(eim, 1800);
+        auto eim_win = me.substr(eim, 4200);
         CHECK(eim_win.find("restamp_after_qq_unwrap") != std::string::npos,
               "AC1: expand_inner_macros uses restamp_after_qq_unwrap");
         CHECK(eim_win.find("->restamp_all_node_generations") == std::string::npos &&

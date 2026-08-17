@@ -33,14 +33,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 241 | 241 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 243 | 243 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 52 | 52 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 82 | 82 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 134 | 134 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 60 | 60 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -1142,13 +1142,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (241)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (243)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (241)
+#### domain/ (243)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1197,6 +1197,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_reject_production_defaults.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults + incomplete chain → no CoercionNode;
 - `tests/compiler/test_coercion_stamp_at_add.cpp` (—) [domain_suite, theme_compiler] — AC1: active mid set → entry mid non-zero before apply; fast_path advances
 - `tests/compiler/test_coercion_unify_incomplete_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → applied==0, no CoercionNode
+- `tests/compiler/test_command_line_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_commercial_tenant_profile.cpp` (—) [domain_suite, theme_compiler] — AC1: No AURA_COMMERCIAL_TENANT — Restricted default soft (#2536 regression)
 - `tests/compiler/test_compiler_closure_env_safety_post_invalidate.cpp` (—) [domain_suite, theme_compiler] — test_compiler_closure_env_safety_post_invalidate.cpp —
 - `tests/compiler/test_composite_auto_partial_from_cone.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Production + cone dirty + empty CS + !txn_dirty → hard reject;
@@ -1263,6 +1264,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_ownership_postmutate_guard_steal_envframe.cpp` (—) [domain_suite, theme_compiler] — test_linear_ownership_postmutate_guard_steal_envframe.cpp — Issue #800:
 - `tests/compiler/test_linear_provenance_steal_gc_closed_loop.cpp` (—) [domain_suite, theme_compiler] — consistency closed-loop (shared validate_linear_provenance).
 - `tests/compiler/test_linear_synth_boundary_authority.cpp` (—) [domain_suite, theme_compiler] — AC1: Production synth hard-fail → boundary/hard-gate force-rollback;
+- `tests/compiler/test_load_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/core/test_lock_hierarchy.cpp` (—) [domain_suite, theme_core] — the lock-hierarchy contract documented in Issue #1388.
 - `tests/core/test_macro_dirty_bits_lock.cpp` (—) [domain_suite, theme_core] — AC1: concurrent apply_macro_dirty_bits(same_id, same_reasons) → +1 metric
 - `tests/compiler/test_macro_intro_restamp.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_macro_restamp_after_flat.cpp (which covers
@@ -1891,13 +1893,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (60)
+### `uncategorized` — Uncategorized / mixed (58)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (60)
+#### domain/ (58)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1906,7 +1908,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_cascade_impact_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_cascade_impact_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_channel_rendezvous.cpp` (—) [domain_suite, theme_compiler] — AC1: rendezvous send blocks until concurrent recv
 - `tests/compiler/test_closure_free.cpp` (—) [domain_suite, theme_compiler] — test_closure_free.cpp — Issue #1361: aura_free_closure + ID reuse
-- `tests/compiler/test_command_line_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_compile02_no_dup_imports.cpp` (—) [domain_suite, theme_compiler] — Issue #1857 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_composite_commit_cs_reuse.cpp` (—) [domain_suite, theme_compiler] — AC1: inject type conflict into commit CS → solve_fail + reject
 - `tests/compiler/test_core_builtins_review.cpp` (—) [domain_suite, theme_compiler] — test_core_builtins_review.cpp — Issue #564:
@@ -1923,7 +1924,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_json_parse_number_exception.cpp` (—) [domain_suite, theme_compiler] — AC1: oversized integer → error (not crash)
 - `tests/compiler/test_json_parse_object_grow.cpp` (—) [domain_suite, theme_compiler] — AC1: 8-key object retains all keys
 - `tests/compiler/test_list_end_of_list_void.cpp` (—) [domain_suite, theme_compiler] — AC1: (null? 0) → false; (null? (list)) → true
-- `tests/compiler/test_load_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_lock_order_audit_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_lock_order_audit_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_module_export_display.cpp` (—) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
 - `tests/compiler/test_module_load_tail_export.cpp` (—) [domain_suite, theme_compiler] — AC1: tail defines always export after require

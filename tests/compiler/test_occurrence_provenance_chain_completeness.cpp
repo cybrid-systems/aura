@@ -71,7 +71,7 @@ static void ac1_source() {
     std::println("\n--- AC1: source cites #2024 ---");
     auto cm = read_file("src/compiler/coercion_map.ixx");
     auto tc = read_file("src/compiler/type_checker.ixx");
-    auto q = read_file("src/compiler/evaluator_primitives_query.cpp");
+    auto q = aura::test::aura_query_prims_source();
     CHECK(!cm.empty(), "coercion_map.ixx readable");
     CHECK(cm.find("Issue #2024") != std::string::npos, "coercion_map cites #2024");
     CHECK(cm.find("fill_coercion_provenance_chain") != std::string::npos, "fill helper");

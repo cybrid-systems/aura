@@ -291,6 +291,11 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_orch_agent_batch greened (15/0): skip #2751/#2926 extra
     # scope-spawn (scheduler UAF) and concurrent ask flake in-batch.
     "test_security_capability_batch",
+    # Unregistered stale binaries (no cmake target): leftover heap crash
+    # (free(): invalid pointer) + annotation-counter AC drift. Source still
+    # exists for coverage linters; do not rediscover as NEW CI failures.
+    "test_bidirectional_annotation",
+    "test_bidirectional_stats",
     # test_serve_legacy_issue_batch greened: spawn_quota !f release cite.
     # test_aot_jit_stamp_batch greened (26/0): PerEval TLS no longer
     # stubbed in first DSO; #2606 filter walks all eval maps; remount

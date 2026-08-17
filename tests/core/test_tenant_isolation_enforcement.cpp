@@ -114,6 +114,17 @@ void reset_all() {
     aura::core::provenance::set_isolation_capture_tenant(0);
 }
 
+// #3090: Restricted/Strict refuse grants when prov.mutation_id==0.
+// Stamp a bound mid so TenantAdmin actually lands in the registry.
+void grant_tenant_admin_mid(std::uint64_t tenant, std::uint64_t mid = 1) {
+    using aura::core::capability::Effect;
+    using aura::core::capability::g_capability_registry;
+    using aura::core::capability::make_grant_provenance;
+    auto prov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
+    g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin, prov);
+    g_capability_registry().default_tenant.store(tenant, std::memory_order_relaxed);
+}
+
 } // namespace
 
 int main() {
@@ -390,6 +401,9 @@ int main() {
         std::println("\n--- #2659 AC3: cross-tenant grant table ---");
         reset_all();
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // #3090: Restricted refuse mid==0; #3086: grant_cross_tenant
+        // requires TenantAdmin on caller/target.
+        grant_tenant_admin_mid(7);
         // Issue grant 7 → 42 globally (shared policy).
         g_workspace_isolation().grant_cross_tenant(7, 42, kEffectMutate);
         CompilerService cs;
@@ -1110,7 +1124,9 @@ int main() {
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(1); // Restricted
         ev.set_capability_tenant_id(7);
-        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        // #3090: grant_capability() stamps mid=0 → refused under Restricted.
+        // Registry TenantAdmin with bound mid so SSOT grant_cross_tenant allows.
+        grant_tenant_admin_mid(7);
 
         const auto allow_before =
             aura::core::workspace_isolation::g_tenant_isolation_metrics()
@@ -1148,7 +1164,7 @@ int main() {
         CHECK(aura::core::capability::g_capability_registry().find_grant(7, "mut-2968-self", g),
               "AC2b: same-tenant self-grant stays allowed");
         // With TenantAdmin → foreign grant allowed.
-        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        grant_tenant_admin_mid(ev.capability_tenant_id());
         ev.grant_effect_capability(/*tenant=*/42, "mut-2968-admin", kEffectMutate, /*mid=*/7);
         CHECK(aura::core::capability::g_capability_registry().find_grant(42, "mut-2968-admin", g),
               "AC2b: foreign grant allowed with TenantAdmin");
@@ -1284,10 +1300,7 @@ int main() {
         aura::core::capability::g_capability_registry().default_tenant.store(
             7, std::memory_order_release);
         // Grant TenantAdmin to the *target* tenant (42), not caller (7).
-        aura::core::capability::g_capability_registry().grant(
-            /*tenant=*/42, std::string_view("tenant-admin"),
-            ::aura::core::capability::Effect::TenantAdmin,
-            ::aura::core::capability::EffectProvenance{});
+        grant_tenant_admin_mid(42);
         const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                      .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
         const auto allow_before =
@@ -1409,7 +1422,7 @@ int main() {
         CHECK(found, "AC1: SE reason 'grant-foreign-tenant-needs-tenant-admin' recorded");
 
         // AC1: session foreign grant denied without TenantAdmin.
-        ev.grant_effect_session(/*tenant=*/42, "ses-2969-foreign", kEffectWrite, /*mid=*/0);
+        ev.grant_effect_session(/*tenant=*/42, "ses-2969-foreign", kEffectWrite, /*mid=*/1);
         CHECK(
             !aura::core::capability::g_capability_registry().find_grant(42, "ses-2969-foreign", g),
             "AC1: no session foreign grant written on deny");
@@ -1417,7 +1430,7 @@ int main() {
         // AC1: revoke foreign denied without TenantAdmin — seed a foreign
         // grant through the admin path, then a second (non-admin) Evaluator
         // attempts the cross-tenant revoke (two-Evaluator verification).
-        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        grant_tenant_admin_mid(ev.capability_tenant_id());
         ev.grant_effect_capability(/*tenant=*/42, "mut-2969-seed", kEffectWrite, /*mid=*/1);
         CHECK(aura::core::capability::g_capability_registry().find_grant(42, "mut-2969-seed", g),
               "AC1: admin path seeds foreign grant (audited)");
@@ -1459,11 +1472,11 @@ int main() {
         const auto deny_before =
             aura::core::capability::g_capability_effect_metrics()
                 .capability_grant_foreign_tenant_deny_total.load(std::memory_order_relaxed);
-        ev.grant_effect_durable(/*tenant=*/7, "dur-2969-self", kEffectWrite, /*mid=*/0,
+        ev.grant_effect_durable(/*tenant=*/7, "dur-2969-self", kEffectWrite, /*mid=*/1,
                                 /*reason=*/"r");
         CHECK(aura::core::capability::g_capability_registry().find_grant(7, "dur-2969-self", g),
               "AC2: same-tenant durable grant stays allowed");
-        ev.grant_effect_session(/*tenant=*/7, "ses-2969-self", kEffectWrite, /*mid=*/0);
+        ev.grant_effect_session(/*tenant=*/7, "ses-2969-self", kEffectWrite, /*mid=*/1);
         CHECK(aura::core::capability::g_capability_registry().find_grant(7, "ses-2969-self", g),
               "AC2: same-tenant session grant stays allowed");
         ev.revoke_effect_capability(/*tenant=*/7, "dur-2969-self");
@@ -1514,14 +1527,14 @@ int main() {
             aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
                 std::memory_order_relaxed);
         CHECK(grants_deny == grants_before, "AC4: deny does not bump capability_grant_total");
-        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        grant_tenant_admin_mid(ev.capability_tenant_id());
         // grant_capability mirrors into the registry (bumps grant_total once
         // for the tenant-admin grant itself) — snapshot AFTER it so the +1
         // assertion isolates the durable allow path.
         const auto grants_admin_granted =
             aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
                 std::memory_order_relaxed);
-        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-admin", kEffectWrite, /*mid=*/0,
+        ev.grant_effect_durable(/*tenant=*/42, "dur-2969-admin", kEffectWrite, /*mid=*/1,
                                 /*reason=*/"r"); // allow (admin)
         const auto grants_allow =
             aura::core::capability::g_capability_effect_metrics().capability_grant_total.load(
@@ -1632,7 +1645,8 @@ int main() {
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(1);
         ev.set_capability_tenant_id(7);
-        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        grant_tenant_admin_mid(ev.capability_tenant_id());
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin); // local list
 
         const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                      .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
@@ -1655,6 +1669,11 @@ int main() {
             auto& ev2 = cs2.evaluator();
             ev2.set_effect_sandbox_mode(1);
             ev2.set_capability_tenant_id(9);
+            // SSOT grant_cross_tenant reads registry default_tenant, not
+            // Evaluator principal. Point it at the non-admin tenant so
+            // #2968 still denies (grant_tenant_admin_mid left default=7).
+            aura::core::capability::g_capability_registry().default_tenant.store(
+                9, std::memory_order_release);
             ev2.grant_cross_tenant_access(9, 42, kEffectMutate);
             CHECK(g_workspace_isolation().cross_grant_bits(9, 42) == 0,
                   "AC2: #2968 grant-write still requires TenantAdmin");
