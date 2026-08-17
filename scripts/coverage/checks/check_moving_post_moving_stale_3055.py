@@ -76,6 +76,31 @@ def main() -> int:
     if _read("tests/core/test_issue_3055.cpp"):
         fails.append("AC6: test_issue_3055.cpp present")
 
+    # ── Issue #3092: production canary wiring (extends #3055) ──
+    # #3055 landed the canary API + gate; #3092 wires production slots so
+    # the gate is no longer blind. Additive to the same #3055 linter (no
+    # second script per #81967).
+    arena_3092 = arena
+    mut_3092 = _read("src/compiler/evaluator_mutation_boundary.cpp")
+    must(
+        "note_post_moving_live_ptr_canary_all(*slot)",
+        "#3092 AC1: Evaluator::register_known_moving_densify_root_slots wiring",
+        mut_3092,
+    )
+    must("void note_post_moving_live_ptr_canary_all(void* p)", "#3092 AC2: ASTArenaGroup helper present", arena_3092)
+    must("Issue #3092", "#3092 AC3: helper cites #3092 lineage", arena_3092)
+    must("Issue #3092", "#3092 AC4: Evaluator wiring cites #3092 lineage", mut_3092)
+    if (
+        "g_moving_pin_registry_3092" in mut_3092
+        or "class MovingCanaryRegistry" in mut_3092
+        or "PostMovingPinRegistry" in mut_3092
+    ):
+        fails.append("#3092 AC5: new pin/canary registry introduced (forbidden)")
+    if _read("docs/design/3092-canary-wiring.md"):
+        fails.append("#3092 AC6: docs/design/3092-* present (forbidden per #1655)")
+    if _read("tests/core/test_issue_3092.cpp"):
+        fails.append("#3092 AC7: test_issue_3092.cpp present (forbidden per #81934)")
+
     if fails:
         print(f"Issue #3055 linter FAILED ({len(fails)} rows):")
         for f in fails:

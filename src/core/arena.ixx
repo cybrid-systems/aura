@@ -2767,6 +2767,21 @@ public:
         }
     }
 
+    // Issue #3092: parallel to register_external_root_slot_for_densify_all —
+    // observe-only post-Moving live-ptr canary injection (#3055 gate) for
+    // production slots that already walk via the slot-rewrite path above.
+    // Observe-only (no rewrite, not cover #3017); quiet path (no slots /
+    // Soft / no densify) early-returns on null + zero extra atomics.
+    void note_post_moving_live_ptr_canary_all(void* p) noexcept {
+        if (!p)
+            return;
+        std::shared_lock<std::shared_mutex> lock(arenas_mtx_);
+        for (auto& [_, arena] : arenas_) {
+            if (arena)
+                arena->note_post_moving_live_ptr_canary(p);
+        }
+    }
+
     // Issue #187 (P0): compact a specific module's arena. Returns
     // bytes reclaimed, or 0 if the module isn't found.
     [[nodiscard]] std::size_t compact_module(const std::string& name) {
