@@ -1457,6 +1457,48 @@ static void ac3076_4_schema_and_linter() {
     CHECK(href_stable(cs, "soft-observe-not-hard-guarantee") == 1 || s < 0, "AC4: Soft tag live");
 }
 
+// Issue #3095: post-restore macro hygiene invariant enforcement
+// (refine #2959 / #3033 / #2099). Verify the 3 new counters surface
+// via the existing query:hygiene-checkpoint-stats primitive (no new
+// query key namespace). Lineage bumped to schema=3095 (old #2099
+// readers still see the existing keys). Smoke test that the helper
+// returns 0 on a healthy flat (zero-cost contract on the happy path).
+static void ac3095_1_post_restore_invariant_keys() {
+    std::println("\n--- #3095 AC1: post-restore macro hygiene invariant keys ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto v = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
+                                 "\"post_abort_invariant_violations_total\")"));
+    CHECK(v && is_int(*v) && as_int(*v) >= 0,
+          "AC1: post_abort_invariant_violations_total surfaces");
+    auto h = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
+                                 "\"post_abort_invariant_hard_fail_total\")"));
+    CHECK(h && is_int(*h) && as_int(*h) >= 0, "AC1: post_abort_invariant_hard_fail_total surfaces");
+    auto s = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
+                                 "\"post_abort_invariant_soft_observed_total\")"));
+    CHECK(s && is_int(*s) && as_int(*s) >= 0,
+          "AC1: post_abort_invariant_soft_observed_total surfaces");
+    auto k = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
+                                 "\"post-abort-invariant-violations-total\")"));
+    CHECK(k && is_int(*k), "AC1: kebab-case alias present");
+    auto schema = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") \"schema\")"));
+    CHECK(schema && is_int(*schema), "AC1: schema key present");
+    CHECK(as_int(*schema) == 3095 || as_int(*schema) == 2099,
+          "AC1: schema is #3095 (new) or #2099 (legacy)");
+    // AC4 zero-cost contract on healthy flat.
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "AC4: workspace_flat wired");
+    if (flat) {
+        const auto validate = flat->validate_macro_hygiene_invariants();
+        CHECK(validate == 0, "AC4: healthy flat validate == 0");
+        const auto helper_ret =
+            cs.evaluator().check_macro_hygiene_invariant_post_restore("ac3095-test");
+        CHECK(helper_ret == 0, "AC4: helper returns 0 on healthy flat");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -1519,6 +1561,8 @@ int main() {
     ac3076_1_production_soft_observe_stays_zero();
     ac3076_2_soft_observe_only();
     ac3076_4_schema_and_linter();
+    std::println("\n=== Issue #3095: post-restore macro hygiene invariant enforcement ===");
+    ac3095_1_post_restore_invariant_keys();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -931,8 +931,34 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                       static_cast<std::int64_t>(ev->hygiene_checkpoint_pending_count()));
             insert_kv("pending-count",
                       static_cast<std::int64_t>(ev->hygiene_checkpoint_pending_count()));
-            insert_kv("schema", 2099);
-            insert_kv("issue", 2099);
+            // Issue #3095: post-restore macro hygiene invariant counters
+            // (refine #2959 / #3033 / #2099). Surfaced on the existing
+            // hygiene-checkpoint-stats query key — no new query namespace.
+            // Three orthogonal counters so production breach rate is a
+            // clean ratio (hard_fail / violations) without needing to
+            // know the global mode at read time. Snake + kebab duplicates
+            // match the #2099 contract (existing readers + future callers).
+            insert_kv("post_abort_invariant_violations_total",
+                      static_cast<std::int64_t>(
+                          ev->get_macro_hygiene_invariant_post_abort_violations_total()));
+            insert_kv("post-abort-invariant-violations-total",
+                      static_cast<std::int64_t>(
+                          ev->get_macro_hygiene_invariant_post_abort_violations_total()));
+            insert_kv("post_abort_invariant_hard_fail_total",
+                      static_cast<std::int64_t>(
+                          ev->get_macro_hygiene_invariant_post_abort_hard_fail_total()));
+            insert_kv("post-abort-invariant-hard-fail-total",
+                      static_cast<std::int64_t>(
+                          ev->get_macro_hygiene_invariant_post_abort_hard_fail_total()));
+            insert_kv("post_abort_invariant_soft_observed_total",
+                      static_cast<std::int64_t>(
+                          ev->get_macro_hygiene_invariant_post_abort_soft_observed_total()));
+            insert_kv("post-abort-invariant-soft-observed-total",
+                      static_cast<std::int64_t>(
+                          ev->get_macro_hygiene_invariant_post_abort_soft_observed_total()));
+            insert_kv("schema", 3095);
+            insert_kv("issue", 3095);
+            insert_kv("lineage-3095", 3095);
             insert_kv("active", 1);
             insert_kv("lineage-1893", 1893);
             insert_kv("nested-under-mutation-boundary", 1);

@@ -3134,6 +3134,30 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> atomic_batch_metadata_captured_total{0};
     std::atomic<std::uint64_t> macro_refresh_invoke_total{0};
     std::atomic<std::uint64_t> macro_provenance_probe_total{0};
+    // Issue #3095: post-restore macro hygiene invariant enforcement
+    // (refine #2959 / #3033 / #2099). After every successful
+    // abort_restore_dual_topology (and after any paired
+    // restore_metadata_columns) on the production surface, the
+    // MutationBoundaryGuard calls validate_macro_hygiene_invariants()
+    // to assert that MacroIntroduced markers / provenance / macro_dirty_
+    // stay consistent with the restored children_ / parent_ topology and
+    // the flat generation. Densify / steal paths that touch live
+    // MacroIntroduced re-run the same invariant under the existing
+    // restamp hooks.
+    //   - post_abort_violations_total: every time validate returns > 0,
+    //     regardless of mode (Agent canary for residual marker /
+    //     topology mismatch).
+    //   - post_abort_hard_fail_total: subset under production
+    //     (Restricted / Strict). Soft / Off is metric-only — zero-cost
+    //     contract preserved (no hard-fail, no abort).
+    //   - post_abort_soft_observed_total: subset under Soft / Off.
+    //     Separate from hard_fail so dashboards can compute
+    //     production_breach_rate = hard_fail / violations.
+    // Three counters (not two) so the production breach rate is a clean
+    // ratio without needing to know the global mode at read time.
+    std::atomic<std::uint64_t> macro_hygiene_invariant_post_abort_violations_total{0};    // #3095
+    std::atomic<std::uint64_t> macro_hygiene_invariant_post_abort_hard_fail_total{0};     // #3095
+    std::atomic<std::uint64_t> macro_hygiene_invariant_post_abort_soft_observed_total{0}; // #3095
     // Issue #2527: mutate:query-and-replace-batch sugar primitive metrics.
     // Additive on existing mutation-stats surface; source-cited in the
     // primitive body (`evaluator_primitives_mutate.cpp`) + the
