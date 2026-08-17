@@ -677,6 +677,32 @@ static void ac2936_4_obs_schema() {
           "AC4: residual cascades key preserved");
 }
 
+// ── #3105 AC1: hard-fail wiring armed (std::abort path + observability counter) ──
+static void ac3105_hard_fail_armed() {
+    std::println("\n--- #3105 AC1: hard-fail wiring armed ---");
+    // Issue stamp + sentinel.
+    CHECK(kIrSoaBatchOnlyHardAbortIssue == 3105, "AC1: issue stamp = 3105");
+    CHECK(ir_dirty_batch_only_production_smoke_wired() == 1,
+          "AC1: production smoke wired sentinel set");
+    // Counter accessible + initial state observable.
+    const auto initial_aborts =
+        g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed);
+    CHECK(initial_aborts >= 0, "AC1: hard-abort counter accessible");
+    // Env var: unset → false (Soft path).
+    unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    CHECK(ir_dirty_batch_only_hard() == false, "AC1: unset env → hard=false (Soft)");
+    // Env var: "1" → true (hard-abort path armed for production).
+    setenv("AURA_IR_DIRTY_BATCH_ONLY", "1", 1);
+    CHECK(ir_dirty_batch_only_hard() == true, "AC1: env=1 → hard=true (hard-abort armed)");
+    // Cleanup: unset so subsequent tests stay Soft unless they opt-in.
+    unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    // Note: the actual std::abort() path can't be directly tested (would kill
+    // the test). The linter check_batch_dirty_production_multi_only_2936.py
+    // enforces the hard-abort path is armed at source-cite level.
+    std::println("AC1: hard-fail wiring OK (std::abort path enforced by linter)");
+}
+
+// ── #2936 AC5: Soft / unit residual still works (env unset) ──
 static void ac2936_5_soft_residual_still_works() {
     std::println("\n--- #2936 AC5: intentional residual under test (batch-only hard off) ---");
     ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
@@ -731,6 +757,7 @@ int run_test_batch_dirty_discipline() {
     ac5_fence_rate();
     ac2681_blocks_per_cascade_bp();
     ac2681_source_cite();
+    ac3105_hard_fail_armed();
     std::println("\n=== Issue #2773: unified dirty fence protocol ===");
     ac2773_1_batch_one_fence_one_logical();
     ac2773_2_single_separate();

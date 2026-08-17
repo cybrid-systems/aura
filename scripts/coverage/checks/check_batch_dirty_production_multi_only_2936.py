@@ -77,6 +77,24 @@ def main() -> int:
     must("kSchemaResidualMultiViaSingleProductionSmoke", "AC1", soa)
     must("ir_dirty_batch_only_production_smoke_wired", "AC1", soa)
     must("AURA_IR_DIRTY_BATCH_ONLY", "AC1", soa)
+    # Issue #3105: hard-fail observability counter + constant in ir_soa.ixx.
+    must("g_ir_soa_batch_only_hard_abort_total", "AC1 #3105", soa)
+    must("kIrSoaBatchOnlyHardAbortIssue", "AC1 #3105", soa)
+    must("= 3105", "AC1 #3105", soa)
+    # Issue #3105: hard-fail path must call std::abort + bump counter (not
+    # just log). Source-cite: the abort path in note_single_mark_for_residual
+    # must increment the dedicated counter before std::abort.
+    abort_window = re.search(
+        r"ir_dirty_batch_only_hard\(\)\s*\{[^}]{0,400}?g_ir_soa_batch_only_hard_abort_total\.fetch_add\("
+        r"[^}]{0,400}?std::abort\(\)",
+        soa,
+        re.DOTALL,
+    )
+    if not abort_window:
+        fails.append(
+            "AC1 #3105: hard-fail path in note_single_mark_for_residual must "
+            "bump g_ir_soa_batch_only_hard_abort_total then std::abort()"
+        )
     must("mark_blocks_dirty", "AC1", soa)
     must("mark_blocks_dirty_bits_only", "AC1", soa)
     must("mark_all_blocks_dirty", "AC1", soa)

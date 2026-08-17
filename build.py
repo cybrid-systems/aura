@@ -8325,6 +8325,12 @@ def cmd_batch_dirty_production_multi_only_2936():
     smoke. Optional AURA_IR_DIRTY_BATCH_ONLY=1 aborts on residual; Soft/unit
     intentional residual remains when env unset. schema-2936 + smoke-wired.
     """
+    # Issue #3105: default AURA_IR_DIRTY_BATCH_ONLY=1 for production builds /
+    # build.py production presets so the hard-abort path in ir_soa.ixx
+    # note_single_mark_for_residual is armed (ir_dirty_batch_only_hard() returns
+    # true → std::abort on residual). Tests that deliberately exercise
+    # residual override this by unsetting the env var before the test runs.
+    os.environ["AURA_IR_DIRTY_BATCH_ONLY"] = "1"
     print(f"{B}=== batch dirty production multi-only (#2936) ==={N}")
     return cmd_batch_dirty_production_multi_only_2936_coverage()
 
