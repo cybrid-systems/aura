@@ -22,7 +22,12 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
 #include <string_view>
+
+// C-linkage SSOT used by core/serve (strong in typed_mutation_audit_hooks,
+// weak no-op in fiber.cpp). Core must not include typed_audit.h.
+extern "C" int aura_production_defaults_active_probe() noexcept;
 
 namespace aura::core::wal_slo {
 
@@ -208,9 +213,6 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
     c.inject_fail_remaining.store(0, std::memory_order_relaxed);
 }
 
-} // namespace aura::core::wal_slo
-
-
 // Issue #3109: production WAL append fail-closed option (SE + mutation
 // audit trail integrity). Thin helper — only effective when
 // AURA_WAL_APPEND_FAIL_CLOSED env is set AND production_defaults_active().
@@ -230,9 +232,10 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
     if (!parsed)
         return false;
     // Only effective when production_defaults_active() is true (AC2:
-    // production-only). Forward-declared here to avoid pulling the
-    // typed_audit.h dependency into this header (thin helper per issue).
-    namespace typed_audit = ::aura::compiler::typed_audit;
-    return typed_audit::production_defaults_active();
+    // production-only). Probe is the C-linkage SSOT — this header must
+    // not include typed_audit.h (core ↛ compiler).
+    return aura_production_defaults_active_probe() != 0;
 }
+
+} // namespace aura::core::wal_slo
 #endif // AURA_CORE_WAL_APPEND_FAIL_SLO_H
