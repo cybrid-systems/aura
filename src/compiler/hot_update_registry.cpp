@@ -9,6 +9,8 @@
 #include "compiler/observability_metrics.h" // CompilerMetrics for #2604 auto-drain bumps
 #include "compiler/runtime_shared.h"        // storm C ABI register
 
+import aura.compiler.ir_cache_pure; // Issue #2902: partial_relower_threshold_forced_atomic
+
 #include <chrono>
 #include <cstdlib> // Issue #2236: std::getenv for AURA_STORM_ISOLATION resolver
 #include <cstring> // Issue #2236: std::strcmp for resolver
@@ -31,6 +33,10 @@ extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
 // Issue #2949: production_defaults_active probe (strong in
 // typed_mutation_audit_hooks; weak no-op in fiber.cpp).
 extern "C" int aura_production_defaults_active_probe() noexcept;
+// Issue #2902: forward-decl for aura_clear_partial_relower_threshold_force
+// (defined later in this TU at the extern "C" definition site; called from
+// HotUpdateRegistry::should_force_full at the top of the file).
+extern "C" void aura_clear_partial_relower_threshold_force(void);
 
 namespace aura::compiler {
 
