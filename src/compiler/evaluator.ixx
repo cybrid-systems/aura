@@ -6585,6 +6585,17 @@ public:
     // path (budget unlimited / not exceeded): one relaxed load, no new
     // atomics. reject_stable_ref_export under production + torn.
     [[nodiscard]] bool allow_query_stable_ref_export(ast::NodeId id) const noexcept;
+    // Issue #3100: shared restamp-status probe for query:*-stable.
+    // Production + last restamp over budget → query:*-stable must hard-reject
+    // (never returns pre-mutate generation as success). Soft / Off /
+    // sandbox=off → false (metric / soft observe allowed). One cheap
+    // atomic load on the production flag + one flat->restamp_last_budget_exceeded()
+    // load on quiet path (under-budget); over-budget path is a single
+    // positive load + early-return. Reuses the existing restamp_last_budget_exceeded_
+    // flag maintained by unified_restamp_after_boundary + ast_impl.cpp
+    // restamp_eager_after_boundary_locked (already set when the budget
+    // is exceeded).
+    [[nodiscard]] bool query_stable_hard_reject_torn() const noexcept;
     // Issue #2056: create helpers that stamp before returning to Agent code.
     [[nodiscard]] ast::FlatAST::StableNodeRef make_stamped_ref(ast::NodeId id) const noexcept;
     [[nodiscard]] ast::FlatAST::StableNodeRef
