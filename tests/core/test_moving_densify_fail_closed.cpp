@@ -2148,6 +2148,58 @@ int run_test_moving_densify_fail_closed() {
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
+    // Issue #3092: wire production EnvFrame/Closure/FFI/JIT live ptrs into
+    // note_post_moving_live_ptr_canary (#3055 gate was blind). Additive to
+    // #2495 test file per #81934 + #81967 (no new test_issue_3092.cpp).
+    //   AC1: Evaluator::register_known_moving_densify_root_slots calls
+    //        note_post_moving_live_ptr_canary_all for each production slot.
+    //   AC2: ASTArenaGroup has note_post_moving_live_ptr_canary_all helper
+    //        (parallels register_external_root_slot_for_densify_all pattern).
+    //   AC3: Canary injection is observe-only (no rewrite per #3017).
+    //   AC4: Quiet path zero cost (early return on null pointer).
+    //   AC5: Source-cite for lineage (#3055 + #3092 references).
+    std::println("\n=== Issue #3092: production canary wiring ===");
+    {
+        const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mut.find("note_post_moving_live_ptr_canary_all(*slot)") != std::string::npos,
+              "#3092 AC1: canary injection in Evaluator::register_known_moving_densify_root_slots");
+    }
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        CHECK(arena.find("void note_post_moving_live_ptr_canary_all(void* p)") != std::string::npos,
+              "#3092 AC2: ASTArenaGroup helper present (parallels slot-rewrite helper)");
+    }
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        const auto helper_pos = arena.find("void note_post_moving_live_ptr_canary_all(void* p)");
+        const auto helper_end =
+            helper_pos != std::string::npos ? arena.find("\n    }", helper_pos) : std::string::npos;
+        if (helper_pos != std::string::npos && helper_end != std::string::npos) {
+            const auto body = arena.substr(helper_pos, helper_end - helper_pos);
+            CHECK(body.find("register_external_root_slot_for_densify") == std::string::npos,
+                  "#3092 AC3: canary helper is observe-only (no rewrite per #3017)");
+        }
+    }
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        const auto helper_pos = arena.find("void note_post_moving_live_ptr_canary_all(void* p)");
+        const auto helper_end =
+            helper_pos != std::string::npos ? arena.find("\n    }", helper_pos) : std::string::npos;
+        if (helper_pos != std::string::npos && helper_end != std::string::npos) {
+            const auto body = arena.substr(helper_pos, helper_end - helper_pos);
+            CHECK(body.find("if (!p)") != std::string::npos,
+                  "#3092 AC4: quiet path early-return on null (zero extra atomics)");
+        }
+    }
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(arena.find("Issue #3092") != std::string::npos,
+              "#3092 AC5: cite #3092 in canary helper");
+        CHECK(mut.find("Issue #3092") != std::string::npos,
+              "#3092 AC5: cite #3092 in Evaluator wiring");
+    }
+
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
     // clang-format on

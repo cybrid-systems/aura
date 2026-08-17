@@ -4715,6 +4715,21 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         return 0;
     for (void** slot : known_slots)
         arena_group_->register_external_root_slot_for_densify_all(slot);
+    // Issue #3092: parallel canary injection for the canary axis of #3055's
+    // post-Moving stale gate. For each production slot that already walks for
+    // slot rewrite above (workspace_flat_ / pools / WorkspaceTree layers /
+    // RootRemap snapshot / opaque_heap_ aliases), inject the dereferenced
+    // pointer as an observe-only canary on every arena in the group. After
+    // densify, `count_post_moving_stale_known_ptrs_()` flags residual EnvFrame
+    // / Closure / FFI / JIT live pointers still holding a last_object_remap_ key
+    // → `pin_contract_held = false` (subsumes canary axis into existing pin
+    // contract per LifetimeConsistencyProof densify/steal arm — AC6). Observe
+    // only (no rewrite, not cover #3017). Quiet path: empty slots / null
+    // *slot / Soft → early return on the canary helper.
+    for (void** slot : known_slots) {
+        if (slot && *slot)
+            arena_group_->note_post_moving_live_ptr_canary_all(*slot);
+    }
     aura::core::densify_consistency::g_moving_known_roots_auto_registered_total.fetch_add(
         static_cast<std::uint64_t>(known_slots.size()), std::memory_order_relaxed);
     return known_slots.size();
