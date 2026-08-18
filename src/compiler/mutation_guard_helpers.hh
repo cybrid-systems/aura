@@ -25,17 +25,26 @@
 
 namespace aura::compiler {
 
+// Issue #3122: Agent-visible kind when Guard abort runs dual topology
+// restore. Distinct from acquire-fail / isolation-deny / hygiene-reject.
+// Soft/Off: keep caller on_fail (zero-cost / existing Soft).
+inline constexpr int kTopologyRestoreStructuredIssue = 3122;
+inline constexpr const char* kTopologyRestoreErrorKind = "topology-restore";
+inline constexpr const char* kTopologyRestoreReasonRestored = "restored";
+
 // run_under_mutation_guard — RAII helper wrapping a mutation body
-// in a MutationBoundaryGuard. On Guard reject, std::exception, or
-// ..., bumps the relevant metrics + returns `on_fail`.
+// in a MutationBoundaryGuard. On Guard reject (acquire-fail) returns
+// `on_fail` (not topology-restore — Issue #3122 AC2). On exception
+// after acquire, Guard dtor dual-restores; Production returns
+// structured topology-restore, Soft keeps `on_fail` (AC3).
 //
 // `track_env_compact_violation`: when true, additionally bumps
 // mutation_boundary_violation_on_env_compact_total (Issue #1948
 // / #1949 path). Default false (most primitives are not env-compact).
 template <typename F>
-EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
-                                   EvalValue on_fail = types::make_bool(false),
-                                   bool track_env_compact_violation = false) {
+types::EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
+                                          types::EvalValue on_fail = types::make_bool(false),
+                                          bool track_env_compact_violation = false) {
     bool guard_ok = true;
     auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &guard_ok);
     if (!gr) {
@@ -61,9 +70,10 @@ EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
                 m->mutation_boundary_violation_on_env_compact_total.fetch_add(
                     1, std::memory_order_relaxed);
         }
-        return on_fail;
+        return ev.topology_restore_abort_result(on_fail);
     } catch (...) {
-        // [SILENCE-PRIM-#615] Guard-path uncaught → on_fail + metrics; dtor restores.
+        // [SILENCE-PRIM-#615] Guard-path uncaught → metrics; dtor restores.
+        // Issue #3122: Production structured topology-restore (not opaque #f).
         guard_ok = false;
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
@@ -73,7 +83,7 @@ EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
                 m->mutation_boundary_violation_on_env_compact_total.fetch_add(
                     1, std::memory_order_relaxed);
         }
-        return on_fail;
+        return ev.topology_restore_abort_result(on_fail);
     }
 }
 

@@ -11,6 +11,8 @@ module;
 #include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
 #include "serve/fiber.h"               // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
 #include "typed_mutation_audit.h"      // Issue #3066: pin composite/batch join mid
+#include "core/capability_model.hh"    // Issue #3132: check_macro_self_evo
+#include "core/sandbox.hh"             // Issue #3132: is_sandbox_active
 
 module aura.compiler.evaluator;
 
@@ -42,6 +44,8 @@ namespace primitives_detail {
 
 using macro_exp::clone_macro_body;
 using macro_exp::expand_inner_macros;
+using macro_exp::g_macro_clone_last_reject_reason;
+using macro_exp::g_macro_self_evo_denied_total;
 using macro_exp::MacroExpansionDef;
 
 static std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,

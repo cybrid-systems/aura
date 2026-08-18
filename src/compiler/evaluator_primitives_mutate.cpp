@@ -6485,6 +6485,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // intentionally removed its manual #1904 path. Validation stays
             // outside Guard; the mutation block (Steps 1–6 + restamp + return
             // value) is wrapped so partial state on exception rolls back.
+            // Issue #3122: exception after acquire → structured
+            // topology-restore (not opaque #f) under Production.
             return run_under_mutation_guard(
                 ev,
                 [&]() -> EvalValue {

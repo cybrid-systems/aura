@@ -82,7 +82,9 @@ using types::make_void;
 // leave partial workspace/IR state. On quota/guard failure bumps
 // compile_primitive_stale_ir_prevented_total; on throw bumps
 // mutation_guard_exception_total (+ lineage eda_guard_* counters, retired 4.4).
-// `on_fail` is returned for both try_acquire reject and caught exceptions
+// `on_fail` is returned for try_acquire reject (Issue #3122 AC2:
+// not topology-restore). Caught exceptions under Production return
+// structured topology-restore; Soft keeps on_fail
 // (bool #f for most dirty! paths; make_int(-1) for compact/subtree/defuse).
 
 // Issue #1896 alias: dirty-bit mutators default on_fail = #f.

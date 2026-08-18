@@ -17,6 +17,7 @@
 // Unit sym/structural tests run first; integration uses CompilerService.
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <cstdint>
@@ -38,8 +39,16 @@ namespace aura_400_detail {
 
 using aura::compiler::CompilerService;
 using aura::compiler::Evaluator;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_pair_idx;
+using aura::compiler::types::as_string_idx;
+using aura::compiler::types::EvalValue;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
+using aura::compiler::types::is_pair;
+using aura::compiler::types::is_string;
+using aura::compiler::types::make_bool;
 
 static std::int64_t coverage_stats(CompilerService& cs) {
     auto r = cs.eval("(engine:metrics \"query:mutation-rollback-coverage-stats\")");
@@ -388,6 +397,120 @@ static void test_abort_restore_ir_map_fence_3117() {
           "3117 AC4: begin fence");
 }
 
+static std::string merr_kind_3122(Evaluator& ev, const EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = ev.pairs();
+    if (idx >= pairs.size() || !is_string(pairs[idx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[idx].car);
+    auto heap = ev.string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static std::string merr_reason_3122(Evaluator& ev, const EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = ev.pairs();
+    if (idx >= pairs.size() || !is_pair(pairs[idx].cdr))
+        return {};
+    auto midx = as_pair_idx(pairs[idx].cdr);
+    if (midx >= pairs.size() || !is_string(pairs[midx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[midx].car);
+    auto heap = ev.string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+// Issue #3122: Guard abort after topology write → structured topology-restore.
+static void test_topology_restore_structured_3122() {
+    std::println("\n--- AC11: Guard abort structured topology-restore (#3122) ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    Evaluator ev;
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto fn = flat.add_variable(pool.intern("+"));
+    auto lit = flat.add_literal(1);
+    auto root = flat.add_call(fn, std::span{&lit, 1});
+    flat.root = root;
+    ev.set_workspace_flat(&flat);
+    ev.set_workspace_pool(&pool);
+    const auto before = flat.get(root).children.size();
+    const auto dual0 = flat.topology_dual_restore_total();
+    const auto inc0 = flat.topology_dual_restore_inconsistency_total();
+
+    const auto r = ev.abort_after_insert_child_for_test(root, 1);
+    CHECK(merr_kind_3122(ev, r) == "topology-restore", "3122 AC1: error=topology-restore");
+    CHECK(merr_reason_3122(ev, r) == "restored", "3122 AC1: reason=restored");
+    CHECK(!is_bool(r), "3122 AC1: not opaque #f");
+    CHECK(flat.get(root).children.size() == before, "3122 AC1: children_ restored");
+    CHECK(flat.topology_dual_restore_total() > dual0, "3122 AC1: dual restore ran");
+    CHECK(flat.topology_dual_restore_inconsistency_total() == inc0,
+          "3122 AC1: dual restore consistent");
+
+    apply_dev_audit_defaults();
+    const auto soft = ev.abort_after_insert_child_for_test(root, 1);
+    CHECK(is_bool(soft) && !as_bool(soft), "3122 AC3: Soft still #f");
+    CHECK(flat.get(root).children.size() == before, "3122 AC3: Soft also restores");
+
+    apply_production_audit_defaults();
+    apply_dev_audit_defaults();
+
+    const auto gh = []() {
+        std::ifstream in("src/compiler/mutation_guard_helpers.hh");
+        if (in)
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::ifstream in2("../src/compiler/mutation_guard_helpers.hh");
+        if (in2)
+            return std::string((std::istreambuf_iterator<char>(in2)),
+                               std::istreambuf_iterator<char>());
+        return std::string{};
+    }();
+    const auto bound = []() {
+        std::ifstream in("src/compiler/evaluator_mutation_boundary.cpp");
+        if (in)
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::ifstream in2("../src/compiler/evaluator_mutation_boundary.cpp");
+        if (in2)
+            return std::string((std::istreambuf_iterator<char>(in2)),
+                               std::istreambuf_iterator<char>());
+        return std::string{};
+    }();
+    const auto mut = []() {
+        std::ifstream in("src/compiler/evaluator_primitives_mutate.cpp");
+        if (in)
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::ifstream in2("../src/compiler/evaluator_primitives_mutate.cpp");
+        if (in2)
+            return std::string((std::istreambuf_iterator<char>(in2)),
+                               std::istreambuf_iterator<char>());
+        return std::string{};
+    }();
+    CHECK(gh.find("Issue #3122") != std::string::npos, "3122 AC4: helper cites");
+    CHECK(bound.find("Issue #3122") != std::string::npos, "3122 AC4: boundary cites");
+    CHECK(mut.find("Issue #3122") != std::string::npos, "3122 AC4: mutate entry cites");
+    CHECK(gh.find("return on_fail;") != std::string::npos, "3122 AC2: acquire-fail stays on_fail");
+    CHECK(gh.find("not topology-restore") != std::string::npos,
+          "3122 AC2: acquire-fail / hygiene distinct");
+    std::ifstream no_issue("tests/compiler/test_issue_3122.cpp");
+    CHECK(!no_issue.good(), "3122 AC5: no test_issue_3122.cpp");
+    std::ifstream no_docs("docs/design/3122-topology-restore.md");
+    CHECK(!no_docs.good(), "3122 AC4: no docs/design");
+}
+
 } // namespace aura_400_detail
 
 int main() {
@@ -399,5 +522,6 @@ int main() {
     aura_400_detail::run_matrix(cs);
     aura_400_detail::test_abort_force_generation_fence_3069();
     aura_400_detail::test_abort_restore_ir_map_fence_3117();
+    aura_400_detail::test_topology_restore_structured_3122();
     return RUN_ALL_TESTS();
 }

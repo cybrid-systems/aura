@@ -108,6 +108,8 @@ import aura.compiler.ir_soa;              // Issue #2432: current_ir_soa_generat
 import aura.compiler.type_checker;        // Issue #2608: maybe_persist_occurrence_snapshot
 import aura.compiler.optimization_passes; // Issue #2674: layered evidence-coherence
 
+#include "compiler/mutation_guard_helpers.hh" // Issue #3122: structured abort result
+
 // Issue #2724 / #2754 counters + regions_disjoint (+ cone mask-AND) live
 // in mutation_hold_budget.h (shared with query:mutation-boundary-hold-stats).
 
@@ -433,6 +435,29 @@ void Evaluator::dual_clear_coercion_state_on_abort() noexcept {
     aura::compiler::g_coercion_abort_dual_clear_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+types::EvalValue Evaluator::topology_restore_abort_result(types::EvalValue on_fail) {
+    using typed_audit::AuditStrategy;
+    using typed_audit::get_strategy;
+    using typed_audit::production_defaults_active;
+    if (!production_defaults_active() && get_strategy() != AuditStrategy::Full)
+        return on_fail;
+    return make_merr(kTopologyRestoreErrorKind, kTopologyRestoreReasonRestored);
+}
+
+// Issue #3122: acquire Guard, insert a child, throw — Production surfaces
+// structured topology-restore; dtor dual-restores children_ + parent_.
+types::EvalValue Evaluator::abort_after_insert_child_for_test(ast::NodeId parent,
+                                                              std::uint32_t idx) {
+    return run_under_mutation_guard(*this, [this, parent, idx]() -> types::EvalValue {
+        if (workspace_flat_) {
+            const auto extra = workspace_flat_->add_literal(2);
+            workspace_flat_->insert_child(parent, idx, extra);
+        }
+        throw std::runtime_error("3122-abort");
+        return types::make_bool(true);
+    });
+}
+
 Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     auto& stack = active_mutation_stack();
     if (stack.empty())
@@ -480,6 +505,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             defuse_index_ = nullptr;
         }
     } else if (!success && workspace_flat_) {
+        // Issue #3122: Agent-visible topology-restore is the Guard wrap
+        // (run_under_mutation_guard); this path owns the Hard restore.
         // Issue #2959: dual topology abort under ONE structural exclusive —
         // mutation-log rollback + children_ snapshot + parent_ rebuild +
         // dual canary. Closes densify×steal mid-window tears between
