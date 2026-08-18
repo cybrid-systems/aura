@@ -822,7 +822,7 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             if (!ev)
                 return make_void();
             auto* m = static_cast<CompilerMetrics*>(ev->compiler_metrics());
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(64); // ~16 keys (snake+kebab)
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

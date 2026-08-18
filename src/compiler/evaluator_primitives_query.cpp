@@ -941,7 +941,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
 
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(64); // #2099 + #3095 (~21 keys)
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();

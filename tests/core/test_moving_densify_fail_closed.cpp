@@ -2064,13 +2064,17 @@ static void ac3128_auto_recover_under_sticky() {
               "AC2: existing #2905 auto-clear path AC preserved");
     }
 
-    // AC3: arena.ixx sticky arm/clear surface unchanged (no second registry).
+    // AC3: sticky arm/clear stays a single registry (no second copy in
+    // arena.ixx). Counters live in densify_consistency_report.h.
     {
         const auto arena = read_file("src/core/arena.ixx");
+        const auto h = read_file("src/core/densify_consistency_report.h");
         CHECK(arena.find("Issue #3128") == std::string::npos,
               "AC3: arena.ixx NOT modified by #3128 (no second sticky registry)");
-        CHECK(arena.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
-              "AC3: existing recovery counter still in arena.ixx");
+        CHECK(arena.find("g_moving_sticky_cleared_via_recovery_total") == std::string::npos,
+              "AC3: recovery counter not duplicated in arena.ixx");
+        CHECK(h.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
+              "AC3: existing recovery counter still in densify_consistency_report.h");
     }
 
     // AC4: moving_densify_health.hh publish window unchanged (no second call site).
@@ -2084,10 +2088,10 @@ static void ac3128_auto_recover_under_sticky() {
 
     // AC5: counters reused (no new query key / no middle insertion).
     {
-        const auto arena = read_file("src/core/arena.ixx");
-        CHECK(arena.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
+        const auto h = read_file("src/core/densify_consistency_report.h");
+        CHECK(h.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
               "AC5: existing recovery counter reused (cleared on success)");
-        CHECK(arena.find("g_moving_densify_retry_after_recovery_total") != std::string::npos,
+        CHECK(h.find("g_moving_densify_retry_after_recovery_total") != std::string::npos,
               "AC5: existing retry counter reused");
     }
 

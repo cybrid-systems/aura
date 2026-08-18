@@ -296,13 +296,13 @@ PRE_EXISTING_FAILURES: set[str] = {
     # drift. Batches that finish 0-AC-fail then rc=1 / SIGBUS under jobs=4
     # (mailbox / hygiene / aot stamp / ir-closure / engine-metrics).
     # 3108 source-cite + rollback counter leftover stay visible with ⚠.
-    "test_issue_3095",
+    # test_issue_3095 greened: hygiene-checkpoint-stats hash cap 16→64.
     "test_issue_3096",
     "test_issue_3097",
     "test_aot_jit_stamp_batch",
     "test_engine_metrics_facade",
     "test_fiber_orch_core_batch",
-    "test_hygiene_mutate_closed_loop",
+    # test_hygiene_mutate_closed_loop greened with #3095 schema hash cap.
     "test_ir_closure_jit_misc_batch",
     "test_macro_hygiene_batch",
     "test_mailbox_fiber_batch",
@@ -322,8 +322,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # ── Full-tier leftovers (2026-08-18 after aura compile-unblock) ──
     # #3128 source-cites (recovery counter lives in densify_consistency_report.h)
     # still fail inside the densify batch; member ACs remain visible with ⚠.
-    "test_densify_pin_batch",
-    "test_moving_densify_fail_closed",
+    # test_densify_pin_batch / test_moving_densify_fail_closed greened:
+    # #3128 recovery counters live in densify_consistency_report.h.
     # Arena compact batch: g_arena_safepoint_check null (same class as
     # test_arena_batch / test_arena_defrag_concurrent).
     "test_gc_compact_batch",
@@ -331,10 +331,12 @@ PRE_EXISTING_FAILURES: set[str] = {
     # SoA query:find lock cite, IntVal field name, restamp mask, record-patch
     # substr OOB, lock-order canary, tenant grant heap-corruption, orch rc=1
     # with 0 member AC fails. Not caused by the header compile-unblock.
-    "test_flatast_atomic_lock_batch",
-    "test_replace_value_audit_consistency",
+    # test_flatast_atomic_lock_batch greened: query:find SoA lock cite
+    # window from ["query:find"] impl, not an earlier comment.
+    # test_replace_value_audit_consistency greened: #2793 window widened.
+    # test_scalar_mutate_record_patch_hygiene greened: record-patch
+    # add_mutate split-line + last_hygiene_blame_node query key.
     "test_hot_update_relower_success_coverage",
-    "test_scalar_mutate_record_patch_hygiene",
     "test_misc_issue_fold_batch",
     "test_tenant_isolation_enforcement",
     "test_orch_agent_batch",
