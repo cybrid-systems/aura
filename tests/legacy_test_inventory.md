@@ -1645,7 +1645,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_cache_stamp_restamp_contract.cpp` (—) [domain_suite, theme_compiler] — AC1: restamp_cache_entry + restamp_cache_entry_live_ on store/partial
 - `tests/compiler/test_capability_gating.cpp` (—) [domain_suite, theme_compiler] — Issue #1416: Inline no-op stubs for aura::jit::AuraJIT::invalidate_prefix
 - `tests/compiler/test_cascade_incremental_pass_suite.cpp` (—) [domain_suite, theme_compiler] — Issue #2044 — Pass pipeline fully incremental on cascade re-lower
-- `tests/compiler/test_castop_density_hard.cpp` (—) [domain_suite, theme_compiler] — AC1: HARD=0 + dens>budget → no hard_action, no force-JIT side effect
+- `tests/compiler/test_castop_density_hard.cpp` (—) [large, domain_suite, theme_compiler] — AC1: HARD=0 + dens>budget → no hard_action, no force-JIT side effect
 - `tests/compiler/test_castop_typed_meta.cpp` (—) [domain_suite, theme_compiler] — AC1: Non-elided Coercion/CastOp lower stamps typed meta (type ids/tags)
 - `tests/compiler/test_closure_call_must_deopt_toctou.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-step free+realloc under concurrent MustDeopt callers —
 - `tests/compiler/test_closure_cow_gen_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: Alloc under gen G → soft-eligible while live gen == G

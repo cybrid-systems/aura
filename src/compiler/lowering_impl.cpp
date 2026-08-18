@@ -3,6 +3,7 @@ module;
 
 #include "jit_typed_mutation_stats.h"
 #include "castop_typed_meta.h" // Issue #2624 Phase A: CastOp src/dst typed meta side table
+#include "typed_mutation_audit.h" // Issue #3140 Phase C: last_type_linear_commit_proof_stamp_v_read() for epoch_or_mid plumbing
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 
 // Issue #2254: production SoA-only default. Macro must be in this TU's
@@ -88,7 +89,14 @@ static void stamp_last_castop_typed_meta(LoweringState& state, std::uint32_t src
     const auto site = castop_meta::make_site_key(state.cur_block, instr_idx, result_slot);
     // Prefer explicit dst; fall back to instruction type_id if caller passed 0.
     const auto dst = dst_type_id != 0 ? dst_type_id : instrs.back().type_id;
-    castop_meta::stamp_castop_typed_meta(site, src_type_id, dst, narrow_evidence, type_tag);
+    // Issue #3140 Phase C: plumb current TypeLinearCommitProof stamp into
+    // meta.epoch_or_mid. JIT hot entry under Production compares
+    // meta.epoch_or_mid vs current_stamp; match → Quiet (AC3), lag or
+    // missing → force-relower (AC1). 0 (no proofs stamped yet) →
+    // Quiet, current_stamp==0 branch in castop_typed_meta_phase_c_lags.
+    const auto cur_stamp = typed_audit::last_type_linear_commit_proof_stamp_v_read();
+    castop_meta::stamp_castop_typed_meta(site, src_type_id, dst, narrow_evidence, type_tag,
+                                         cur_stamp);
 }
 
 const LowerSoAEmitSnapshot* lower_last_soa_snapshot() noexcept {

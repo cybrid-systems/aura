@@ -1,0 +1,97 @@
+{
+  "issue": 3140,
+  "title": "Issue #3140: [P0][area:type][zero-overhead] Phase C: CastOp typed-meta epoch mismatch under Production must force JIT deopt to tree path (close residual of #2624 Phase A)",
+  "ok": "OK: Issue #3140 Phase C — JIT deopt on missing/aging typed-meta under Production only. src/compiler/castop_typed_meta.h adds epoch_or_mid field on CastOpTypedMeta + castop_typed_meta_phase_c_deopt_total additive counter + castop_typed_meta_phase_c_wired flag + castop_typed_meta_phase_c_lags(site_key, current_stamp) helper (returns true iff missing meta or meta.epoch_or_mid < current_stamp); stamp_castop_typed_meta gains a 6-arg overload (epoch_or_mid default 0 = legacy). src/compiler/lowering_impl.cpp plumbing: last_type_linear_commit_proof_stamp_v_read() plumbed as the 6th stamp arg + Issue #3140 cite + castop_typed_meta.h / typed_mutation_audit.h includes. src/compiler/castop_density_policy.hh adds castop_typed_meta_phase_c_hot_entry_deopt(site_key, current_stamp, fn_name, production_override) — production_path_enabled gated, lag check, deopt counter bump, aura_jit_batch_deopt_for(fn_name, current_stamp) force-relower (existing #3107 mechanism). AC1 Production+missing/aging → deopt; AC2 Soft zero cost; AC3 Quiet (epoch match or current_stamp==0) → no extra atomic; AC4 additive counter only + wired flag; AC5 source-cite castop_typed_meta.h + castop_density_policy.hh + lowering_impl.cpp; extended tests/compiler/test_castop_density_hard.cpp with ac3140_1..5; no docs/design/, no tests/issues/test_issue_3140.cpp (per #81967/#1655); scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py source-cite linter wired into build.py; manifest 3140.json.",
+  "source_script": "scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py",
+  "checks": [
+    {
+      "ac": "AC1-3140",
+      "path": "src/compiler/castop_density_policy.hh",
+      "contains": [
+        "Issue #3140 Phase C",
+        "castop_typed_meta_phase_c_hot_entry_deopt",
+        "aura_jit_batch_deopt_for(fn_name, current_stamp)",
+        "production_path_enabled"
+      ]
+    },
+    {
+      "ac": "AC1-3140-meta",
+      "path": "src/compiler/castop_typed_meta.h",
+      "contains": [
+        "castop_typed_meta_phase_c_lags",
+        "castop_typed_meta_phase_c_deopt_total",
+        "kCastOpTypedMetaPhaseCIssue = 3140",
+        "castop_typed_meta_phase_c_wired",
+        "epoch_or_mid",
+        "AC1: missing meta → lag",
+        "AC3 Quiet"
+      ]
+    },
+    {
+      "ac": "AC1-3140-lowering",
+      "path": "src/compiler/lowering_impl.cpp",
+      "contains": [
+        "Issue #3140 Phase C",
+        "last_type_linear_commit_proof_stamp_v_read",
+        "stamp_castop_typed_meta(site, src_type_id, dst, narrow_evidence, type_tag,"
+      ]
+    },
+    {
+      "ac": "AC2-3140",
+      "path": "src/compiler/castop_typed_meta.h",
+      "contains": [
+        "castop_typed_meta_missing_total.fetch_add(1",
+        "AC2: Soft / unit → zero cost"
+      ]
+    },
+    {
+      "ac": "AC3-3140",
+      "path": "src/compiler/castop_typed_meta.h",
+      "contains": [
+        "current_stamp == 0",
+        "hit->epoch_or_mid < current_stamp",
+        "AC3: zero extra atomic RMW"
+      ]
+    },
+    {
+      "ac": "AC4-3140",
+      "path": "src/compiler/castop_typed_meta.h",
+      "contains": [
+        "set_castop_typed_meta_phase_c_wired_for_test",
+        "reset_castop_typed_meta_phase_c_for_test",
+        "castop_typed_meta_phase_c_deopt_total_v_read",
+        "castop_typed_meta_last_epoch_or_mid"
+      ]
+    },
+    {
+      "ac": "AC5-3140-test",
+      "path": "tests/compiler/test_castop_density_hard.cpp",
+      "contains": [
+        "ac3140_1_production_missing_meta_deopt",
+        "ac3140_2_production_epoch_lag_deopt",
+        "ac3140_3_soft_path_zero_cost",
+        "ac3140_4_quiet_epoch_match_zero_extra",
+        "ac3140_5_additive_counter_and_source_cite",
+        "3140 AC5: no docs/design/3140-*.md",
+        "3140 AC5: no tests/issues/test_issue_3140.cpp"
+      ]
+    },
+    {
+      "ac": "Linter-3140",
+      "path": "scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py",
+      "contains": [
+        "Issue #3140 Phase C",
+        "castop_typed_meta_phase_c_hot_entry_deopt",
+        "AC1: missing meta → lag",
+        "AC3 Quiet"
+      ]
+    },
+    {
+      "ac": "Build-3140",
+      "path": "build.py",
+      "contains": [
+        "check_castop_typed_meta_phase_c_3140.py"
+      ]
+    }
+  ]
+}

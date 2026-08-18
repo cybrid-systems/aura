@@ -813,6 +813,21 @@ def cmd_lint():
             "Issue #3106 harden-armed hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_3106.py"
         )
         return r
+    # Issue #3140: Phase C — CastOp typed-meta JIT deopt on missing/aging
+    # meta under Production only. Source-cite castop_typed_meta.h +
+    # castop_density_policy.hh + lowering_impl.cpp; extends
+    # test_castop_density_hard.cpp (no docs/design/, no test_issue_3140.cpp
+    # per #81967/#1655 aura philosophy).
+    ct3140_script = COVERAGE_CHECKS / "check_castop_typed_meta_phase_c_3140.py"
+    if not ct3140_script.exists():
+        fail(f"missing {ct3140_script}")
+        return 1
+    r = run([sys.executable, str(ct3140_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3140 CastOp typed-meta Phase C linter failed — run python3 scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py"
+        )
+        return r
     # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.
