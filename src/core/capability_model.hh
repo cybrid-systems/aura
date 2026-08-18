@@ -263,6 +263,12 @@ struct CapabilityEffectMetrics {
     // at struct END (never insert mid-struct: stale module BMIs writing at
     // wrong offsets corrupt neighboring heap — see #2906).
     std::atomic<std::uint64_t> capability_session_revoke_steal_total{0};
+    // Issue #3141: kCapWildcard write-fence deny — production caller holds
+    // kCapWildcard but NOT explicit TenantAdmin attempts privilege-bearing
+    // string-path grant_capability("self-evo"|"tenant-admin"|...). Closes
+    // privilege escalation via wildcard → full Effect mask → check passes →
+    // grant succeeds. Appended at struct END (never insert mid-struct).
+    std::atomic<std::uint64_t> capability_wildcard_write_fence_deny_total{0};
     std::atomic<std::uint64_t> capability_session_revoke_abort_total{0};
     // Issue #3090: production (Restricted/Strict) grant refused when
     // prov.mutation_id == 0 — same refuse semantics as
@@ -731,6 +737,29 @@ struct CapabilityRegistry {
                 acc = acc | g.effects;
         }
         return acc;
+    }
+
+    // Issue #3141: wildcard-only detection. Returns true if tenant holds
+    // kCapWildcard ("*") string grant AND no non-wildcard grant contributing
+    // Effect::TenantAdmin. Caller MUST hold `mtx`. Distinguishes "TenantAdmin
+    // via wildcard" from "explicit TenantAdmin via string grant" — the
+    // former does NOT pass the production write fence.
+    [[nodiscard]] bool holds_wildcard_only_locked(TenantId tenant) const noexcept {
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return false;
+        bool has_wildcard = false;
+        bool has_explicit_TenantAdmin = false;
+        for (const auto& g : it->second) {
+            if (g.revoked)
+                continue;
+            if (g.name == "*")
+                has_wildcard = true;
+            else if ((static_cast<std::uint16_t>(g.effects) &
+                      static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0)
+                has_explicit_TenantAdmin = true;
+        }
+        return has_wildcard && !has_explicit_TenantAdmin;
     }
 
     // Optional provenance binding check: if grant has bound_mutation_id != 0
@@ -1744,6 +1773,68 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
                Effect::Syscall;
     // SECURITY_EXEMPT: read-only observability (compile/query/sandbox/macro/…).
     return Effect::None;
+}
+
+// Issue #3141: kCapWildcard write-fence gate for string-path grant_capability.
+// Under production mode (Restricted/Strict), a tenant holding kCapWildcard
+// (which gives full Effect mask via `effect_for_cap_name("*")`) cannot
+// write privilege-bearing cap names ("self-evo"/"synthesize"/"strategy"/
+// "tenant-admin"/"capability"/"agent"/"workspace"/"fiber") without explicit
+// TenantAdmin grant. Closes privilege escalation via wildcard → full mask →
+// check passes → grant succeeds.
+//
+// Caller MUST hold registry `mtx`. AC3 Soft/Off zero-cost (one relaxed
+// load + early-out before any scan).
+//
+// Return: true = allow; false = deny (counter bumped + SE emitted).
+inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
+                                                               std::string_view cap_name,
+                                                               std::uint16_t eff_bits) noexcept {
+    using namespace ::aura::core::capability;
+
+    // AC3: Soft / sandbox=off zero-cost (no scan).
+    const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
+    if (mode == EffectSandboxMode::Off)
+        return true;
+
+    // Only fence on privilege-bearing names (TenantAdmin / MacroSelfEvo).
+    constexpr std::uint16_t kPrivilegeMask = static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                                             static_cast<std::uint16_t>(Effect::MacroSelfEvo);
+    if ((eff_bits & kPrivilegeMask) == 0)
+        return true;
+
+    auto& reg = g_capability_registry();
+
+    // AC2: caller has explicit TenantAdmin (not wildcard-only) → allow.
+    // If caller is NOT a wildcard-only holder, the regular effects_for_locked
+    // check applies: explicit TenantAdmin (via any non-wildcard string grant)
+    // passes; no explicit TenantAdmin fails the standard check.
+    if (!reg.holds_wildcard_only_locked(caller))
+        return reg.effects_for_locked(caller).has(Effect::TenantAdmin);
+
+    // AC1: wildcard-only holder attempting privilege-bearing grant → deny.
+    g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.fetch_add(
+        1, std::memory_order_relaxed);
+
+    // Dual-write to SecurityEvent ring + WAL for forensic join (mid + fiber + epoch).
+    using ::aura::core::current_mutation_epoch;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    const auto epoch = current_mutation_epoch();
+    const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+    const auto fid = static_cast<std::int64_t>(
+        effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
+    emit_security_event_durable(SecurityEventKind::EffectDeny, caller, mid, epoch, eff_bits,
+                                "grant_capability",
+                                "wildcard-write-fence-needs-explicit-tenant-admin",
+                                /*denied=*/true, fid);
+    return false;
+}
+
+// Issue #3141: counter accessor for query surface.
+[[nodiscard]] inline std::uint64_t capability_wildcard_write_fence_deny_total_v_read() noexcept {
+    return g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load(
+        std::memory_order_relaxed);
 }
 
 } // namespace aura::core::capability

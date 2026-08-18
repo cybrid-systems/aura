@@ -828,6 +828,20 @@ def cmd_lint():
             "Issue #3140 CastOp typed-meta Phase C linter failed — run python3 scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py"
         )
         return r
+    # Issue #3141: kCapWildcard write-fence — production caller holding wildcard
+    # but NOT explicit TenantAdmin cannot write privilege-bearing cap names
+    # ("self-evo"/"tenant-admin"/...) via string path. Closes Gap A from the
+    # 18:00 Security + Sandbox + Multi-Tenant + Provenance review.
+    cw3141_script = COVERAGE_CHECKS / "check_wildcard_grant_effect_fence.py"
+    if not cw3141_script.exists():
+        fail(f"missing {cw3141_script}")
+        return 1
+    r = run([sys.executable, str(cw3141_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3141 kCapWildcard write-fence linter failed — run python3 scripts/coverage/checks/check_wildcard_grant_effect_fence.py"
+        )
+        return r
     # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.
