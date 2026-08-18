@@ -432,6 +432,11 @@ inline void clear_mutation_hold_budget_forced_unlock_for_test() noexcept {
     g_mutation_hold_budget_forced_unlock_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3118: production cancel force-unlock + depth clear immediately
+// after dual-topology restore (dtor consume path). Reuses #3035
+// forced_unlock_total — no new query keys. Soft stays observe-only.
+inline constexpr int kMutationHoldBudgetCancelForceReleaseIssue = 3118;
+
 // Issue #3071: in-body non-poll window after cancel+force-safepoint.
 // #3035 closes the dtor half; a body that never reaches check_gc_safepoint
 // / yield / Phase-5 can still hold workspace_mtx_ until it happens to

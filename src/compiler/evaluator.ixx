@@ -14608,6 +14608,10 @@ public:
         // Issue #2222: true when ctor armed fiber-local LinearEnforce Strict
         // hold (must pop in dtor / transfer on move).
         bool linear_enforce_strict_pushed_ = false;
+        // Issue #3118: production hold-budget cancel already dropped
+        // workspace_mtx_ + depth after dual restore. Phase-5 must not
+        // decrement depth or process-held a second time.
+        bool cancel_force_released_ = false;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
@@ -14768,6 +14772,9 @@ public:
         MutationBoundaryGuard(Evaluator& ev, bool* success_flag, bool fine_rollback, AcquireTag,
                               bool quota_prechecked = true,
                               std::optional<std::uint64_t> region_key = std::nullopt) noexcept;
+        // Issue #3118: production cancel — unlock + clear depth after
+        // abort_restore_dual_topology (single unlock site vs Phase-5).
+        void force_release_hold_after_cancel_() noexcept;
 
         Evaluator* ev_;
         bool* flag_;

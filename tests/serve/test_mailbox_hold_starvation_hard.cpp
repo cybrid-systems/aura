@@ -1725,6 +1725,92 @@ static void ac3071_6_no_docs_design() {
           "AC6: no docs/design/3071-* per #1655");
 }
 
+// ── Issue #3118 AC1: production cancel → lock free + depth 0 after dtor.
+static void ac3118_1_force_unlock_depth_clear() {
+    std::println("\n--- #3118 AC1: production cancel force-unlock + depth clear ---");
+    using aura::compiler::Evaluator;
+    using aura::serve::Scheduler;
+    ::unsetenv("AURA_SANDBOX");
+    ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+          "3118 AC1: reject_enabled under production");
+    CompilerService cs;
+    Evaluator::set_query_evaluator(&cs.evaluator());
+    std::atomic<int> ok_flag{1};
+    std::atomic<int> ran{0};
+    std::atomic<int> held_after{-1};
+    std::atomic<int> depth_after{-1};
+    Scheduler sched(2);
+    sched.spawn([&]() {
+        bool ok = true;
+        {
+            Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+            CHECK(g.is_outermost(), "3118 AC1: outermost Guard");
+            auto* f = aura::serve::g_current_fiber;
+            CHECK(f != nullptr, "3118 AC1: fiber current");
+            f->request_hold_budget_cancel();
+            // Busy-loop without yield / check_gc_safepoint — dtor consumes.
+            std::atomic<int> spin{0};
+            for (int i = 0; i < 1000; ++i)
+                spin.fetch_add(1, std::memory_order_relaxed);
+            ran.store(1, std::memory_order_relaxed);
+        }
+        ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                         std::memory_order_relaxed);
+        depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                          std::memory_order_relaxed);
+    });
+    std::thread io([&]() { sched.run(); });
+    for (int i = 0; i < 200 && ran.load() == 0; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    sched.stop();
+    io.join();
+    CHECK(ran.load() == 1, "3118 AC1: fiber body ran");
+    CHECK(ok_flag.load() == 0, "3118 AC1: cancel forced success=false");
+    CHECK(held_after.load() == 0, "3118 AC1: workspace hold cleared");
+    CHECK(depth_after.load() == 0, "3118 AC1: depth slot == 0");
+    Evaluator::set_query_evaluator(nullptr);
+}
+
+// ── Issue #3118 AC3: Soft — no force-release helper on observe path.
+static void ac3118_3_soft_no_force_release() {
+    std::println("\n--- #3118 AC3: Soft observe-only ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("peek_hold_budget_cancel") != std::string::npos, "3118 AC3: Soft peek");
+    CHECK(emb.find("soft_observe_total") != std::string::npos, "3118 AC3: Soft observe");
+    CHECK(emb.find("if (cancel_forced_fail && outermost)") != std::string::npos,
+          "3118 AC3: force-release only on cancel_forced_fail");
+}
+
+// ── Issue #3118 AC4/AC6: source-cite + no invent.
+static void ac3118_6_source_and_linter() {
+    std::println("\n--- #3118 AC6: source-cite + linter ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    const auto t = read_file("tests/serve/test_mailbox_hold_starvation_hard.cpp");
+    const auto ht = read_file("tests/compiler/test_mutation_hold_hard_timeout.cpp");
+    const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+    const auto build = read_file("build.py");
+    CHECK(emb.find("Issue #3118") != std::string::npos, "3118 AC6: emb cite");
+    CHECK(emb.find("abort_restore_dual_topology") != std::string::npos,
+          "3118 AC2: dual restore still on fail path");
+    CHECK(emb.find("force_release_hold_after_cancel_") != std::string::npos, "3118 AC6: helper");
+    CHECK(mhb.find("kMutationHoldBudgetCancelForceReleaseIssue = 3118") != std::string::npos,
+          "3118 AC6: stamp");
+    CHECK(t.find("ac3118_1_force_unlock_depth_clear") != std::string::npos, "3118 AC6: AC1 test");
+    CHECK(ht.find("ac3118_source_cite") != std::string::npos, "3118 AC6: hard-timeout extend");
+    CHECK(chaos.find("ac3118_residual_force_release_cite") != std::string::npos,
+          "3118 AC6: chaos cite");
+    CHECK(build.find("check_hold_budget_cancel_force_release_3118") != std::string::npos,
+          "3118 AC6: build.py");
+    CHECK(read_file("tests/serve/test_issue_3118.cpp").empty(),
+          "3118 AC6: no invent test_issue_3118.cpp");
+    CHECK(read_file("docs/design/3118-hold-budget-cancel-force-release.md").empty(),
+          "3118 AC6: no docs/design");
+}
+
 // ── Issue #2754 AC1: equal keys + cone-/mask-disjoint ImpactScope →
 // concurrent admit (bump cone-admit counter). Key-disjoint fast path
 // preserved (#2724). regions_disjoint 4-arg + regions_cone_disjoint
@@ -2469,6 +2555,11 @@ int run_test_mailbox_hold_starvation_hard() {
     ac3071_4_query_keys();
     ac3071_5_source_and_linter();
     ac3071_6_no_docs_design();
+    std::println("\n=== Issue #3118: production cancel force-unlock + depth clear "
+                 "(#3071 residual) ===");
+    ac3118_1_force_unlock_depth_clear();
+    ac3118_3_soft_no_force_release();
+    ac3118_6_source_and_linter();
     std::println(
         "\n=== Issue #2754: region concurrent cone/ImpactScope mask-AND (#2724 residual) ===");
     ac2754_1_cone_disjoint_concurrent_admit();

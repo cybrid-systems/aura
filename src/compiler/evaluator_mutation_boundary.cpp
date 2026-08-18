@@ -2228,6 +2228,33 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     }
 }
 
+// Issue #3118: production hold-budget cancel force-unlock + depth clear
+// immediately after abort_restore_dual_topology. Steal/GC/densify see
+// depth==0 && !held without waiting for Phase-1-4. Soft never calls this
+// (cancel_forced_fail is production/hard-env only). Idempotent.
+void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexcept {
+    if (cancel_force_released_ || !ev_)
+        return;
+    if (int* ds = Evaluator::mutation_boundary_depth_slot(ev_))
+        *ds = 0;
+    ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+    aura_process_mutation_boundary_held_exit();
+    aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
+    aura::gc_hooks::release_mutation_hold_defer();
+    if (region_mode_) {
+        if (region_lock_.owns_lock()) {
+            region_lock_.unlock();
+            ev_->workspace_region_holders_[region_shard_].fetch_sub(1, std::memory_order_relaxed);
+        }
+        if (shared_lock_.owns_lock())
+            shared_lock_.unlock();
+    } else if (lock_.owns_lock()) {
+        lock_.unlock();
+    }
+    aura::compiler::lock_order::on_release(aura::compiler::lock_order::Level::Workspace);
+    cancel_force_released_ = true;
+}
+
 // ── destructor ───────────────────────────────────────────────────────────
 Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     if (!ev_ || inert_) {
@@ -2295,6 +2322,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     cancel_forced_fail = true;
                     g_mutation_hold_budget_forced_unlock_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+                    // Issue #3118: consume is production/hard-env only.
+                    // After exit_mutation_boundary(false) restores
+                    // topology, force-release lock + depth immediately.
                     if (flag_ && *flag_) {
                         *flag_ = false; // dtor takes ResidualPolicy fail + unlock
                         g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
@@ -2711,6 +2741,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     ev_->exit_mutation_boundary(success);
     ev_->render_fast_exit_this_boundary_ = false;
+    // Issue #3118: production hold-budget cancel — lock + depth must
+    // drop immediately after abort_restore_dual_topology so densify /
+    // steal cannot wait through Phase-1-4 while seeing held+depth.
+    // Soft never sets cancel_forced_fail (observe-only). Happy path
+    // (flag unset) does not enter here.
+    if (cancel_forced_fail && outermost)
+        force_release_hold_after_cancel_();
     // Issue #2964 / #3006: unified linear fast-path gate on outermost
     // success. Depth is 0 after pop (before exit fence). When
     // !linear_fast_path_ok under production/Full → force dirty-root
@@ -2935,13 +2972,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             exit_fence_pushed = false;
         }
         // depth_slot last (paired with ctor ++; was early-decrement pre-#2120).
-        if (slot)
-            (*slot)--;
-        ev_->mutation_boundary_held_.store(false, std::memory_order_release);
-        // Issue #2849: process-wide held count exit (paired with enter at
-        // outermost held_.store true). Cross-thread mailbox gate reopens
-        // only after this count hits zero (and TLS depth is 0).
-        aura_process_mutation_boundary_held_exit();
+        // Issue #3118: cancel path already zeroed the slot + process-held.
+        if (!cancel_force_released_) {
+            if (slot)
+                (*slot)--;
+            ev_->mutation_boundary_held_.store(false, std::memory_order_release);
+            // Issue #2849: process-wide held count exit (paired with enter at
+            // outermost held_.store true). Cross-thread mailbox gate reopens
+            // only after this count hits zero (and TLS depth is 0).
+            aura_process_mutation_boundary_held_exit();
+        }
         // Issue #2517: clear process-wide live max probe if this fiber owns it.
         // Simplified exit: only clear when we are the recorded max holder
         // (next enter rebuilds; best-effort under multi-eval contention).
@@ -4223,6 +4263,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , dirty_upward_at_enter_(o.dirty_upward_at_enter_)
     , render_fast_exit_(o.render_fast_exit_)
     , linear_enforce_strict_pushed_(o.linear_enforce_strict_pushed_)
+    , cancel_force_released_(o.cancel_force_released_)
     , ev_(o.ev_)
     , flag_(o.flag_)
     , lock_(std::move(o.lock_))
@@ -4244,6 +4285,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.dirty_upward_at_enter_ = 0;
     o.render_fast_exit_ = false;
     o.linear_enforce_strict_pushed_ = false; // ownership transferred; do not double-pop
+    o.cancel_force_released_ = false;
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;
@@ -4277,6 +4319,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         dirty_upward_at_enter_ = o.dirty_upward_at_enter_;
         render_fast_exit_ = o.render_fast_exit_;
         linear_enforce_strict_pushed_ = o.linear_enforce_strict_pushed_;
+        cancel_force_released_ = o.cancel_force_released_;
         ev_ = o.ev_;
         flag_ = o.flag_;
         lock_ = std::move(o.lock_);
@@ -4298,6 +4341,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         o.dirty_upward_at_enter_ = 0;
         o.render_fast_exit_ = false;
         o.linear_enforce_strict_pushed_ = false;
+        o.cancel_force_released_ = false;
         o.uncaught_at_enter_ = 0;
         o.ev_ = nullptr;
         o.flag_ = nullptr;

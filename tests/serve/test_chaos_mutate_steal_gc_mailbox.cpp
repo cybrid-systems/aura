@@ -1905,6 +1905,20 @@ static void ac3035_residual_force_unlock_cite() {
     CHECK(read_file("tests/serve/test_issue_3035.cpp").empty(), "#3035: no invent test file");
 }
 
+// Issue #3118: production cancel force-unlock + depth clear immediately
+// after dual restore (non-yield body window; chaos residual_zero stays 0).
+static void ac3118_residual_force_release_cite() {
+    std::println("\n--- #3118: force-release cite (residual_zero lineage) ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    CHECK(emb.find("Issue #3118") != std::string::npos, "#3118: emb cites force-release");
+    CHECK(emb.find("force_release_hold_after_cancel_") != std::string::npos, "#3118: helper");
+    CHECK(emb.find("cancel_forced_fail && outermost") != std::string::npos, "#3118: after restore");
+    CHECK(mhb.find("kMutationHoldBudgetCancelForceReleaseIssue = 3118") != std::string::npos,
+          "#3118: issue stamp");
+    CHECK(read_file("tests/serve/test_issue_3118.cpp").empty(), "#3118: no invent test file");
+}
+
 // Issue #3071: in-body window residual cite — cancel-arm watchdog
 // re-arms force-safepoint (no unlock); soak fail-closed if holder
 // still live past the bound (chaos residual_zero stays 0).
@@ -2031,6 +2045,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac3002_mailbox_hold_slo_soak_cite();
         ac3036_mailbox_residual_prod_fail_closed_cite();
         ac3071_residual_inbody_window_cite();
+        ac3118_residual_force_release_cite();
         ac3073_1_production_soak_binds_residual_and_hold();
         ac3073_2_soft_unit_no_abort();
         ac3073_3_reuse_counters_additive();
@@ -2047,6 +2062,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
         ac2999_residual_dtor_consume_cite();
         ac3002_mailbox_hold_slo_soak_cite();
         ac3071_residual_inbody_window_cite();
+        ac3118_residual_force_release_cite();
         ac3073_1_production_soak_binds_residual_and_hold();
         ac3073_2_soft_unit_no_abort();
         ac3073_3_reuse_counters_additive();
@@ -2080,6 +2096,7 @@ int run_test_chaos_mutate_steal_gc_mailbox() {
     ac3002_mailbox_hold_slo_soak_cite();
     ac3036_mailbox_residual_prod_fail_closed_cite();
     ac3071_residual_inbody_window_cite();
+    ac3118_residual_force_release_cite();
     std::println("\n=== Issue #3073: production soak readiness gate ===");
     ac3073_1_production_soak_binds_residual_and_hold();
     ac3073_2_soft_unit_no_abort();
