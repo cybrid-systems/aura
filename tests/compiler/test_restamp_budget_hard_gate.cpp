@@ -188,6 +188,89 @@ void test_regression_soft_degrade() {
     expect_true("should_hard_reject_soft_sibling is the Soft/Production gate", true);
 }
 
+
+// AC10 -- Issue #3138: every restamp-lag reject path includes the Agent-
+// visible recovery hint so multi-round Agents have a stable contract
+// ("re-query after budget window or force full restamp before reusing refs").
+// The hint must appear in all 5 sites: query:children-stable /
+// query:parent-stable / query:stable-ref / query:ensure-ref /
+// query:as-stable-ref (mutate:export-stable-ref). Source-level check
+// mirrors the linter (scripts/check_restamp_budget_hard_gate.py
+// RECOVERY_HINT_REQUIRED) -- the test pins the contract for the
+// production build.
+void test_ac10_recovery_hint_in_restamp_lag() {
+    std::print("AC10 -- recovery hint present in all restamp-lag reject paths\n");
+    constexpr std::string_view kHint =
+        "recovery: re-query after budget window or force full restamp before reusing refs";
+    constexpr std::array<std::string_view, 5> kSites = {
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        "src/compiler/evaluator_primitives_mutate.cpp",
+    };
+    constexpr std::array<std::string_view, 5> kKeywords = {
+        "query:children-stable", "query:parent-stable", "query:stable-ref",
+        "query:ensure-ref",      "query:as-stable-ref",
+    };
+    auto read_source = [](std::string_view rel) -> std::string {
+        std::ifstream in{std::string{rel}};
+        if (!in)
+            return {};
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    for (std::size_t i = 0; i < kSites.size(); ++i) {
+        const auto text = read_source(kSites[i]);
+        expect_true(std::string{kSites[i]} + ": source read", !text.empty());
+        if (text.empty())
+            continue;
+        const auto pos = text.find(kKeywords[i]);
+        expect_true(std::string{kKeywords[i]} + ": keyword found", pos != std::string::npos);
+        if (pos == std::string::npos)
+            continue;
+        const auto window = text.substr(pos, 4000);
+        expect_true(std::string{kKeywords[i]} + ": restamp-lag in window",
+                    window.find("restamp-lag") != std::string::npos);
+        expect_true(std::string{kKeywords[i]} + ": recovery hint in window",
+                    window.find(kHint) != std::string::npos);
+    }
+}
+
+// AC11 -- Issue #3138 AC1: query:query-epoch-stats exposes the budget-
+// exceeded + torn-visible surface (single authoritative query point for
+// Agents). The three required fields are restamp-last-budget-exceeded
+// (bool), restamp-budget-exceeded-total (counter), and
+// restamp-budget-query-epoch-stale-total (counter). Source-level check
+// pins the keys so a future rename trips the test instead of breaking
+// Agent consumers silently.
+void test_ac11_status_surface_exposes_budget_fields() {
+    std::print("AC11 -- query:query-epoch-stats surface exposes budget fields\n");
+    constexpr std::array<std::pair<std::string_view, std::string_view>, 3> kFields = {{
+        {"src/compiler/evaluator_primitives_obs_eval.cpp", "restamp-last-budget-exceeded"},
+        {"src/compiler/evaluator_primitives_obs_eval.cpp", "restamp-budget-exceeded-total"},
+        {"src/compiler/evaluator_primitives_obs_eval.cpp",
+         "restamp-budget-query-epoch-stale-total"},
+    }};
+    auto read_source = [](std::string_view rel) -> std::string {
+        std::ifstream in{std::string{rel}};
+        if (!in)
+            return {};
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    for (const auto& [rel, key] : kFields) {
+        const auto text = read_source(rel);
+        expect_true(std::string{rel} + ": source read", !text.empty());
+        if (text.empty())
+            continue;
+        expect_true(std::string{rel} + ": field " + std::string{key} + " present",
+                    text.find(std::string{"\""} + std::string{key} + "\""
+    }) != std::string::npos);
+}
+}
 } // namespace
 
 int main() {
@@ -199,6 +282,8 @@ int main() {
     test_ac4_ac5_unified_restamp_compile_link();
     test_ac9_export_site_error_key();
     test_regression_soft_degrade();
-    std::print("All #3104 AC tests PASSED\n");
+    test_ac10_recovery_hint_in_restamp_lag();
+    test_ac11_status_surface_exposes_budget_fields();
+    std::print("All #3104 + #3138 AC tests PASSED\n");
     return 0;
 }

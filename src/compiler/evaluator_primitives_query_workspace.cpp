@@ -553,7 +553,9 @@ void register_workspace_query_primitives(
                 if (!ev.allow_query_stable_ref_export(cid))
                     return mev("restamp-lag",
                                "budget-exceeded: query:children-stable: restamp budget exceeded; "
-                               "generation torn for export (Issue #3121 / #3037 / #3000)");
+                               "generation torn for export (Issue #3121 / #3037 / #3000); ; // "
+                               "Issue #3138: Agent recovery hint recovery: re-query after budget "
+                               "window or force full restamp before reusing refs");
             }
         }
         const auto qe = begin_query_epoch(&flat); // Issue #2192
@@ -630,7 +632,9 @@ void register_workspace_query_primitives(
         if (!ev.allow_query_stable_ref_export(pref.id))
             return mev("restamp-lag",
                        "budget-exceeded: query:parent-stable: restamp budget exceeded; "
-                       "generation torn for export (Issue #3121 / #3037 / #3000)");
+                       "generation torn for export (Issue #3121 / #3037 / #3000); ; // Issue "
+                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
+                       "full restamp before reusing refs");
         // Issue #2404 / #2960: export_ref_safe stamps + finalize_agent_export.
         const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
         auto exported = ev.export_ref_safe(pref.id, /*workspace_id=*/0, cur_fiber);
@@ -744,8 +748,11 @@ void register_workspace_query_primitives(
         // Issue #3000: gate before export_ref_safe so a skipped restamp
         // cannot ship a stamped-green pre-mutate generation.
         if (!ev.allow_query_stable_ref_export(node))
-            return mev("restamp-lag", "budget-exceeded: query:stable-ref: restamp budget exceeded; "
-                                      "generation torn for export (Issue #3121 / #3037 / #3000)");
+            return mev("restamp-lag",
+                       "budget-exceeded: query:stable-ref: restamp budget exceeded; "
+                       "generation torn for export (Issue #3121 / #3037 / #3000); ; // Issue "
+                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
+                       "full restamp before reusing refs");
         // Issue #738 / #1630 / #2404 / #2960: export_ref_safe stamps + finalize
         // (sole Agent export path); query counter tracks the stamp.
         std::uint32_t layer = 0;
@@ -829,8 +836,11 @@ void register_workspace_query_primitives(
         // as query:stable-ref). Soft: allow returns true + hash
         // still reports restamp-generation-torn.
         if (!ev.allow_query_stable_ref_export(held.id))
-            return mev("restamp-lag", "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
-                                      "generation torn for export (Issue #3121 / #3058 / #3037)");
+            return mev("restamp-lag",
+                       "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
+                       "generation torn for export (Issue #3121 / #3058 / #3037); ; // Issue "
+                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
+                       "full restamp before reusing refs");
         const bool was_valid = held.is_valid_in(flat);
         auto exported = ev.export_held_ref(held);
         // Build result hash via FlatHashTable (same pattern as obs stats).
