@@ -709,13 +709,14 @@ extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((w
 }
 
 export [[nodiscard]] inline bool production_auto_arm_pack_active() noexcept {
-    if (sandbox_dev_off_for_auto_arm())
-        return false;
     const int pref = g_production_auto_arm_moving_pref.load(std::memory_order_acquire);
     if (pref == 0)
         return false;
     if (pref == 1)
-        return true;
+        return true; // test force-on, independent of AURA_SANDBOX
+    // Derive path: Soft / AURA_SANDBOX=off never auto-arms.
+    if (sandbox_dev_off_for_auto_arm())
+        return false;
     if (aura_production_defaults_active_probe == nullptr)
         return false;
     return aura_production_defaults_active_probe() != 0;

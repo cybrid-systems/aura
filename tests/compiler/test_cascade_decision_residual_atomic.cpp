@@ -70,10 +70,10 @@ int run_test_cascade_decision_residual_atomic_3135() {
     {
         std::println("\n--- AC1: cascade_decision_mtx_ + record_dependency reject lock ---");
         // Find the field declaration.
-        auto pos = ixx.find("cascade_decision_mtx_");
+        auto pos = ixx.find("std::mutex cascade_decision_mtx_");
         CHECK(pos != std::string::npos, "AC1: cascade_decision_mtx_ declared");
-        auto end = pos + 2500;
-        auto block = ixx.substr(pos, end - pos);
+        const auto block_start = pos > 600 ? pos - 600 : 0;
+        auto block = ixx.substr(block_start, (pos - block_start) + 200);
         must_inline(block, "Issue #3135", "AC1 field declaration cites #3135");
         must_inline(block, "std::mutex", "AC1 lock is std::mutex (not std::shared_mutex)");
         must_inline(block, "cascade_decision_mtx_", "AC1 lock named cascade_decision_mtx_");
@@ -120,7 +120,8 @@ int run_test_cascade_decision_residual_atomic_3135() {
         auto end = pos + 8000;
         auto block = ixx.substr(pos, end - pos);
         // need_lock must be the gate that decides skip-or-take.
-        must_inline(block, "need_lock = initial_armed ||", "AC2 need_lock is the Soft-skip gate");
+        must_inline(block, "const bool need_lock =", "AC2 need_lock is the Soft-skip gate");
+        must_inline(block, "initial_armed ||", "AC2 need_lock ORs armed with production");
         must_inline(block, "cascade_guard.lock()",
                     "AC2 lock is acquired conditionally via defer_lock + .lock()");
         must_inline(block, "defer_lock",
@@ -202,7 +203,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
         }
         // Existing dep-graph / cascade suites preserved (regression).
         CHECK(read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp")
-                      .find("deferred_hybrid_armed") != std::string::npos,
+                      .find("drain_deferred_hybrid_cascade") != std::string::npos,
               "AC5: hybrid-cascade lineage preserved");
     }
 

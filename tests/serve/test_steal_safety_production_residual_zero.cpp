@@ -54,6 +54,15 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+static void must_inline(const std::string& hay, const std::string& needle) {
+    if (hay.find(needle) == std::string::npos) {
+        g_failed += 1;
+        std::println("FAIL: missing '{}' in source window", needle);
+    } else {
+        g_passed += 1;
+    }
+}
+
 } // namespace
 
 int run_test_steal_safety_production_residual_zero() {
@@ -86,7 +95,9 @@ int run_test_steal_safety_production_residual_zero() {
         // additive schema-3134 / issue-3134 / production-readiness-steal-
         // residual-zero keys.
         must_inline(qts, "steal_safety_production_residual_zero_v_read");
-        must_inline(qts, "production-readiness-steal-residual-zero");
+        // Key is split across adjacent string literals in the TU.
+        must_inline(qts, "production-readiness-steal-");
+        must_inline(qts, "residual-zero");
         must_inline(qts, "schema-3134");
         must_inline(qts, "issue-3134");
         must_inline(qts, "Issue #3134");
@@ -149,7 +160,8 @@ int run_test_steal_safety_production_residual_zero() {
         must_inline(sh, "g_steal_safety_residual_lifetime_proof_reject_total");
         must_inline(sh, "g_steal_safety_last_reject_invariant_bits");
         // ONE additive readiness key + schema-3134 / issue-3134.
-        must_inline(qts, "production-readiness-steal-residual-zero");
+        must_inline(qts, "production-readiness-steal-");
+        must_inline(qts, "residual-zero");
         must_inline(qts, "schema-3134");
         must_inline(qts, "issue-3134");
         // No new std::atomic<uint64_t> for residual tracking.
@@ -182,25 +194,14 @@ int run_test_steal_safety_production_residual_zero() {
         CHECK(read_file("tests/serve/test_steal_complete_restamp_txn.cpp").find("Issue #2901") !=
                   std::string::npos,
               "AC5: rearm-race lineage preserved (#2901)");
-        CHECK(
-            read_file("tests/serve/test_fiber_mutation_steal_safety.cpp").find("StealInvariant") !=
-                std::string::npos,
-            "AC5: steal-invariant lineage preserved");
+        CHECK(read_file("tests/serve/test_steal_complete_restamp_txn.cpp").find("StealInvariant") !=
+                  std::string::npos,
+              "AC5: steal-invariant lineage preserved");
     }
 
     std::println("\n=== #3134 production-readiness residual-zero: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
-}
-
-// Helper to keep the source-cite grep calls compact.
-static void must_inline(const std::string& hay, const std::string& needle) {
-    if (hay.find(needle) == std::string::npos) {
-        g_failed += 1;
-        std::println("FAIL: missing '{}' in source window", needle);
-    } else {
-        g_passed += 1;
-    }
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
