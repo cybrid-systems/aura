@@ -140,6 +140,10 @@ struct CapabilityGrant {
     // self-evo under one mid without durable sticky grants. Soft/Off
     // ignores session_bound for enforcement (zero cost, AC3).
     bool session_bound = false;
+    // Issue #3142: stolen flag — set by fiber steal path so caller-side
+    // check_and_record_effect fails on a stolen SessionBound entry (no
+    // double-consume). Layout-additive at END of struct per #2906.
+    bool stolen = false;
 };
 
 // Sandbox mode mirror for effect checks (written only via sandbox::set_mode).
@@ -269,6 +273,14 @@ struct CapabilityEffectMetrics {
     // privilege escalation via wildcard → full Effect mask → check passes →
     // grant succeeds. Appended at struct END (never insert mid-struct).
     std::atomic<std::uint64_t> capability_wildcard_write_fence_deny_total{0};
+    // Issue #3142: SessionBound revoke cascade counters (additive; appended at
+    // struct END per #2906). dtor_total: cascade revoke on nested TenantScope
+    // dtor / abort. steal_total: stolen flag set on fiber steal path.
+    // orphan_total: orphan grant caught at audit (live_session_grants > 0 but
+    // no caller is tracked; defense-in-depth metric for long-run chaos).
+    std::atomic<std::uint64_t> session_bound_revoked_on_scope_dtor_total{0};
+    std::atomic<std::uint64_t> session_bound_revoked_on_steal_total{0};
+    std::atomic<std::uint64_t> session_bound_orphan_detected_total{0};
     std::atomic<std::uint64_t> capability_session_revoke_abort_total{0};
     // Issue #3090: production (Restricted/Strict) grant refused when
     // prov.mutation_id == 0 — same refuse semantics as
@@ -664,6 +676,101 @@ struct CapabilityRegistry {
         return n;
     }
 
+    // Issue #3142: revoke all live session_bound grants matching
+    // (tenant, mid, fiber_id) tuple. Used by TenantScope::release() to
+    // cascade-revoke inner SessionBound grants on nested scope abort /
+    // early-return. Caller MUST hold mtx (matches #3126 / #2659 patterns).
+    // Zero-cost short-circuit when capability_live_session_grants == 0
+    // (AC3 Soft happy path).
+    std::size_t revoke_session_grants_for(TenantId tenant, std::uint64_t mid,
+                                          std::uint32_t fiber_id,
+                                          const char* reason = "scope-dtor-cascade") {
+        if (mid == 0 || tenant == 0)
+            return 0;
+        auto& met = g_capability_effect_metrics();
+        if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+            return 0; // AC3: zero extra work when no session grants
+        if (!reason || reason[0] == '\0')
+            reason = "scope-dtor-cascade";
+        std::lock_guard<std::mutex> lock(mtx);
+        std::size_t n = 0;
+        auto ep = ::aura::core::current_mutation_epoch();
+        if (ep == 0)
+            ep = 1;
+        EffectProvenance audit_prov{};
+        audit_prov.mutation_id = mid;
+        audit_prov.epoch = ep;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return 0;
+        for (auto& g : it->second) {
+            if (g.revoked || !g.session_bound)
+                continue;
+            if (g.bound_mutation_id != mid)
+                continue;
+            if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
+                continue;
+            g.revoked = true;
+            g.effects = Effect::None;
+            g.revoke_epoch = ep;
+            g.session_bound = false; // no longer live
+            ++n;
+            met.session_bound_revoked_on_scope_dtor_total.fetch_add(1, std::memory_order_relaxed);
+            met.capability_session_revoke_total.fetch_add(1, std::memory_order_relaxed);
+            met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+            met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+            auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
+            if (cur > 0)
+                met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+            record_audit(Effect::None, Effect::None, tenant, audit_prov,
+                         /*denied=*/false, reason, reason);
+        }
+        return n;
+    }
+
+    // Issue #3142: count live SessionBound entries for given tenant
+    // (AC3 long-run chaos test: must == 0 after 1000 nested aborts).
+    [[nodiscard]] std::size_t session_bound_entries_alive(TenantId tenant) const noexcept {
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return 0;
+        std::size_t n = 0;
+        for (const auto& g : it->second) {
+            if (!g.revoked && g.session_bound)
+                ++n;
+        }
+        return n;
+    }
+
+    // Issue #3142: mark SessionBound entry as stolen on fiber steal.
+    // Caller MUST hold mtx. Idempotent — second call on same (tenant, mid,
+    // fiber_id) is no-op. Returns true if a matching entry was found and
+    // marked stolen (caller can use to decide whether to also revoke).
+    bool mark_session_bound_stolen(TenantId tenant, std::uint64_t mid,
+                                   std::uint32_t fiber_id) noexcept {
+        if (mid == 0 || tenant == 0)
+            return false;
+        std::lock_guard<std::mutex> lock(mtx);
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return false;
+        bool found = false;
+        for (auto& g : it->second) {
+            if (g.revoked || !g.session_bound || g.stolen)
+                continue;
+            if (g.bound_mutation_id != mid)
+                continue;
+            if (fiber_id != 0 && g.grant_fiber_id != fiber_id)
+                continue;
+            g.stolen = true;
+            found = true;
+            g_capability_effect_metrics().session_bound_revoked_on_steal_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        return found;
+    }
+
     // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
     // If revoke_at_epoch == 0, callers should pass current_mutation_epoch() (or
     // the make_grant_provenance helper) so blame trails stay non-zero.
@@ -714,7 +821,10 @@ struct CapabilityRegistry {
         if (it == by_tenant.end())
             return acc;
         for (const auto& g : it->second) {
-            if (!g.revoked)
+            // Issue #3142: stolen entries do NOT contribute effects — caller-side
+            // check_and_record_effect on a stolen SessionBound fails (no
+            // double-consume after fiber steal).
+            if (!g.revoked && !g.stolen)
                 acc = acc | g.effects;
         }
         return acc;
@@ -733,7 +843,8 @@ struct CapabilityRegistry {
         if (it == by_tenant.end())
             return acc;
         for (const auto& g : it->second) {
-            if (!g.revoked)
+            // Issue #3142: stolen entries excluded (see effects_for above).
+            if (!g.revoked && !g.stolen)
                 acc = acc | g.effects;
         }
         return acc;
@@ -1309,6 +1420,11 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
             if (it != reg.by_tenant.end()) {
                 for (auto& g : it->second) {
                     if (g.revoked || !g.single_use)
+                        continue;
+                    // Issue #3142 AC2: stolen entries are skipped — caller cannot
+                    // consume a stolen SessionBound grant (no double-consume
+                    // after fiber steal).
+                    if (g.stolen)
                         continue;
                     if (!has_effect(g.effects, required))
                         continue;

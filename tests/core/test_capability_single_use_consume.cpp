@@ -113,8 +113,177 @@ void reset_all() {
 
 } // namespace
 
+
+// ── Issue #3142: SessionBound grant revoke cascade (nested TenantScope
+// abort + fiber steal paths must revoke inner SessionBound grants; stolen
+// flag prevents caller-side double-consume). Soft / zero live residual is
+// a no-op short-circuit (AC3). Additive metrics only (AC4). Source-cite
+// capability_model.hh + evaluator_security.cpp + evaluator_fiber_mutation.cpp;
+// no docs/design/, no tests/issues/test_issue_3142.cpp (AC5).
+
+static void ac3142_1_nested_abort_cascade_revoke() {
+    std::println("\n--- #3142 AC1: nested TenantScope abort cascade-revoke SessionBound ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto tenant = ev.capability_tenant_id();
+    ev.set_capability_tenant_id(42);
+
+    EffectProvenance prov{};
+    prov.epoch = 1;
+    prov.mutation_id = 1;
+    g_capability_registry().grant(tenant, "mut-3142-cascade", Effect::Mutate | Effect::MacroSelfEvo,
+                                  prov,
+                                  /*single_use=*/false, /*session_bound=*/true);
+
+    const auto before = g_capability_registry().session_bound_entries_alive(tenant);
+    CHECK(before == 1, "AC1 pre: tenant has 1 live session_bound grant");
+
+    // Simulate TenantScope::release path: revoke_session_grants_for with
+    // matching (tenant, mid, fiber_id) tuple.
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        (void)g_capability_registry().revoke_session_grants_for(
+            tenant, prov.mutation_id, /*fiber_id=*/0, "scope-dtor-cascade");
+    }
+
+    const auto after = g_capability_registry().session_bound_entries_alive(tenant);
+    CHECK(after == 0, "AC1: cascade revoke cleared session_bound grant");
+    CHECK(g_capability_effect_metrics().session_bound_revoked_on_scope_dtor_total.load() >= 1,
+          "AC1: counter bumped on cascade revoke");
+}
+
+static void ac3142_2_steal_marks_no_double_consume() {
+    std::println(
+        "\n--- #3142 AC2: fiber steal marks stolen → caller check fails (no double-consume) ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto tenant = ev.capability_tenant_id();
+    ev.set_capability_tenant_id(7);
+
+    EffectProvenance prov{};
+    prov.epoch = 1;
+    prov.mutation_id = 42;
+
+    g_capability_registry().grant(tenant, "mut-3142-stolen", Effect::Mutate | Effect::MacroSelfEvo,
+                                  prov,
+                                  /*single_use=*/false, /*session_bound=*/true);
+
+    // Mark stolen (simulating fiber steal path).
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        (void)g_capability_registry().mark_session_bound_stolen(tenant, prov.mutation_id,
+                                                                /*fiber_id=*/0);
+    }
+
+    // AC2: caller-side check_and_record_effect for the same mid must FAIL
+    // (stolen entry excluded from effects_for_locked, no double-consume).
+    const bool allowed = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant,
+                                                 "mut-3142-stolen-check");
+    CHECK(!allowed,
+          "AC2: stolen SessionBound grant → check_and_record_effect deny (no double-consume)");
+
+    // Verify stolen flag was set (consume loop skipped the entry).
+    bool found_stolen = false;
+    {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        const auto it = g_capability_registry().by_tenant.find(tenant);
+        if (it != g_capability_registry().by_tenant.end()) {
+            for (const auto& g : it->second) {
+                if (g.name == "mut-3142-stolen") {
+                    found_stolen = g.stolen;
+                    break;
+                }
+            }
+        }
+    }
+    CHECK(found_stolen, "AC2: entry has stolen=true (caller cannot consume)");
+    CHECK(g_capability_effect_metrics().session_bound_revoked_on_steal_total.load() >= 1,
+          "AC2: counter bumped on steal mark");
+}
+
+static void ac3142_3_long_run_no_leak() {
+    std::println("\n--- #3142 AC3: 1000 nested aborts → session_bound_entries_alive == 0 ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto tenant = ev.capability_tenant_id();
+    ev.set_capability_tenant_id(99);
+
+    EffectProvenance prov{};
+    prov.epoch = 1;
+    prov.mutation_id = 99;
+
+    for (int i = 0; i < 1000; ++i) {
+        const std::string name = "mut-3142-loop-" + std::to_string(i);
+        g_capability_registry().grant(tenant, name, Effect::Mutate, prov,
+                                      /*single_use=*/false, /*session_bound=*/true);
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        (void)g_capability_registry().revoke_session_grants_for(tenant, prov.mutation_id,
+                                                                /*fiber_id=*/0, "loop-cascade");
+    }
+
+    const auto remaining = g_capability_registry().session_bound_entries_alive(tenant);
+    CHECK(remaining == 0, "AC3: 1000 nested aborts → no leak (session_bound_entries_alive == 0)");
+}
+
+static void ac3142_4_additive_metrics_and_source_cite() {
+    std::println("\n--- #3142 AC4/AC5: additive counter + source-cite + linter ---");
+    // Source-cite in capability_model.hh
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #3142") != std::string::npos, "AC4: capability_model.hh cites #3142");
+    CHECK(cap.find("session_bound_revoked_on_scope_dtor_total") != std::string::npos,
+          "AC4: dtor counter present");
+    CHECK(cap.find("session_bound_revoked_on_steal_total") != std::string::npos,
+          "AC4: steal counter present");
+    CHECK(cap.find("revoke_session_grants_for") != std::string::npos,
+          "AC4: revoke_session_grants_for overload present");
+    CHECK(cap.find("session_bound_entries_alive") != std::string::npos,
+          "AC4: session_bound_entries_alive accessor present");
+    CHECK(cap.find("mark_session_bound_stolen") != std::string::npos,
+          "AC4: mark_session_bound_stolen helper present");
+    CHECK(cap.find("bool stolen = false") != std::string::npos,
+          "AC4: stolen flag field on CapabilityGrant");
+
+    // Source-cite in evaluator_security.cpp (TenantScope::release cascade revoke)
+    const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(eval_sec.find("Issue #3142") != std::string::npos,
+          "AC4: evaluator_security.cpp cites #3142");
+    CHECK(eval_sec.find("scope-dtor-cascade") != std::string::npos,
+          "AC4: TenantScope::release calls revoke_session_grants_for");
+
+    // Source-cite in evaluator_fiber_mutation.cpp (steal mark)
+    const auto fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fiber_mut.find("mark_session_bound_stolen") != std::string::npos,
+          "AC4: fiber_mutation.cpp wires mark_session_bound_stolen");
+    CHECK(fiber_mut.find("Issue #3142") != std::string::npos,
+          "AC4: fiber_mutation.cpp cites #3142");
+
+    // Linter exists
+    const auto linter = read_file("scripts/coverage/checks/check_session_bound_dtor_cascade.py");
+    CHECK(!linter.empty() && linter.find("Issue #3142") != std::string::npos,
+          "AC5: linter exists and cites #3142");
+
+    // build.py wires linter
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_session_bound_dtor_cascade") != std::string::npos,
+          "AC5: build.py wires linter");
+
+    // No docs/design/, no tests/issues/test_issue_3142.cpp
+    CHECK(!std::filesystem::exists("docs/design/3142-castop-typed-meta-phase-c.md"),
+          "AC5: no docs/design/3142-*.md");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3142.cpp"),
+          "AC5: no tests/issues/test_issue_3142.cpp");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3142.cpp"),
+          "AC5: no tests/core/test_issue_3142.cpp");
+}
+
 int run_test_capability_single_use_consume() {
-    std::println("=== Issue #2586: single-use grant auto-revoke ===");
+    std::println("=== Issue #2586/#3142: single-use + SessionBound revoke cascade ===");
 
     // ── AC1: grant_once(Mutate) → 1st allow; 2nd deny ──────────────
     {
@@ -973,6 +1142,10 @@ int run_test_capability_single_use_consume() {
             }
         }
 
+        ac3142_1_nested_abort_cascade_revoke();
+        ac3142_2_steal_marks_no_double_consume();
+        ac3142_3_long_run_no_leak();
+        ac3142_4_additive_metrics_and_source_cite();
         std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;
     }
