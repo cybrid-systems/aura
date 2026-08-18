@@ -20,6 +20,7 @@
 //        _probe() != 0` gate before note_relower_success_coverage.
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <print>
@@ -93,6 +94,32 @@ int run_test_hot_update_relower_success_coverage() {
     CompilerService cs;
     std::print("[test_hot_update_relower_success_coverage] running 4 ACs\n");
 
+    // Seed cache first (Soft) so store_ir_cache_v2 does not already
+    // OR last_reemit_success_region_mask. Then arm production so
+    // restamp_cache_entry_for_test notes coverage.
+    // restamp_cache_entry_for_test only hits live ir_cache_v2_ names.
+    CHECK(cs.eval("(set-code \""
+                  "(define test_hot_update_relower_success_coverage_ac1 (lambda () 1))"
+                  "(define test_hot_update_relower_success_coverage_ac2 (lambda () 2))"
+                  "(define test_hot_update_relower_success_coverage_ac3_a (lambda () 3))"
+                  "(define test_hot_update_relower_success_coverage_ac3_b (lambda () 4))"
+                  "(define test_hot_update_relower_success_coverage_ac4 (lambda () 5))"
+                  "\")")
+              .has_value(),
+          "seed defines");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval seed");
+    if (!cs.get_define_v2("test_hot_update_relower_success_coverage_ac1"))
+        (void)cs.eval("(compile:cache-define \"test_hot_update_relower_success_coverage_ac1\")");
+    if (!cs.get_define_v2("test_hot_update_relower_success_coverage_ac2"))
+        (void)cs.eval("(compile:cache-define \"test_hot_update_relower_success_coverage_ac2\")");
+    if (!cs.get_define_v2("test_hot_update_relower_success_coverage_ac3_a"))
+        (void)cs.eval("(compile:cache-define \"test_hot_update_relower_success_coverage_ac3_a\")");
+    if (!cs.get_define_v2("test_hot_update_relower_success_coverage_ac3_b"))
+        (void)cs.eval("(compile:cache-define \"test_hot_update_relower_success_coverage_ac3_b\")");
+    if (!cs.get_define_v2("test_hot_update_relower_success_coverage_ac4"))
+        (void)cs.eval("(compile:cache-define \"test_hot_update_relower_success_coverage_ac4\")");
+
+    aura::compiler::typed_audit::apply_production_audit_defaults();
     ac1_restamp_flips_bit(cs);
     ac2_monotonic_same_name(cs);
     ac3_distinct_names_grow(cs);

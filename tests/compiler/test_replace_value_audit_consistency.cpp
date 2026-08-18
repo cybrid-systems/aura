@@ -53,11 +53,12 @@ int run_test_replace_value_audit_consistency() {
         auto ast = read_file("src/core/ast.ixx");
         CHECK(!mut.empty(), "AC1: mutate primitives readable");
         CHECK(!ast.empty(), "AC1: ast.ixx readable");
-        auto pos = mut.find("mutate:replace-value");
-        CHECK(pos != std::string::npos, "AC1: replace-value present");
-        // Window must cover the #2793 comment block + LiteralInt branch (~3.5KB).
-        auto win = mut.substr(pos > 600 ? pos - 600 : 0, 5000);
-        CHECK(win.find("Issue #2793") != std::string::npos, "AC1: replace-value cites #2793");
+        auto pos = mut.find("Issue #2793");
+        CHECK(pos != std::string::npos, "AC1: replace-value cites #2793");
+        // Window from the #2793 cite through the LiteralInt / Float / Sym
+        // rollback branches (first "mutate:replace-value" is too early).
+        auto win = mut.substr(pos, 6000);
+        CHECK(win.find("mutate:replace-value") != std::string::npos, "AC1: replace-value present");
         CHECK(win.find("MutationSoAField::IntVal") != std::string::npos,
               "AC1: Int uses MutationSoAField::IntVal");
         CHECK(ast.find("rollback_record_for_boundary_abort") != std::string::npos,

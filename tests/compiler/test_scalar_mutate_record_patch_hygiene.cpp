@@ -84,9 +84,9 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         std::println("\n--- AC1: record-patch body cites #3131 + guard ---");
         auto src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
         CHECK(!src.empty(), "AC1: mutate primitives readable");
-        auto pos = src.find("add_mutate(\"mutate:record-patch\"");
+        auto pos = src.find("\"mutate:record-patch\"");
         CHECK(pos != std::string::npos, "AC1: record-patch present");
-        auto end = src.find("add_mutate(\"mutate:query-and-replace\"", pos);
+        auto end = src.find("\"mutate:query-and-replace\"", pos);
         if (end == std::string::npos)
             end = pos + 6000;
         auto win = src.substr(pos, end - pos);
@@ -185,10 +185,10 @@ int run_test_scalar_mutate_record_patch_hygiene() {
               "AC5: deny fires + reason hygiene");
         // The hash key for last_hygiene_blame_node — kebab-case mapping.
         // Confirm blame points to the rejected nid (existing key, no new keys).
-        auto blame_node = cs.eval(
-            std::format("(hash-ref (engine:metrics \"query:macro-hygiene-provenance-stats\") "
-                        "\"last-hygiene-blame-node\")"));
-        CHECK(blame_node && is_int(*blame_node), "AC5: last-hygiene-blame-node readable");
+        auto blame_node =
+            cs.eval(std::format("(hash-ref (engine:metrics \"query:last-mutation-provenance\") "
+                                "\"last_hygiene_blame_node\")"));
+        CHECK(blame_node && is_int(*blame_node), "AC5: last_hygiene_blame_node readable");
         CHECK(as_int(*blame_node) == static_cast<std::int64_t>(nid),
               "AC5: blame node id matches rejected nid");
     }
@@ -202,8 +202,8 @@ int run_test_scalar_mutate_record_patch_hygiene() {
     {
         std::println("\n--- AC6: chokepoint (guard between resolve and add_mutation) ---");
         auto src = read_file("src/compiler/evaluator_primitives_mutate.cpp");
-        auto pos = src.find("add_mutate(\"mutate:record-patch\"");
-        auto end = src.find("add_mutate(\"mutate:query-and-replace\"", pos);
+        auto pos = src.find("\"mutate:record-patch\"");
+        auto end = src.find("\"mutate:query-and-replace\"", pos);
         if (end == std::string::npos)
             end = pos + 6000;
         auto win = src.substr(pos, end - pos);
