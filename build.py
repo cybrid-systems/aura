@@ -3542,6 +3542,19 @@ def cmd_lint():
             "Issue #3120 residual CastOp type-txn remirror linter failed — run python3 scripts/coverage/checks/check_residual_castop_type_txn_3120.py"
         )
         return r
+    # Issue #3132: MacroSelfEvo chokepoint at outermost
+    # post_mutation_macro_reexpand entry (P0 residual of #2023).
+    # Extends test_macro_self_evo_reexpand_chokepoint; no test_issue_3132.cpp.
+    msc3132_script = COVERAGE_CHECKS / "check_macro_self_evo_chokepoint_3132.py"
+    if not msc3132_script.exists():
+        fail(f"missing {msc3132_script}")
+        return 1
+    r = run([sys.executable, str(msc3132_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3132 MacroSelfEvo reexpand chokepoint linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_chokepoint_3132.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

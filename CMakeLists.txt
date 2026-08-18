@@ -2314,6 +2314,15 @@ aura_add_issue_test(test_scalar_mutate_record_patch_hygiene)
 aura_issue_test_link_light(test_scalar_mutate_record_patch_hygiene)
 add_dependencies(all_test_issue_targets test_scalar_mutate_record_patch_hygiene)
 
+# Issue #3132: MacroSelfEvo chokepoint at outermost post_mutation_macro_reexpand
+# entry. macro_expand_all + clone_macro_body #2023 chokepoints preserved;
+# post_mutation_macro_reexpand now routes through check_macro_self_evo at the
+# entry (existing #2023 deny counter + #3028 reason surface). No new query
+# keys. No tests/issues/test_issue_3132.cpp (#81967).
+aura_add_issue_test(test_macro_self_evo_reexpand_chokepoint)
+aura_issue_test_link_light(test_macro_self_evo_reexpand_chokepoint)
+add_dependencies(all_test_issue_targets test_macro_self_evo_reexpand_chokepoint)
+
 # Issue #3095: post-restore macro hygiene invariant enforcement
 # (refine #2959 / #3033 / #2099). After every successful
 # abort_restore_dual_topology / restore_metadata_columns on the

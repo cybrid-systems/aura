@@ -5969,6 +5969,29 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
     if (macros_.empty())
         return 0; // no macros registered, nothing to do (quiet path)
 
+    // Issue #3132: MacroSelfEvo chokepoint at the outermost
+    // post_mutation entry. Without this, the reexpand path could
+    // re-enter clone_macro_body + expand_inner_macros without a
+    // capability gate (clone_macro_body's internal depth=0 gate is
+    // a coarser fence — it fires on the inner call but does not
+    // cover the reexpand itself; Soft/Off zero-cost contract
+    // requires the gate to be at the OUTERMOST entry, not deep
+    // inside every reexpand_call). On deny: bump existing counters,
+    // set existing reason surface (no new vocabulary), return 0 so
+    // no re-expansion work is performed.
+    {
+        using aura::core::capability::check_macro_self_evo;
+        using aura::core::capability::g_capability_registry;
+        const auto tenant = g_capability_registry().default_tenant.load();
+        const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
+        const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
+        if (!chk.allowed) {
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_clone_last_reject_reason.store(1, std::memory_order_relaxed);
+            return 0;
+        }
+    }
+
     // Collect affected node IDs: descendants of target_node
     // + parent_id + dirty-upward chain. This is a conservative
     // set — we may visit nodes that aren't actually affected
