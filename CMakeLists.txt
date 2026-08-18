@@ -2306,6 +2306,14 @@ aura_add_issue_test(test_hygiene_mutate_closed_loop)
 aura_issue_test_link_light(test_hygiene_mutate_closed_loop)
 add_dependencies(all_test_issue_targets test_hygiene_mutate_closed_loop)
 
+# Issue #3131: scalar/metadata mutate MacroIntroduced hygiene (record-patch
+# closed-loop). replace-type / replace-value / tweak-literal guards preserved
+# (#3115 / #373); record-patch body adds reject_structural_macro_hygiene +
+# propagate_macro_introduced_marker. No tests/issues/test_issue_3131.cpp.
+aura_add_issue_test(test_scalar_mutate_record_patch_hygiene)
+aura_issue_test_link_light(test_scalar_mutate_record_patch_hygiene)
+add_dependencies(all_test_issue_targets test_scalar_mutate_record_patch_hygiene)
+
 # Issue #3095: post-restore macro hygiene invariant enforcement
 # (refine #2959 / #3033 / #2099). After every successful
 # abort_restore_dual_topology / restore_metadata_columns on the

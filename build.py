@@ -3518,6 +3518,18 @@ def cmd_lint():
             "Issue #3119 production lock-order Hard linter failed — run python3 scripts/coverage/checks/check_lock_order_production_hard_3119.py"
         )
         return r
+    # Issue #3131: scalar/metadata mutate MacroIntroduced hygiene (record-patch).
+    # Extends test_scalar_mutate_record_patch_hygiene; no test_issue_3131.cpp.
+    smh3131_script = COVERAGE_CHECKS / "check_scalar_mutate_hygiene_3131.py"
+    if not smh3131_script.exists():
+        fail(f"missing {smh3131_script}")
+        return 1
+    r = run([sys.executable, str(smh3131_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3131 scalar/metadata mutate hygiene linter failed — run python3 scripts/coverage/checks/check_scalar_mutate_hygiene_3131.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
