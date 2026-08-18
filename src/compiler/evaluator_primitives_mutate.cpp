@@ -1272,7 +1272,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // migrating via the guard adds the lock that should have
     // been there.
     add_mutate("mutate:replace-type",
-               [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
+               [resolve_mutate_node_arg, &ev, mev](std::span<const EvalValue> a) -> EvalValue {
                    bool ok = true;
                    // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
                    auto guard_r =
@@ -1300,6 +1300,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                            resolve_mutate_node_arg(flat, a[0], "mutate:replace-type", &ok, node);
                        !is_void(resolve_err))
                        return resolve_err;
+                   // Issue #3115: scalar type rewrite is still a mutate of
+                   // a MacroIntroduced node — same opt-in as structural prims.
+                   const bool allow_macro_rt =
+                       ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+                   const bool was_macro_rt = flat.is_macro_introduced(node);
+                   if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_rt,
+                                                                  "replace-type", mev)) {
+                       ok = false;
+                       return *err;
+                   }
                    auto type_idx = as_string_idx(a[1]);
                    if (type_idx >= ev.string_heap_.size()) {
                        ok = false;
@@ -1334,6 +1344,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                    // Actually apply the type change
                    flat.set_type(node, new_tid);
                    ev.workspace_flat_->mark_dirty_upward(node);
+                   if (allow_macro_rt && was_macro_rt)
+                       propagate_macro_introduced_marker(ev, flat, node,
+                                                         parse_no_auto_restamp_opt_out(ev, a));
                    // Issue #213 Cycle 2: with the MutationBoundaryGuard,
                    // the second version bump is now only needed on
                    // success (to mirror the legacy behavior of
@@ -1359,7 +1372,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // audit log cannot claim "committed" for a reverted value.
     add_mutate(
         "mutate:replace-value",
-        [resolve_mutate_node_arg, &ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
+        [resolve_mutate_node_arg, &ev, mev](std::span<const EvalValue> a) -> EvalValue {
             bool ok = true;
             // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
             auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
@@ -1387,6 +1400,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     resolve_mutate_node_arg(flat, a[0], "mutate:replace-value", &ok, node);
                 !is_void(resolve_err))
                 return resolve_err;
+            // Issue #3115: scalar value rewrite is still a mutate of a
+            // MacroIntroduced node — same opt-in as structural prims.
+            const bool allow_macro_rv =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            const bool was_macro_rv = flat.is_macro_introduced(node);
+            if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_rv,
+                                                           "replace-value", mev)) {
+                ok = false;
+                return *err;
+            }
+            auto restamp_if_allowed = [&]() {
+                if (allow_macro_rv && was_macro_rv)
+                    propagate_macro_introduced_marker(ev, flat, node,
+                                                      parse_no_auto_restamp_opt_out(ev, a));
+            };
             std::uint8_t ppa_hint = 0;
             if (a.size() >= 4 && is_int(a[3]))
                 ppa_hint = aura::compiler::hardware::parse_ppa_hint(as_int(a[3]));
@@ -1420,6 +1448,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (ppa_hint != 0)
                         aura::compiler::hardware::on_structural_mutation(
                             node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
+                    restamp_if_allowed();
                     return make_int(static_cast<std::int64_t>(mid));
                 }
                 case aura::ast::NodeTag::LiteralFloat: {
@@ -1445,6 +1474,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (ppa_hint != 0)
                         aura::compiler::hardware::on_structural_mutation(
                             node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
+                    restamp_if_allowed();
                     return make_int(static_cast<std::int64_t>(mid));
                 }
                 case aura::ast::NodeTag::Variable:
@@ -1473,6 +1503,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     if (ppa_hint != 0)
                         aura::compiler::hardware::on_structural_mutation(
                             node, aura::ast::FlatAST::kGeneralDirty, ppa_hint);
+                    restamp_if_allowed();
                     return make_int(static_cast<std::int64_t>(mid));
                 }
                 default:

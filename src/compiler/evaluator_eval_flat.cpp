@@ -2099,6 +2099,15 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
     if (node >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :replace-value: node out of range"});
+    // Issue #3115: batch has no :allow-macro? kwargs — honor the global
+    // allow-macro-mutate flag only. Default still rejects MacroIntroduced.
+    if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(
+            aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                   "batch :replace-value: cannot replace-value MacroIntroduced "
+                                   "without public mutate:replace-value :allow-macro? #t"});
+    }
     auto nv = flat.get(node);
     switch (nv.tag) {
         case aura::ast::NodeTag::LiteralInt: {

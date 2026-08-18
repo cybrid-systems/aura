@@ -1457,12 +1457,122 @@ static void ac3076_4_schema_and_linter() {
     CHECK(href_stable(cs, "soft-observe-not-hard-guarantee") == 1 || s < 0, "AC4: Soft tag live");
 }
 
-// Issue #3095: post-restore macro hygiene invariant enforcement
-// (refine #2959 / #3033 / #2099). Verify the 3 new counters surface
-// via the existing query:hygiene-checkpoint-stats primitive (no new
-// query key namespace). Lineage bumped to schema=3095 (old #2099
-// readers still see the existing keys). Smoke test that the helper
-// returns 0 on a healthy flat (zero-cost contract on the happy path).
+// Issue #3115: scalar replace-type / replace-value MacroIntroduced gate.
+static aura::ast::NodeId first_lit_int(aura::ast::FlatAST* ws) {
+    if (!ws)
+        return aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt)
+            return id;
+    }
+    return aura::ast::NULL_NODE;
+}
+
+static void ac3115_1_default_reject() {
+    std::println("\n--- 3115 AC1: replace-type/value reject MacroIntroduced ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3115 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3115 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3115 AC1: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3115 AC1: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3115 AC1: stamp MacroIntroduced");
+    CHECK(ws->is_macro_introduced(lit), "3115 AC1: marker set");
+    auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
+    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene", "3115 AC1: replace-type hygiene");
+    auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3115-deny\")", lit));
+    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene",
+          "3115 AC1: replace-value hygiene");
+}
+
+static void ac3115_2_allow_macro_permits() {
+    std::println("\n--- 3115 AC2: :allow-macro? #t permits + restamps ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3115 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3115 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3115 AC2: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3115 AC2: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(), "3115 AC2: stamp");
+    auto denied = cs.eval(std::format("(mutate:replace-value {} 11 \"3115-pre\")", lit));
+    CHECK(denied.has_value() && merr_kind_3027(cs, *denied) == "hygiene",
+          "3115 AC2: denied without allow");
+    auto okv =
+        cs.eval(std::format("(mutate:replace-value {} 42 \"3115-allow\" :allow-macro? #t)", lit));
+    CHECK(okv.has_value() && merr_kind_3027(cs, *okv) != "hygiene",
+          "3115 AC2: :allow-macro? #t permits replace-value");
+    CHECK(ws->is_macro_introduced(lit), "3115 AC2: marker preserved after replace-value");
+    auto okt = cs.eval(std::format("(mutate:replace-type {} \"Int\" :allow-macro? #t)", lit));
+    CHECK(okt.has_value() && merr_kind_3027(cs, *okt) != "hygiene",
+          "3115 AC2: :allow-macro? #t permits replace-type");
+    CHECK(ws->is_macro_introduced(lit), "3115 AC2: marker preserved after replace-type");
+}
+
+static void ac3115_3_atomic_batch_respects() {
+    std::println("\n--- 3115 AC5: atomic-batch scalar mutate of MacroIntroduced ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3115 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3115 AC5: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3115 AC5: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3115 AC5: LiteralInt");
+    const auto old_val = ws->get(lit).int_value;
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(), "3115 AC5: stamp");
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3115-batch\")) "
+        "\"3115-batch\")",
+        lit));
+    CHECK(r.has_value(), "3115 AC5: batch returns");
+    CHECK(merr_kind_3027(cs, *r) != "" || (is_bool(*r) && !as_bool(*r)) || !is_int(*r),
+          "3115 AC5: batch does not commit scalar MacroIntroduced mutate");
+    CHECK(ws->get(lit).int_value == old_val, "3115 AC5: value unchanged after batch reject");
+}
+
+static void ac3115_4_soft_non_macro() {
+    std::println("\n--- 3115 AC6: Soft / non-macro scalar mutate still works ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3115 AC6: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3115 AC6: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3115 AC6: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3115 AC6: LiteralInt");
+    CHECK(!ws->is_macro_introduced(lit), "3115 AC6: not MacroIntroduced");
+    auto rv = cs.eval(std::format("(mutate:replace-value {} 7 \"3115-soft\")", lit));
+    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) != "hygiene",
+          "3115 AC6: non-macro replace-value ok");
+    auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
+    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) != "hygiene",
+          "3115 AC6: non-macro replace-type ok");
+}
+
+static void ac3115_5_source_and_linter() {
+    std::println("\n--- 3115 AC4: source-cite + linter ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_scalar_macro_hygiene_3115.py");
+    CHECK(mut.find("Issue #3115") != std::string::npos, "3115 AC4: mutate cites #3115");
+    CHECK(mut.find("\"replace-type\"") != std::string::npos &&
+              mut.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3115 AC4: replace-type gate");
+    CHECK(mut.find("\"replace-value\"") != std::string::npos, "3115 AC4: replace-value gate");
+    CHECK(flat.find("Issue #3115") != std::string::npos, "3115 AC4: lockless cites #3115");
+    CHECK(flat.find("cannot replace-value MacroIntroduced") != std::string::npos,
+          "3115 AC4: lockless replace-value");
+    CHECK(!lint.empty() && lint.find("Issue #3115") != std::string::npos, "3115 AC4: linter");
+    CHECK(build.find("check_scalar_macro_hygiene_3115") != std::string::npos,
+          "3115 AC4: build.py wires linter");
+    CHECK(read_file("docs/design/3115-scalar-macro-hygiene.md").empty(),
+          "3115 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3115.cpp").empty(),
+          "3115 AC4: no invent test per #81967");
+}
+
 static void ac3095_1_post_restore_invariant_keys() {
     std::println("\n--- #3095 AC1: post-restore macro hygiene invariant keys ---");
     CompilerService cs;
@@ -1563,6 +1673,12 @@ int main() {
     ac3076_4_schema_and_linter();
     std::println("\n=== Issue #3095: post-restore macro hygiene invariant enforcement ===");
     ac3095_1_post_restore_invariant_keys();
+    std::println("\n=== Issue #3115: scalar replace-type/value MacroIntroduced gate ===");
+    ac3115_1_default_reject();
+    ac3115_2_allow_macro_permits();
+    ac3115_3_atomic_batch_respects();
+    ac3115_4_soft_non_macro();
+    ac3115_5_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

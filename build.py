@@ -3457,6 +3457,19 @@ def cmd_lint():
             "Issue #3114 evolution-audit-decision linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_3114.py"
         )
         return r
+    # Issue #3115: mutate:replace-type / replace-value MacroIntroduced gate.
+    # Reuse reject_structural_macro_hygiene; lockless batch rejects too.
+    # Extends test_hygiene_mutate_closed_loop; no test_issue_3115.cpp.
+    smh3115_script = COVERAGE_CHECKS / "check_scalar_macro_hygiene_3115.py"
+    if not smh3115_script.exists():
+        fail(f"missing {smh3115_script}")
+        return 1
+    r = run([sys.executable, str(smh3115_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3115 scalar MacroIntroduced hygiene linter failed — run python3 scripts/coverage/checks/check_scalar_macro_hygiene_3115.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
