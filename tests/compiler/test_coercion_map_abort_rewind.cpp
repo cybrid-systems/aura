@@ -44,36 +44,45 @@ using aura::ast::FlatAST;
 using aura::ast::NodeId;
 using aura::ast::StringPool;
 using aura::compiler::apply_coercion_map;
-using aura::compiler::clear_coercion_commit_readiness_on_abort;
+using aura::compiler::clear_coercion_active_mutation_context;
 using aura::compiler::clear_coercion_map_abort_rewind_for_test;
 using aura::compiler::coerced_nodes_tracker_enter_boundary;
 using aura::compiler::coerced_nodes_tracker_exit_boundary;
 using aura::compiler::coerced_nodes_tracker_push;
 using aura::compiler::coerced_nodes_tracker_size;
 using aura::compiler::coerced_nodes_tracker_take;
+using aura::compiler::coercion_active_mutation_id;
 using aura::compiler::CoercionEntry;
 using aura::compiler::CoercionMap;
 using aura::compiler::CompilerService;
-using aura::compiler::dead_coercion_decision_invalidate_gen;
-using aura::compiler::dead_coercion_decision_invalidate_total;
-using aura::compiler::g_coercion_commit_readiness_cleared_on_abort_total;
-using aura::compiler::g_coercion_commit_readiness_cleared_on_abort_wired;
+using aura::compiler::g_coercion_abort_dual_clear_observe_total;
+using aura::compiler::g_coercion_abort_dual_clear_total;
 using aura::compiler::g_coercion_map_abort_forced_dirty_total;
 using aura::compiler::g_coercion_map_abort_rewind_observe_total;
 using aura::compiler::g_coercion_map_abort_rewind_total;
 using aura::compiler::g_coercion_map_abort_soft_observe_total;
 using aura::compiler::g_coercion_map_apply_tracker_push_total;
-using aura::compiler::reset_coercion_commit_readiness_cleared_on_abort_for_test;
-using aura::compiler::reset_dead_coercion_decision_invalidate_for_test;
-using aura::compiler::truncate_type_cone_to_size;
+using aura::compiler::kCoercionAbortDualClearIssue;
+using aura::compiler::set_coercion_active_mutation_context;
+using aura::compiler::dirty::dead_coercion_decision_invalidate_gen;
+using aura::compiler::dirty::dead_coercion_decision_invalidate_total;
+using aura::compiler::dirty::reset_dead_coercion_decision_invalidate_for_test;
+using aura::compiler::dirty::truncate_type_cone_to_size;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::clear_coercion_commit_readiness_on_abort;
+using aura::compiler::typed_audit::coercion_commit_readiness_cleared_on_abort_observe_total_v_read;
+using aura::compiler::typed_audit::coercion_commit_readiness_cleared_on_abort_total_v_read;
+using aura::compiler::typed_audit::g_coercion_commit_readiness_cleared_on_abort_total;
+using aura::compiler::typed_audit::g_coercion_commit_readiness_cleared_on_abort_wired;
 using aura::compiler::typed_audit::get_strategy;
 using aura::compiler::typed_audit::production_defaults_active;
+using aura::compiler::typed_audit::reset_coercion_commit_readiness_cleared_on_abort_for_test;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::set_strategy;
-using aura::compiler::value::as_int;
-using aura::compiler::value::EvalValue;
-using aura::compiler::value::make_int;
+using aura::compiler::types::as_int;
+using aura::compiler::types::EvalValue;
+using aura::compiler::types::make_int;
 
 constexpr std::uint64_t kCoercionMapAbortRewindIssue = 3102;
 
@@ -128,7 +137,10 @@ void test_ac1_coercion_map_rewind_on_abort() {
     // Abort: truncate cone to entry size + take + force-dirty + bump gen + commit_readiness.
     truncate_type_cone_to_size(entry_size);
     auto coerced = coerced_nodes_tracker_take();
-    expect_eq_i64("coerced tracker drained", 0, static_cast<std::int64_t>(coerced.size()));
+    expect_eq_i64("coerced tracker take returns pushed nodes", 3,
+                  static_cast<std::int64_t>(coerced.size()));
+    expect_eq_i64("coerced tracker drained", 0,
+                  static_cast<std::int64_t>(coerced_nodes_tracker_size()));
 
     // Production/Full gate: simulate (Production is set via env, but the abort
     // helpers are always callable; the test only checks the helper behavior).
@@ -141,7 +153,7 @@ void test_ac1_coercion_map_rewind_on_abort() {
     expect_eq_i64("rewind_total counter advanced", 1,
                   counter_v_read(g_coercion_map_abort_rewind_total));
     expect_eq_i64("decision_invalidate_gen advanced", 1,
-                  counter_v_read(dead_coercion_decision_invalidate_gen()));
+                  static_cast<std::int64_t>(dead_coercion_decision_invalidate_gen()));
     expect_eq_i64("commit_readiness_cleared counter advanced", 1,
                   counter_v_read(g_coercion_commit_readiness_cleared_on_abort_total));
 }
@@ -196,7 +208,7 @@ void test_ac3_dead_coercion_decision_invalidate() {
     const auto gen2 = dead_coercion_decision_invalidate_gen();
     expect_eq_i64("gen advanced by 2 after two bumps", 2, static_cast<std::int64_t>(gen2 - gen0));
     expect_eq_i64("decision_invalidate_total advanced by 2", 2,
-                  counter_v_read(dead_coercion_decision_invalidate_total()));
+                  static_cast<std::int64_t>(dead_coercion_decision_invalidate_total()));
 }
 
 // ── AC4 — Commit readiness clear on abort ──────────────────────────
@@ -216,7 +228,7 @@ void test_ac4_commit_readiness_clear() {
     // Production may or may not be active; either the real counter or the
     // observe counter must advance by exactly 1.
     const auto real_delta = static_cast<std::int64_t>(after) - static_cast<std::int64_t>(before);
-    const auto obs_before = g_coercion_commit_readiness_cleared_on_abort_observe_total_v_read();
+    const auto obs_before = coercion_commit_readiness_cleared_on_abort_observe_total_v_read();
     (void)obs_before;
     expect_true("commit_readiness clear advances one counter", real_delta == 1 || real_delta == 0);
     expect_eq_i64("wired marker is set", 1,
@@ -262,6 +274,10 @@ void test_ac5_soft_quiet_zero_cost() {
                   counter_v_read(g_coercion_map_apply_tracker_push_total));
     expect_eq_i64("forced_dirty_total cleared", 0,
                   counter_v_read(g_coercion_map_abort_forced_dirty_total));
+    expect_eq_i64("3116 dual_clear_total cleared", 0,
+                  counter_v_read(g_coercion_abort_dual_clear_total));
+    expect_eq_i64("3116 dual_clear_observe cleared", 0,
+                  counter_v_read(g_coercion_abort_dual_clear_observe_total));
 }
 
 // ── Regression — wired marker + accessors live ──────────────────────
@@ -274,11 +290,43 @@ void test_regression_wired() {
     expect_true("decision invalidate total accessor present",
                 dead_coercion_decision_invalidate_total() >= 0);
     expect_true("commit_readiness cleared accessor present",
-                g_coercion_commit_readiness_cleared_on_abort_total_v_read() >= 0);
+                coercion_commit_readiness_cleared_on_abort_total_v_read() >= 0);
     expect_eq_i64("wired marker for coercion_commit_readiness cleared", 1,
                   static_cast<std::int64_t>(g_coercion_commit_readiness_cleared_on_abort_wired.load(
                       std::memory_order_relaxed)));
     (void)kCoercionMapAbortRewindIssue;
+    expect_eq_i64("3116 issue stamp", 3116, kCoercionAbortDualClearIssue);
+}
+
+// ── Issue #3116 — dual-clear last_coercions_ + TLS on abort ─────────
+void test_ac3116_dual_clear_tls_and_counter() {
+    std::print("3116 — dual-clear TLS + production abort path\n");
+    reset_for_test();
+    clear_coercion_map_abort_rewind_for_test();
+    set_strategy(AuditStrategy::Full);
+    set_coercion_active_mutation_context(8116, 7);
+    expect_eq_i64("3116 AC1: TLS mid set", 8116,
+                  static_cast<std::int64_t>(coercion_active_mutation_id()));
+    CompilerService cs;
+    cs.evaluator().dual_clear_coercion_state_on_abort();
+    expect_eq_i64("3116 AC1: TLS mid cleared", 0,
+                  static_cast<std::int64_t>(coercion_active_mutation_id()));
+    expect_true("3116 AC1: dual_clear_total bumped",
+                counter_v_read(g_coercion_abort_dual_clear_total) >= 1);
+
+    clear_coercion_map_abort_rewind_for_test();
+    apply_dev_audit_defaults();
+    set_strategy(AuditStrategy::Sampled);
+    set_coercion_active_mutation_context(8117, 1);
+    cs.evaluator().dual_clear_coercion_state_on_abort();
+    expect_eq_i64("3116 AC3: Soft leaves TLS (no behaviour change)", 8117,
+                  static_cast<std::int64_t>(coercion_active_mutation_id()));
+    expect_true("3116 AC3: Soft observe counter bumped",
+                counter_v_read(g_coercion_abort_dual_clear_observe_total) >= 1);
+    expect_eq_i64("3116 AC3: Soft does not bump production total", 0,
+                  counter_v_read(g_coercion_abort_dual_clear_total));
+    clear_coercion_active_mutation_context();
+    set_strategy(AuditStrategy::Full);
 }
 
 } // namespace
@@ -292,6 +340,7 @@ int main() {
     test_ac4_commit_readiness_clear();
     test_ac5_soft_quiet_zero_cost();
     test_regression_wired();
+    test_ac3116_dual_clear_tls_and_counter();
     std::print("All #3102 AC tests PASSED\n");
     return 0;
 }

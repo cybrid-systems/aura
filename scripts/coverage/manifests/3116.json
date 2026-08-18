@@ -1,0 +1,50 @@
+{
+  "issue": 3116,
+  "title": "Issue #3116: production abort dual-clear CoercionMap + TLS active context.",
+  "ok": "OK: Issue #3116 coercion abort dual-clear — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_coercion_abort_dual_clear_3116.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "dual_clear_coercion_state_on_abort",
+        "take_coercions()",
+        "clear_coercion_active_mutation_context()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_typecheck.cpp",
+      "contains": [
+        "dual_clear_coercion_state_on_abort",
+        "Issue #3116"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/coercion_map.ixx",
+      "contains": [
+        "g_coercion_abort_dual_clear_total",
+        "g_coercion_abort_dual_clear_observe_total",
+        "kCoercionAbortDualClearIssue"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_query_reflect.cpp",
+      "contains": [
+        "coercion-abort-dual-clear-total",
+        "schema-3116"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_coercion_map_abort_rewind.cpp",
+      "contains": [
+        "3116 AC1",
+        "3116 AC3"
+      ]
+    }
+  ]
+}

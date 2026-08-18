@@ -679,6 +679,17 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 static_cast<std::int64_t>(
                     aura::compiler::typed_audit::cone_outside_goal_drop_reject_total_v_read()));
             insert_kv("type-linear-evolution-snapshot-wired", 1);
+            // Issue #3116: abort dual-clear of last_coercions_ + TLS context.
+            insert_kv(
+                "coercion-abort-dual-clear-total",
+                static_cast<std::int64_t>(aura::compiler::g_coercion_abort_dual_clear_total.load(
+                    std::memory_order_relaxed)));
+            insert_kv("coercion-abort-dual-clear-observe-total",
+                      static_cast<std::int64_t>(
+                          aura::compiler::g_coercion_abort_dual_clear_observe_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("schema-3116", aura::compiler::kCoercionAbortDualClearIssue);
+            insert_kv("issue-3116", aura::compiler::kCoercionAbortDualClearIssue);
             // Lineage preserved (detailed queries remain authoritative)
             insert_kv("schema-2613", 2613);
             insert_kv("schema-2697", 2697);

@@ -3470,6 +3470,18 @@ def cmd_lint():
             "Issue #3115 scalar MacroIntroduced hygiene linter failed — run python3 scripts/coverage/checks/check_scalar_macro_hygiene_3115.py"
         )
         return r
+    # Issue #3116: production abort dual-clear CoercionMap + TLS context.
+    # Extends test_coercion_map_abort_rewind; no test_issue_3116.cpp.
+    cad3116_script = COVERAGE_CHECKS / "check_coercion_abort_dual_clear_3116.py"
+    if not cad3116_script.exists():
+        fail(f"missing {cad3116_script}")
+        return 1
+    r = run([sys.executable, str(cad3116_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3116 coercion abort dual-clear linter failed — run python3 scripts/coverage/checks/check_coercion_abort_dual_clear_3116.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

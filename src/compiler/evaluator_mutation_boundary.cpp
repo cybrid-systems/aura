@@ -414,6 +414,25 @@ void Evaluator::enter_mutation_boundary() {
 //
 // Returns the popped checkpoint (or {0} if the stack is
 // empty — a defensive fallback for unbalanced calls).
+
+// Issue #3116: production abort dual-clear — drop TypeChecker residual
+// last_coercions_ and TLS active mid/predicate so a force-rollback after
+// apply_coercion_map cannot leave half-green type authority. Soft/Off:
+// observe counter only (no take, no TLS write). Idempotent.
+void Evaluator::dual_clear_coercion_state_on_abort() noexcept {
+    const bool prod = typed_audit::production_defaults_active() ||
+                      typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
+    if (!prod) {
+        aura::compiler::g_coercion_abort_dual_clear_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    if (auto* tc = static_cast<TypeChecker*>(commit_type_checker_handle()))
+        (void)tc->take_coercions();
+    aura::compiler::clear_coercion_active_mutation_context();
+    aura::compiler::g_coercion_abort_dual_clear_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     auto& stack = active_mutation_stack();
     if (stack.empty())
@@ -551,6 +570,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 1, std::memory_order_relaxed);
             (void)aura::compiler::coerced_nodes_tracker_take(); // discard
         }
+        // Issue #3116: last_coercions_ + TLS active context (half-green residual).
+        dual_clear_coercion_state_on_abort();
         last_boundary_rollback_stats_ = stats;
         // Invalidate the def-use index — the workspace state
         // is now different from what the index reflects.
@@ -927,6 +948,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     }
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
+                    // Issue #3116: synth-hard-fail rollback is a production abort.
+                    dual_clear_coercion_state_on_abort();
                     if (!nested_boundary)
                         clear_txn_dirty();
                     typed_audit::record_boundary_outcome(
@@ -1215,6 +1238,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                     1, std::memory_order_relaxed);
                                 (void)aura::compiler::coerced_nodes_tracker_take();
                             }
+                            // Issue #3116: last_coercions_ + TLS active context.
+                            dual_clear_coercion_state_on_abort();
                             last_boundary_rollback_stats_ = stats;
                             defuse_index_ = nullptr;
                             // Issue #2105: leave txn_dirty set until outermost clean exit,
@@ -1325,6 +1350,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             1, std::memory_order_relaxed);
                         (void)aura::compiler::coerced_nodes_tracker_take();
                     }
+                    // Issue #3116: last_coercions_ + TLS active context.
+                    dual_clear_coercion_state_on_abort();
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
                     if (!nested_boundary)
