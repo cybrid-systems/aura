@@ -3482,6 +3482,18 @@ def cmd_lint():
             "Issue #3116 coercion abort dual-clear linter failed — run python3 scripts/coverage/checks/check_coercion_abort_dual_clear_3116.py"
         )
         return r
+    # Issue #3117: dual-topology abort restore IR cache + source_to_ir_map fence.
+    # Extends test_mutation_rollback_coverage; no test_issue_3117.cpp.
+    arif3117_script = COVERAGE_CHECKS / "check_abort_restore_ir_map_fence_3117.py"
+    if not arif3117_script.exists():
+        fail(f"missing {arif3117_script}")
+        return 1
+    r = run([sys.executable, str(arif3117_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3117 abort restore IR map fence linter failed — run python3 scripts/coverage/checks/check_abort_restore_ir_map_fence_3117.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

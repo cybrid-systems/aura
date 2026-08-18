@@ -808,6 +808,8 @@ public:
         // Issue #3033: dual-topology abort → force-dirty + zero-restamp every
         // IR cache entry so should_relower is forced true (abort path leaves
         // version stamps pointing at intermediate/pre-abort state).
+        evaluator_.set_abort_ir_cache_begin_force_fn(
+            [this]() { this->begin_abort_ir_cache_force_fence(); });
         evaluator_.set_abort_ir_cache_force_dirty_fn(
             [this]() { this->force_ir_cache_dirty_after_abort(); });
         // Issue #2730: rebind/set-body publish new source before dirty cascade.
@@ -4330,6 +4332,10 @@ public:
         // store_define_v2 / partial re-lower so selective invalidate
         // never uses a stale map against new IR layout.
         SourceToIrMap source_to_ir_map;
+        // Issue #3117: dual-topology abort cleared this map; do not
+        // lazy-rebuild from pre-abort IR (NodeIds vs restored AST).
+        // Cleared on the next successful store_define_v2.
+        bool abort_map_invalid = false;
 
         // Issue #196: per-block dirty bitmask helpers.
 
@@ -4982,6 +4988,8 @@ public:
         // Issue #2045: full rebuild of source_to_ir_map after store
         // (new IR layout + dual-emit SoA); consistency check wired.
         rebuild_or_patch_source_to_ir_map_(entry, /*only_func_idx=*/std::nullopt);
+        // Issue #3117: post-abort store rebuilt the map from fresh IR.
+        entry.abort_map_invalid = false;
         // Issue #959: enforce max-size policy after store.
         maybe_evict_ir_cache_v2();
     }
@@ -5148,6 +5156,8 @@ public:
     // Issue #3068: emptiness-only. Callers that need a *complete*
     // map before an impact snapshot use prepare_source_to_ir_map_for_partial_.
     void ensure_source_to_ir_map_(IRCacheEntry& entry) {
+        if (entry.abort_map_invalid)
+            return;
         if (!entry.source_to_ir_map.empty() || entry.irs.empty())
             return;
         rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
@@ -5165,6 +5175,8 @@ public:
     [[nodiscard]] bool prepare_source_to_ir_map_for_partial_(IRCacheEntry& entry) {
         if (entry.irs.empty())
             return true;
+        if (entry.abort_map_invalid)
+            return false;
         ensure_source_to_ir_map_(entry);
         if (entry.source_to_ir_map.empty())
             return false;
@@ -5248,17 +5260,27 @@ public:
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Issue #3033: dual-topology abort force-dirty. abort_restore_dual_topology
-    // restores AST topology but the IR cache version stamps still point at
-    // intermediate/pre-abort state, so should_relower can return false and
-    // silently serve stale IR. Force-dirty + zero-restamp every cached entry
-    // (abort path only — non-abort path stays zero-cost). Also rebuild
-    // source_to_ir_map so ImpactScope cannot under-invalidate.
-    void force_ir_cache_dirty_after_abort() {
-        // Issue #3069: publish the fence *before* the walk so a concurrent
-        // lookup cannot observe a half-forced entry as a clean hit.
+    // Issue #3117: publish abort-force fence *before* dual-topology restore
+    // so a concurrent lookup_define_v2 cannot serve pre-abort IR as clean
+    // while FlatAST / pool / MacroIntroduced are still mid-restore.
+    void begin_abort_ir_cache_force_fence() {
         abort_force_in_progress_.store(1, std::memory_order_release);
-        const auto gen = abort_force_generation_.fetch_add(1, std::memory_order_release) + 1;
+        abort_force_generation_.fetch_add(1, std::memory_order_release);
+    }
+
+    // Issue #3033 / #3069 / #3117: dual-topology abort force-dirty.
+    // abort_restore_dual_topology restores AST topology but IR cache
+    // stamps / source_to_ir_map can still point at pre-abort IR.
+    // Force-dirty + zero-restamp every cached entry, then *clear*
+    // (do not rebuild from) source_to_ir_map so ImpactScope cannot
+    // under-invalidate on aborted NodeIds. Abort path only.
+    void force_ir_cache_dirty_after_abort() {
+        // Issue #3069 / #3117: publish the fence before the walk. When
+        // begin_abort_ir_cache_force_fence already ran (restore window),
+        // do not bump generation a second time.
+        if (abort_force_in_progress_.load(std::memory_order_acquire) == 0)
+            begin_abort_ir_cache_force_fence();
+        const auto gen = abort_force_generation_.load(std::memory_order_acquire);
         if (abort_force_hold_.load(std::memory_order_acquire) != 0) {
             while (abort_force_hold_.load(std::memory_order_acquire) != 0)
                 std::this_thread::yield();
@@ -5277,15 +5299,17 @@ public:
             // finish_cascade_soa_dirty_sync_ handles empty/absent SoA
             // (force_soa_instruction_dirty_sync is a no-op on empty module).
             finish_cascade_soa_dirty_sync_(entry);
-            // Rebuild source_to_ir_map from current IR so ImpactScope
-            // (compute_impact_scope) cannot under-invalidate on stale map.
-            rebuild_or_patch_source_to_ir_map_(entry, std::nullopt);
+            // Issue #3117: clear — do not rebuild from pre-abort IR.
+            // ensure_source_to_ir_map_ refuses to refill until store.
+            entry.source_to_ir_map.clear();
+            entry.abort_map_invalid = true;
             ++forced;
         }
         if (forced > 0)
             metrics_.abort_ir_cache_force_dirty_total.fetch_add(static_cast<std::uint64_t>(forced),
                                                                 std::memory_order_relaxed);
         abort_force_in_progress_.store(0, std::memory_order_release);
+        std::atomic_thread_fence(std::memory_order_release);
     }
 
     // Issue #2181: hard-require SoA block↔instr dirty sync before any
@@ -11698,7 +11722,8 @@ public:
         return relower_dirty_defines_from_workspace();
     }
 
-    // Issue #3069: abort-force fence test hooks.
+    // Issue #3069 / #3117: abort-force fence test hooks.
+    void public_begin_abort_ir_cache_force_fence() { begin_abort_ir_cache_force_fence(); }
     void public_force_ir_cache_dirty_after_abort() { force_ir_cache_dirty_after_abort(); }
     void public_set_abort_force_hold(bool on) {
         abort_force_hold_.store(on ? 1 : 0, std::memory_order_release);

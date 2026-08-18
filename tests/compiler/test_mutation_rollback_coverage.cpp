@@ -298,6 +298,96 @@ static void test_abort_force_generation_fence_3069() {
     CHECK(svc.find("abort_force_in_progress_") != std::string::npos, "3069 AC4: in-progress");
 }
 
+// Issue #3117: dual-topology abort restore must hold the abort-force
+// fence across restore and clear source_to_ir_map (no rebuild from
+// pre-abort IR). Concurrent lookup during the fence is never a clean hit.
+static void test_abort_restore_ir_map_fence_3117() {
+    std::println("\n--- AC10: abort restore IR map fence (#3117) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3117 (lambda (x) (+ x 1))) (f3117 1)\")").has_value(),
+          "3117 set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3117 eval");
+    if (!cs.get_define_v2("f3117"))
+        (void)cs.eval("(compile:cache-define \"f3117\")");
+    CHECK(cs.get_define_v2("f3117") != nullptr, "3117 cache entry");
+    const auto hash = cs.get_define_v2("f3117")->source_hash;
+    const auto gen0 = cs.public_abort_force_generation();
+
+    // AC1: begin fence (restore window) — no clean lookup.
+    cs.public_begin_abort_ir_cache_force_fence();
+    CHECK(cs.public_abort_force_in_progress(), "3117 AC1: in-progress before restore");
+    CHECK(cs.public_abort_force_generation() > gen0, "3117 AC1: gen bumped before restore");
+    int clean_hits = 0;
+    int dirty_hits = 0;
+    for (int i = 0; i < 128; ++i) {
+        const int st = cs.lookup_define_v2("f3117", hash);
+        if (st == 0)
+            ++clean_hits;
+        else if (st == 1)
+            ++dirty_hits;
+    }
+    CHECK(clean_hits == 0, "3117 AC1: no clean hit during restore fence");
+    CHECK(dirty_hits > 0, "3117 AC1: lookups return need-relower");
+
+    cs.public_force_ir_cache_dirty_after_abort();
+    CHECK(!cs.public_abort_force_in_progress(), "3117 AC2: in-progress cleared after walk");
+    const auto* after = cs.get_define_v2("f3117");
+    CHECK(after != nullptr && after->dirty, "3117 AC2: dirty after abort");
+    CHECK(after && after->source_to_ir_map.empty(), "3117 AC2: map cleared (not rebuilt)");
+    CHECK(after && after->abort_map_invalid, "3117 AC2: abort_map_invalid set");
+    CHECK(cs.public_source_to_ir_map_consistent("f3117"), "3117 AC2: empty map is consistent");
+    CHECK(cs.lookup_define_v2("f3117", hash) == 1, "3117 AC2: post-abort still need-relower");
+
+    // Dual-topology abort (exit false) also leaves map invalid.
+    auto& ev = cs.evaluator();
+    ev.enter_mutation_boundary();
+    (void)cs.eval("(mutate:rebind \"f3117\" \"9\")");
+    ev.exit_mutation_boundary(false);
+    const auto* after_exit = cs.get_define_v2("f3117");
+    CHECK(after_exit && after_exit->abort_map_invalid,
+          "3117 AC2: exit(false) leaves abort_map_invalid");
+    CHECK(after_exit && after_exit->source_to_ir_map.empty(),
+          "3117 AC2: exit(false) leaves map empty");
+
+    // AC3: success-path store rebuilds map + clears abort_map_invalid.
+    {
+        aura::ir::IRFunction top;
+        top.id = 0;
+        top.name = "__top__";
+        top.blocks.push_back({0, {}, {}});
+        aura::ir::IRFunction body;
+        body.id = 1;
+        body.name = "f3117_body";
+        body.blocks.push_back({0, {}, {}});
+        std::vector<aura::ir::IRFunction> irs;
+        irs.push_back(std::move(top));
+        irs.push_back(std::move(body));
+        const std::string src = "(define f3117 (lambda (x) (+ x 1)))";
+        cs.store_define_v2("f3117", src, std::move(irs), {}, {});
+        const auto stored = cs.get_define_v2("f3117");
+        CHECK(stored && !stored->dirty, "3117 AC3: store clears dirty");
+        CHECK(stored && !stored->abort_map_invalid, "3117 AC3: store clears abort_map_invalid");
+        CHECK(cs.lookup_define_v2("f3117", stored->source_hash) == 0,
+              "3117 AC3: success-path store is clean hit");
+    }
+
+    const auto svc = []() {
+        std::ifstream in("src/compiler/service.ixx");
+        if (in)
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        std::ifstream in2("../src/compiler/service.ixx");
+        if (in2)
+            return std::string((std::istreambuf_iterator<char>(in2)),
+                               std::istreambuf_iterator<char>());
+        return std::string{};
+    }();
+    CHECK(svc.find("Issue #3117") != std::string::npos, "3117 AC4: service cite");
+    CHECK(svc.find("abort_map_invalid") != std::string::npos, "3117 AC4: abort_map_invalid");
+    CHECK(svc.find("begin_abort_ir_cache_force_fence") != std::string::npos,
+          "3117 AC4: begin fence");
+}
+
 } // namespace aura_400_detail
 
 int main() {
@@ -308,5 +398,6 @@ int main() {
     aura::compiler::CompilerService cs;
     aura_400_detail::run_matrix(cs);
     aura_400_detail::test_abort_force_generation_fence_3069();
+    aura_400_detail::test_abort_restore_ir_map_fence_3117();
     return RUN_ALL_TESTS();
 }
