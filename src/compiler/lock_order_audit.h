@@ -1,4 +1,4 @@
-// lock_order_audit.h — Issue #1523 / #1388 / #2043 / #2316 / #2354 / #2557
+// lock_order_audit.h — Issue #1523 / #1388 / #2043 / #2316 / #2354 / #2557 / #3119
 // canonical lock-order verifier.
 //
 // Canonical acquire order (never reverse):
@@ -72,16 +72,16 @@
 //   off   1      no       no     AURA_SANDBOX=off default; AUDIT=0/off;
 //                                pre-#2557 lazy default when defaults
 //                                not applied
-//   soft  2      yes      no     production Restricted/Strict default
-//                                (#2557); AURA_LOCK_ORDER_AUDIT=1
-//   hard  3      yes      yes    AURA_LOCK_ORDER_CANARY=1 (always wins)
+//   soft  2      yes      no     AURA_LOCK_ORDER_AUDIT=1|soft (explicit)
+//   hard  3      yes      yes    production Restricted/Strict default
+//                                (#3119); AURA_LOCK_ORDER_CANARY=1
 //
 // Env precedence (highest first):
 //   1. AURA_LOCK_ORDER_CANARY=1  → hard (3)
 //   2. AURA_LOCK_ORDER_AUDIT=1|soft|on → soft (2)
 //   3. AURA_LOCK_ORDER_AUDIT=0|off|false → force off (1)
 //   4. apply_production_lock_order_default(!sandbox_off):
-//        sandbox != off → soft (2); sandbox=off → off (1)
+//        sandbox != off → hard (3); sandbox=off → off (1)
 //   5. Lazy first-touch without production defaults → off (1)
 //
 // TLS depth is ALWAYS tracked (nest safety for
@@ -261,11 +261,11 @@ inline void force_audit_mode_for_test(int mode) noexcept {
         g_lock_order_production_soft_default.store(0, std::memory_order_release);
 }
 
-// Issue #2557: wire production soft lock-order audit.
+// Issue #2557 / #3119: wire production lock-order audit.
 // Called from apply_production_security_defaults.
 //   sandbox_off=true  (AURA_SANDBOX=off): force OFF unless env overrides
-//   sandbox_off=false (Restricted/Strict): soft unless env overrides
-// Env precedence: CANARY=1 → hard; AUDIT=0/off → off; AUDIT=1 → soft.
+//   sandbox_off=false (Restricted/Strict): Hard (#3119) unless env overrides
+// Env precedence: CANARY=1 → hard; AUDIT=0/off → off; AUDIT=1|soft → soft.
 inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
     // 1) Hard canary always wins.
     const char* c = std::getenv("AURA_LOCK_ORDER_CANARY");
@@ -307,10 +307,11 @@ inline void apply_production_lock_order_default(bool sandbox_off) noexcept {
         g_lock_order_canary_enabled.store(0, std::memory_order_release);
         g_lock_order_production_soft_default.store(0, std::memory_order_release);
     } else {
-        // Production Restricted/Strict: soft metrics-only audit.
-        g_lock_order_mode.store(2, std::memory_order_release);
-        g_lock_order_canary_enabled.store(0, std::memory_order_release);
-        g_lock_order_production_soft_default.store(1, std::memory_order_release);
+        // Issue #3119: production Restricted/Strict → Hard (abort on
+        // inversion). Soft remains via AURA_LOCK_ORDER_AUDIT=soft.
+        g_lock_order_mode.store(3, std::memory_order_release);
+        g_lock_order_canary_enabled.store(1, std::memory_order_release);
+        g_lock_order_production_soft_default.store(0, std::memory_order_release);
     }
 }
 
@@ -357,8 +358,9 @@ inline void dump_held_ranks(FILE* out) noexcept {
 // non-recursive mutex. Skipping depth when audit is off caused
 // "Resource deadlock avoided" (EDEADLK) under default CI (#2354 regression).
 //
-// Mode soft (#2557 production default): atomics + inversion metrics, no abort.
-// Mode hard (CANARY): soft + abort.
+// Mode soft (explicit AURA_LOCK_ORDER_AUDIT=soft): atomics + inversion
+// metrics, no abort.
+// Mode hard (#3119 production default + CANARY): soft + abort.
 inline bool on_acquire(Level L, const char* file = __builtin_FILE(),
                        int line = __builtin_LINE()) noexcept {
     // Depth always (nest / acquire_if_needed correctness).

@@ -1,0 +1,40 @@
+{
+  "issue": 3119,
+  "title": "Issue #3119: production_defaults arm lock_order Hard.",
+  "ok": "OK: Issue #3119 production lock-order Hard — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_lock_order_production_hard_3119.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/lock_order_audit.h",
+      "contains": [
+        "Issue #3119",
+        "g_lock_order_mode.store(3",
+        "apply_production_lock_order_default"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
+      "contains": [
+        "3119 AC1",
+        "production mode Hard"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_lock_order_audit_hard.cpp",
+      "contains": [
+        "3119 AC3",
+        "sandbox=off"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "#3119"
+      ]
+    }
+  ]
+}

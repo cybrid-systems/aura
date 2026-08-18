@@ -3506,6 +3506,18 @@ def cmd_lint():
             "Issue #3118 hold-budget cancel force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_cancel_force_release_3118.py"
         )
         return r
+    # Issue #3119: production_defaults arm lock_order Hard.
+    # Extends test_lock_order_audit_hard; no test_issue_3119.cpp.
+    loh3119_script = COVERAGE_CHECKS / "check_lock_order_production_hard_3119.py"
+    if not loh3119_script.exists():
+        fail(f"missing {loh3119_script}")
+        return 1
+    r = run([sys.executable, str(loh3119_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3119 production lock-order Hard linter failed — run python3 scripts/coverage/checks/check_lock_order_production_hard_3119.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

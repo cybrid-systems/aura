@@ -1,11 +1,11 @@
 // @category: unit
 // @reason: Issue #2557 — production default soft lock-order audit (metrics-only).
 //
-//   AC1: apply_production_lock_order_default(false) → soft; inversion bumps metrics
+//   AC1: Soft (force mode 2) + inversion bumps metrics, no abort
 //   AC2: apply_production_lock_order_default(true) / sandbox=off → OFF (zero atomics)
-//   AC3: Hard canary precedence (mode=3) still available via force
-//   AC4: TLS depth still tracked under soft (nest safety; near-zero extra cost)
-//   AC5: Source-cite + query:lock-order-audit-stats schema-2557 + intentional inversion
+//   AC3: Hard canary still available; production re-apply is Hard (#3119)
+//   AC4: TLS depth still tracked under production Hard (nest safety)
+//   AC5: Source-cite + query:lock-order-audit-stats schema-2557
 
 #include "test_harness.hpp"
 
@@ -65,16 +65,17 @@ static std::int64_t href(CompilerService& cs, std::string_view key) {
     return as_int(*r);
 }
 
-// ── AC1: production soft + intentional inversion metrics ──
+// ── AC1: explicit Soft + intentional inversion metrics (no abort) ──
 static void ac1_production_soft_inversion() {
-    std::println("\n--- #2557 AC1: production soft + inversion metrics ---");
-    apply_production_lock_order_default(/*sandbox_off=*/false);
+    std::println("\n--- #2557 AC1: explicit Soft + inversion metrics ---");
+    // #3119: production default is Hard (would abort). Soft inversion
+    // stays opt-in via force / AURA_LOCK_ORDER_AUDIT=soft.
+    force_audit_mode_for_test(2);
     reset_tls_for_test();
     CHECK(lock_order_mode() == 2, "AC1: mode soft (2)");
     CHECK(lock_order_audit_enabled(), "AC1: audit enabled");
     CHECK(!lock_order_canary_enabled(), "AC1: not canary");
-    CHECK(lock_order_production_soft_active(), "AC1: production soft flag");
-    CHECK(g_lock_order_production_soft_default.load() == 1, "AC1: production soft atomic");
+    CHECK(!lock_order_production_soft_active(), "AC1: force-soft is not production default");
 
     const auto inv0 = g_lock_inversion_detected_total.load();
     const auto vio0 = g_lock_order_violation_total.load();
@@ -124,15 +125,15 @@ static void ac3_canary_precedence() {
     CHECK(lock_order_mode() == 3, "AC3: mode hard (3)");
     CHECK(lock_order_canary_enabled(), "AC3: canary enabled");
     CHECK(lock_order_audit_enabled(), "AC3: audit enabled under canary");
-    // Soft production re-apply restores soft (not canary) when env unset.
+    // #3119: production re-apply is Hard (same abort face as canary).
     apply_production_lock_order_default(/*sandbox_off=*/false);
-    CHECK(lock_order_mode() == 2, "AC3: re-apply production → soft");
-    CHECK(!lock_order_canary_enabled(), "AC3: canary cleared by production soft");
+    CHECK(lock_order_mode() == 3, "AC3: re-apply production → hard");
+    CHECK(lock_order_canary_enabled(), "AC3: canary stays on under production Hard");
 }
 
-// ── AC4: nest depth under soft ──
+// ── AC4: nest depth under production Hard ──
 static void ac4_depth_under_soft() {
-    std::println("\n--- #2557 AC4: TLS depth under soft (nest safety) ---");
+    std::println("\n--- #2557 AC4: TLS depth under production Hard (nest safety) ---");
     apply_production_lock_order_default(/*sandbox_off=*/false);
     reset_tls_for_test();
     CHECK(on_acquire(Level::Mutate), "AC4: Mutate acquire");
@@ -169,14 +170,14 @@ static void ac5_source_schema() {
     CHECK(q.find("schema-2557") != std::string::npos, "AC5: schema-2557");
     CHECK(q.find("production-soft-active") != std::string::npos, "AC5: production-soft-active key");
 
-    // Live query under production soft.
+    // Live query under production Hard (#3119).
     apply_production_lock_order_default(/*sandbox_off=*/false);
     CompilerService cs;
     CHECK(href(cs, "schema-2557") == 2557, "AC5: live schema-2557");
-    CHECK(href(cs, "mode") == 2, "AC5: live mode soft");
-    CHECK(href(cs, "soft-active") == 1, "AC5: soft-active");
-    CHECK(href(cs, "production-soft-active") == 1, "AC5: production-soft-active");
-    CHECK(href(cs, "canary-active") == 0, "AC5: canary inactive");
+    CHECK(href(cs, "mode") == 3, "AC5: live mode hard");
+    CHECK(href(cs, "soft-active") == 0, "AC5: soft-active off under Hard");
+    CHECK(href(cs, "production-soft-active") == 0, "AC5: production-soft-active off");
+    CHECK(href(cs, "canary-active") == 1, "AC5: canary-active under Hard");
     CHECK(href(cs, "inversion-detected-total") >= 0, "AC5: inversion total queryable");
 }
 

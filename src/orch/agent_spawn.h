@@ -347,6 +347,11 @@ inline constexpr std::uint64_t kProductionWaitReclaimedMsDefault = 50;
 // typed_mutation_audit_hooks.cpp). Avoid importing evaluator from orch.
 extern "C" int aura_production_defaults_active_probe() noexcept;
 
+// Orch-local alias — do not import typed_audit into this header.
+[[nodiscard]] inline bool production_defaults_active() noexcept {
+    return aura_production_defaults_active_probe() != 0;
+}
+
 // Issue #3012: production Restricted/Strict (probe on, AURA_SANDBOX!=off)
 // must surface must-wait-reclaimed after Reclaimed when wait_reclaimed_ms
 // is unset. Soft / sandbox=off: false (zero extra join work).

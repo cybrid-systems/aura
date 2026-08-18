@@ -3619,7 +3619,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             bool auto_recover_attempted = false;
             if (typed_audit::production_defaults_active() &&
                 aura::ast::moving_incomplete_remap_sticky_densify_off()) {
-                auto r = this->recover_moving_sticky_densify_off(/*retry_densify=*/true);
+                auto r = ev_->recover_moving_sticky_densify_off(/*retry_densify=*/true);
                 auto_recover_attempted = true;
                 // Success / failure already stamped via
                 // g_moving_sticky_cleared_via_recovery_total +

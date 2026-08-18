@@ -29,6 +29,7 @@ import std;
 
 namespace {
 
+using aura::compiler::lock_order::apply_production_lock_order_default;
 using aura::compiler::lock_order::AuditedMutexLock;
 using aura::compiler::lock_order::AuditScope;
 using aura::compiler::lock_order::force_audit_mode_for_test;
@@ -39,7 +40,9 @@ using aura::compiler::lock_order::is_held;
 using aura::compiler::lock_order::Level;
 using aura::compiler::lock_order::level_name;
 using aura::compiler::lock_order::lock_order_audit_enabled;
+using aura::compiler::lock_order::lock_order_canary_enabled;
 using aura::compiler::lock_order::lock_order_mode;
+using aura::compiler::lock_order::lock_order_production_soft_active;
 using aura::compiler::lock_order::on_acquire;
 using aura::compiler::lock_order::on_release;
 using aura::compiler::lock_order::OrderedUniqueLock;
@@ -229,6 +232,38 @@ static void ac5_env_and_mode() {
     CHECK(true, "AC5: AuditScope RAII compiles under audit off");
 }
 
+// Issue #3119: production defaults arm lock_order Hard (not Soft).
+static void ac3119_production_defaults_hard() {
+    std::println("\n--- #3119: production defaults → Hard ---");
+    apply_production_lock_order_default(/*sandbox_off=*/false);
+    reset_tls_for_test();
+    CHECK(lock_order_mode() == 3, "3119 AC1: production mode Hard (3)");
+    CHECK(lock_order_canary_enabled(), "3119 AC1: Hard abort face armed");
+    CHECK(lock_order_audit_enabled(), "3119 AC1: audit enabled");
+    CHECK(!lock_order_production_soft_active(), "3119 AC1: not Soft-default");
+    // Correct order stays zero extra abort (same atomics as Soft).
+    CHECK(on_acquire(Level::Workspace), "3119 AC4: Workspace ok");
+    CHECK(on_acquire(Level::Closures), "3119 AC4: Closures after Workspace ok");
+    on_release(Level::Closures);
+    on_release(Level::Workspace);
+    apply_production_lock_order_default(/*sandbox_off=*/true);
+    CHECK(lock_order_mode() == 1, "3119 AC3: sandbox=off → Off");
+    CHECK(!lock_order_audit_enabled(), "3119 AC3: audit off under sandbox=off");
+    const auto h = read_file("src/compiler/lock_order_audit.h");
+    CHECK(h.find("Issue #3119") != std::string::npos || h.find("#3119") != std::string::npos,
+          "3119 AC2: header cites Hard production default");
+    CHECK(h.find("sandbox != off → hard") != std::string::npos ||
+              h.find("→ hard (3)") != std::string::npos,
+          "3119 AC2: mode table documents production Hard");
+    CHECK(h.find("std::abort()") != std::string::npos, "3119 AC2: inversion fail-closed");
+    CHECK(read_file("tests/compiler/test_issue_3119.cpp").empty(),
+          "3119 AC6: no invent test_issue_3119.cpp");
+    CHECK(read_file("docs/design/3119-lock-order-production-hard.md").empty(),
+          "3119 AC6: no docs/design");
+    force_audit_mode_for_test(1);
+    reset_tls_for_test();
+}
+
 } // namespace
 
 int run_test_lock_order_audit_hard() {
@@ -240,6 +275,7 @@ int run_test_lock_order_audit_hard() {
     ac3_reverse_order_detected();
     ac3b_audited_mutex_reverse();
     ac5_env_and_mode();
+    ac3119_production_defaults_hard();
     force_audit_mode_for_test(1);
     reset_tls_for_test();
     std::println("\n=== #2354: {} passed, {} failed ===", g_passed, g_failed);
