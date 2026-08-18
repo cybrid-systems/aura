@@ -3580,6 +3580,19 @@ def cmd_lint():
             "Issue #3133 hold-budget synthetic yield linter failed — run python3 scripts/coverage/checks/check_hold_budget_synthetic_yield_3133.py"
         )
         return r
+    # Issue #3134: production-readiness residual-zero check fail-closed
+    # under production multi-worker (chaos soak gate). Extends
+    # test_steal_safety_production_residual_zero; no test_issue_3134.cpp.
+    srpz3134_script = COVERAGE_CHECKS / "check_steal_safety_production_residual_zero_3134.py"
+    if not srpz3134_script.exists():
+        fail(f"missing {srpz3134_script}")
+        return 1
+    r = run([sys.executable, str(srpz3134_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3134 production-readiness residual-zero linter failed — run python3 scripts/coverage/checks/check_steal_safety_production_residual_zero_3134.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

@@ -121,6 +121,40 @@ inline std::atomic<std::uint64_t> g_steal_safety_residual_rearm_race_total{0};
 inline std::atomic<std::uint32_t> g_steal_safety_residual_rearm_race_wired{1};
 inline constexpr int kStealSafetyResidualRearmRaceIssue = 2901;
 inline constexpr int kStealSafetyResidualRearmResampleIssue = 3038;
+
+// Issue #3134: production-readiness residual-zero wired sentinel. Additive —
+// does NOT change steal_safety_transaction's quiet Ok path (zero extra
+// atomics; the check is consulted once per query primitive, not per
+// steal). #3073 / schema-3073 surface consults this to fail closed when
+// the named residual counters are non-zero under production_defaults_active().
+// Soft / sandbox=off: pass-through (1) so the gate doesn't false-fail when
+// residual bumps fire under Soft observation.
+inline std::atomic<std::uint32_t> g_steal_safety_production_residual_zero_wired{1};
+inline constexpr int kStealSafetyProductionResidualZeroIssue = 3134;
+
+// Forward-declare the production probe (defined weak in fiber.cpp;
+// full definition in runtime_production_abi.cpp). Avoids pulling
+// fiber.h into the steal_safety.h header surface.
+extern "C" int aura_production_defaults_active_probe() noexcept;
+
+// Issue #3134: production-readiness residual-zero accessor.
+// Returns 1 iff production_defaults_active() is 0 (Soft / sandbox=off)
+// OR both named residual counters are 0:
+//   - g_steal_safety_residual_rearm_race_total (#2901 / #3038)
+//   - g_steal_safety_residual_lifetime_proof_reject_total (#2957)
+// Hot path (steal_safety_transaction's quiet Ok) does NOT call this —
+// consulted only from g_chaos_production_readiness_gate_wired /
+// schema-3073 query primitive (per-query, not per-steal). 2 atomic loads
+// on production + 1 weak call on Soft.
+[[nodiscard]] inline std::uint32_t steal_safety_production_residual_zero_v_read() noexcept {
+    if (aura_production_defaults_active_probe() == 0)
+        return 1;
+    return (g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) == 0 &&
+            g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) ==
+                0)
+               ? 1u
+               : 0u;
+}
 // Issue #2954: per-Fiber decision protocol (replaces process-wide mutex).
 // contention_total bumps when try_begin_steal_decision CAS fails (same
 // victim concurrent decision). per_fiber_wired=1 when Ok path uses Fiber
