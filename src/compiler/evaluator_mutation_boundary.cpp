@@ -3559,15 +3559,41 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // Issue #2619: publish Agent-visible Moving densify health window.
         // Soft/no densify → vacuous healthy (would-allow-mutate=true). Production
         // hard (#2596) + incomplete remap → agent_throttle (orch refuse mutate).
+        //
+        // Issue #3128: production auto-recover before throttle. Under
+        // production_defaults_active() + sticky armed, call
+        // this->recover_moving_sticky_densify_off(retry_densify=true) —
+        // re-register known roots, clear sticky (or stay armed on failure),
+        // optional one-shot densify. On success the retry densify's
+        // internal publish handles the window + throttle update, so we
+        // skip the manual publish below (idempotent with the retry's
+        // already-published state). On failure sticky re-arms and the
+        // retry's publish sets the throttle (fail-closed — AC2). Soft/Off:
+        // zero extra work (auto-recover not attempted; manual publish
+        // unchanged from before). Agents that already call recover
+        // explicitly are unaffected (sticky is already clear when they
+        // re-enter Phase-5 → auto-recover gate skips — AC4).
         {
             const bool incomplete =
                 densify_incomplete_remap || !untracked_ok || densify_untracked_kept > 0;
-            aura::core::moving_densify_health::publish_last_moving_densify_window(
-                had_moving_densify, pin_contract_held && densify_consistency.pin_ok, incomplete,
-                static_cast<std::uint64_t>(densify_objects_moved),
-                static_cast<std::uint64_t>(densify_untracked_kept),
-                static_cast<std::uint64_t>(densify_root_remap_fails),
-                static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
+            bool auto_recover_attempted = false;
+            if (typed_audit::production_defaults_active() &&
+                aura::ast::moving_incomplete_remap_sticky_densify_off()) {
+                auto r = this->recover_moving_sticky_densify_off(/*retry_densify=*/true);
+                auto_recover_attempted = true;
+                // Success / failure already stamped via
+                // g_moving_sticky_cleared_via_recovery_total +
+                // g_moving_densify_retry_after_recovery_total.
+                (void)r;
+            }
+            if (!auto_recover_attempted) {
+                aura::core::moving_densify_health::publish_last_moving_densify_window(
+                    had_moving_densify, pin_contract_held && densify_consistency.pin_ok, incomplete,
+                    static_cast<std::uint64_t>(densify_objects_moved),
+                    static_cast<std::uint64_t>(densify_untracked_kept),
+                    static_cast<std::uint64_t>(densify_root_remap_fails),
+                    static_cast<std::uint64_t>(densify_external_roots_prep_registered_cleared));
+            }
         }
         // Issue #2975: production hard gate on every outermost Phase-5 exit
         // (success *and* non-intentional-failure). Shared residual leftover

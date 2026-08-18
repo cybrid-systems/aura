@@ -2031,6 +2031,74 @@ static void ac3057_5_source_cite_no_invent() {
 
 } // namespace
 
+// ── Issue #3128: production auto-recover under sticky densify-off ──
+static void ac3128_auto_recover_under_sticky() {
+    std::println("\n--- #3128: production auto-recover under sticky densify-off ---");
+
+    // AC1: source-cite — Phase-5 fail residual in evaluator_mutation_boundary.cpp
+    //       calls this->recover_moving_sticky_densify_off under production.
+    {
+        const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mut.find("Issue #3128") != std::string::npos,
+              "AC1: evaluator_mutation_boundary.cpp cites Issue #3128");
+        CHECK(mut.find("recover_moving_sticky_densify_off(/*retry_densify=*/true)") !=
+                  std::string::npos,
+              "AC1: Phase-5 calls recover_moving_sticky_densify_off(retry_densify=true)");
+        CHECK(mut.find("moving_incomplete_remap_sticky_densify_off()") != std::string::npos,
+              "AC1: gate checks sticky armed");
+        CHECK(mut.find("production_defaults_active()") != std::string::npos,
+              "AC1: gate production-defaults-active");
+        CHECK(mut.find("auto_recover_attempted") != std::string::npos,
+              "AC1: manual publish conditional on auto_recover_attempted");
+    }
+
+    // AC2: existing #2935 / #2837 / #2905 tests stay green (no removed ACs).
+    {
+        const auto test_src = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+        CHECK(test_src.find("ac2935_3_agent_recovery_path") != std::string::npos,
+              "AC2: existing #2935 agent recovery path AC preserved");
+        CHECK(test_src.find("ac2837_3_sticky_densify_off_under_hard") != std::string::npos,
+              "AC2: existing #2837 sticky-densify-off AC preserved");
+        CHECK(test_src.find("ac2905_4_reregister_clean_restores_without_manual_clear") !=
+                  std::string::npos,
+              "AC2: existing #2905 auto-clear path AC preserved");
+    }
+
+    // AC3: arena.ixx sticky arm/clear surface unchanged (no second registry).
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        CHECK(arena.find("Issue #3128") == std::string::npos,
+              "AC3: arena.ixx NOT modified by #3128 (no second sticky registry)");
+        CHECK(arena.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
+              "AC3: existing recovery counter still in arena.ixx");
+    }
+
+    // AC4: moving_densify_health.hh publish window unchanged (no second call site).
+    {
+        const auto h = read_file("src/core/moving_densify_health.hh");
+        CHECK(h.find("publish_last_moving_densify_window") != std::string::npos,
+              "AC4: publish_last_moving_densify_window still exists");
+        CHECK(h.find("Issue #3128") == std::string::npos,
+              "AC4: moving_densify_health.hh NOT modified (single decision site)");
+    }
+
+    // AC5: counters reused (no new query key / no middle insertion).
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        CHECK(arena.find("g_moving_sticky_cleared_via_recovery_total") != std::string::npos,
+              "AC5: existing recovery counter reused (cleared on success)");
+        CHECK(arena.find("g_moving_densify_retry_after_recovery_total") != std::string::npos,
+              "AC5: existing retry counter reused");
+    }
+
+    // AC6: no new tests/issues/test_issue_3128.cpp (per #81967).
+    {
+        const auto issue_test = read_file("tests/issues/test_issue_3128.cpp");
+        CHECK(issue_test.empty(),
+              "AC6: no new tests/issues/test_issue_3128.cpp (must NOT — src/-aligned only)");
+    }
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -2145,6 +2213,9 @@ int run_test_moving_densify_fail_closed() {
     ac3057_3_soft_no_walk();
     ac3057_4_exempt_reason_no_second_registry();
     ac3057_5_source_cite_no_invent();
+    // Issue #3128: production auto-recover under sticky densify-off
+    // (extends this suite per #81967).
+    ac3128_auto_recover_under_sticky();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
 
