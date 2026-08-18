@@ -43,13 +43,19 @@ def main() -> int:
     cmake = _read("CMakeLists.txt")
     build = _read("build.py")
 
-    # Locate require_effect body
+    # Locate require_effect body. Issue #3143 added a large doc-block to
+    # require_effect, so the previous 1500-char window was too small
+    # (the `return check_and_record_effect(...)` call was past it). Find
+    # the function end properly (next "}\n" at column 0) — supports
+    # arbitrary function body length.
     req_i = sec.find("bool Evaluator::require_effect")
     if req_i < 0:
         fails.append("AC1: require_effect definition missing")
         body = ""
     else:
-        body = sec[req_i : req_i + 1500]
+        # Find the closing "}\n" at column 0 after the function start.
+        body_end = sec.find("\n}\n", req_i)
+        body = sec[req_i : req_i + 8192] if body_end < 0 else sec[req_i : body_end + 2]
 
     # AC1/AC2 live mid wiring
     must("Issue #2384", "AC1", sec)

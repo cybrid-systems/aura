@@ -855,6 +855,19 @@ def cmd_lint():
             "Issue #3142 SessionBound revoke cascade linter failed — run python3 scripts/coverage/checks/check_session_bound_dtor_cascade.py"
         )
         return r
+    # Issue #3143: typed_mid SSOT for require_effect mid stamp chain — closes
+    # 5-source mid drift between SE.mid / AuditWalRecord.provenance_mutation_id
+    # / TypedMutationAudit.last_mid / CapabilityGrant.bound_mutation_id.
+    cmp3143_script = COVERAGE_CHECKS / "check_mid_provenance_unified.py"
+    if not cmp3143_script.exists():
+        fail(f"missing {cmp3143_script}")
+        return 1
+    r = run([sys.executable, str(cmp3143_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3143 typed_mid provenance linter failed — run python3 scripts/coverage/checks/check_mid_provenance_unified.py"
+        )
+        return r
     # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.

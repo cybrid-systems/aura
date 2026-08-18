@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 844 | Preferred destination suites |
-| **Total scanned** | **844** | |
+| `tests/core/test_*.cpp` | 845 | Preferred destination suites |
+| **Total scanned** | **845** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 249 | 249 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 250 | 250 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 54 | 54 | P1 — domain hygiene suite exists |
@@ -249,6 +249,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/stdlib/test_atomic_swap_stdlib.cpp`
 - `tests/compiler/test_audit_mid_fallback_slo.cpp`
 - `tests/compiler/test_audit_mutation_id_unify.cpp`
+- `tests/core/test_audit_replay_join.cpp`
 - `tests/compiler/test_audit_ring_publish.cpp`
 - `tests/compiler/test_audit_trail_lockfree.cpp`
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp`
@@ -1155,13 +1156,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (249)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (250)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (249)
+#### domain/ (250)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1178,6 +1179,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
 - `tests/compiler/test_audit_mid_fallback_slo.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_audit_mid_fallback_slo.cpp
 - `tests/compiler/test_audit_mutation_id_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
+- `tests/core/test_audit_replay_join.cpp` (—) [domain_suite, theme_core] — AC1: require_effect mid stamp order: TypedMid
 - `tests/compiler/test_audit_ring_publish.cpp` (—) [domain_suite, theme_compiler] — AC1: both kAuditRing == 1024
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp` (—) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
 - `tests/compiler/test_aura_sandbox_env.cpp` (—) [domain_suite, theme_compiler] — Issue #2076 — production default Restricted sandbox + Agent-readable

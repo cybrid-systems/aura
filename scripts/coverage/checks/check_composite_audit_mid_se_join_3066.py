@@ -45,11 +45,17 @@ def main() -> int:
     t = _read("tests/compiler/test_audit_mutation_id_unify.cpp")
     build = _read("build.py")
 
-    # AC1
+    # AC1 — Issue #3143 refactor: TypedMid
+    # (typed_mutation_audit.h:1176 last_type_linear_commit_proof_stamp_v_read)
+    # is now the SSOT for require_effect mid stamp chain. The previous
+    # join_audit_and_se_mid path is deprecated as the require_effect
+    # first-tier check (still exists as a function for other callers but
+    # no longer on the require_effect hot path). pin_composite_batch_join_mid
+    # remains valid for batch / nested mutation boundary use.
     must("Issue #3066", "AC1 header", tma)
     must("pin_composite_batch_join_mid", "AC1 pin", tma)
-    must("join_audit_and_se_mid", "AC1 join", tma)
-    must("join_audit_and_se_mid", "AC1 require_effect", sec)
+    must("join_audit_and_se_mid", "AC1 join fn still defined", tma)
+    must("last_type_linear_commit_proof_stamp_v_read", "AC1 require_effect TypedMid (Issue #3143 SSOT)", sec)
     must("pin_composite_batch_join_mid", "AC1 batch pinning", ev)
     must("pin_composite_batch_join_mid", "AC1 nested/batch enter", mb)
     must("ac3066_1_production_batch_share_mid", "AC1 test", t)

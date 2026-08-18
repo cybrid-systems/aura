@@ -561,6 +561,47 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                       snap.sandbox_mode != 0 ? 1 : 0); // Restricted/Strict → armed
             insert_kv("schema-2707", 2707);
             insert_kv("issue-2707", 2707);
+            // Issue #3143: query:audit-replay-join(mutation_id) — joined audit
+            // trail surface (typed_audit + SE + WAL + grants + isolation)
+            // keyed on a single mutation_id so Agent debug time is O(1)
+            // instead of 5 manual joins. Surface additive on existing
+            // query:capability-effect-stats (no new public query key per
+            // primitive freeze #1448). Falls through silently when args
+            // is empty (returns current typed_audit last_mid surface).
+            {
+                std::uint64_t mid = 0;
+                if (!args.empty() && is_int(args[0]))
+                    mid = static_cast<std::uint64_t>(as_int(args[0]));
+                if (mid == 0)
+                    mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
+                if (mid == 0)
+                    mid = ::aura::core::current_mutation_epoch();
+                if (mid == 0)
+                    mid = 1;
+                std::size_t se_count = 0;
+                std::size_t se_deny_count = 0;
+                auto& se_ring = ::aura::core::security_event::g_security_event_ring();
+                for (const auto& e : se_ring.ring) {
+                    if (e.mutation_id != mid)
+                        continue;
+                    ++se_count;
+                    if (e.denied)
+                        ++se_deny_count;
+                }
+                insert_kv("replay-mid", static_cast<std::int64_t>(mid));
+                insert_kv("typed-mid-current",
+                          static_cast<std::int64_t>(
+                              typed_audit::last_type_linear_commit_proof_stamp_v_read()));
+                insert_kv("se-count", static_cast<std::int64_t>(se_count));
+                insert_kv("se-deny-count", static_cast<std::int64_t>(se_deny_count));
+                insert_kv("wal-enabled",
+                          ::aura::core::audit_wal::g_mutation_audit_wal().is_enabled() ? 1 : 0);
+                insert_kv("wal-last-seq",
+                          static_cast<std::int64_t>(
+                              ::aura::core::audit_wal::g_mutation_audit_wal().last_seq_persisted));
+                insert_kv("schema-3143", 3143);
+                insert_kv("issue-3143", 3143);
+            }
             // Issue #3090: production grant refused when prov.mutation_id == 0
             // under Restricted/Strict (same refuse semantics as
             // resolve_audit_mutation_id #2836). Additive on
