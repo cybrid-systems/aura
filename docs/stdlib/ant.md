@@ -25,4 +25,4 @@ control — same family as closed strategy-evolution pheromone metrics (#444).
 (swarm:step! fitness-on-op-name)
 ```
 
-See `docs/stdlib/swarm.md` and `examples/swarm_ant_rank.aura`.
+See `docs/stdlib/swarm.md` and `tests/suite/swarm_ant_bridge_2876.aura`.

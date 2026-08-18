@@ -50,7 +50,7 @@ can be rebound through simultaneous `define` / `letrec` traps.
        (= j1 3) (= j2 30)))
 ```
 
-Hephaestus probes `examples/09` / `10` use this style on purpose.
+Hephaestus probes for concurrent-rebind / mutate-in-fiber use this style on purpose.
 
 ### Top-level / multi-`define` begin (product contract)
 
@@ -151,7 +151,7 @@ is available.
 ## Related
 
 - Hephaestus `notes/host-residuals.md` **H9** (spawn ids) + #2685 caveat
-- Hephaestus `examples/09-concurrent-rebind`, `10-mutate-in-fiber` (`let*`)
-- Aether `examples/12-parallel-yield`, dual-mode residuals
+- Hephaestus concurrent-rebind + mutate-in-fiber (`let*`)
+- Aether parallel-yield, dual-mode residuals
 - Implementation: `src/compiler/evaluator_primitives_messaging.cpp`
   (spawn ids); multi-define begin in `evaluator_eval_flat.cpp`

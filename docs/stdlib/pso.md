@@ -75,4 +75,4 @@ Callers own apply: write policy knobs, `hot-strategy:swap!`, or
 
 ## Example
 
-`examples/swarm_sphere_search.aura` — sphere minimization via PSO.
+`tests/suite/swarm_2874.aura` — sphere minimization via PSO.
