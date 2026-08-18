@@ -1,0 +1,50 @@
+{
+  "issue": 3135,
+  "title": "Issue #3135: [P0][Incremental] relower_dirty_defines drain+impact_ub+partial peel not atomic vs concurrent record_dependency re-arm (residual of #3067/#3097)",
+  "ok": "OK: Issue #3135 cascade-decision residual atomic \u2014 cascade_decision_mtx_ (std::mutex, ordered after dep_graph_mtx_ + mutate_mtx_) acquired by record_dependency reject path + relower_dirty_defines_from_workspace critical section; re-check deferred_hybrid_armed_ immediately before peel forces full + mark_all_blocks_dirty; Soft + clean (armed==0) skips lock for zero cost; existing #3067 drain + #3097 impact_ub consult + partial_forced_full_by_impact_total counter preserved",
+  "source_script": "scripts/coverage/checks/check_cascade_decision_residual_atomic_3135.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "cascade_decision_mtx_",
+        "Issue #3135",
+        "std::mutex",
+        "cascade_guard(cascade_decision_mtx_)",
+        "initial_armed",
+        "need_lock",
+        "production_defaults_active",
+        "re_armed_now",
+        "mark_all_blocks_dirty"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "need_lock = initial_armed ||",
+        "cascade_guard.lock()",
+        "defer_lock"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "drain_deferred_hybrid_cascade_()",
+        "impact_upper_bound_for_entry_",
+        "should_partial_relower_impact_checked",
+        "partial_forced_full_by_impact_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_cascade_decision_residual_atomic.cpp",
+      "contains": [
+        "Issue #3135",
+        "cascade_decision_mtx_"
+      ]
+    }
+  ]
+}

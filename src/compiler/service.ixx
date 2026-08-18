@@ -6872,6 +6872,18 @@ public:
         auto* ws_pool = evaluator_.workspace_pool();
         if (!ws_flat || !ws_pool)
             return 0;
+        // Issue #3135: under production defaults OR when the deferred
+        // hybrid queue is already armed, take cascade_decision_mtx_ to
+        // serialize the drain → snapshot → impact_ub consult → partial/
+        // full decision window against concurrent record_dependency
+        // reject/re-arm. Soft / sandbox=off + clean (armed==0) single-
+        // fiber skips the lock for zero cost (AC2).
+        const bool initial_armed = deferred_hybrid_armed_.load(std::memory_order_acquire) != 0;
+        const bool need_lock =
+            initial_armed || aura::core::typed_audit::production_defaults_active();
+        std::unique_lock<std::mutex> cascade_guard(cascade_decision_mtx_, std::defer_lock);
+        if (need_lock)
+            cascade_guard.lock();
         std::size_t ok = 0;
         // Snapshot names first — relower may erase/replace entries.
         std::vector<std::string> dirty_names;
@@ -6956,6 +6968,21 @@ public:
                             1, std::memory_order_relaxed);
                     }
                 }
+            }
+            // Issue #3135: re-check deferred_hybrid_armed_ immediately
+            // before peel; if a concurrent record_dependency re-armed
+            // during this critical section (lock-ordered), force full.
+            // Bounded once per define — drain already cleared initial
+            // queue, so re-arm means a fresh reject arrived; upgrade
+            // to full + mark_all_blocks_dirty ensures callee-dependent
+            // IR is not served stale.
+            const bool re_armed_now = deferred_hybrid_armed_.load(std::memory_order_acquire) != 0;
+            if (re_armed_now && !initial_armed && want_partial) {
+                want_partial = false;
+                it->second.mark_all_blocks_dirty();
+                it->second.dirty = true;
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
             }
             if (want_partial)
                 metrics_.should_partial_relower_yes_total.fetch_add(1, std::memory_order_relaxed);
@@ -10879,6 +10906,15 @@ private:
     // reject actually happened (clean path: zero extra).
     std::vector<std::pair<std::string, std::string>> deferred_hybrid_edges_{};
     std::atomic<std::uint32_t> deferred_hybrid_armed_{0};
+    // Issue #3135: cascade-decision lock (ordered AFTER mutate_mtx_).
+    // Serializes record_dependency reject/re-arm against the drain →
+    // impact_ub consult → partial/full decision window in
+    // relower_dirty_defines_from_workspace. Single-fiber + clean
+    // (deferred_hybrid_armed_==0) skips the lock (zero cost per AC2).
+    // Production + armed>0 takes the lock + re-checks immediately
+    // before peel; if re-armed since snapshot, force full or
+    // re-drain + re-consult (bounded once).
+    std::mutex cascade_decision_mtx_;
 
     // Issue #2110: dense slot for encode_fn_node (under dep_graph_mtx_).
     [[nodiscard]] std::uint32_t ensure_dep_fn_slot_(const std::string& name) {
@@ -10930,6 +10966,13 @@ private:
             // Issue #3067: do not leave NodeId cascade permanently lagging
             // the string graph — queue (caller, callee) for deferred hybrid
             // drain at next relower / end of cascade window.
+            // Issue #3135: acquire cascade_decision_mtx_ around the
+            // emplace_back + store(1) pair to serialize against the
+            // drain → impact_ub consult → partial/full decision window
+            // in relower_dirty_defines_from_workspace. Lock order: this
+            // mutex is held AFTER dep_graph_mtx_ + mutate_mtx_ (so it's
+            // safe to acquire here without risk of inversion).
+            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
             deferred_hybrid_armed_.store(1, std::memory_order_release);
             return;

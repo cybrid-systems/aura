@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 842 | Preferred destination suites |
-| **Total scanned** | **842** | |
+| `tests/core/test_*.cpp` | 843 | Preferred destination suites |
+| **Total scanned** | **843** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 248 | 248 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 249 | 249 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 54 | 54 | P1 — domain hygiene suite exists |
@@ -286,6 +286,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_capability_unified.cpp`
 - `tests/compiler/test_capture_audit_event_forced_enforcement_link.cpp`
 - `tests/compiler/test_cascade_bfs_invalidate_after_guard.cpp`
+- `tests/compiler/test_cascade_decision_residual_atomic.cpp`
 - `tests/compiler/test_cascade_defuse_touch_null_define.cpp`
 - `tests/compiler/test_cascade_impact_batch.cpp`
 - `tests/compiler/test_cascade_incremental_pass_suite.cpp`
@@ -1153,13 +1154,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (248)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (249)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (248)
+#### domain/ (249)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1193,6 +1194,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_capability_string_matrix_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant mutate → has_capability("mutate") true
 - `tests/compiler/test_capability_unified.cpp` (—) [domain_suite, theme_compiler] — AC1: has_capability("mutate") under Strict consults the effect matrix,
 - `tests/compiler/test_cascade_bfs_invalidate_after_guard.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade enqueues precise defines; Guard dtor drains after unlock
+- `tests/compiler/test_cascade_decision_residual_atomic.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3135 in service.ixx — cascade_decision_mtx_
 - `tests/compiler/test_cascade_skip_metrics.cpp` (—) [domain_suite, theme_compiler] — AC1: summary-dirty cascade skip → cascade_skip_subtree_total via metrics
 - `tests/compiler/test_castop_density_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft path — no gate reject; optional force-JIT only under HARD
 - `tests/core/test_clear_macro_dirty_concurrent.cpp` (—) [domain_suite, theme_core] — AC1: concurrent clear_macro_dirty_all + macro_dirty(id) no torn reads
