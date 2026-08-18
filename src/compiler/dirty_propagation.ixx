@@ -527,6 +527,53 @@ inline constexpr NodeId kAstDepTag = 0x20000000u;
 // tests / Agent dashboards after infer_flat_partial.
 inline thread_local std::vector<NodeId> t_last_type_cone_ast{};
 
+// Issue #3120: residual CastOp source AST / containing-block persist
+// that survives mirror_type_affected_to_cascade's wipe of
+// t_last_type_cone_ast. Production sweep notes leftover sites here;
+// type txn remirrors them after the post-infer cone is installed.
+// Soft / quiet: never written.
+inline constexpr int kResidualCastopTypeTxnRemirrorIssue = 3120;
+inline thread_local std::vector<NodeId> t_residual_castop_ast{};
+inline thread_local std::vector<NodeId> t_residual_castop_blocks{};
+
+[[nodiscard]] inline bool residual_castop_persist_active() noexcept {
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
+inline void note_residual_id(std::vector<NodeId>& dst, NodeId id) noexcept {
+    if (id == 0)
+        return;
+    for (NodeId x : dst) {
+        if (x == id)
+            return;
+    }
+    dst.push_back(id);
+}
+
+inline void note_residual_castop_sites(std::span<const NodeId> ast,
+                                       std::span<const NodeId> blocks) noexcept {
+    if (!residual_castop_persist_active())
+        return;
+    if (ast.empty() && blocks.empty())
+        return;
+    for (NodeId id : ast)
+        note_residual_id(t_residual_castop_ast, id);
+    for (NodeId id : blocks)
+        note_residual_id(t_residual_castop_blocks, id);
+}
+
+inline void reset_residual_castop_persist_for_test() noexcept {
+    t_residual_castop_ast.clear();
+    t_residual_castop_blocks.clear();
+}
+
+[[nodiscard]] inline std::size_t residual_castop_persist_size() noexcept {
+    return t_residual_castop_ast.size() + t_residual_castop_blocks.size();
+}
+
 [[nodiscard]] inline const std::vector<NodeId>& last_type_cone_ast() noexcept {
     return t_last_type_cone_ast;
 }
@@ -728,6 +775,20 @@ inline std::size_t force_residual_castop_blocks_into_cone(std::span<const NodeId
                                           std::memory_order_relaxed);
     type_ir_cone_union_samples.fetch_add(1, std::memory_order_relaxed);
     return n;
+}
+
+// Issue #3120: after type-txn wipe of last_type_cone_ast, re-union
+// persisted residual CastOp source AST / containing blocks so a
+// previously cone-skipped site re-enters type∪IR (or forces full).
+// Soft / empty persist → 0 extra. Reuses #3065 force_* (no new keys).
+inline std::size_t remirror_persisted_residual_castops() noexcept {
+    if (!residual_castop_persist_active())
+        return 0;
+    if (t_residual_castop_ast.empty() && t_residual_castop_blocks.empty())
+        return 0;
+    const auto n_ast = force_dead_coercion_elim_into_cone(t_residual_castop_ast);
+    const auto n_blk = force_residual_castop_blocks_into_cone(t_residual_castop_blocks);
+    return n_ast + n_blk;
 }
 
 // Issue #3102 AC1: truncate the last type cone to a previously-captured

@@ -1,0 +1,40 @@
+{
+  "issue": 3120,
+  "title": "Issue #3120: residual CastOp remirror after type-txn wipe.",
+  "ok": "OK: Issue #3120 residual CastOp type-txn remirror — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_residual_castop_type_txn_3120.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/dirty_propagation.ixx",
+      "contains": [
+        "Issue #3120",
+        "note_residual_castop_sites",
+        "remirror_persisted_residual_castops"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/type_checker_impl.cpp",
+      "contains": [
+        "remirror_persisted_residual_castops"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "3120 AC1",
+        "type-txn remirror"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_dead_coercion_dirty_cone.cpp",
+      "contains": [
+        "3120 AC2",
+        "Soft remirror no-op"
+      ]
+    }
+  ]
+}

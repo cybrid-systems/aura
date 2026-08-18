@@ -3530,6 +3530,18 @@ def cmd_lint():
             "Issue #3131 scalar/metadata mutate hygiene linter failed — run python3 scripts/coverage/checks/check_scalar_mutate_hygiene_3131.py"
         )
         return r
+    # Issue #3120: residual CastOp remirror after type-txn wipe.
+    # Extends test_dead_coercion_dirty_cone; no test_issue_3120.cpp.
+    rct3120_script = COVERAGE_CHECKS / "check_residual_castop_type_txn_3120.py"
+    if not rct3120_script.exists():
+        fail(f"missing {rct3120_script}")
+        return 1
+    r = run([sys.executable, str(rct3120_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3120 residual CastOp type-txn remirror linter failed — run python3 scripts/coverage/checks/check_residual_castop_type_txn_3120.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
