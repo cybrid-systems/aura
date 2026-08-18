@@ -26,6 +26,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <thread>
@@ -33,6 +35,7 @@
 import std;
 
 extern "C" int aura_production_defaults_active_probe() noexcept;
+extern "C" std::uint64_t aura_aot_func_table_epoch(void);
 
 namespace {
 
@@ -40,6 +43,17 @@ using aura::compiler::hot_update_registry;
 using aura::compiler::HotUpdateRegistry;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 static std::uint64_t read_prevented() noexcept {
     return HotUpdateRegistry::g_dual_track_bypass_prevented_total.load(std::memory_order_relaxed);

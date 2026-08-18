@@ -52,6 +52,8 @@
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
+#include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h" // Issue #2778: reset_all_agent_scopes_for_test clears BP map
 #include "serve/fiber.h"
@@ -62,6 +64,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 #include <thread>
@@ -88,6 +91,17 @@ using aura::serve::mf_mailbox::MailMessage;
 using aura::serve::mf_mailbox::MailPriority;
 using aura::serve::mf_mailbox::MultiFiberMailbox;
 using aura::serve::mf_mailbox::PushStatus;
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
 
 std::int64_t href(CompilerService& cs, std::string_view key) {
     auto r =
@@ -1235,7 +1249,7 @@ int run_test_mailbox_bp_admit() {
             }
             // 257th scope (production): bumps overflow gauge, drops new scope.
             aura::orch::note_mailbox_bp_recent_event("prod-scope-257");
-            if (aura::core::typed_audit::production_defaults_active()) {
+            if (aura::compiler::typed_audit::production_defaults_active()) {
                 CHECK(m.spawn_bp_scope_overflow_dropped_total.load() > dropped_pre,
                       "AC3 production: dropped counter bumped (overflow redirect)");
                 // New scope NOT in map (redirected to overflow bucket).

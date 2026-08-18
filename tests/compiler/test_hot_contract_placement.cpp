@@ -284,7 +284,7 @@ int run_test_hot_contract_placement() {
         // self-modify preset binaries are implicitly armed without env/HARDEN-flag.
         // Source-level check (mirrors linter scripts/coverage/checks/
         // check_hot_contract_harden_3106.py AC4 closure).
-        void test_3139_ac4a_probe_consults_production_defaults() {
+        auto test_3139_ac4a_probe_consults_production_defaults = []() {
             std::println("3139 AC4a -- probe considers production_defaults_active()");
             std::ifstream in{"src/core/cpp26_contract_stats.h"};
             std::stringstream ss;
@@ -299,12 +299,12 @@ int run_test_hot_contract_placement() {
                 hh.find("aura::compiler::typed_audit::production_defaults_active()") !=
                     std::string::npos,
                 "3139 AC4a: production_defaults_active() called from hot_contract_harden_armed()");
-        }
+        };
 
         // #3139 AC4b: implicit-arm check is gated by parsed==0 (env OFF respected).
         // If parsed was already 1 (env AURA_HOT_HARDEN set), the implicit arm is
         // skipped — env OFF cannot be silently overridden by production_defaults.
-        void test_3139_ac4b_implicit_arm_gated_by_parsed_zero() {
+        auto test_3139_ac4b_implicit_arm_gated_by_parsed_zero = []() {
             std::println("3139 AC4b -- implicit-arm gated by parsed==0");
             std::ifstream in{"src/core/cpp26_contract_stats.h"};
             std::stringstream ss;
@@ -312,12 +312,12 @@ int run_test_hot_contract_placement() {
             const std::string hh = ss.str();
             CHECK(hh.find("if (parsed == 0 && ") != std::string::npos,
                   "3139 AC4b: implicit-arm guard present (parsed==0 check)");
-        }
+        };
 
         // #3139 AC4c: include of typed_mutation_audit.h is at the top of the header
         // (near other plain-header includes) so production_defaults_active() is
         // reachable without crossing module boundaries.
-        void test_3139_ac4c_include_at_top() {
+        auto test_3139_ac4c_include_at_top = []() {
             std::println("3139 AC4c -- include at top of header");
             std::ifstream in{"src/core/cpp26_contract_stats.h"};
             std::stringstream ss;
@@ -326,7 +326,7 @@ int run_test_hot_contract_placement() {
             CHECK(head.find("#include \"compiler/typed_mutation_audit.h\"") != std::string::npos,
                   "3139 AC4c: typed_mutation_audit.h include in first 2000 chars (plain-header "
                   "section)");
-        }
+        };
 
         std::println("\n--- #3106 AC1: harden-armed CHECK path ---");
         test_3139_ac4a_probe_consults_production_defaults();

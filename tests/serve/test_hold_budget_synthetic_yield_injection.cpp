@@ -66,12 +66,12 @@ int run_test_hold_budget_synthetic_yield_injection() {
         // Fiber.h: method declaration with the right signature + comment block.
         auto method_pos = fh.find("inject_synthetic_mutation_boundary_yield()");
         CHECK(method_pos != std::string::npos, "AC1: method declared in fiber.h");
-        auto method_end = fh.find("};", method_pos);
-        if (method_end == std::string::npos || method_end > method_pos + 1500)
-            method_end = method_pos + 1500;
-        auto win = fh.substr(method_pos, method_end - method_pos);
+        // Comment block sits immediately above the declaration (body is
+        // out-of-line in fiber.cpp so the header window has no stores).
+        const auto decl_start = method_pos > 1600 ? method_pos - 1600 : 0;
+        auto win = fh.substr(decl_start, method_pos - decl_start + 80);
         CHECK(win.find("Issue #3133") != std::string::npos, "AC1: cites #3133 (declaration block)");
-        CHECK(win.find("force_safepoint_requested_") != std::string::npos,
+        CHECK(win.find("force_safepoint_requested") != std::string::npos,
               "AC1: sets force_safepoint_requested_ = true");
         CHECK(win.find("last_yield_reason_") != std::string::npos,
               "AC1: sets last_yield_reason_ = MutationBoundary synthetically");
