@@ -522,6 +522,20 @@ struct CapabilityRegistry {
             }
         }
         std::lock_guard<std::mutex> lock(mtx);
+        grant_locked(tenant, name, effects, prov, single_use, session_bound);
+    }
+
+    // Issue #3126: caller MUST hold `mtx`. Body is the post-refuse
+    // mutation logic of `grant()` (insert into by_tenant[name] + OR
+    // effects, re-grant semantics). Used by security fence paths in
+    // evaluator_security.cpp (grant_effect_* foreign-tenant +
+    // TenantAdmin) so the admin re-check + act are atomic w.r.t.
+    // concurrent revoke from another Evaluator / fiber. Pre-lock refuse
+    // (Issue #3090) is the caller's responsibility (atomic only, OK to
+    // run without the lock).
+    void grant_locked(TenantId tenant, std::string_view name, Effect effects,
+                      const EffectProvenance& prov = {}, bool single_use = false,
+                      bool session_bound = false) {
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
             g.effects = g.effects | effects;
@@ -649,6 +663,16 @@ struct CapabilityRegistry {
     // the make_grant_provenance helper) so blame trails stay non-zero.
     void revoke(TenantId tenant, std::string_view name, std::uint64_t revoke_at_epoch = 0) {
         std::lock_guard<std::mutex> lock(mtx);
+        revoke_locked(tenant, name, revoke_at_epoch);
+    }
+
+    // Issue #3126: caller MUST hold `mtx`. Body is the by_tenant
+    // mutation logic of `revoke()` without the internal lock_guard.
+    // Used by security fence paths in evaluator_security.cpp
+    // (revoke_effect_capability foreign-tenant fence) so the admin
+    // re-check + revoke are atomic w.r.t. concurrent grant / revoke
+    // from another Evaluator / fiber.
+    void revoke_locked(TenantId tenant, std::string_view name, std::uint64_t revoke_at_epoch = 0) {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return;
@@ -671,7 +695,33 @@ struct CapabilityRegistry {
     }
 
     // OR all non-revoked grants for tenant.
+    //
+    // Issue #3126: Soft/observational only — unlocked read of `by_tenant`.
+    // DO NOT use for security decisions under concurrent mutation: the
+    // read can race with grant/revoke (data race UB on std::unordered_map,
+    // and the result is stale w.r.t. concurrent admin revoke). Security
+    // fence paths (grant_effect_* foreign-tenant + TenantAdmin fence)
+    // must take the registry mtx and call `effects_for_locked` instead.
     [[nodiscard]] Effect effects_for(TenantId tenant) const {
+        Effect acc = Effect::None;
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return acc;
+        for (const auto& g : it->second) {
+            if (!g.revoked)
+                acc = acc | g.effects;
+        }
+        return acc;
+    }
+
+    // Issue #3126: locked variant — caller MUST hold `mtx`. Body matches
+    // `effects_for` but takes the registry lock so the read is atomic w.r.t.
+    // concurrent grant/revoke. Used by `check_and_record_effect` (which
+    // already holds `mtx`) and by security fence paths in
+    // evaluator_security.cpp (grant_effect_* / revoke_effect_*) that take
+    // the lock themselves to fold the admin re-check + act into one
+    // critical section.
+    [[nodiscard]] Effect effects_for_locked(TenantId tenant) const {
         Effect acc = Effect::None;
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
@@ -704,6 +754,14 @@ struct CapabilityRegistry {
     //   hard_fiber_isolation=true → deny + capability_fiber_hard_deny_total
     //     (multi-tenant+Strict default, or AURA_HARD_FIBER_ISOLATION=1 even
     //     under pure Restricted — env never blocked by default branch).
+    //
+    // Issue #3126: Soft/observational only — unlocked read of `by_tenant`.
+    // DO NOT use for security decisions under concurrent mutation: the
+    // read can race with grant/revoke (data race UB on std::unordered_map,
+    // and the result is stale w.r.t. concurrent admin revoke). Security
+    // fence paths must take the registry mtx and call `provenance_ok_locked`
+    // instead. `check_and_record_effect` (free function) already holds mtx
+    // and uses `provenance_ok_locked`.
     [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
@@ -749,6 +807,60 @@ struct CapabilityRegistry {
             // Issue #3076: capability_fiber_mismatch_total is Soft-observe
             // (not a Hard guarantee). Hard sibling is fiber_hard_deny
             // under hard_fiber_isolation (#2536 Restricted share stays Soft).
+            if (g.grant_fiber_id != 0 && prov.fiber_id != 0 && g.grant_fiber_id != prov.fiber_id) {
+                g_capability_effect_metrics().capability_fiber_mismatch_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                if (hard_fiber) {
+                    g_capability_effect_metrics().capability_fiber_hard_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Issue #3126: locked variant — caller MUST hold `mtx`. Body matches
+    // `provenance_ok` but takes the registry lock so the mid-join / epoch-
+    // fence / fiber-mismatch checks are atomic w.r.t. concurrent
+    // grant/revoke. Used by `check_and_record_effect` (which already holds
+    // `mtx`) and by security fence paths.
+    [[nodiscard]] bool provenance_ok_locked(TenantId tenant, const EffectProvenance& prov) const {
+        auto it = by_tenant.find(tenant);
+        if (it == by_tenant.end())
+            return true; // no grants → not a mismatch (denied separately)
+        const bool hard_fiber = hard_fiber_isolation_.load(std::memory_order_acquire);
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const bool fail_closed_mid =
+            (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+        if (fail_closed_mid && prov.mutation_id == 0) {
+            g_capability_effect_metrics().capability_mid_join_zero_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return false;
+        }
+        for (const auto& g : it->second) {
+            if (g.revoked)
+                continue;
+            if (fail_closed_mid) {
+                if (g.bound_mutation_id == 0) {
+                    g_capability_effect_metrics().capability_mid_join_zero_deny_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return false;
+                }
+                if (g.bound_mutation_id != prov.mutation_id)
+                    return false;
+            } else {
+                if (g.bound_mutation_id != 0 && prov.mutation_id != 0 &&
+                    g.bound_mutation_id != prov.mutation_id) {
+                    return false;
+                }
+            }
+            const auto min_valid = grant_min_valid_epoch_.load(std::memory_order_acquire);
+            if (g.grant_epoch != 0 && min_valid != 0 && g.grant_epoch < min_valid) {
+                g_capability_effect_metrics().capability_epoch_fence_hit_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                return false;
+            }
             if (g.grant_fiber_id != 0 && prov.fiber_id != 0 && g.grant_fiber_id != prov.fiber_id) {
                 g_capability_effect_metrics().capability_fiber_mismatch_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -1134,20 +1246,22 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         std::lock_guard<std::mutex> lock(reg.mtx);
         const auto hard0 = met.capability_fiber_hard_deny_total.load(std::memory_order_relaxed);
         if (need_grant && required != Effect::None && !wildcard_ok) {
-            const Effect held = reg.effects_for(tenant);
+            // Issue #3126: locked variant (caller already holds mtx).
+            const Effect held = reg.effects_for_locked(tenant);
             // Require full coverage of required bits (not just any overlap).
             const auto req_u = static_cast<std::uint16_t>(required);
             const auto held_u = static_cast<std::uint16_t>(held);
             if ((held_u & req_u) != req_u)
                 allowed = false;
-            if (allowed && !reg.provenance_ok(tenant, prov)) {
+            if (allowed && !reg.provenance_ok_locked(tenant, prov)) {
                 allowed = false;
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }
         } else if (wildcard_ok) {
             // Issue #2055: wildcard must still honor epoch fence / provenance
             // binding — otherwise privilege-sticky grants pass under "*".
-            if (!reg.provenance_ok(tenant, prov)) {
+            // Issue #3126: locked variant (caller already holds mtx).
+            if (!reg.provenance_ok_locked(tenant, prov)) {
                 allowed = false;
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }

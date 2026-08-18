@@ -79,7 +79,15 @@ def main() -> int:
     must("kHighRiskMask", "AC1", sec)
     # Force logic must precede the registry::grant() single_use forwarding.
     cap_p = sec.find("kHighRiskMask")
+    # Issue #3126: after the locked-variant refactor (TOCTOU admin fence
+    # fix), the foreign-tenant path calls `reg.grant_locked(...)` under
+    # the registry mtx; the same-tenant path calls `reg.grant(...)` (which
+    # forwards single_use to grant_locked internally). Both forms forward
+    # single_use to the registry's mutation logic — the #2882 contract is
+    # preserved, the call site style changed.
     grant_idx = sec.find("g_capability_registry().grant(tenant_id, name")
+    if grant_idx < 0:
+        grant_idx = sec.find(".grant_locked(tenant_id, name")
     if cap_p < 0:
         fails.append("AC1: kHighRiskMask not defined in evaluator_security.cpp")
     if grant_idx < 0:
