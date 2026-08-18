@@ -1,0 +1,60 @@
+{
+  "issue": 3132,
+  "title": "Issue #3132: P0 residual \u2014 Unify check_macro_self_evo on every expand/clone entry (post_mutation_macro_reexpand + eval_data_as_code + direct clone paths); choke-point coverage residual",
+  "ok": "OK: Issue #3132 post_mutation_macro_reexpand chokepoint \u2014 check_macro_self_evo at outermost entry, existing #2023 / #3028 counters reused, Soft/Off zero-cost, macro_expand_all + clone_macro_body #2023 chokepoints preserved",
+  "source_script": "scripts/coverage/checks/check_macro_self_evo_chokepoint_3132.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3132",
+        "check_macro_self_evo",
+        "g_capability_registry().default_tenant.load()",
+        "g_macro_self_evo_denied_total.fetch_add(1",
+        "g_macro_clone_last_reject_reason.store(1",
+        "return 0;"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "g_macro_self_evo_denied_total",
+        "g_macro_clone_last_reject_reason"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "check_macro_self_evo"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "check_macro_self_evo",
+        "g_macro_self_evo_denied_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "TopLevelMacroCapGuard",
+        "check_macro_self_evo",
+        "hygiene_depth != 0"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_macro_self_evo_reexpand_chokepoint.cpp",
+      "contains": [
+        "Issue #3132",
+        "check_macro_self_evo"
+      ]
+    }
+  ]
+}
