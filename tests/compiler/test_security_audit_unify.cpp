@@ -9,7 +9,13 @@
 //   AC5: query joins typed_kind + typed_outcome on matching mutation_id
 //   AC6: schema-2054 on query:security-audit-stats
 //   AC7: WAL replay rebuilds unified SecurityEvent ring
-//   AC8: ring size preserved (kSecurityEventRingSize == 64)
+//   AC8: ring size preserved (kSecurityEventRingSize == 1024, #2225)
+//   #3113 AC1: wrap → query:security-audit typed-trail-miss=1 + window/se-ring
+//   #3113 AC2: WAL on → wal-replay-hint=1 (is_enabled only, no scan)
+//   #3113 AC3: typed_trail_wrap_total + stats typed-trail-wrap-risk
+//   #3113 AC4: in-memory join is last 256; SE 1024 + WAL for full replay
+//   #3113 AC5: keep 256+WAL (no AURA_TYPED_TRAIL_SIZE)
+//   #3113 AC6: Soft / WAL-off miss mark OK, no extra I/O
 
 #include "test_harness.hpp"
 
@@ -20,6 +26,7 @@
 #include "core/mutation_audit_wal.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
+#include "core/security_event_wal.hh"
 #include "core/workspace_isolation.hh"
 
 #include <cstdint>
@@ -41,6 +48,10 @@ using aura::compiler::security::apply_production_security_defaults;
 using aura::compiler::security::kCapWildcard;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::typed_audit::AuditOutcome;
+using aura::compiler::typed_audit::capture_audit_event_forced;
+using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
 using aura::compiler::typed_audit::MutationKind;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::trail_find_by_mutation_id;
@@ -67,6 +78,8 @@ using aura::core::security_event::kSecurityAuditUnifyIssue;
 using aura::core::security_event::kSecurityEventRingSize;
 using aura::core::security_event::reset_security_event_ring_for_test;
 using aura::core::security_event::SecurityEventKind;
+using aura::core::security_event_wal::g_security_event_wal;
+using aura::core::security_event_wal::reset_security_event_wal_for_test;
 using aura::core::workspace_isolation::reset_tenant_isolation_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -103,6 +116,7 @@ void reset_process() {
     reset_capability_effects_for_test();
     reset_tenant_isolation_for_test();
     reset_audit_wal_for_test();
+    reset_security_event_wal_for_test();
     reset_for_test();
     reset_security_event_ring_for_test();
     set_mode(SandboxMode::Off);
@@ -113,7 +127,9 @@ void reset_process() {
 int run_test_security_audit_unify() {
     std::println("=== Issue #2054: unified security audit surface ===");
     CHECK(kSecurityAuditUnifyIssue == 2054, "issue stamp");
-    CHECK(kSecurityEventRingSize == 64, "AC8: ring size preserved at 64");
+    CHECK(kSecurityEventRingSize == 1024, "AC8: ring size 1024 (#2225 / #3113)");
+    CHECK(kTypedMutationAuditTrailSize == 256, "3113 AC4: typed trail window 256");
+    CHECK(kTypedTrailWrapMissIssue == 3113, "3113 issue stamp");
 
     // ── AC1/AC2: deny + allow append SecurityEvent with reason ──
     {
@@ -293,7 +309,7 @@ int run_test_security_audit_unify() {
         CHECK(href_stats(cs, "schema-2054") == 2054, "schema-2054 key");
         CHECK(href_stats(cs, "schema") == 2054, "schema key");
         CHECK(href_stats(cs, "unified") == 1, "unified=1");
-        CHECK(href_stats(cs, "ring-size") == 64, "ring-size=64");
+        CHECK(href_stats(cs, "ring-size") == 1024, "ring-size=1024");
         auto st = cs.eval(R"((engine:metrics "query:security-audit-stats"))");
         CHECK(st && is_hash(*st), "stats returns hash");
     }
@@ -368,6 +384,134 @@ int run_test_security_audit_unify() {
         CHECK(e.fiber_id == 99, "fiber_id stored");
         CHECK(e.denied == false, "denied=false on allow");
         CHECK(e.kind == SecurityEventKind::EffectAllow, "EffectAllow kind");
+    }
+
+    // ── Issue #3113: typed trail wrap miss is explicit, not "no audit" ──
+    {
+        std::println("\n--- 3113 AC1/AC3: wrap → typed-trail-miss + wrap-total ---");
+        reset_process();
+        CompilerService cs;
+
+        const std::uint64_t mid = 8113;
+        append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny,
+                              /*tenant=*/10, mid, /*epoch=*/1, kEffectMutate, "op-wrap",
+                              "wrap-seed-deny", true, /*fiber=*/7);
+        aura::compiler::typed_audit::capture_security_correlated_audit(mid, "op-wrap", /*epoch=*/1,
+                                                                       /*denied=*/true, 0, 7);
+        TypedMutationAuditEvent te0{};
+        CHECK(trail_find_by_mutation_id(mid, te0), "3113: mid in trail before wrap");
+
+        auto r_hit = cs.eval(R"((engine:metrics "query:security-audit" 8 10 7 0 8113))");
+        CHECK(r_hit.has_value(), "3113 pre-wrap query ok");
+        auto lines_hit = list_string_lines(cs, *r_hit);
+        CHECK(!lines_hit.empty(), "3113 pre-wrap has SE row");
+        for (const auto& ln : lines_hit) {
+            CHECK(ln.find("typed-trail-miss=0") != std::string::npos, "3113 AC1: hit miss=0");
+            CHECK(ln.find("typed-trail-size=256") != std::string::npos, "3113 AC1: window=256");
+            CHECK(ln.find("se-ring-size=1024") != std::string::npos, "3113 AC1: se-ring-size=1024");
+            CHECK(ln.find("wal-replay-hint=0") != std::string::npos,
+                  "3113 AC2/AC6: WAL off → hint=0");
+            CHECK(ln.find("schema=2054") != std::string::npos, "3113: schema=2054 retained");
+        }
+
+        CHECK(href_stats(cs, "typed-trail-window") == 256, "3113 AC3: stats window=256");
+        CHECK(href_stats(cs, "se-ring-size") == 1024, "3113 AC3: stats se-ring-size");
+        CHECK(href_stats(cs, "schema-3113") == 3113, "3113 AC3: schema-3113");
+        CHECK(href_stats(cs, "typed-trail-size") >= 1, "3113: typed-trail-size live occupancy");
+        CHECK(href_stats(cs, "typed-trail-wrap-risk") == 0, "3113 AC3: no wrap-risk yet");
+
+        const auto wrap0 =
+            g_typed_mutation_audit_counters.typed_trail_wrap_total.load(std::memory_order_relaxed);
+        for (std::size_t i = 0; i < kTypedMutationAuditTrailSize; ++i) {
+            capture_audit_event_forced(92000 + i, "wrap-fill", MutationKind::Other, 1, 1,
+                                       AuditOutcome::Success);
+        }
+        const auto wrap1 =
+            g_typed_mutation_audit_counters.typed_trail_wrap_total.load(std::memory_order_relaxed);
+        std::println("  typed_trail_wrap_total {} → {}", wrap0, wrap1);
+        CHECK(wrap1 > wrap0, "3113 AC3: wrap counter increases after >256 captures");
+
+        TypedMutationAuditEvent te_miss{};
+        CHECK(!trail_find_by_mutation_id(mid, te_miss), "3113: old mid evicted from typed trail");
+
+        auto r_miss = cs.eval(R"((engine:metrics "query:security-audit" 8 10 7 0 8113))");
+        CHECK(r_miss.has_value(), "3113 wrap query ok");
+        auto lines_miss = list_string_lines(cs, *r_miss);
+        CHECK(!lines_miss.empty(), "3113 AC1: SE row still present after typed wrap");
+        bool saw_miss = false;
+        for (const auto& ln : lines_miss) {
+            std::println("  wrap-miss: {}", ln);
+            if (ln.find("mutation_id=8113") != std::string::npos &&
+                ln.find("typed-trail-miss=1") != std::string::npos)
+                saw_miss = true;
+            CHECK(ln.find("typed-trail-size=256") != std::string::npos, "3113 AC1: window on miss");
+            CHECK(ln.find("se-ring-size=1024") != std::string::npos, "3113 AC1: se-ring on miss");
+            CHECK(ln.find("wal-replay-hint=0") != std::string::npos,
+                  "3113 AC2/AC6: WAL off no hint, no scan");
+            CHECK(ln.find("typed_kind=-") != std::string::npos, "3113: typed details gone");
+            CHECK(ln.find("schema=2054") != std::string::npos, "3113: existing schema key kept");
+        }
+        CHECK(saw_miss, "3113 AC1: typed-trail-miss=1 (not silent no-audit)");
+        CHECK(href_stats(cs, "typed-trail-wrap-risk") == 1,
+              "3113 AC3: wrap-risk=1 after trail_seq>256 + SE");
+        CHECK(href_stats(cs, "typed-trail-wrap-total") == static_cast<std::int64_t>(wrap1),
+              "3113 AC3: stats wrap-total");
+
+        // AC6 Soft default list: no mid filter, WAL still off — miss mark
+        // may appear, no extra disk I/O (hint stays 0).
+        auto r_list = cs.eval(R"((engine:metrics "query:security-audit" 10))");
+        CHECK(r_list.has_value(), "3113 AC6: default list ok");
+        auto lines_list = list_string_lines(cs, *r_list);
+        CHECK(!lines_list.empty(), "3113 AC6: default list has rows");
+        for (const auto& ln : lines_list) {
+            CHECK(ln.find("typed-trail-miss=") != std::string::npos,
+                  "3113 AC6: miss field present");
+            CHECK(ln.find("wal-replay-hint=0") != std::string::npos, "3113 AC6: no WAL scan/hint");
+        }
+
+        CHECK(!g_mutation_audit_wal().is_enabled(), "3113 AC6: mutation WAL off");
+        CHECK(!g_security_event_wal().is_enabled(), "3113 AC6: SE WAL off");
+    }
+
+    {
+        std::println("\n--- 3113 AC2: WAL on → wal-replay-hint=1 ---");
+        reset_process();
+        CompilerService cs;
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3113-wal-hint";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        // Enable first: enable_mutation_audit_wal resets the SE ring, so seed
+        // the wrap scenario after WAL is on.
+        CHECK(cs.evaluator().enable_mutation_audit_wal(dir.string()), "3113 AC2: enable WAL");
+        CHECK(g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
+              "3113 AC2: some WAL enabled");
+        const std::uint64_t mid = 8114;
+        append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny,
+                              /*tenant=*/10, mid, /*epoch=*/1, kEffectMutate, "op-wal",
+                              "wrap-wal-deny", true, /*fiber=*/7);
+        aura::compiler::typed_audit::capture_security_correlated_audit(mid, "op-wal", /*epoch=*/1,
+                                                                       /*denied=*/true, 0, 7);
+        for (std::size_t i = 0; i < kTypedMutationAuditTrailSize; ++i) {
+            capture_audit_event_forced(93000 + i, "wrap-fill-wal", MutationKind::Other, 1, 1,
+                                       AuditOutcome::Success);
+        }
+        TypedMutationAuditEvent te{};
+        CHECK(!trail_find_by_mutation_id(mid, te), "3113 AC2: mid wrapped out of typed trail");
+        auto r_wal = cs.eval(R"((engine:metrics "query:security-audit" 8 10 7 0 8114))");
+        CHECK(r_wal.has_value(), "3113 AC2: WAL-on query ok");
+        auto lines_wal = list_string_lines(cs, *r_wal);
+        bool saw_hint = false;
+        for (const auto& ln : lines_wal) {
+            std::println("  wal-hint: {}", ln);
+            if (ln.find("typed-trail-miss=1") != std::string::npos &&
+                ln.find("wal-replay-hint=1") != std::string::npos)
+                saw_hint = true;
+        }
+        CHECK(saw_hint, "3113 AC2: miss + WAL enabled → wal-replay-hint=1");
+        cs.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir, ec);
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

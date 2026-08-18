@@ -52,7 +52,14 @@ inline constexpr int kTypedMutationAuditIssue =
     2145; // lineage 1894 / 1614 / 1589; AOT #1882; #2027/#2029 satellite
 // Issue #2053: production multi-tenant AI — stronger audit defaults.
 inline constexpr int kProductionSecurityDefaultsIssue = 2053;
+// Issue #3113: in-memory typed join window. Fixed 256 is the production
+// contract (not env-resized; AURA_TYPED_TRAIL_SIZE deferred). Full forensic
+// replay is SE ring (1024) + mutation/SE WAL. query:security-audit must
+// mark typed-trail-miss when trail_find_by_mutation_id misses — wrap must
+// not look like "never audited". #3091 proof.audit_mid still joins SE mid
+// after wrap; typed details are window-only.
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
+inline constexpr int kTypedTrailWrapMissIssue = 3113;
 // Force audit when dirty scope is large (Sampled strategy still hits).
 inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
 // Issue #2053: under production defaults, force critical kinds even if Sampled.
@@ -140,6 +147,10 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> audit_strategy_default_warnings_total{0};
     std::atomic<std::uint32_t> audit_strategy_default_warning_fired{0};
     std::atomic<std::uint64_t> trail_seq{0};
+    // Issue #3113: bump once per overwrite after the 256-slot window fills
+    // (mirrors SecurityEvent::ring_wrap_total). Agents pair this with
+    // typed-trail-miss on query:security-audit.
+    std::atomic<std::uint64_t> typed_trail_wrap_total{0};
     // Issue #1613: macro hygiene audit trail (hygiene-protected blocks + allowed macro mutates).
     std::atomic<std::uint64_t> macro_hygiene_events{0};
     std::atomic<std::uint64_t> macro_hygiene_blocked{0};
@@ -2862,6 +2873,12 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
         if (g_tls_composite_batch_join_mid == 0)
             (void)promote_sampled_force_join_mid(mutation_id);
     }
+    // Issue #3113: mirror SecurityEvent ring_wrap_total — bump once per
+    // overwrite after the in-memory window fills. After the #2814 window
+    // so the enforcement-link linter scan stays intact.
+    if (seq >= kTypedMutationAuditTrailSize)
+        g_typed_mutation_audit_counters.typed_trail_wrap_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
 }
 
 inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
@@ -3267,6 +3284,9 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
 // Issue #2054: newest-first scan for mutation_id correlation join.
 // Returns true and copies the most recent matching event still in ring.
 // Issue #2819: lock-free scan (best-effort under concurrent wrap).
+// Issue #3113: window is only the last kTypedMutationAuditTrailSize
+// events. A miss is not "no audit" — the mid may still live in the
+// SecurityEvent ring (1024) or WAL. Callers must surface typed-trail-miss.
 [[nodiscard]] inline bool trail_find_by_mutation_id(std::uint64_t mutation_id,
                                                     TypedMutationAuditEvent& out) noexcept {
     if (mutation_id == 0)
@@ -3327,6 +3347,8 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.rollbacks.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.errors.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.trail_seq.store(0, std::memory_order_relaxed);
+    // Issue #3113
+    g_typed_mutation_audit_counters.typed_trail_wrap_total.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.macro_hygiene_events.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.macro_hygiene_blocked.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.macro_hygiene_allowed.store(0, std::memory_order_relaxed);

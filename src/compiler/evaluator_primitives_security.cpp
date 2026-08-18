@@ -4604,16 +4604,26 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     //                 (e.g. "mid-fallback-refused")
     // Each line includes typed_kind/typed_outcome when the TypedMutation
     // trail still holds a correlated event (newest match).
+    // Issue #3113: in-memory typed join is only the last
+    // kTypedMutationAuditTrailSize (256) events. Full replay is SE ring
+    // (1024) + WAL. When the SE row has a mid that is no longer in the
+    // typed window, the line carries typed-trail-miss=1 (plus window /
+    // se-ring-size). That miss is not "never audited". wal-replay-hint=1
+    // when a miss coincides with mutation or SE WAL enabled — is_enabled()
+    // only, no disk scan (Soft / Sampled / WAL-off stay zero extra I/O).
     ObservabilityPrims::register_stats_impl(
         "query:security-audit", [&ev](std::span<const EvalValue> a) -> EvalValue {
             using aura::compiler::typed_audit::AuditOutcome;
+            using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
             using aura::compiler::typed_audit::MutationKind;
             using aura::compiler::typed_audit::trail_find_by_mutation_id;
             using aura::compiler::typed_audit::TypedMutationAuditEvent;
+            using aura::core::audit_wal::g_mutation_audit_wal;
             using aura::core::security_event::g_security_event_ring;
             using aura::core::security_event::kSecurityAuditUnifyIssue;
             using aura::core::security_event::kSecurityEventRingSize;
             using aura::core::security_event::SecurityEventKind;
+            using aura::core::security_event_wal::g_security_event_wal;
             auto& ring = g_security_event_ring();
 
             std::size_t limit = 10;
@@ -4714,19 +4724,31 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 const char* typed_outcome = "-";
                 std::uint64_t typed_seq = 0;
                 TypedMutationAuditEvent te{};
-                if (e.mutation_id != 0 && trail_find_by_mutation_id(e.mutation_id, te)) {
+                const bool typed_hit =
+                    e.mutation_id != 0 && trail_find_by_mutation_id(e.mutation_id, te);
+                if (typed_hit) {
                     typed_kind = typed_kind_name(te.kind);
                     typed_outcome = typed_outcome_name(te.outcome);
                     typed_seq = te.seq;
                 }
+                // Issue #3113: additive miss / window / SE size / WAL hint.
+                // Existing keys (typed_kind / typed_outcome / schema=2054)
+                // stay. WAL hint is is_enabled() only — no disk scan.
+                const int typed_miss = (!typed_hit && e.mutation_id != 0) ? 1 : 0;
+                const bool wal_on =
+                    g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled();
+                const int wal_hint = (typed_miss && wal_on) ? 1 : 0;
 
                 auto line = std::format(
                     "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} effect={} "
                     "op=\"{}\" reason=\"{}\" denied={} typed_seq={} typed_kind={} "
-                    "typed_outcome={} schema={}",
+                    "typed_outcome={} schema={} typed-trail-miss={} typed-trail-size={} "
+                    "se-ring-size={} wal-replay-hint={}",
                     e.seq, kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id, e.epoch,
                     e.effect_bits, e.op, e.reason, e.denied ? 1 : 0, typed_seq, typed_kind,
-                    typed_outcome, kSecurityAuditUnifyIssue);
+                    typed_outcome, kSecurityAuditUnifyIssue, typed_miss,
+                    static_cast<unsigned>(kTypedMutationAuditTrailSize),
+                    static_cast<unsigned>(kSecurityEventRingSize), wal_hint);
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
@@ -4739,14 +4761,22 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #2054: query:security-audit-stats — SlimSurface counters for
     // the unified trail (schema-2054 + ring head/total + typed trail size).
+    // Issue #3113: additive typed-trail-window (=256 capacity), se-ring-size
+    // (=1024), typed-trail-wrap-total / wrap-risk. typed-trail-size stays
+    // live occupancy (do not rename). In-memory typed join is window-only;
+    // full replay is SE(1024)+WAL.
     ObservabilityPrims::register_stats_impl(
         "query:security-audit-stats", [&ev](const auto&) -> EvalValue {
+            using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+            using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+            using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+            using aura::compiler::typed_audit::trail_seq;
             using aura::compiler::typed_audit::trail_size;
             using aura::core::security_event::g_security_event_ring;
             using aura::core::security_event::kSecurityAuditUnifyIssue;
             using aura::core::security_event::kSecurityEventRingSize;
             auto& ring = g_security_event_ring();
-            // Capacity 32: schema-2054 fields + schema-2156 isolation-mid keys.
+            // Capacity 32: schema-2054 + schema-2156 + schema-3113 wrap keys.
             auto* ht = FlatHashTable::create(32);
             if (!ht)
                 return make_void();
@@ -4791,6 +4821,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("total",
                       static_cast<std::int64_t>(ring.total.load(std::memory_order_relaxed)));
             insert_kv("typed-trail-size", static_cast<std::int64_t>(trail_size()));
+            // Issue #3113: additive window / wrap / SE ring. typed-trail-size
+            // remains live occupancy; typed-trail-window is the join capacity.
+            insert_kv("typed-trail-window",
+                      static_cast<std::int64_t>(kTypedMutationAuditTrailSize));
+            insert_kv("se-ring-size", static_cast<std::int64_t>(kSecurityEventRingSize));
+            const auto tseq = trail_seq();
+            const auto se_total = ring.total.load(std::memory_order_relaxed);
+            insert_kv("typed-trail-wrap-total",
+                      static_cast<std::int64_t>(
+                          g_typed_mutation_audit_counters.typed_trail_wrap_total.load(
+                              std::memory_order_relaxed)));
+            insert_kv("typed-trail-wrap-risk",
+                      (tseq > kTypedMutationAuditTrailSize && se_total > 0) ? 1 : 0);
+            insert_kv("schema-3113", kTypedTrailWrapMissIssue);
+            insert_kv("issue-3113", kTypedTrailWrapMissIssue);
             insert_kv("unified", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
@@ -4935,7 +4980,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3020: ~44 live keys; next_pow2(planned*2) ≥64.
             // Issue #3040: +4 keys (schema/issue/wired/total).
             // Issue #3056: +4 keys (breach/wired/schema/issue).
-            constexpr std::size_t kSecurityPosturePlannedKeys = 64;
+            // Issue #3113: +5 keys (wrap-risk/wrap-total/window/schema/issue).
+            constexpr std::size_t kSecurityPosturePlannedKeys = 72;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -5075,6 +5121,25 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::security_event_wal::wal_overflow_ring_depth()));
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
+            }
+            // Issue #3113: typed trail 256 wrap vs SE 1024 — Agent wrap-risk
+            // so a mid-join miss is not read as "no audit". Additive.
+            {
+                using ::aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+                using ::aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+                using ::aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+                using ::aura::compiler::typed_audit::trail_seq;
+                const auto tseq = trail_seq();
+                insert_kv("typed-trail-wrap-risk",
+                          (tseq > kTypedMutationAuditTrailSize && se_total > 0) ? 1 : 0);
+                insert_kv("typed-trail-wrap-total",
+                          static_cast<std::int64_t>(
+                              g_typed_mutation_audit_counters.typed_trail_wrap_total.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("typed-trail-window",
+                          static_cast<std::int64_t>(kTypedMutationAuditTrailSize));
+                insert_kv("schema-3113", kTypedTrailWrapMissIssue);
+                insert_kv("issue-3113", kTypedTrailWrapMissIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
