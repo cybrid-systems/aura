@@ -283,7 +283,8 @@ static void ac3142_4_additive_metrics_and_source_cite() {
 }
 
 int run_test_capability_single_use_consume() {
-    std::println("=== Issue #2586/#3142: single-use + SessionBound revoke cascade ===");
+    std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
+                 "effects_for strip ===");
 
     // ── AC1: grant_once(Mutate) → 1st allow; 2nd deny ──────────────
     {
@@ -1146,7 +1147,171 @@ int run_test_capability_single_use_consume() {
         ac3142_2_steal_marks_no_double_consume();
         ac3142_3_long_run_no_leak();
         ac3142_4_additive_metrics_and_source_cite();
-        std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
+        ac3144_1_production_wildcard_only_strip_tenant_admin();
+        ac3144_2_explicit_tenant_admin_no_strip();
+        ac3144_3_soft_off_no_strip();
+        ac3144_4_additive_counter_and_source_cite();
+        static void ac3144_1_production_wildcard_only_strip_tenant_admin() {
+            std::println(
+                "\n--- #3144 AC1: production + kCapWildcard (no explicit TenantAdmin) → strip ---");
+            reset_all();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            const auto tenant = ev.capability_tenant_id();
+            ev.set_capability_tenant_id(7);
+
+            // Grant ONLY kCapWildcard (no explicit TenantAdmin string grant).
+            g_capability_registry().grant(tenant, "*",
+                                          Effect::Read | Effect::Write | Effect::Exec |
+                                              Effect::Mutate | Effect::Network | Effect::Ffi |
+                                              Effect::Render | Effect::MacroSelfEvo |
+                                              Effect::TenantAdmin | Effect::Syscall,
+                                          {});
+
+            const auto before =
+                g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.load();
+
+            // AC1: effects_for() under Strict + wildcard-only → TenantAdmin + MacroSelfEvo
+            // stripped.
+            const auto stripped = g_capability_registry().effects_for(tenant);
+            const auto held_ta = has_effect(stripped, Effect::TenantAdmin);
+            const auto held_mse = has_effect(stripped, Effect::MacroSelfEvo);
+            CHECK(!held_ta, "AC1: TenantAdmin stripped from effects_for() (wildcard-only holder)");
+            CHECK(!held_mse,
+                  "AC1: MacroSelfEvo stripped from effects_for() (wildcard-only holder)");
+            CHECK(has_effect(stripped, Effect::Read),
+                  "AC1: non-privilege Effect::Read preserved in stripped mask");
+
+            // Counter bumped.
+            const auto after =
+                g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.load();
+            CHECK(after > before, "AC1: counter bumped on strip");
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        }
+
+        static void ac3144_2_explicit_tenant_admin_no_strip() {
+            std::println("\n--- #3144 AC2: production + explicit TenantAdmin → no strip ---");
+            reset_all();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            const auto tenant = ev.capability_tenant_id();
+            ev.set_capability_tenant_id(7);
+
+            // Grant BOTH wildcard + explicit TenantAdmin.
+            g_capability_registry().grant(tenant, "*",
+                                          Effect::Read | Effect::Write | Effect::Exec |
+                                              Effect::Mutate | Effect::Network | Effect::Ffi |
+                                              Effect::Render | Effect::MacroSelfEvo |
+                                              Effect::TenantAdmin | Effect::Syscall,
+                                          {});
+            g_capability_registry().grant(tenant, kCapTenantAdmin, Effect::TenantAdmin, {});
+
+            const auto before =
+                g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.load();
+            // AC2: effects_for() under Strict + explicit TA → no strip.
+            const auto held = g_capability_registry().effects_for(tenant);
+            CHECK(has_effect(held, Effect::TenantAdmin),
+                  "AC2: TenantAdmin preserved in effects_for() (explicit TA holder)");
+            CHECK(has_effect(held, Effect::MacroSelfEvo),
+                  "AC2: MacroSelfEvo preserved in effects_for() (explicit TA holder)");
+
+            const auto after =
+                g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.load();
+            CHECK(after == before,
+                  "AC2: counter NOT bumped for explicit TenantAdmin holder (no strip)");
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        }
+
+        static void ac3144_3_soft_off_no_strip() {
+            std::println("\n--- #3144 AC3: Soft / sandbox=off → zero-cost (no strip) ---");
+            reset_all();
+            // Soft mode (Off) — no production mode active.
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+            CompilerService cs;
+            auto& ev = cs.evaluator();
+            const auto tenant = ev.capability_tenant_id();
+            ev.set_capability_tenant_id(7);
+
+            // Grant ONLY wildcard (no explicit TenantAdmin).
+            g_capability_registry().grant(tenant, "*",
+                                          Effect::Read | Effect::Write | Effect::Exec |
+                                              Effect::Mutate | Effect::Network | Effect::Ffi |
+                                              Effect::Render | Effect::MacroSelfEvo |
+                                              Effect::TenantAdmin | Effect::Syscall,
+                                          {});
+
+            const auto before =
+                g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.load();
+            // AC3: Soft/Off → no strip (wildcard contract preserved).
+            const auto held = g_capability_registry().effects_for(tenant);
+            CHECK(has_effect(held, Effect::TenantAdmin),
+                  "AC3: Soft/Off → TenantAdmin preserved (wildcard contract preserved)");
+            CHECK(has_effect(held, Effect::MacroSelfEvo), "AC3: Soft/Off → MacroSelfEvo preserved");
+
+            const auto after =
+                g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.load();
+            CHECK(after == before, "AC3: Soft/Off → counter NOT bumped (zero-cost, no strip)");
+        }
+
+        static void ac3144_4_additive_counter_and_source_cite() {
+            std::println("\n--- #3144 AC4/AC5: additive counter + source-cite + linter ---");
+            // Source-cite in capability_model.hh
+            const auto cap = read_file("src/core/capability_model.hh");
+            CHECK(cap.find("Issue #3144") != std::string::npos,
+                  "AC4: capability_model.hh cites #3144");
+            CHECK(cap.find("wildcard_strip_tenant_admin_effect_total") != std::string::npos,
+                  "AC4: counter present");
+            CHECK(cap.find("wildcard_strip_tenant_admin_effect_total{0}") != std::string::npos,
+                  "AC4: counter field initialized");
+            CHECK(cap.find("Effect::TenantAdmin") != std::string::npos &&
+                      cap.find("Effect::MacroSelfEvo") != std::string::npos,
+                  "AC4: strip bits in effects_for / effects_for_locked");
+            CHECK(cap.find("has_wildcard && !has_explicit_TenantAdmin") != std::string::npos,
+                  "AC4: strip condition present");
+            CHECK(cap.find("Soft/Off: zero-cost") != std::string::npos,
+                  "AC4: Soft/Off zero-cost comment");
+
+            // Counter appended at struct END per #2906
+            const auto pos_3141 = cap.find("capability_wildcard_write_fence_deny_total{0};");
+            const auto pos_3144 = cap.find("wildcard_strip_tenant_admin_effect_total{0};");
+            CHECK(pos_3141 != std::string::npos && pos_3144 != std::string::npos,
+                  "AC4: both counter fields present");
+            CHECK(pos_3144 > pos_3141,
+                  "AC4: #3144 counter appended after #3141 counter (struct END per #2906)");
+
+            // Source-cite in security_capabilities.h
+            const auto sec_cap = read_file("src/compiler/security_capabilities.h");
+            CHECK(sec_cap.find("Issue #3144") != std::string::npos,
+                  "AC4: security_capabilities.h cites #3144");
+            CHECK(sec_cap.find("wildcard_strip_tenant_admin_effect_total_v_read") !=
+                      std::string::npos,
+                  "AC4: accessor exported");
+
+            // Linter exists
+            const auto linter =
+                read_file("scripts/coverage/checks/check_wildcard_effects_for_fence.py");
+            CHECK(!linter.empty() && linter.find("Issue #3144") != std::string::npos,
+                  "AC5: linter exists and cites #3144");
+
+            // build.py wires linter
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_wildcard_effects_for_fence") != std::string::npos,
+                  "AC5: build.py wires linter");
+
+            // No docs/design/, no tests/issues/test_issue_3144.cpp
+            CHECK(!std::filesystem::exists("docs/design/3144-castop-typed-meta-phase-c.md"),
+                  "AC5: no docs/design/3144-*.md");
+            CHECK(!std::filesystem::exists("tests/issues/test_issue_3144.cpp"),
+                  "AC5: no tests/issues/test_issue_3144.cpp");
+            CHECK(!std::filesystem::exists("tests/core/test_issue_3144.cpp"),
+                  "AC5: no tests/core/test_issue_3144.cpp");
+            CHECK(!std::filesystem::exists("tests/compiler/test_issue_3144.cpp"),
+                  "AC5: no tests/compiler/test_issue_3144.cpp");
+        }
+
+        std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;
     }
 }

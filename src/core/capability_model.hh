@@ -273,6 +273,12 @@ struct CapabilityEffectMetrics {
     // privilege escalation via wildcard → full Effect mask → check passes →
     // grant succeeds. Appended at struct END (never insert mid-struct).
     std::atomic<std::uint64_t> capability_wildcard_write_fence_deny_total{0};
+    // Issue #3144: kCapWildcard持卡但不显式 TenantAdmin → effects_for() 查询 path
+    // strip TenantAdmin + MacroSelfEvo bits (caller cannot pass
+    // require_effect(TenantAdmin) check; independent of #3141 grant_capability
+    // string path). Soft/Off zero-cost (no strip; wildcard contract preserved).
+    // Appended at struct END per #2906.
+    std::atomic<std::uint64_t> wildcard_strip_tenant_admin_effect_total{0};
     // Issue #3142: SessionBound revoke cascade counters (additive; appended at
     // struct END per #2906). dtor_total: cascade revoke on nested TenantScope
     // dtor / abort. steal_total: stolen flag set on fiber steal path.
@@ -820,12 +826,33 @@ struct CapabilityRegistry {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return acc;
+        // Issue #3144 AC1: detect wildcard-only holder (kCapWildcard "*"
+        // string grant but no explicit TenantAdmin) under production mode
+        // (Restricted/Strict). If so, strip TenantAdmin + MacroSelfEvo
+        // bits from the returned Effect (caller cannot pass
+        // require_effect(TenantAdmin)). Soft/Off: zero-cost (no strip).
+        const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
+        bool has_wildcard = false;
+        bool has_explicit_TenantAdmin = false;
         for (const auto& g : it->second) {
-            // Issue #3142: stolen entries do NOT contribute effects — caller-side
-            // check_and_record_effect on a stolen SessionBound fails (no
-            // double-consume after fiber steal).
+            // Issue #3142: stolen entries do NOT contribute effects.
             if (!g.revoked && !g.stolen)
                 acc = acc | g.effects;
+            // Wildcard-only detection (production only).
+            if (mode != EffectSandboxMode::Off && !g.revoked) {
+                if (g.name == "*")
+                    has_wildcard = true;
+                else if ((static_cast<std::uint16_t>(g.effects) &
+                          static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0)
+                    has_explicit_TenantAdmin = true;
+            }
+        }
+        if (mode != EffectSandboxMode::Off && has_wildcard && !has_explicit_TenantAdmin) {
+            constexpr std::uint16_t kStrip = static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                                             static_cast<std::uint16_t>(Effect::MacroSelfEvo);
+            acc = static_cast<Effect>(static_cast<std::uint16_t>(acc) & ~kStrip);
+            g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
         return acc;
     }
@@ -842,10 +869,30 @@ struct CapabilityRegistry {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return acc;
+        // Issue #3144: same wildcard-only strip as effects_for above. Caller
+        // MUST hold mtx (per the existing contract). Production fence strips
+        // TenantAdmin + MacroSelfEvo from wildcard-only holders.
+        const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
+        bool has_wildcard = false;
+        bool has_explicit_TenantAdmin = false;
         for (const auto& g : it->second) {
             // Issue #3142: stolen entries excluded (see effects_for above).
             if (!g.revoked && !g.stolen)
                 acc = acc | g.effects;
+            if (mode != EffectSandboxMode::Off && !g.revoked) {
+                if (g.name == "*")
+                    has_wildcard = true;
+                else if ((static_cast<std::uint16_t>(g.effects) &
+                          static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0)
+                    has_explicit_TenantAdmin = true;
+            }
+        }
+        if (mode != EffectSandboxMode::Off && has_wildcard && !has_explicit_TenantAdmin) {
+            constexpr std::uint16_t kStrip = static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                                             static_cast<std::uint16_t>(Effect::MacroSelfEvo);
+            acc = static_cast<Effect>(static_cast<std::uint16_t>(acc) & ~kStrip);
+            g_capability_effect_metrics().wildcard_strip_tenant_admin_effect_total.fetch_add(
+                1, std::memory_order_relaxed);
         }
         return acc;
     }

@@ -1,0 +1,73 @@
+{
+  "issue": 3144,
+  "title": "Issue #3144: [P0][security][privilege-escalation][area:capability] kCapWildcard 持卡 tenant 在 effects_for() 查询 path 返回 full Effect mask,自助 grant TenantAdmin / MacroSelfEvo (独立于 Gap A 字符串 path 的查询 path)",
+  "ok": "OK: Issue #3144 P0 production-readiness AI-mutation residual closed — kCapWildcard持卡但不显式 TenantAdmin 的 tenant,在 Restricted/Strict 下 effects_for() / effects_for_locked() 返回的 Effect mask 中 TenantAdmin + MacroSelfEvo bits 被 strip(caller 不能 pass require_effect(TenantAdmin) check;独立于 #3141 grant_capability 字符串 path 的查询 path fence)。AC2 显式 TenantAdmin 走 effects_for_locked 原路径 (no double-write, no behavior change)。AC3 Soft/off zero-cost (单 relaxed load + early-out before any scan;wildcard contract 保留)。AC4 additive counter only — wildcard_strip_tenant_admin_effect_total appended at CapabilityEffectMetrics struct END per #2906;existing counters + query keys 不动。AC5 source-cite capability_model.hh + security_capabilities.h;extends tests/core/test_capability_single_use_consume.cpp with ac3144_1..4 (no docs/design/, no tests/issues/test_issue_3144.cpp per #81967/#1655);scripts/coverage/checks/check_wildcard_effects_for_fence.py + manifest 3144.json;build.py wires cwe3144_script into gate stage alongside cmp3143_script。Together with #3141 closes wildcard privilege-escalation across both grant (string path) and query (effects_for path) surfaces.",
+  "source_script": "scripts/coverage/checks/check_wildcard_effects_for_fence.py",
+  "checks": [
+    {
+      "ac": "AC1-3144",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #3144",
+        "wildcard_strip_tenant_admin_effect_total",
+        "has_wildcard && !has_explicit_TenantAdmin",
+        "Effect::TenantAdmin",
+        "Effect::MacroSelfEvo",
+        "kStrip =",
+        "g.name == \"*\""
+      ]
+    },
+    {
+      "ac": "AC3-3144",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Soft/Off: zero-cost",
+        "mode != EffectSandboxMode::Off"
+      ]
+    },
+    {
+      "ac": "AC4-3144-meta",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "wildcard_strip_tenant_admin_effect_total{0}"
+      ]
+    },
+    {
+      "ac": "AC4-3144-cap",
+      "path": "src/compiler/security_capabilities.h",
+      "contains": [
+        "Issue #3144",
+        "wildcard_strip_tenant_admin_effect_total",
+        "wildcard_strip_tenant_admin_effect_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC5-3144-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "ac3144_1_production_wildcard_only_strip",
+        "ac3144_2_explicit_tenant_admin_no_strip",
+        "ac3144_3_soft_off_no_strip",
+        "ac3144_4_additive_counter_and_source_cite",
+        "Issue #3144"
+      ]
+    },
+    {
+      "ac": "Linter-3144",
+      "path": "scripts/coverage/checks/check_wildcard_effects_for_fence.py",
+      "contains": [
+        "Issue #3144",
+        "AC1 counter (declared)",
+        "AC1 strip condition",
+        "AC4 counter field initializer"
+      ]
+    },
+    {
+      "ac": "Build-3144",
+      "path": "build.py",
+      "contains": [
+        "check_wildcard_effects_for_fence.py"
+      ]
+    }
+  ]
+}

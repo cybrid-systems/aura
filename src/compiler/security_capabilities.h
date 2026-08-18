@@ -47,6 +47,15 @@ inline constexpr const char* kCapMacroSelfEvo = "macro-self-evo";
 // (`capability_wildcard_write_fence_deny_total`); query surface wired via
 // `aura::core::capability::capability_wildcard_write_fence_deny_total_v_read()`.
 
+// Issue #3144: kCapWildcard持卡但不显式 TenantAdmin → effects_for() 查询 path
+// strip TenantAdmin + MacroSelfEvo bits (caller cannot pass
+// require_effect(TenantAdmin); 独立于 #3141 grant_capability 字符串 path
+// 的查询 path)。 Closes privilege escalation via wildcard → full Effect mask →
+// check passes. Soft/Off zero-cost (no strip; wildcard contract preserved).
+// Counter lives in src/core/capability_model.hh
+// (`wildcard_strip_tenant_admin_effect_total`); query surface wired via
+// `aura::core::capability::wildcard_strip_tenant_admin_effect_total_v_read()`.
+
 // Issues #1293/#1294/#1295 Phase 1: compile / fiber / workspace / exception
 // control capability gates (retrofit scaffold for systematic coverage).
 inline constexpr const char* kCapCompile = "compile";
