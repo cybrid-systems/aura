@@ -192,6 +192,41 @@ static void ac3b_same_name_overrides() {
     CHECK(p != nullptr && p->id == 2, "second spawn id=2 (override)");
 }
 
+// ── AC4: #3125 cross-scope directory merge — separation from #2078 name table ──
+static void ac3125_cross_scope_isolation() {
+    std::println("\n--- AC4: #3125 cross-scope directory merge — separation from #2078 ---");
+    // Source-cite: cross_scope_directory is in agent_scope.h (not agent_name_table.h).
+    // Per #2078, AgentNameTable is per-Evaluator storage. Cross-scope merge
+    // (#3125) walks an explicit span<AgentScope* const> caller-owned list —
+    // it does NOT consult AgentNameTable. Verify the separation:
+    //   - agent_scope.h owns cross_scope_directory + CrossScope* types
+    //   - agent_name_table.h owns AgentNameTable (no cross-scope surface)
+    //   - README documents both #2078 and #3125 as distinct concerns
+    auto scope_h = read_file("src/orch/agent_scope.h");
+    auto name_h = read_file("src/compiler/agent_name_table.h");
+    auto readme = read_file("src/orch/README.md");
+    CHECK(scope_h.find("cross_scope_directory(std::span<AgentScope* const>") != std::string::npos,
+          "AC4: agent_scope.h owns cross_scope_directory free fn");
+    CHECK(scope_h.find("struct CrossScopeEntry") != std::string::npos,
+          "AC4: agent_scope.h owns CrossScopeEntry");
+    CHECK(scope_h.find("struct CrossScopeFilter") != std::string::npos,
+          "AC4: agent_scope.h owns CrossScopeFilter");
+    CHECK(scope_h.find("struct CrossScopeSnapshot") != std::string::npos,
+          "AC4: agent_scope.h owns CrossScopeSnapshot");
+    CHECK(name_h.find("cross_scope_directory") == std::string::npos,
+          "AC4: agent_name_table.h does NOT reference cross_scope_directory");
+    CHECK(name_h.find("CrossScopeEntry") == std::string::npos,
+          "AC4: agent_name_table.h does NOT reference CrossScopeEntry");
+    CHECK(name_h.find("AgentNameTable") != std::string::npos,
+          "AC4: agent_name_table.h owns AgentNameTable (#2078 surface)");
+    CHECK(readme.find("#3125") != std::string::npos,
+          "AC4: README documents #3125 cross-scope merge");
+    CHECK(readme.find("#2078") != std::string::npos,
+          "AC4: README references #2078 per-Evaluator name table");
+    CHECK(readme.find("cross-scope directory merge") != std::string::npos,
+          "AC4: README has 'cross-scope directory merge' section");
+}
+
 } // namespace
 
 int run_test_agent_name_table_isolation() {
@@ -201,7 +236,8 @@ int run_test_agent_name_table_isolation() {
     ac2b_compiler_service_isolation();
     ac3_drain_clears_table();
     ac3b_same_name_overrides();
-    std::println("\n=== #2078: passed={} failed={} ===", g_passed, g_failed);
+    ac3125_cross_scope_isolation();
+    std::println("\n=== #2078/#3125: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

@@ -721,6 +721,86 @@ Metrics (`query:orch-module-stats`):
 Regression: `tests/orch/test_orch_scope` (#2751 AC block) + C++ hierarchy
 coverage via `AgentScope::directory_snapshot` in the same suite.
 
+### `orch:cross-scope-directory` merge (Issue #3125)
+
+C++ helper that joins N per‑Scope directory snapshots into a single
+cross‑scope snapshot. Caller passes an explicit
+`std::span<AgentScope* const>` (no process-global registry walk). The
+merge applies one `CrossScopeFilter` (alive_only / name_prefix /
+source_scope_paths allow-list / dedup_by_name) and labels every
+surviving entry with the source's `bp_scope_id()` (`source_path`) and
+the input span index (`source_seq`). Per-source relative
+`scope_path` is preserved so existing `#2751` readers keep working
+after a merge.
+
+Cross-scope directory merge contract: each `CrossScopeEntry` in the
+returned `CrossScopeSnapshot::entries` carries the per-entry fields
+(`name` / `id` / `status` / `scope_path`) plus the cross-scope source
+labels (`source_path` / `source_seq` / `ok`); the snapshot aggregates
+`scopes_visited` (sum across sources), `sources_count` (input span
+size), and `entries_dropped` (filtered-out count).
+
+```cpp
+#include "orch/orch.h"   // pulls in agent_scope.h automatically
+
+aura::serve::Scheduler sched(2);
+aura::orch::AgentScope root(sched);
+aura::orch::AgentScope worker_scope(sched);   // independent peer scope
+
+root.spawn({.name = "supervisor", .body = [] { /* ... */ }});
+auto& w = root.spawn_child();
+w.spawn({.name = "worker-A", .body = [] { /* ... */ }});
+w.spawn({.name = "worker-B", .body = [] { /* ... */ }});
+worker_scope.spawn({.name = "peer-X", .body = [] { /* ... */ }});
+
+// Cross-scope merge: caller supplies the source list (root + worker_scope).
+aura::orch::AgentScope* sources[] = {&root, &worker_scope};
+aura::orch::CrossScopeFilter filter;
+filter.alive_only = true;
+filter.dedup_by_name = true;
+auto snap = aura::orch::cross_scope_directory(sources, filter);
+// snap.entries: [supervisor, worker-A, worker-B, peer-X] (or subset per filter)
+// snap.entries[i].source_path = bp_scope_id() of the contributing scope ("as:3")
+// snap.entries[i].source_seq  = index in `sources` (0 or 1)
+// snap.scopes_visited         = sum across all sources (each walks descendants)
+// snap.sources_count          = 2 (input span size)
+// snap.entries_dropped        = filtered-out count (alive_only / name_prefix / dedup)
+```
+
+Rules (per Issue #3125):
+1. **No** process-global registry. Caller owns the `span<AgentScope* const>`
+   input — passing an empty span returns a snapshot with
+   `sources_count = 0` and `entries.size() = 0`.
+2. **Per-source `directory_snapshot({})` is called with an empty filter**
+   (the cross-scope filter applies after merge). Each per-source call
+   takes its own `ScopeEnterGuard` (`#2777`); concurrent caller +
+   `~AgentScope` on the same source is detected.
+3. **`source_path`** uses `AgentScope::bp_scope_id()` (`"as:1"`, `"as:2"`, ...)
+   — the canonical session-local label introduced by `#3015`. Stable
+   for the scope's lifetime; suitable for downstream dashboard
+   grouping. Filter `source_scope_paths` matches against this same
+   label (string compare, empty = include all sources).
+4. **`dedup_by_name` defaults to `true`** (first-wins on duplicate
+   names across sources). Set `false` to keep duplicates (preserves
+   cross-source fan-out for diagnostic dashboards).
+5. **Not transactional** — best-effort at call time (matches
+   `AgentDirectorySnapshot` `#2751` contract). Two callers racing on
+   the same source scope observe independent snapshots.
+
+Metrics (`query:orch-module-stats`, schema-3125):
+
+| Key | Source |
+|-----|--------|
+| `cross-scope-directory-total` | per-call prim invocations |
+| `cross-scope-directory-entries-total` | sum of `CrossScopeSnapshot::entries.size()` across calls |
+| `cross-scope-directory-sources-total` | sum of input span size across calls (fan-out) |
+| `schema-3125` / `issue-3125` | `kCrossScopeDirectoryIssue = 3125` |
+| `cross-scope-directory-wired` | sentinel `1` (presence check) |
+
+Regression: `tests/orch/test_agent_scope` (`ac3125_*`) +
+`tests/orch/test_agent_name_table_isolation` (`ac3125_cross_scope_isolation`)
++ `tests/orch/test_orch_scope` (`ac3125_cross_scope_directory` — source-cite).
+
 ## Mailbox BP admission (default on, #2228 / #2535)
 
 Production default: `kMailboxBpAdmitThresholdDefault = 32` — spawn with
