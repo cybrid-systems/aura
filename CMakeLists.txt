@@ -2344,6 +2344,19 @@ aura_add_issue_test(test_steal_safety_production_residual_zero)
 aura_issue_test_link_light(test_steal_safety_production_residual_zero)
 add_dependencies(all_test_issue_targets test_steal_safety_production_residual_zero)
 
+# Issue #3135: cascade-decision residual atomic — relower_dirty_defines
+# drain + impact_ub + partial peel atomic vs concurrent record_dependency
+# re-arm (residual of #3067/#3097). cascade_decision_mtx_ (std::mutex,
+# ordered after dep_graph_mtx_ + mutate_mtx_) acquired by record_dependency
+# reject path + relower_dirty_defines_from_workspace critical section +
+# re-check immediately before peel. Soft + clean (armed==0) skips lock
+# for zero cost. Existing #3067 drain + #3097 impact_ub consult +
+# partial_forced_full_by_impact_total counter preserved.
+# No tests/issues/test_issue_3135.cpp (#81967).
+aura_add_issue_test(test_cascade_decision_residual_atomic)
+aura_issue_test_link_light(test_cascade_decision_residual_atomic)
+add_dependencies(all_test_issue_targets test_cascade_decision_residual_atomic)
+
 # Issue #3095: post-restore macro hygiene invariant enforcement
 # (refine #2959 / #3033 / #2099). After every successful
 # abort_restore_dual_topology / restore_metadata_columns on the

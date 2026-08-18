@@ -3593,6 +3593,20 @@ def cmd_lint():
             "Issue #3134 production-readiness residual-zero linter failed — run python3 scripts/coverage/checks/check_steal_safety_production_residual_zero_3134.py"
         )
         return r
+    # Issue #3135: cascade-decision residual atomic — relower_dirty_
+    # defines drain + impact_ub + partial peel atomic vs concurrent
+    # record_dependency re-arm (residual of #3067/#3097). Extends
+    # test_cascade_decision_residual_atomic_3135; no test_issue_3135.cpp.
+    cdr3135_script = COVERAGE_CHECKS / "check_cascade_decision_residual_atomic_3135.py"
+    if not cdr3135_script.exists():
+        fail(f"missing {cdr3135_script}")
+        return 1
+    r = run([sys.executable, str(cdr3135_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3135 cascade-decision residual atomic linter failed — run python3 scripts/coverage/checks/check_cascade_decision_residual_atomic_3135.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
