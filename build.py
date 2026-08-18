@@ -3607,6 +3607,18 @@ def cmd_lint():
             "Issue #3135 cascade-decision residual atomic linter failed — run python3 scripts/coverage/checks/check_cascade_decision_residual_atomic_3135.py"
         )
         return r
+    # Issue #3122: Guard abort structured topology-restore.
+    # Extends test_mutation_rollback_coverage; no test_issue_3122.cpp.
+    trs3122_script = COVERAGE_CHECKS / "check_topology_restore_structured_3122.py"
+    if not trs3122_script.exists():
+        fail(f"missing {trs3122_script}")
+        return 1
+    r = run([sys.executable, str(trs3122_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3122 topology-restore structured linter failed — run python3 scripts/coverage/checks/check_topology_restore_structured_3122.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

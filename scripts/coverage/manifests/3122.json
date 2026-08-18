@@ -1,0 +1,39 @@
+{
+  "issue": 3122,
+  "title": "Issue #3122: Guard abort structured topology-restore.",
+  "ok": "OK: Issue #3122 Guard abort structured topology-restore — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_topology_restore_structured_3122.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/mutation_guard_helpers.hh",
+      "contains": [
+        "Issue #3122",
+        "topology-restore",
+        "topology_restore_abort_result"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_mutation_rollback_coverage.cpp",
+      "contains": [
+        "3122 AC1",
+        "error=topology-restore"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/mutation_guard_helpers.hh",
+      "contains": [
+        "return on_fail;"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3122"
+      ]
+    }
+  ]
+}

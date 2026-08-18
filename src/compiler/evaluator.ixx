@@ -4166,6 +4166,12 @@ public:
     void unregister_live_env_frame_ref(EnvFrameRef* p) const noexcept;
     // Test inject alias of register (explicit hold across steal/densify).
     [[nodiscard]] EnvFrameRef* inject_live_env_frame_ref_for_test(EnvFrameRef ref) noexcept;
+    // Issue #3122: test hook — Guard acquire, insert_child, throw.
+    // Production returns structured topology-restore; Soft returns #f.
+    [[nodiscard]] types::EvalValue abort_after_insert_child_for_test(ast::NodeId parent,
+                                                                     std::uint32_t idx);
+    // Issue #3122: Production make_merr(topology-restore, restored); Soft on_fail.
+    [[nodiscard]] types::EvalValue topology_restore_abort_result(types::EvalValue on_fail);
     [[nodiscard]] std::size_t live_env_frame_ref_count() const noexcept;
     // Issue #2362: shared ownership protocol for densify + fiber steal.
     // For each live ref: OOB/reclaimed → drop; generation advanced →
