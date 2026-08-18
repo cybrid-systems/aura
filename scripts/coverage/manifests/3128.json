@@ -1,0 +1,70 @@
+{
+  "issue": 3128,
+  "title": "Issue #3128: [P0][area:gc/arena] sticky densify-off recovery remains Agent-only; high-freq self-evo can stay blocked until explicit recover_moving_sticky_densify_off.",
+  "ok": "OK: Issue #3128 production auto-recover under sticky densify-off \u2014 all 6 AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_sticky_densify_recover_3128.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "Issue #3128",
+        "recover_moving_sticky_densify_off(/*retry_densify=*/true)",
+        "moving_incomplete_remap_sticky_densify_off()",
+        "production_defaults_active()",
+        "auto_recover_attempted",
+        "if (!auto_recover_attempted)",
+        "publish_last_moving_densify_window"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "MovingStickyDensifyRecoveryResult",
+        "g_moving_sticky_cleared_via_recovery_total",
+        "g_moving_densify_retry_after_recovery_total"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "if (typed_audit::production_defaults_active() &&",
+        "moving_incomplete_remap_sticky_densify_off()"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "clear_moving_incomplete_remap_sticky_densify_off",
+        "compute_moving_unified_success",
+        "would_allow_mutate",
+        "publish_last_moving_densify_window"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "g_moving_sticky_cleared_via_recovery_total",
+        "g_moving_densify_retry_after_recovery_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/core/test_moving_densify_fail_closed.cpp",
+      "contains": [
+        "ac3128_auto_recover_under_sticky",
+        "Issue #3128",
+        "recover_moving_sticky_densify_off(/*retry_densify=*/true)",
+        "ac2837_3_sticky_densify_off_under_hard",
+        "ac2905_4_reregister_clean_restores_without_manual_clear",
+        "ac2935_3_agent_recovery_path",
+        "ac3017_4_sticky_recover_after_inject",
+        "ac3057_5_source_cite_no_invent"
+      ]
+    }
+  ]
+}
