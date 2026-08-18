@@ -183,6 +183,15 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
             if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end()) {
                 restamp_cache_entry_live_(it->second);
                 metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #3136: success-path bitmap coherence — root restamp
+                // (cascade-reemit path). Cross-TU deterministic hash via
+                // std::hash<std::string_view> (libstdc++ _Hash_bytes is
+                // process-stable). Service.ixx sites use fnv1a_64 — distinct
+                // bit for same name is fine; coverage mask still shrinks
+                // residual_force_mask correctly (union covers it).
+                if (aura_production_defaults_active_probe() != 0)
+                    hot_update_registry().note_relower_success_coverage(
+                        1ULL << (std::hash<std::string_view>{}(name) & 63));
             }
             for (const auto& d : dependents) {
                 if (d.empty() || d == name)
@@ -190,6 +199,11 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                 if (auto it = ir_cache_v2_.find(d); it != ir_cache_v2_.end()) {
                     restamp_cache_entry_live_(it->second);
                     metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                    // Issue #3136: success-path bitmap coherence — dependent
+                    // restamp (cascade-reemit path, see root comment above).
+                    if (aura_production_defaults_active_probe() != 0)
+                        hot_update_registry().note_relower_success_coverage(
+                            1ULL << (std::hash<std::string_view>{}(d) & 63));
                 }
             }
         }

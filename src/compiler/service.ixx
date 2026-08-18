@@ -4908,6 +4908,13 @@ public:
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
         // Issue #2033 / #2111 / #2183: unified restamp after successful store.
         restamp_cache_entry_live_(entry);
+        // Issue #3136: success-path bitmap coherence — stamp residual force
+        // region for the just-restamped define so residual_force_mask()
+        // shrinks for the covered region (under production + named residual
+        // bits). Soft / Off: caller gated via production_defaults_active →
+        // zero extra work (hash + one load + branch).
+        if (aura_production_defaults_active_probe() != 0)
+            hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.
         // init_block_dirty_from_irs() sizes to irs[].blocks.size()
@@ -6016,6 +6023,10 @@ public:
                 } else {
                     // Issue #2183 AC1: restamp after successful partial peel.
                     restamp_cache_entry_live_(it->second);
+                    // Issue #3136: success-path bitmap coherence (see 4968).
+                    if (aura_production_defaults_active_probe() != 0)
+                        hot_update_registry().note_relower_success_coverage(
+                            1ULL << (fnv1a_64(name) & 63));
                     (void)flat;
                     (void)pool;
                     (void)expanded_root;
@@ -6197,6 +6208,10 @@ public:
                     } else {
                         // Issue #2183 AC1: restamp after successful per-fn partial.
                         restamp_cache_entry_live_(it->second);
+                        // Issue #3136: success-path bitmap coherence (see 4968).
+                        if (aura_production_defaults_active_probe() != 0)
+                            hot_update_registry().note_relower_success_coverage(
+                                1ULL << (fnv1a_64(name) & 63));
                         // Issue #1514: sync JIT — evict native code for this
                         // define so next exec recompiles only the dirty fn.
                         (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
@@ -7012,6 +7027,9 @@ public:
         if (it == ir_cache_v2_.end())
             return false;
         restamp_cache_entry_live_(it->second);
+        // Issue #3136: success-path bitmap coherence (see store_ir_cache_v2).
+        if (aura_production_defaults_active_probe() != 0)
+            hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));
         return true;
     }
 

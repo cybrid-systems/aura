@@ -2357,6 +2357,22 @@ aura_add_issue_test(test_cascade_decision_residual_atomic)
 aura_issue_test_link_light(test_cascade_decision_residual_atomic)
 add_dependencies(all_test_issue_targets test_cascade_decision_residual_atomic)
 
+# Issue #3136: relower-success-path bitmap coherence — stamp
+# last_reemit_success_region_mask_ on each successful restamp so
+# residual_force_mask = force & ~last_success shrinks for the
+# just-covered region (closes success-path authority split between IR
+# cache stamp and registry residual force; orthogonal to #3129
+# entry-path completion). Service.ixx has 4 sites (store_ir_cache_v2 /
+# partial peel / per-fn partial / test helper) gated by
+# aura_production_defaults_active_probe() != 0 with fnv1a_64(name) & 63.
+# Service_dirty.cpp has 2 sites (cascade-reemit root + dependent) gated
+# with std::hash<std::string_view>{}(name_or_d) & 63 (cross-TU
+# deterministic hash, libstdc++ _Hash_bytes process-stable). Soft / Off
+# path is zero-cost (gate inline before the hash).
+aura_add_issue_test(test_hot_update_relower_success_coverage)
+aura_issue_test_link_light(test_hot_update_relower_success_coverage)
+add_dependencies(all_test_issue_targets test_hot_update_relower_success_coverage)
+
 # Issue #3095: post-restore macro hygiene invariant enforcement
 # (refine #2959 / #3033 / #2099). After every successful
 # abort_restore_dual_topology / restore_metadata_columns on the
