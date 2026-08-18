@@ -20,6 +20,7 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2973 pre-densify counters
+#include "core/moving_densify_health.hh"     // Issue #3123 production auto-arm + clear reason
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 export module aura.core.arena;
 import std;
@@ -610,8 +611,28 @@ inline void reset_intermediate_create_with_cover_for_test() noexcept {
     g_intermediate_create_value_only_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3123: last sticky-clear reason (0=none). Production auto-clear
+// records HealthyWindow / ZeroMoveClean after a complete Moving window
+// (RootRemap + stale + untracked all green). Recovery / Phase-5 green
+// record their own codes. Test reset uses the no-reason helper.
+export inline constexpr std::uint8_t kStickyClearNone = 0;
+export inline constexpr std::uint8_t kStickyClearHealthyWindow = 1;
+export inline constexpr std::uint8_t kStickyClearZeroMoveClean = 2;
+export inline constexpr std::uint8_t kStickyClearRecovery = 3;
+export inline constexpr std::uint8_t kStickyClearPhase5Green = 4;
+export inline constexpr int kProductionAutoArmMovingIssue = 3123;
+
 export inline void clear_moving_incomplete_remap_sticky_densify_off() noexcept {
     g_moving_incomplete_remap_sticky_densify_off.store(0, std::memory_order_release);
+}
+
+export inline void
+clear_moving_incomplete_remap_sticky_densify_off_reason(std::uint8_t reason) noexcept {
+    const auto prev =
+        g_moving_incomplete_remap_sticky_densify_off.exchange(0, std::memory_order_acq_rel);
+    if (prev != 0) {
+        aura::core::moving_densify_health::note_sticky_last_clear_reason(reason);
+    }
 }
 
 export [[nodiscard]] inline bool moving_incomplete_remap_sticky_densify_off() noexcept {
@@ -625,12 +646,10 @@ export [[nodiscard]] inline bool moving_incomplete_remap_sticky_densify_off() no
 export inline void set_moving_compact_enabled(int enabled) noexcept {
     g_moving_compact_enabled_pref.store(enabled ? 1 : 0, std::memory_order_release);
 }
-export inline int moving_compact_enabled() noexcept {
-    // Issue #2837: sticky densify-off after production incomplete-remap
-    // hard-fail. Overrides pref/env until clear_moving_incomplete_remap_
-    // sticky_densify_off() (or a clean Moving densify clears it).
-    if (g_moving_incomplete_remap_sticky_densify_off.load(std::memory_order_acquire) != 0)
-        return 0;
+// Pref/env only — sticky does not hide the feature flag. live_compact(Moving)
+// uses this so a healthy window can still run and clear sticky (#3123 AC3).
+// Agents / auto-arm use moving_compact_enabled() (sticky-gated).
+export [[nodiscard]] inline int moving_compact_feature_enabled() noexcept {
     const int pref = g_moving_compact_enabled_pref.load(std::memory_order_acquire);
     if (pref == 0 || pref == 1)
         return pref;
@@ -645,6 +664,14 @@ export inline int moving_compact_enabled() noexcept {
     // bound fragmentation. Tests can force OFF via
     // AURA_ARENA_MOVING_COMPACT=0.
     return 1;
+}
+export inline int moving_compact_enabled() noexcept {
+    // Issue #2837: sticky densify-off after production incomplete-remap
+    // hard-fail. Overrides pref/env until clear_moving_incomplete_remap_
+    // sticky_densify_off() (or a clean Moving densify clears it).
+    if (g_moving_incomplete_remap_sticky_densify_off.load(std::memory_order_acquire) != 0)
+        return 0;
+    return moving_compact_feature_enabled();
 }
 
 // Issue #2256: Adaptive-on-threshold policy. When fragmentation
@@ -666,6 +693,60 @@ export inline bool should_auto_moving_compact(double current_fragmentation) noex
     const auto last_ms = g_last_moving_compact_ms.load(std::memory_order_acquire);
     constexpr std::uint64_t kCooldownMs = 100; // at most 10 Hz
     return (now_ms - last_ms) >= kCooldownMs;
+}
+
+// Issue #3123: production pack auto-arm for live_compact(Moving).
+// Soft/sandbox never auto-arms (even if the test pref is on).
+// -1 = derive from production_defaults_active C probe (Full pack applies
+// those defaults); 0 = force off; 1 = force on (tests).
+export inline std::atomic<int> g_production_auto_arm_moving_pref{-1};
+
+extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
+
+[[nodiscard]] inline bool sandbox_dev_off_for_auto_arm() noexcept {
+    if (const char* e = std::getenv("AURA_SANDBOX"))
+        return e[0] == 'o' && e[1] == 'f' && e[2] == 'f' && e[3] == '\0';
+    return false;
+}
+
+export [[nodiscard]] inline bool production_auto_arm_pack_active() noexcept {
+    if (sandbox_dev_off_for_auto_arm())
+        return false;
+    const int pref = g_production_auto_arm_moving_pref.load(std::memory_order_acquire);
+    if (pref == 0)
+        return false;
+    if (pref == 1)
+        return true;
+    if (aura_production_defaults_active_probe == nullptr)
+        return false;
+    return aura_production_defaults_active_probe() != 0;
+}
+
+// Once per quiet window: production pack + frag ≥ threshold + Moving on
+// + zero live pins + zero EnvFrame guards + MutationBoundary depth 0.
+// Soft/sandbox returns false. Existing should_auto_moving_compact owns
+// the cooldown / flag / threshold checks.
+export [[nodiscard]] inline bool
+should_production_auto_arm_moving(double current_fragmentation) noexcept {
+    if (!production_auto_arm_pack_active())
+        return false;
+    if (!should_auto_moving_compact(current_fragmentation))
+        return false;
+    if (aura::core::lifetime::live_pin_count() != 0)
+        return false;
+    if (aura::core::envframe_lifetime::active_guard_depth() != 0)
+        return false;
+    if (arena_mutation_boundary_depth() != 0)
+        return false;
+    return true;
+}
+
+inline void stamp_last_moving_compact_now() noexcept {
+    const auto now_ms =
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count());
+    g_last_moving_compact_ms.store(now_ms, std::memory_order_release);
 }
 
 export struct LiveCompactResult {
@@ -1522,7 +1603,10 @@ public:
             ++stats_.live_compact_soft_count;
         } else if (mode == LiveCompactMode::Moving) {
             // Issue #2166: Moving requires feature flag + Force-level preconditions.
-            if (!moving_compact_enabled()) {
+            // Issue #3123: use feature flag (not sticky-gated moving_compact_
+            // enabled) so a healthy window can still enter and clear sticky.
+            // Auto-arm / Agents stay sticky-gated via moving_compact_enabled().
+            if (!moving_compact_feature_enabled()) {
                 result.moving_blocked_precondition = true;
                 result.soft_gated = true;
                 ++stats_.moving_blocked_precondition_total;
@@ -1753,18 +1837,10 @@ public:
                 }
             }
 
-            if (result.objects_moved > 0 && !result.moving_incomplete_remap &&
-                result.pin_contract_held) {
-                // Issue #2837 / #2905 AC1: clean Moving densify clears sticky
-                // densify-off so Agents resume densify after re-registering
-                // roots and completing a green window. Phase-5 outermost
-                // aggregated green also clears (evaluator_mutation_boundary).
-                // Do not clear while incomplete_remap / residual untracked
-                // (this predicate already requires !incomplete + pin held).
-                clear_moving_incomplete_remap_sticky_densify_off();
-                // Issue #2840: clean densify clears general-object pin breach.
-                aura::core::lifetime::clear_general_object_pin_required_breach();
-            }
+            // Issue #3123: sticky auto-clear moved to after RootRemapPass +
+            // post-Moving stale so incomplete / root-remap-fail windows
+            // cannot clear sticky. Early objects_moved>0 && pin_held was
+            // too early (#2905 site) — RootRemap can still fail after it.
         } else {
             // Force path (#2160 / #2157).
             if (aura::gc_hooks::should_defer_destructive_gc()) {
@@ -1936,6 +2012,25 @@ public:
                 }
             }
             post_moving_live_canaries_.clear();
+        }
+
+        // Issue #3123 AC3: production path is the only auto-clear site.
+        // Clear sticky only after the full Moving window is known:
+        // !incomplete, pin held, zero untracked, no RootRemap fail.
+        // Zero-move clean also clears (healthy quiet window). Incomplete
+        // / blocked / stale windows leave sticky set. Soft/Force never
+        // reach this block (mode != Moving).
+        if (mode == LiveCompactMode::Moving && !result.moving_blocked_precondition) {
+            const bool healthy = !result.moving_incomplete_remap && result.pin_contract_held &&
+                                 result.untracked_kept_count == 0 &&
+                                 result.root_remap_stable_ref_fail_total == 0 &&
+                                 result.root_remap_closure_capture_fail_total == 0;
+            if (healthy) {
+                const auto reason = result.objects_moved > 0 ? kStickyClearHealthyWindow
+                                                             : kStickyClearZeroMoveClean;
+                clear_moving_incomplete_remap_sticky_densify_off_reason(reason);
+                aura::core::lifetime::clear_general_object_pin_required_breach();
+            }
         }
 
         invoke_compact_hook_with_deopt_();
@@ -2542,10 +2637,28 @@ private:
             // Issue #1518 / #1621: prefer live_compact (mark + freelist
             // relocate + deopt coord) when freelist holes or tracked
             // live objs exist; fall back to defrag_no_clear_request.
+            // Issue #3123: production pack + high frag + quiet pin/guard
+            // window may request live_compact(Moving) once per cooldown.
+            // Soft/sandbox never takes this arm. Blocked Moving falls
+            // back to Soft so the compact is not dropped.
             if (small_pool_.free_slot_count() > 0 || live_count() > 0) {
-                const auto marked = live_compact(/*force=*/false);
-                if (marked > 0 || small_pool_.free_slot_count() == 0)
-                    saved = 1;
+                if (should_production_auto_arm_moving(frag_before)) {
+                    aura::core::moving_densify_health::note_production_auto_arm();
+                    stamp_last_moving_compact_now();
+                    const auto r = live_compact(LiveCompactMode::Moving);
+                    if (r.moving_blocked_precondition || r.soft_gated) {
+                        const auto marked = live_compact(/*force=*/false);
+                        if (marked > 0 || small_pool_.free_slot_count() == 0)
+                            saved = 1;
+                    } else if (r.slots_recycled > 0 || r.objects_moved > 0 ||
+                               r.bytes_reclaimed > 0) {
+                        saved = 1;
+                    }
+                } else {
+                    const auto marked = live_compact(/*force=*/false);
+                    if (marked > 0 || small_pool_.free_slot_count() == 0)
+                        saved = 1;
+                }
             } else {
                 saved = defrag_no_clear_request();
             }

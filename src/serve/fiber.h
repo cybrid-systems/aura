@@ -823,10 +823,9 @@ public:
     // synthetic state is set-and-forget so any later edge completes the chain.
     // Soft / sandbox=off contract: caller gates via
     // mutation_hold_budget_reject_enabled() before invoking.
-    void inject_synthetic_mutation_boundary_yield() noexcept {
-        force_safepoint_requested_.store(true, std::memory_order_release);
-        last_yield_reason_.store(YieldReason::MutationBoundary, std::memory_order_release);
-    }
+    // Body (fiber.cpp): force_safepoint_requested_.store(true +
+    // last_yield_reason_.store(YieldReason::MutationBoundary.
+    void inject_synthetic_mutation_boundary_yield() noexcept;
     // Process-wide metrics (#2533).
     [[nodiscard]] static std::uint64_t residual_force_safepoint_total() noexcept;
     [[nodiscard]] static std::uint64_t residual_cpu_budget_exceeded_total() noexcept;

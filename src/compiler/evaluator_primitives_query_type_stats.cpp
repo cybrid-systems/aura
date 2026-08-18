@@ -1595,10 +1595,11 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                       static_cast<std::int64_t>(
                                           g_chaos_production_readiness_gate_wired.load(
                                               std::memory_order_relaxed)));
-                            insert_kv("production-readiness-steal-"
-                                      "residual-zero",
-                                      static_cast<std::int64_t>(
-                                          steal_safety_production_residual_zero_v_read()));
+                            insert_kv(
+                                "production-readiness-steal-"
+                                "residual-zero",
+                                static_cast<std::int64_t>(
+                                    aura::serve::steal_safety_production_residual_zero_v_read()));
                             insert_kv("schema-3073", 3073);
                             insert_kv("issue-3073", 3073);
                             insert_kv("schema-3134", 3134);

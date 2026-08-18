@@ -12363,6 +12363,18 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("post-moving-stale-wired", 1);
             insert_kv("schema-3055", aura::core::densify_consistency::kMovingPostMovingStaleIssue);
             insert_kv("issue-3055", aura::core::densify_consistency::kMovingPostMovingStaleIssue);
+            // Issue #3123: production auto-arm + last sticky-clear reason.
+            // Additive keys on the existing densify-health query (no new
+            // query:*). Agents refuse mutate while sticky-off is set and
+            // can see whether the auto-compact path requested Moving.
+            insert_kv("production-auto-arm-total",
+                      static_cast<std::int64_t>(s.production_auto_arm_total));
+            insert_kv("last-auto-arm-fired", s.last_auto_arm_fired ? 1 : 0);
+            insert_kv("sticky-last-clear-reason",
+                      static_cast<std::int64_t>(s.sticky_last_clear_reason));
+            insert_kv("production-auto-arm-wired", 1);
+            insert_kv("schema-3123", mdh::kProductionAutoArmMovingIssue);
+            insert_kv("issue-3123", mdh::kProductionAutoArmMovingIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

@@ -1,0 +1,41 @@
+{
+  "issue": 3123,
+  "title": "Issue #3123: production Moving densify auto-arm + sticky-clear discipline.",
+  "ok": "OK: Issue #3123 production Moving auto-arm + sticky-clear — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_production_auto_arm_moving_3123.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3123",
+        "should_production_auto_arm_moving",
+        "live_compact(LiveCompactMode::Moving)"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_arena_moving_densify_health.cpp",
+      "contains": [
+        "ac3123_1_production_auto_arm_soft_never"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "kStickyClearHealthyWindow",
+        "clear_moving_incomplete_remap_sticky_densify_off_reason"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_obs_jit.cpp",
+      "contains": [
+        "production-auto-arm-total",
+        "sticky-last-clear-reason",
+        "schema-3123"
+      ]
+    }
+  ]
+}
