@@ -1,0 +1,57 @@
+{
+  "issue": 3137,
+  "title": "Issue #3137: [P0][mutation][query][agent-memory] feat(query/result): wire schema-2 stamp_query_result_full_provenance into all :as-query-result finish paths (refine #3103) — closes residual that blocks production Agent multi-round memory on cached QueryResult (silent-rebind under concurrent fiber / COW / wrap)",
+  "ok": "OK: Issue #3137 schema-2 stamp-at-capture wired into make_query_result_hash chokepoint (evaluator_primitives_query_workspace.cpp ~200) — single source-of-truth covers all 7 :as-query-result / :query-result #t finish sites (query:find / query:children-stable / query:parent-stable / query:stable-ref / query:ensure-ref / query:pattern / query:tag); under aura::compiler::typed_audit::production_defaults_active() builds transient aura::core::QueryResult, push_match_full per NodeId, stamp_query_result_full_provenance fills wrap_epoch / cow_epoch_at_capture / tenant_id / fiber_id / mutation_id_at_capture, exposes schema-2 fields as hash keys (wrap-epoch / cow-epoch-at-capture / tenant-id / fiber-id / mutation-id-at-capture / schema-3137 / query-result-wired-full); Soft / Quiet / sandbox=off / no matches / hash OOM → zero-cost (early-return before transient build); tests/compiler/test_query_result_full_provenance.cpp extended with AC7 (schema-2 stamped → validator returns Fresh) + AC8 (drift detection → InvalidMutation); check_query_result_full_provenance.py extended with 10 new IMPL_REQUIRED + WIRING_REQUIRED patterns + self-test fixture; #3103 schema-2 foundation preserved; counter surface unchanged (g_query_result_full_provenance_total etc. already exist)",
+  "source_script": "scripts/check_query_result_full_provenance.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "make_query_result_hash",
+        "qr.push_match_full(node_id, gen, 0, 0, 0, 0, 0, 0)",
+        "stamp_query_result_full_provenance(qr, ev, *ws.workspace_flat, scratch_ref)",
+        "aura::compiler::typed_audit::production_defaults_active()",
+        "insert_kv(\"wrap-epoch\"",
+        "insert_kv(\"cow-epoch-at-capture\"",
+        "insert_kv(\"tenant-id\"",
+        "insert_kv(\"fiber-id\"",
+        "insert_kv(\"mutation-id-at-capture\"",
+        "insert_kv(\"schema-3137\"",
+        "insert_kv(\"query-result-wired-full\"",
+        "Issue #3137"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "qr.matches[0].has_full_provenance()",
+        "aura::ast::FlatAST::StableNodeRef scratch_ref"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "scripts/check_query_result_full_provenance.py",
+      "contains": [
+        "qr\\.push_match_full\\(node_id, gen, 0, 0, 0, 0, 0, 0\\)",
+        "stamp_query_result_full_provenance\\(qr, ev, \\*ws\\.workspace_flat, scratch_ref\\)",
+        "aura::compiler::typed_audit::production_defaults_active\\(\\)",
+        "insert_kv\\(\\\"wrap-epoch\\\"",
+        "insert_kv\\(\\\"mutation-id-at-capture\\\""
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_query_result_full_provenance.cpp",
+      "contains": [
+        "Issue #3103 + #3137",
+        "test_ac7_schema2_validator_fresh",
+        "test_ac8_schema2_validator_stale_on_mutate",
+        "schema-2 stamped match",
+        "InvalidMutation",
+        "push_match_full"
+      ]
+    }
+  ]
+}

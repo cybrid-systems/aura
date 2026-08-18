@@ -197,8 +197,8 @@ void register_workspace_query_primitives(
     // hash (schema-2933). Opt-in via :as-query-result / :query-result #t.
     // Default (no keyword) remains the bare list (AC2 Soft regression).
     // Capture `ws` by value (struct-of-refs); do NOT capture &ws.
-    auto make_query_result_hash = [ws](const aura::core::QueryEpoch& epoch, EvalValue matches,
-                                       bool pinned) -> EvalValue {
+    auto make_query_result_hash = [ws, &ev](const aura::core::QueryEpoch& epoch, EvalValue matches,
+                                            bool pinned) -> EvalValue {
         auto* ht = FlatHashTable::create(32);
         if (!ht)
             return matches; // Soft: fall back to bare list if hash OOM
@@ -237,6 +237,76 @@ void register_workspace_query_primitives(
         insert_kv("schema-2933", make_int(2933));
         insert_kv("issue-2933", make_int(2933));
         insert_kv("schema-2192", make_int(2192)); // lineage: QueryEpoch
+        // Issue #3137: schema-2 full provenance stamp under production
+        // defaults. Build a transient QueryResult from the matches list
+        // (NodeIds + gens), call stamp_query_result_full_provenance to
+        // fill wrap_epoch / cow_epoch_at_capture / tenant_id / fiber_id /
+        // mutation_id_at_capture, then expose the schema-2 fields as
+        // hash keys for downstream Agent multi-round memory consumers.
+        // Soft / Quiet / sandbox=off / no matches / hash OOM → zero-cost
+        // (no stamp, no extra atomics beyond the existing
+        // note_query_result_created bump). Schema-1 path stays schema-1
+        // — matches[0].has_full_provenance() is false until push_match_full
+        // flips wrap_epoch / cow / tenant, so the early-return on schema-1
+        // protects the no-op Soft case.
+        if (aura::compiler::typed_audit::production_defaults_active() && ws.workspace_flat) {
+            aura::core::QueryResult qr;
+            qr.epoch = epoch;
+            bool pushed = false;
+            // Walk matches pair list. Each pair's car is either an int
+            // (flat NodeId list — query:find / query:pattern) or a pair
+            // (id . gen) (query:children-stable / query:parent-stable /
+            // query:stable-ref / query:ensure-ref).
+            EvalValue cur = matches;
+            while (is_pair(cur) && cur.val != make_void().val) {
+                const auto outer = as_pair_idx(cur);
+                if (static_cast<std::size_t>(outer) >= ws.pairs.size())
+                    break;
+                const auto car = ws.pairs[outer].car;
+                std::uint32_t node_id = 0;
+                std::uint16_t gen = 0;
+                bool got = false;
+                if (is_int(car)) {
+                    node_id = static_cast<std::uint32_t>(as_int(car));
+                    got = true;
+                } else if (is_pair(car)) {
+                    const auto inner = as_pair_idx(car);
+                    if (static_cast<std::size_t>(inner) < ws.pairs.size()) {
+                        const auto id_ev = ws.pairs[inner].car;
+                        if (is_int(id_ev)) {
+                            node_id = static_cast<std::uint32_t>(as_int(id_ev));
+                            got = true;
+                        }
+                        const auto cdr_ev = ws.pairs[inner].cdr;
+                        if (is_int(cdr_ev))
+                            gen = static_cast<std::uint16_t>(as_int(cdr_ev));
+                    }
+                }
+                if (got && node_id < ws.workspace_flat->size()) {
+                    qr.push_match_full(node_id, gen, 0, 0, 0, 0, 0, 0);
+                    pushed = true;
+                }
+                cur = ws.pairs[outer].cdr;
+            }
+            if (pushed && qr.matches[0].has_full_provenance()) {
+                aura::ast::FlatAST::StableNodeRef scratch_ref{};
+                stamp_query_result_full_provenance(qr, ev, *ws.workspace_flat, scratch_ref);
+                // Expose schema-2 fields as hash keys. The first match
+                // carries the canonical wrap_epoch / tenant_id for the
+                // result (multi-match results aggregate at the Agent's
+                // unpack step; see #3103 lineage).
+                const auto& m = qr.matches[0];
+                insert_kv("wrap-epoch", make_int(static_cast<std::int64_t>(m.wrap_epoch)));
+                insert_kv("cow-epoch-at-capture",
+                          make_int(static_cast<std::int64_t>(m.cow_epoch_at_capture)));
+                insert_kv("tenant-id", make_int(static_cast<std::int64_t>(m.tenant_id)));
+                insert_kv("fiber-id", make_int(static_cast<std::int64_t>(m.fiber_id)));
+                insert_kv("mutation-id-at-capture",
+                          make_int(static_cast<std::int64_t>(m.mutation_id_at_capture)));
+                insert_kv("schema-3137", make_int(3137));
+                insert_kv("query-result-wired-full", make_int(1));
+            }
+        }
         aura::core::note_query_result_created();
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);
