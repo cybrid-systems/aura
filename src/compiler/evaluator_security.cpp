@@ -410,13 +410,22 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
     }
     std::uint64_t mid =
         aura::core::resource_quota::process_resource_quota_manager().provenance_mutation_id;
+    // Issue #3143 AC1: TypedMid (typed_mutation_audit.h:1176
+    // `last_type_linear_commit_proof_stamp_v_read()`) is SSOT for mid in
+    // require_effect. Boundary-aware (updated on each linear commit proof
+    // stamp at MutationBoundary enter / composite commit) joins
+    // TypedMutationAudit.last_mid + SecurityEvent.mutation_id +
+    // AuditWalRecord.provenance_mutation_id + CapabilityGrant.bound_mutation_id
+    // on the same value. Falls through to current_mutation_epoch() (process-
+    // global atomic) when TypedMid == 0, then 1 (process origin) when
+    // nothing else pinned. AC3: TypedMid stamped at boundary enter uses
+    // the same epoch value as the preflight's TypedMid (or bumps to a
+    // boundary-aligned value); subsequent require_effect after boundary
+    // matches TypedMutationAudit.last_mid (no drift across enter).
+    if (mid == 0)
+        mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
     if (mid == 0)
         mid = ::aura::core::current_mutation_epoch();
-    // Issue #3066: prefer pinned composite/batch / boundary mid so SE
-    // trail and typed deny share last_stamped_audit_mid. Soft/Off with
-    // nothing pinned keeps the historical process-origin stamp 1.
-    if (mid == 0)
-        mid = typed_audit::join_audit_and_se_mid(0);
     if (mid == 0)
         mid = 1; // Soft / standalone: non-zero join stamp (process origin)
     return check_and_record_effect(req_bits, req_bits, op, target_node, capability_tenant_id_, mid);

@@ -1,0 +1,65 @@
+{
+  "issue": 3143,
+  "title": "Issue #3143: [P1][security][provenance][area:audit] SE.mid / AuditWalRecord.provenance_mutation_id / TypedMutationAudit.last_mid / CapabilityGrant.bound_mutation_id 5 来源不统一,MutationBoundary enter 之前 preflight require_effect 落 stale mid",
+  "ok": "OK: Issue #3143 P1 forensic integrity residual closed — typed_mid (TypedMutationAudit.last_type_linear_commit_proof_stamp_v_read at typed_mutation_audit.h:1176) is now SSOT for require_effect mid stamp chain. Stamp order: process ResourceQuota host provenance_mutation_id → TypedMid (boundary-aware) → current_mutation_epoch() → 1. Soft/sandbox=off zero-cost (single relaxed load + early-out before any scan, AC3). preflight require_effect stamps TypedMid; subsequent mutate after MutationBoundary enter uses same TypedMid (no drift across boundary enter, AC3). New query primitive query:audit-replay-join(mutation_id) surfaces joined audit data (typed_audit + SE + WAL + grants + isolation) keyed on the mid — additive on existing query:capability-effect-stats surface (no new public query key per primitive freeze #1448). AC4/AC5: source-cite evaluator_security.cpp + typed_mutation_audit.h + evaluator_primitives_security.cpp + workspace_epoch.hh; new tests/core/test_audit_replay_join.cpp (no docs/design/, no tests/issues/test_issue_3143.cpp per #81967/#1655); scripts/coverage/checks/check_mid_provenance_unified.py + manifest 3143.json; build.py wires cmp3143_script into gate stage alongside csb3142_script.",
+  "source_script": "scripts/coverage/checks/check_mid_provenance_unified.py",
+  "checks": [
+    {
+      "ac": "AC1-3143",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3143",
+        "last_type_linear_commit_proof_stamp_v_read",
+        "TypedMid"
+      ]
+    },
+    {
+      "ac": "AC3-3143",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "stamp_type_linear_commit_proof"
+      ]
+    },
+    {
+      "ac": "AC4-3143",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "query:audit-replay-join",
+        "replay-mid",
+        "typed-mid-current",
+        "se-count",
+        "wal-enabled",
+        "schema-3143",
+        "Issue #3143"
+      ]
+    },
+    {
+      "ac": "AC5-3143-test",
+      "path": "tests/core/test_audit_replay_join.cpp",
+      "contains": [
+        "ac1_typedmid_first_stamp_order",
+        "ac2_soft_off_zero_cost",
+        "ac3_typedmid_after_boundary_enter",
+        "ac4_query_audit_replay_join",
+        "ac5_source_cite_no_design",
+        "Issue #3143"
+      ]
+    },
+    {
+      "ac": "Linter-3143",
+      "path": "scripts/coverage/checks/check_mid_provenance_unified.py",
+      "contains": [
+        "Issue #3143",
+        "AC1 TypedMid first in stamp order",
+        "AC4 query primitive registered"
+      ]
+    },
+    {
+      "ac": "Build-3143",
+      "path": "build.py",
+      "contains": [
+        "check_mid_provenance_unified.py"
+      ]
+    }
+  ]
+}
