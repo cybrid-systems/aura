@@ -656,10 +656,18 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
     // short-circuits before any privilege lookup.
     const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
     const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
+    auto& reg = g_capability_registry();
     if (force_bind && foreign_target) {
-        using aura::compiler::security::kCapCapability;
-        using aura::compiler::security::kCapTenantAdmin;
-        const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
+        using ::aura::core::capability::Effect;
+        // Issue #3126: take the registry mtx + use effects_for_locked so a
+        // concurrent revoke of TenantAdmin from another Evaluator / fiber
+        // cannot race past this fence. The previous has_capability() call
+        // (unlocked read of by_tenant via effects_for) was a TOCTOU window
+        // that allowed a momentarily-held TenantAdmin to land a foreign
+        // grant before revocation.
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        const auto held = reg.effects_for_locked(self_tenant);
+        const bool is_admin = has_effect(held, Effect::TenantAdmin);
         if (!is_admin) {
             using ::aura::core::security_event::SecurityEventKind;
             using ::aura::core::security_event_wal::emit_security_event_durable;
@@ -676,9 +684,12 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
                                         /*denied=*/true, fid);
             return; // deny — no registry grant, no allow-counter bump
         }
+        // Issue #3126: act via grant_locked (caller holds mtx); no nested lock.
+        reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use);
+    } else {
+        // Same-tenant self-grant — no admin fence, plain grant() takes its own lock.
+        reg.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use);
     }
-    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
-                                  single_use);
     // Issue #2136: count Render grants (effect-only path when name empty;
     // named "render" also bumps via grant_capability below).
     if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
@@ -735,30 +746,33 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
     // weaker caller could seed foreign-tenant grants in the process-global
     // by_tenant table. AC3: Soft/Off short-circuits before any privilege
     // lookup; AC2: same-tenant self-grant keeps existing policy.
-    {
-        const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
-        const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
-        if (force_bind && foreign_target) {
-            const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
-            if (!is_admin) {
-                using ::aura::core::security_event::SecurityEventKind;
-                using ::aura::core::security_event_wal::emit_security_event_durable;
-                const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = provenance_mutation_id != 0
-                                     ? provenance_mutation_id
-                                     : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
-                const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
-                const auto fid = static_cast<std::int64_t>(fiber);
-                aura::core::capability::g_capability_effect_metrics()
-                    .capability_grant_foreign_tenant_deny_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
-                                            effect_bits, name,
-                                            "grant-foreign-tenant-needs-tenant-admin",
-                                            /*denied=*/true, fid);
-                return; // deny — no registry write, no allow-counter bump (AC4)
-            }
-        }
+    // Issue #3126: take the registry mtx + use effects_for_locked (single
+    // computation shared with the high-risk TenantAdmin + reason gate
+    // #2967 below) so a concurrent revoke of TenantAdmin from another
+    // Evaluator / fiber cannot race past this fence. Previous
+    // has_capability() (unlocked read of by_tenant via effects_for) was
+    // a TOCTOU window.
+    const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
+    const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
+    auto& reg_durable = g_capability_registry();
+    std::lock_guard<std::mutex> lock(reg_durable.mtx);
+    const auto held_durable = reg_durable.effects_for_locked(self_tenant);
+    const bool is_admin = has_effect(held_durable, Effect::TenantAdmin);
+    if (force_bind && foreign_target && !is_admin) {
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        const auto mid = provenance_mutation_id != 0
+                             ? provenance_mutation_id
+                             : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+        const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
+        const auto fid = static_cast<std::int64_t>(fiber);
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_grant_foreign_tenant_deny_total.fetch_add(1, std::memory_order_relaxed);
+        emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch, effect_bits,
+                                    name, "grant-foreign-tenant-needs-tenant-admin",
+                                    /*denied=*/true, fid);
+        return; // deny — no registry write, no allow-counter bump (AC4)
     }
     // Issue #2967: production gate — TenantAdmin + mandatory reason.
     // AC3: Soft / Off (sandbox_mode_ == 0 && effect_sandbox_mode() == 0)
@@ -776,7 +790,8 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
         // AC1: caller principal must hold TenantAdmin (string caps
         // "tenant-admin" / "capability" map to the same Effect bit via
         // effect_for_cap_name → has_effect on capability_tenant_id_).
-        const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
+        // Issue #3126: use the already-computed `is_admin` from
+        // effects_for_locked under the registry mtx above (no re-read).
         if (!is_admin) {
             g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(
                 1, std::memory_order_relaxed);
@@ -799,8 +814,9 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
         g_capability_effect_metrics().capability_durable_high_risk_grant_total.fetch_add(
             1, std::memory_order_relaxed);
     }
-    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
-                                  /*single_use=*/false);
+    // Issue #3126: act via grant_locked (caller holds mtx); no nested lock.
+    reg_durable.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                             /*single_use=*/false);
     if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
@@ -846,35 +862,40 @@ void Evaluator::grant_effect_session(std::uint64_t tenant_id, std::string_view n
     // (Restricted/Strict), writing a session grant for a FOREIGN tenant id
     // requires TenantAdmin. AC3: Soft/Off short-circuits; AC2: same-tenant
     // self-grant keeps existing policy.
-    {
-        const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
-        const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
-        if (force_bind && foreign_target) {
-            using aura::compiler::security::kCapCapability;
-            using aura::compiler::security::kCapTenantAdmin;
-            const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
-            if (!is_admin) {
-                using ::aura::core::security_event::SecurityEventKind;
-                using ::aura::core::security_event_wal::emit_security_event_durable;
-                const auto epoch = ::aura::core::current_mutation_epoch();
-                const auto mid = provenance_mutation_id != 0
-                                     ? provenance_mutation_id
-                                     : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
-                const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
-                const auto fid = static_cast<std::int64_t>(fiber);
-                aura::core::capability::g_capability_effect_metrics()
-                    .capability_grant_foreign_tenant_deny_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
-                                            effect_bits, name,
-                                            "grant-foreign-tenant-needs-tenant-admin",
-                                            /*denied=*/true, fid);
-                return; // deny — no registry write, no allow-counter bump (AC4)
-            }
+    // Issue #3126: take the registry mtx + use effects_for_locked so a
+    // concurrent revoke of TenantAdmin from another Evaluator / fiber
+    // cannot race past this fence. Previous has_capability() (unlocked
+    // read of by_tenant via effects_for) was a TOCTOU window.
+    const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
+    const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
+    auto& reg_session = g_capability_registry();
+    if (force_bind && foreign_target) {
+        std::lock_guard<std::mutex> lock(reg_session.mtx);
+        const auto held = reg_session.effects_for_locked(self_tenant);
+        const bool is_admin = has_effect(held, Effect::TenantAdmin);
+        if (!is_admin) {
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            const auto epoch = ::aura::core::current_mutation_epoch();
+            const auto mid = provenance_mutation_id != 0
+                                 ? provenance_mutation_id
+                                 : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+            const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
+            const auto fid = static_cast<std::int64_t>(fiber);
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.fetch_add(1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name,
+                                        "grant-foreign-tenant-needs-tenant-admin",
+                                        /*denied=*/true, fid);
+            return; // deny — no registry write, no allow-counter bump (AC4)
         }
+        reg_session.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                                 single_use, /*session_bound=*/true);
+    } else {
+        reg_session.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use,
+                          /*session_bound=*/true);
     }
-    g_capability_registry().grant(tenant_id, name, static_cast<Effect>(effect_bits), prov,
-                                  single_use, /*session_bound=*/true);
     if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
@@ -890,37 +911,41 @@ void Evaluator::revoke_effect_capability(std::uint64_t tenant_id, std::string_vi
     // (Restricted/Strict), revoking a FOREIGN tenant's grant requires
     // TenantAdmin. AC3: Soft/Off short-circuits; AC2: same-tenant revoke
     // keeps existing policy.
-    {
-        const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
-        const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
-        const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
-        if (force_bind && foreign_target) {
-            using aura::compiler::security::kCapCapability;
-            using aura::compiler::security::kCapTenantAdmin;
-            const bool is_admin = has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
-            if (!is_admin) {
-                using ::aura::core::security_event::SecurityEventKind;
-                using ::aura::core::security_event_wal::emit_security_event_durable;
-                const auto epoch = aura::core::current_mutation_epoch();
-                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
-                const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
-                const auto fid = static_cast<std::int64_t>(
-                    effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
-                aura::core::capability::g_capability_effect_metrics()
-                    .capability_grant_foreign_tenant_deny_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
-                                            /*effect_bits=*/0, name,
-                                            "grant-foreign-tenant-needs-tenant-admin",
-                                            /*denied=*/true, fid);
-                return; // deny — no revoke, no allow-counter bump (AC4)
-            }
-        }
-    }
+    // Issue #3126: take the registry mtx + use effects_for_locked so a
+    // concurrent revoke of TenantAdmin from another Evaluator / fiber
+    // cannot race past this fence. Previous has_capability() (unlocked
+    // read of by_tenant via effects_for) was a TOCTOU window.
+    const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+    const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
+    const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
     auto ep = aura::core::current_mutation_epoch();
     if (ep == 0)
         ep = 1;
-    g_capability_registry().revoke(tenant_id, name, ep);
+    auto& reg_revoke = g_capability_registry();
+    if (force_bind && foreign_target) {
+        std::lock_guard<std::mutex> lock(reg_revoke.mtx);
+        const auto held = reg_revoke.effects_for_locked(self_tenant);
+        const bool is_admin = has_effect(held, Effect::TenantAdmin);
+        if (!is_admin) {
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            const auto epoch = aura::core::current_mutation_epoch();
+            const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+            const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
+            const auto fid = static_cast<std::int64_t>(
+                effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_grant_foreign_tenant_deny_total.fetch_add(1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        /*effect_bits=*/0, name,
+                                        "grant-foreign-tenant-needs-tenant-admin",
+                                        /*denied=*/true, fid);
+            return; // deny — no revoke, no allow-counter bump (AC4)
+        }
+        reg_revoke.revoke_locked(tenant_id, name, ep);
+    } else {
+        reg_revoke.revoke(tenant_id, name, ep);
+    }
     // Drop matching string grant so has_capability stays consistent.
     if (!name.empty()) {
         granted_capabilities_.erase(std::remove(granted_capabilities_.begin(),

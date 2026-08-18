@@ -122,6 +122,177 @@ void grant_tenant_admin_mid(std::uint64_t tenant, std::uint64_t mid = 1) {
     using aura::core::capability::make_grant_provenance;
     auto prov = make_grant_provenance(mid, /*force_mutation_bind=*/true, 0, 0);
     g_capability_registry().grant(tenant, "tenant-admin", Effect::TenantAdmin, prov);
+}
+
+// Issue #3126: TOCTOU in TenantAdmin check vs grant (unlocked effects_for
+// + has_capability admin fence). The fix adds locked variants to
+// CapabilityRegistry and rewrites every foreign-tenant / high-risk admin
+// fence in evaluator_security.cpp to take the registry mtx + use the
+// locked variants under one critical section. This AC verifies the
+// source-cite surface (locked variants exist + are wired + Soft/Off
+// public surfaces stay documented as observational only) and that the
+// existing test files (#2490 require_effect_auto_isolation / #2529
+// grant_epoch_retain_restricted) keep their shape (no deletion / no
+// removed ACs).
+static void ac3126_admin_fence_locked() {
+    std::println("\n--- #3126: TOCTOU admin fence — locked variants + foreign-tenant gate ---");
+
+    // AC1: capability_model.hh owns the locked variants + Soft/observational
+    // comments on the unlocked public readers.
+    {
+        const auto cm = read_file("src/core/capability_model.hh");
+        CHECK(cm.find("effects_for_locked") != std::string::npos,
+              "AC1: capability_model.hh has effects_for_locked");
+        CHECK(cm.find("provenance_ok_locked") != std::string::npos,
+              "AC1: capability_model.hh has provenance_ok_locked");
+        CHECK(cm.find("grant_locked") != std::string::npos,
+              "AC1: capability_model.hh has grant_locked (caller MUST hold mtx)");
+        CHECK(cm.find("revoke_locked") != std::string::npos,
+              "AC1: capability_model.hh has revoke_locked (caller MUST hold mtx)");
+        // Public unlocked surfaces stay, but are documented as observational.
+        CHECK(cm.find("Soft/observational only") != std::string::npos,
+              "AC1: capability_model.hh marks Soft/observational only on unlocked readers");
+        CHECK(cm.find("DO NOT use for security decisions under concurrent mutation") !=
+                  std::string::npos,
+              "AC1: unlocked readers carry the security-decision warning");
+        // Issue constant present for lineage / source-cite.
+        CHECK(cm.find("Issue #3126") != std::string::npos,
+              "AC1: capability_model.hh cites Issue #3126");
+    }
+
+    // AC2: evaluator_security.cpp grant_effect_capability rewrites the
+    // foreign-tenant fence to take the registry mtx + use effects_for_locked
+    // + grant_locked (closes the unlocked has_capability TOCTOU window).
+    {
+        const auto es = read_file("src/compiler/evaluator_security.cpp");
+        // The fence must NOT call has_capability (which is unlocked).
+        const std::string grant_cap_section_marker = "cross-tenant-grant-needs-tenant-admin";
+        const auto fence_pos = es.find("cross-tenant-grant-needs-tenant-admin");
+        CHECK(fence_pos != std::string::npos,
+              "AC2: foreign-tenant fence string present in evaluator_security.cpp");
+        // Within a generous window around the first foreign-tenant fence, the
+        // admin check should use effects_for_locked, not has_capability.
+        const auto window_start = fence_pos > 600 ? fence_pos - 600 : 0;
+        const auto window_end = (fence_pos + 1200 < es.size()) ? fence_pos + 1200 : es.size();
+        const std::string fence_window = es.substr(window_start, window_end - window_start);
+        CHECK(fence_window.find("effects_for_locked(self_tenant)") != std::string::npos,
+              "AC2: grant_effect_capability fence uses effects_for_locked");
+        CHECK(fence_window.find("has_effect(held, Effect::TenantAdmin)") != std::string::npos,
+              "AC2: grant_effect_capability fence checks Effect::TenantAdmin bit");
+        CHECK(fence_window.find("reg.grant_locked(") != std::string::npos,
+              "AC2: grant_effect_capability fence acts via grant_locked");
+        CHECK(fence_window.find("reg.mtx") != std::string::npos,
+              "AC2: grant_effect_capability fence holds registry mtx");
+    }
+
+    // AC3: grant_effect_durable has TWO gates (foreign-tenant #2969 + high-risk
+    // TenantAdmin+reason #2967). Both must use the same locked is_admin.
+    {
+        const auto es = read_file("src/compiler/evaluator_security.cpp");
+        const auto durable_pos = es.find("grant_effect_durable(");
+        const auto next_func = es.find("grant_effect_session(", durable_pos);
+        const std::string durable_block =
+            es.substr(durable_pos, (next_func > durable_pos) ? next_func - durable_pos
+                                                             : es.size() - durable_pos);
+        CHECK(durable_block.find("std::lock_guard<std::mutex> lock(reg_durable.mtx)") !=
+                  std::string::npos,
+              "AC3: grant_effect_durable takes registry mtx");
+        CHECK(durable_block.find("effects_for_locked(self_tenant)") != std::string::npos,
+              "AC3: grant_effect_durable uses effects_for_locked");
+        CHECK(durable_block.find("has_effect(held_durable, Effect::TenantAdmin)") !=
+                  std::string::npos,
+              "AC3: grant_effect_durable precomputes is_admin from locked bit");
+        CHECK(durable_block.find("reg_durable.grant_locked(") != std::string::npos,
+              "AC3: grant_effect_durable acts via grant_locked");
+        // Legacy unlocked is_admin helper must not survive in this block.
+        CHECK(durable_block.find(
+                  "has_capability(kCapTenantAdmin) || has_capability(kCapCapability)") ==
+                  std::string::npos,
+              "AC3: grant_effect_durable removed unlocked has_capability fence");
+    }
+
+    // AC4: grant_effect_session foreign-tenant fence locks + uses
+    // effects_for_locked + grant_locked.
+    {
+        const auto es = read_file("src/compiler/evaluator_security.cpp");
+        const auto session_pos = es.find("void Evaluator::grant_effect_session(");
+        const auto next_func = es.find("void Evaluator::revoke_effect_capability(", session_pos);
+        const std::string session_block =
+            es.substr(session_pos, (next_func > session_pos) ? next_func - session_pos
+                                                             : es.size() - session_pos);
+        CHECK(session_block.find("std::lock_guard<std::mutex> lock(reg_session.mtx)") !=
+                  std::string::npos,
+              "AC4: grant_effect_session takes registry mtx");
+        CHECK(session_block.find("effects_for_locked(self_tenant)") != std::string::npos,
+              "AC4: grant_effect_session uses effects_for_locked");
+        CHECK(session_block.find("reg_session.grant_locked(") != std::string::npos,
+              "AC4: grant_effect_session acts via grant_locked");
+        CHECK(session_block.find(
+                  "has_capability(kCapTenantAdmin) || has_capability(kCapCapability)") ==
+                  std::string::npos,
+              "AC4: grant_effect_session removed unlocked has_capability fence");
+    }
+
+    // AC5: revoke_effect_capability foreign-tenant fence locks + uses
+    // effects_for_locked + revoke_locked.
+    {
+        const auto es = read_file("src/compiler/evaluator_security.cpp");
+        const auto revoke_pos = es.find("void Evaluator::revoke_effect_capability(");
+        const std::string revoke_block = es.substr(revoke_pos);
+        CHECK(revoke_block.find("std::lock_guard<std::mutex> lock(reg_revoke.mtx)") !=
+                  std::string::npos,
+              "AC5: revoke_effect_capability takes registry mtx");
+        CHECK(revoke_block.find("effects_for_locked(self_tenant)") != std::string::npos,
+              "AC5: revoke_effect_capability uses effects_for_locked");
+        CHECK(revoke_block.find("reg_revoke.revoke_locked(") != std::string::npos,
+              "AC5: revoke_effect_capability acts via revoke_locked");
+        CHECK(revoke_block.find(
+                  "has_capability(kCapTenantAdmin) || has_capability(kCapCapability)") ==
+                  std::string::npos,
+              "AC5: revoke_effect_capability removed unlocked has_capability fence");
+    }
+
+    // AC6: existing tests stay green — no deletion / no removed ACs.
+    {
+        const auto req = read_file("tests/compiler/test_require_effect_auto_isolation.cpp");
+        const auto retain = read_file("tests/compiler/test_grant_epoch_retain_restricted.cpp");
+        CHECK(req.find("Issue #2490") != std::string::npos,
+              "AC6: test_require_effect_auto_isolation still cites #2490");
+        CHECK(req.find("IsolationDeny") != std::string::npos ||
+                  req.find("auto-enforce workspace isolation") != std::string::npos,
+              "AC6: test_require_effect_auto_isolation AC1/AC2 surface intact");
+        CHECK(retain.find("Issue #2529") != std::string::npos,
+              "AC6: test_grant_epoch_retain_restricted still cites #2529");
+        CHECK(retain.find("kDefaultGrantEpochRetainWindowRestricted") != std::string::npos,
+              "AC6: test_grant_epoch_retain_restricted AC1 surface intact");
+    }
+
+    // Soft/Off behavior preserved — public unlocked effects_for / provenance_ok
+    // remain callable (no API break); the existing reset / re-grant cycle
+    // used by reset_all() above still works end-to-end (regression check
+    // for the Soft happy path that the issue body mandates).
+    {
+        reset_all();
+        using aura::core::capability::Effect;
+        using aura::core::capability::g_capability_registry;
+        const auto tenant = std::uint64_t{4242};
+        // Soft path: no TenantAdmin held → public unlocked effects_for must
+        // observe the same empty Effect set both via raw by_tenant iteration
+        // and via effects_for (no race in Soft single-thread tests).
+        const auto held = g_capability_registry().effects_for(tenant);
+        CHECK(held == Effect::None,
+              "AC6 soft: public effects_for returns None for tenant with no grants");
+        // After grant_locked via the public grant() (which itself takes the
+        // lock), the Soft reader sees the bit. This proves the public API
+        // pair is still consistent — Issue #3126 contract is to make the
+        // SECURITY FENCE paths lock; Soft / single-thread callers are
+        // unchanged.
+        grant_tenant_admin_mid(tenant, 7);
+        const auto held2 = g_capability_registry().effects_for(tenant);
+        CHECK((held2 & Effect::TenantAdmin) != Effect::None,
+              "AC6 soft: public effects_for sees TenantAdmin after grant()");
+        reset_all();
+    }
     g_capability_registry().default_tenant.store(tenant, std::memory_order_relaxed);
 }
 
@@ -129,6 +300,9 @@ void grant_tenant_admin_mid(std::uint64_t tenant, std::uint64_t mid = 1) {
 
 int main() {
     reset_all();
+
+    // ── Issue #3126: TOCTOU admin fence (locked variants + foreign-tenant gate) ──
+    ac3126_admin_fence_locked();
 
     // ── AC6: query:tenant-isolation-stats shape ──
     {

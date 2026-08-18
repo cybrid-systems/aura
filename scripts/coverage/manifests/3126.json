@@ -1,0 +1,86 @@
+{
+  "issue": 3126,
+  "title": "Issue #3126: security TOCTOU in TenantAdmin check vs grant (unlocked effects_for / has_capability admin fence) under multi-Evaluator / fiber-steal.",
+  "ok": "OK: Issue #3126 admin fence locked \u2014 all 6 AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_capability_admin_fence_3126.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "effects_for_locked",
+        "provenance_ok_locked",
+        "grant_locked",
+        "revoke_locked",
+        "Soft/observational only",
+        "DO NOT use for security decisions under concurrent mutation",
+        "Issue #3126"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "std::lock_guard<std::mutex> lock(reg.mtx)",
+        "effects_for_locked(self_tenant)",
+        "has_effect(held, Effect::TenantAdmin)",
+        "reg.grant_locked("
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "std::lock_guard<std::mutex> lock(reg_durable.mtx)",
+        "effects_for_locked(self_tenant)",
+        "has_effect(held_durable, Effect::TenantAdmin)",
+        "reg_durable.grant_locked("
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "std::lock_guard<std::mutex> lock(reg_session.mtx)",
+        "effects_for_locked(self_tenant)",
+        "reg_session.grant_locked("
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "std::lock_guard<std::mutex> lock(reg_revoke.mtx)",
+        "effects_for_locked(self_tenant)",
+        "reg_revoke.revoke_locked("
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/core/test_tenant_isolation_enforcement.cpp",
+      "contains": [
+        "ac3126_admin_fence_locked",
+        "Issue #3126",
+        "effects_for_locked",
+        "grant_locked",
+        "revoke_locked"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_require_effect_auto_isolation.cpp",
+      "contains": [
+        "Issue #2490",
+        "auto-enforce workspace isolation"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_grant_epoch_retain_restricted.cpp",
+      "contains": [
+        "Issue #2529",
+        "kDefaultGrantEpochRetainWindowRestricted"
+      ]
+    }
+  ]
+}
