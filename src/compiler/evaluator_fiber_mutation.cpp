@@ -890,6 +890,11 @@ bool aura::compiler::Evaluator::re_pin_cow_children_from_snapshot() {
 // so steady-state cost stays negligible; only pending checkpoints
 // drive the truncate / generation / invalidate / walk_active_closures
 // / clear lifecycle close.
+void aura::compiler::Evaluator::on_arena_compact_hook_thunk(void* ctx) noexcept {
+    if (ctx)
+        static_cast<Evaluator*>(ctx)->on_arena_compact_hook();
+}
+
 void aura::compiler::Evaluator::on_arena_compact_hook() {
     re_pin_cow_children_from_snapshot();
     // Issue #1612: GC compact path — MacroIntroduced marker/provenance repin.

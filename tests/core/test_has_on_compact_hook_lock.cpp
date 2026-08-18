@@ -6,6 +6,7 @@
 //   AC2: Concurrent set + has under N threads completes without crash
 //   AC3: Existing install/take/has semantics still correct
 
+#include "arena_nonalloc_hooks.hpp"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -95,7 +96,7 @@ static void ac2_concurrent_set_has() {
     thr.emplace_back([&]() {
         while (!stop.load(std::memory_order_relaxed)) {
             try {
-                arena.set_on_compact_hook([]() noexcept {});
+                arena.set_on_compact_hook(&arena_hook_compact_nop, nullptr);
                 (void)arena.take_on_compact_hook();
             } catch (...) {
                 errors.fetch_add(1, std::memory_order_relaxed);
@@ -105,7 +106,7 @@ static void ac2_concurrent_set_has() {
     thr.emplace_back([&]() {
         while (!stop.load(std::memory_order_relaxed)) {
             try {
-                arena.set_on_layout_change([](std::uint64_t, std::uint64_t) noexcept {});
+                arena.set_on_layout_change(&arena_hook_layout_nop, nullptr);
                 (void)arena.take_on_layout_change();
             } catch (...) {
                 errors.fetch_add(1, std::memory_order_relaxed);
@@ -115,9 +116,7 @@ static void ac2_concurrent_set_has() {
     thr.emplace_back([&]() {
         while (!stop.load(std::memory_order_relaxed)) {
             try {
-                arena.set_root_remap_callback(
-                    [](std::uint64_t, std::uint64_t, std::unordered_map<void*, void*> const&,
-                       std::size_t&, std::size_t&, std::size_t&, std::size_t&) {});
+                arena.set_root_remap_callback(&arena_hook_root_remap_nop, nullptr);
                 (void)arena.take_root_remap_callback();
             } catch (...) {
                 errors.fetch_add(1, std::memory_order_relaxed);
@@ -154,11 +153,9 @@ static void ac3_semantics() {
     CHECK(!arena.has_on_layout_change(), "fresh: no layout hook");
     CHECK(!arena.has_root_remap_callback(), "fresh: no root_remap");
 
-    arena.set_on_compact_hook([]() noexcept {});
-    arena.set_on_layout_change([](std::uint64_t, std::uint64_t) noexcept {});
-    arena.set_root_remap_callback([](std::uint64_t, std::uint64_t,
-                                     std::unordered_map<void*, void*> const&, std::size_t&,
-                                     std::size_t&, std::size_t&, std::size_t&) {});
+    arena.set_on_compact_hook(&arena_hook_compact_nop, nullptr);
+    arena.set_on_layout_change(&arena_hook_layout_nop, nullptr);
+    arena.set_root_remap_callback(&arena_hook_root_remap_nop, nullptr);
     CHECK(arena.has_on_compact_hook(), "after set: compact");
     CHECK(arena.has_on_layout_change(), "after set: layout");
     CHECK(arena.has_root_remap_callback(), "after set: root_remap");
@@ -182,6 +179,49 @@ static void ac3_semantics() {
           "AC3: coverage linter present");
 }
 
+// ── Issue #3124: non-allocating {fn,ctx} slots ──
+static void ac3124_1_no_std_function_api() {
+    std::println("\n--- #3124 AC1: APIs are function-pointer + ctx ---");
+    const auto src = read_file("src/core/arena.ixx");
+    CHECK(src.find("CompactHookFn") != std::string::npos, "AC1: CompactHookFn");
+    CHECK(src.find("LayoutChangeHookFn") != std::string::npos, "AC1: LayoutChangeHookFn");
+    CHECK(src.find("RootRemapHookFn") != std::string::npos, "AC1: RootRemapHookFn");
+    CHECK(src.find("kArenaCompactHookSlots = 4") != std::string::npos, "AC1: 4 compact slots");
+    CHECK(src.find("kNonAllocatingArenaHooksIssue = 3124") != std::string::npos, "AC1: stamp");
+    CHECK(src.find("set_on_compact_hook(std::function") == std::string::npos,
+          "AC1: compact no std::function");
+    CHECK(src.find("set_on_layout_change(LiveCompactLayoutChangeCallback") == std::string::npos ||
+              src.find("LayoutChangeHookFn fn") != std::string::npos,
+          "AC1: layout is fn+ctx");
+}
+
+static void ac3124_2_two_slots_fire() {
+    std::println("\n--- #3124 AC2: two compact slots fire once each ---");
+    aura::ast::ASTArena arena(/*initial_size=*/16 * 1024);
+    std::atomic<int> a{0};
+    std::atomic<int> b{0};
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &a);
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &b);
+    CHECK(arena.has_on_compact_hook(), "AC2: hooks installed");
+    arena.invoke_on_compact_hook_for_test();
+    CHECK(a.load() == 1, "AC2: first slot fired once");
+    CHECK(b.load() == 1, "AC2: second slot fired once");
+}
+
+static void ac3124_5_source_and_linter() {
+    std::println("\n--- #3124 AC5: source-cite + linter ---");
+    const auto t = read_file("tests/core/test_has_on_compact_hook_lock.cpp");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3124_1_no_std_function_api") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3124_2_two_slots_fire") != std::string::npos, "AC5: AC2 test");
+    CHECK(build.find("check_nonalloc_arena_hooks_3124") != std::string::npos, "AC5: build.py");
+    CHECK(read_file("tests/core/test_issue_3124.cpp").empty(), "AC5: no test_issue_3124.cpp");
+    std::ifstream design("docs/design/3124-nonalloc-hooks.md");
+    if (!design)
+        design.open("../docs/design/3124-nonalloc-hooks.md");
+    CHECK(!design.good(), "AC5: no docs/design/3124-* per #1655");
+}
+
 } // namespace
 
 int run_test_has_on_compact_hook_lock() {
@@ -189,6 +229,9 @@ int run_test_has_on_compact_hook_lock() {
     ac1_source_lock_parity();
     ac2_concurrent_set_has();
     ac3_semantics();
+    ac3124_1_no_std_function_api();
+    ac3124_2_two_slots_fire();
+    ac3124_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

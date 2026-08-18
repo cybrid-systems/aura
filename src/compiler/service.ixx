@@ -601,69 +601,11 @@ public:
         // the soft path (legacy fallback when profiler empty is a no-op).
         // 500ms throttle still gates aggressive JIT cache thrash accounting.
         //
-        // Issue #1666: set_arena already installed Evaluator::on_arena_compact_hook
-        // (StableNodeRef re_pin). take + reinstall chain so ShapeProfiler does
-        // not silently overwrite that hook (prior first, then service body).
+        // Issue #1666 / #3124: set_arena already installed Evaluator
+        // re_pin into a compact-hook slot. Install ShapeProfiler as a
+        // sibling slot (no take+chain, no heap std::function).
         {
-            auto prior = arena_.take_on_compact_hook();
-            arena_.set_on_compact_hook([this, prior = std::move(prior)]() {
-                if (prior)
-                    prior();
-                // Issue #1521: always soft-coordinate ShapeProfiler (version bump
-                // + ArenaCompact deopt hooks, keep is_stable / history).
-                const auto touched = shape_profiler_.on_arena_compact();
-                // Issue #2984: arena compact hook (no densify Phase-5).
-                // last_proof_linear_root_count==0 → no extra collect.
-                (void)typed_audit::note_arena_compact_linear_root_consistency();
-                metrics_.shape_inval_on_compact_triggered_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                metrics_.shape_stability_post_compact_preserved_total.store(
-                    shape::shape_stability_post_compact_preserved.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                metrics_.deopt_from_arena_compact_total.store(
-                    shape::deopt_from_arena_compact_total.load(std::memory_order_relaxed),
-                    std::memory_order_relaxed);
-                (void)touched;
-
-                if (aura::core::arena_policy::try_render_deopt_throttle(500)) {
-                    // Throttle pass: count as triggered deopt coordination.
-                    // Soft on_arena_compact already fired kArenaCompact hooks;
-                    // do NOT invalidate_all (would clear history + feed storm).
-                    metrics_.arena_compact_deopt_triggered_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    aura::core::arena_policy::record_compact_deopt_triggered();
-                    // Issue #1919: feed JIT deopt pressure into intelligent
-                    // auto-compact (raise frag threshold to avoid storms).
-                    aura::core::arena_policy::signal_jit_deopt_pressure();
-                } else {
-                    // Soft path under pressure: IR dirty only + throttle count.
-                    metrics_.arena_compact_deopt_throttled_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    aura::core::arena_policy::record_compact_deopt_throttled();
-                    aura::core::arena_policy::signal_jit_deopt_pressure();
-                }
-                // Issue #2059: always re-sync ShapeProfiler after compact so
-                // stability can be re-asserted under AI multi-round mutation
-                // without waiting for a MutationBoundary exit. Also publish
-                // live deopt_rate / storm into adaptive compact policy.
-                (void)shape_profiler_.on_boundary_or_fiber_sync(
-                    /*clear_compact_only_storm=*/true);
-                aura::core::arena_policy::record_post_compact_resync();
-                aura::core::arena_policy::publish_shape_deopt_metrics(
-                    shape_profiler_.deopt_rate_per_fn(), shape_profiler_.deopt_storm_active(),
-                    shape_profiler_.shape_stable_ratio());
-                aura::core::arena_policy::record_shape_inval_on_compact();
-                // Issue #2436 step 7: IR SoA finish_dirty_sync after compact
-                // dirty mark (pin-or-remap already held inside live_compact).
-                // Soft path when cache empty: loop is zero iterations.
-                for (auto& [_, entry] : ir_cache_v2_) {
-                    entry.dirty = true;
-                    entry.mark_all_blocks_dirty();
-                    // Single production entry for block→instr dirty (#2139).
-                    (void)entry.force_soa_instruction_dirty_sync();
-                }
-                aura::core::post_compact_lifecycle::note_lifecycle_ir_sync();
-            });
+            arena_.set_on_compact_hook(&CompilerService::on_arena_compact_hook_thunk, this);
         }
         // Issue #743 / #2438: static lambdas (no capture) load
         // g_current_compiler_service at call time. Teardown clears hooks
@@ -10166,6 +10108,50 @@ public:
             }
         }
         return n;
+    }
+
+    // Issue #3124: non-allocating arena compact hook (ShapeProfiler + IR dirty).
+    static void on_arena_compact_hook_thunk(void* ctx) noexcept {
+        if (ctx)
+            static_cast<CompilerService*>(ctx)->on_arena_compact_notify();
+    }
+    void on_arena_compact_notify() noexcept {
+        // Issue #1521: always soft-coordinate ShapeProfiler (version bump
+        // + ArenaCompact deopt hooks, keep is_stable / history).
+        const auto touched = shape_profiler_.on_arena_compact();
+        // Issue #2984: arena compact hook (no densify Phase-5).
+        // last_proof_linear_root_count==0 → no extra collect.
+        (void)typed_audit::note_arena_compact_linear_root_consistency();
+        metrics_.shape_inval_on_compact_triggered_total.fetch_add(1, std::memory_order_relaxed);
+        metrics_.shape_stability_post_compact_preserved_total.store(
+            shape::shape_stability_post_compact_preserved.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        metrics_.deopt_from_arena_compact_total.store(
+            shape::deopt_from_arena_compact_total.load(std::memory_order_relaxed),
+            std::memory_order_relaxed);
+        (void)touched;
+
+        if (aura::core::arena_policy::try_render_deopt_throttle(500)) {
+            metrics_.arena_compact_deopt_triggered_total.fetch_add(1, std::memory_order_relaxed);
+            aura::core::arena_policy::record_compact_deopt_triggered();
+            aura::core::arena_policy::signal_jit_deopt_pressure();
+        } else {
+            metrics_.arena_compact_deopt_throttled_total.fetch_add(1, std::memory_order_relaxed);
+            aura::core::arena_policy::record_compact_deopt_throttled();
+            aura::core::arena_policy::signal_jit_deopt_pressure();
+        }
+        (void)shape_profiler_.on_boundary_or_fiber_sync(/*clear_compact_only_storm=*/true);
+        aura::core::arena_policy::record_post_compact_resync();
+        aura::core::arena_policy::publish_shape_deopt_metrics(shape_profiler_.deopt_rate_per_fn(),
+                                                              shape_profiler_.deopt_storm_active(),
+                                                              shape_profiler_.shape_stable_ratio());
+        aura::core::arena_policy::record_shape_inval_on_compact();
+        for (auto& [_, entry] : ir_cache_v2_) {
+            entry.dirty = true;
+            entry.mark_all_blocks_dirty();
+            (void)entry.force_soa_instruction_dirty_sync();
+        }
+        aura::core::post_compact_lifecycle::note_lifecycle_ir_sync();
     }
 
 private:

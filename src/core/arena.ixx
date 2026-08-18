@@ -6,7 +6,6 @@ module;
 #include <cstring> // Issue #2166: memcpy for Moving densify
 #include <expected>
 #include <format>
-#include <functional>
 #include <memory>
 #include <memory_resource>
 #include <mutex>
@@ -879,14 +878,82 @@ export struct AdaptiveCompactResult {
     }
 };
 
+// Issue #3124: non-allocating compact / layout / root-remap hooks.
+// Replaces type-erased std::function (heap + re-entry opacity) with
+// {fn, ctx} function pointers. Compact keeps a fixed 4-slot array so
+// Evaluator re_pin + CompilerService Shape inval install independently
+// without take+chain lambdas. Layout / root_remap stay single-slot
+// (one production listener each). set(fn=nullptr) clears the family.
+inline constexpr std::size_t kArenaCompactHookSlots = 4;
+inline constexpr int kNonAllocatingArenaHooksIssue = 3124;
+
+export using CompactHookFn = void (*)(void* ctx) noexcept;
+export using LayoutChangeHookFn =
+    void (*)(void* ctx, std::uint64_t arena_id, std::uint64_t new_gen) noexcept;
+export using RootRemapHookFn = void (*)(
+    void* ctx, std::uint64_t arena_id, std::uint64_t new_gen,
+    std::unordered_map<void*, void*> const& object_remap, std::size_t& out_stable_ref_total,
+    std::size_t& out_stable_ref_fail_total, std::size_t& out_closure_capture_total,
+    std::size_t& out_closure_capture_fail_total) noexcept;
+
+export struct CompactHook {
+    CompactHookFn fn = nullptr;
+    void* ctx = nullptr;
+    [[nodiscard]] explicit operator bool() const noexcept { return fn != nullptr; }
+    void operator()() const noexcept {
+        if (fn)
+            fn(ctx);
+    }
+    [[nodiscard]] friend bool operator==(const CompactHook& h, std::nullptr_t) noexcept {
+        return h.fn == nullptr;
+    }
+    [[nodiscard]] friend bool operator!=(const CompactHook& h, std::nullptr_t) noexcept {
+        return h.fn != nullptr;
+    }
+};
+
+export struct LayoutChangeHook {
+    LayoutChangeHookFn fn = nullptr;
+    void* ctx = nullptr;
+    [[nodiscard]] explicit operator bool() const noexcept { return fn != nullptr; }
+    void operator()(std::uint64_t arena_id, std::uint64_t new_gen) const noexcept {
+        if (fn)
+            fn(ctx, arena_id, new_gen);
+    }
+    [[nodiscard]] friend bool operator==(const LayoutChangeHook& h, std::nullptr_t) noexcept {
+        return h.fn == nullptr;
+    }
+    [[nodiscard]] friend bool operator!=(const LayoutChangeHook& h, std::nullptr_t) noexcept {
+        return h.fn != nullptr;
+    }
+};
+
+export struct RootRemapHook {
+    RootRemapHookFn fn = nullptr;
+    void* ctx = nullptr;
+    [[nodiscard]] explicit operator bool() const noexcept { return fn != nullptr; }
+    void operator()(std::uint64_t arena_id, std::uint64_t new_gen,
+                    std::unordered_map<void*, void*> const& object_remap, std::size_t& sr,
+                    std::size_t& sr_fail, std::size_t& cc, std::size_t& cc_fail) const noexcept {
+        if (fn)
+            fn(ctx, arena_id, new_gen, object_remap, sr, sr_fail, cc, cc_fail);
+    }
+    [[nodiscard]] friend bool operator==(const RootRemapHook& h, std::nullptr_t) noexcept {
+        return h.fn == nullptr;
+    }
+    [[nodiscard]] friend bool operator!=(const RootRemapHook& h, std::nullptr_t) noexcept {
+        return h.fn != nullptr;
+    }
+};
+
 // Issue #2089: optional layout-change callback hook. Fires on each
 // successful live_compact that actually bumps the generation counter (i.e.
 // saved_bytes > 0 || relocated > 0) — never on soft-gated no-ops or on the
 // initial zero-gen state. Default-wired to pin invalidate (already in-path
 // via invalidate_all_pins_for_arena) — HotUpdate / Shape hooks can install
 // their own observer here without assuming any pointer rewrite happened.
-using LiveCompactLayoutChangeCallback =
-    std::function<void(std::uint64_t arena_id, std::uint64_t new_gen)>;
+// Issue #3124: function-pointer form (no std::function).
+using LiveCompactLayoutChangeCallback = LayoutChangeHookFn;
 
 // Issue #2267 / #2294: RootRemapPass — non-pin root rewrite (stable-object
 // slots + Closure capture cells) after Moving densify. Receives densify
@@ -895,11 +962,8 @@ using LiveCompactLayoutChangeCallback =
 // in src/compiler/ (needs Evaluator / capture layout) with a type-erased
 // entry to avoid core→compiler cycle (same pattern as PanicCheckpointHost
 // / EnvFrameLifetimeHost). Out-params keep the typedef free of compiler types.
-using RootRemapCallback = std::function<void(
-    std::uint64_t arena_id, std::uint64_t new_gen,
-    std::unordered_map<void*, void*> const& object_remap, std::size_t& out_stable_ref_total,
-    std::size_t& out_stable_ref_fail_total, std::size_t& out_closure_capture_total,
-    std::size_t& out_closure_capture_fail_total)>;
+// Issue #3124: function-pointer form (ctx first; production ctx is unused).
+using RootRemapCallback = RootRemapHookFn;
 
 // Module-internal counter used by ASTArena constructors to mint stable per-arena
 // ids. LifetimePin::invalidate_all_pins_for_arena(arena_id_) keys pin
@@ -1001,33 +1065,59 @@ public:
         defrag_requested_.store(false, std::memory_order_release);
     }
 
-    // Issue #685: optional hook invoked after compact()/defrag()
-    // reclaims bytes (ShapeProfiler invalidate, dirty cascade).
-    //
-    // Issue #1666: set_on_compact_hook **replaces** any prior hook
-    // (not append). Callers that need multiple listeners MUST use
-    // take_on_compact_hook() + reinstall a chain. Silent overwrite
-    // previously dropped Evaluator re_pin when CompilerService
-    // installed ShapeProfiler after set_arena.
-    void set_on_compact_hook(std::function<void()> hook) {
+    // Issue #685 / #1666 / #3124: optional hook after compact()/defrag()
+    // (ShapeProfiler invalidate, Evaluator re_pin). fn==nullptr clears
+    // every slot. Otherwise installs into the first empty slot (or is a
+    // no-op if fn+ctx is already present). Full table replaces slot 0.
+    // Production listeners install independently — no take+chain, no heap.
+    void set_on_compact_hook(CompactHookFn fn, void* ctx = nullptr) noexcept {
         std::lock_guard<std::mutex> lock(hook_mtx_);
-        on_compact_hook_ = std::move(hook);
+        if (!fn) {
+            for (auto& slot : on_compact_hooks_) {
+                slot.fn = nullptr;
+                slot.ctx = nullptr;
+            }
+            return;
+        }
+        for (auto& slot : on_compact_hooks_) {
+            if (slot.fn == fn && slot.ctx == ctx)
+                return;
+        }
+        for (auto& slot : on_compact_hooks_) {
+            if (slot.fn == nullptr) {
+                slot.fn = fn;
+                slot.ctx = ctx;
+                return;
+            }
+        }
+        on_compact_hooks_[0].fn = fn;
+        on_compact_hooks_[0].ctx = ctx;
     }
-    // Move out the current hook (leaves arena with no hook).
-    [[nodiscard]] std::function<void()> take_on_compact_hook() {
+    // Move out the last occupied slot (leaves that slot empty).
+    [[nodiscard]] CompactHook take_on_compact_hook() noexcept {
         std::lock_guard<std::mutex> lock(hook_mtx_);
-        return std::move(on_compact_hook_);
+        for (std::size_t i = kArenaCompactHookSlots; i-- > 0;) {
+            if (on_compact_hooks_[i].fn != nullptr) {
+                CompactHook out = on_compact_hooks_[i];
+                on_compact_hooks_[i].fn = nullptr;
+                on_compact_hooks_[i].ctx = nullptr;
+                return out;
+            }
+        }
+        return {};
     }
     [[nodiscard]] bool has_on_compact_hook() const noexcept {
         // Issue #2383 / #2382: observe under hook_mtx_ — same lock pattern as
         // has_on_layout_change / has_root_remap_callback (set/take/invoke copy).
-        // Unsynchronized operator bool on std::function is a TSAN data race
-        // against concurrent set_on_compact_hook.
         std::lock_guard<std::mutex> lock(hook_mtx_);
-        return static_cast<bool>(on_compact_hook_);
+        for (const auto& slot : on_compact_hooks_) {
+            if (slot.fn != nullptr)
+                return true;
+        }
+        return false;
     }
 
-    // Issue #2089: optional layout-change callback. Fires exactly when
+    // Issue #2089 / #3124: optional layout-change callback. Fires exactly when
     // live_compact(Soft|Force) actually bumps the generation counter
     // (saved_bytes > 0 || relocated > 0) — NEVER on soft-gated no-ops or
     // on the initial zero-gen state. Allows HotUpdate / Shape / Fiber
@@ -1036,37 +1126,45 @@ public:
     // LiveCompactResult::moved_live_objects and the module-level
     // contract comment). Default null; callers opt in via this setter.
     // Concurrent set/take is serialized via on_layout_change_mtx_; the
-    // invoke path copies the callback under the lock and fires outside
+    // invoke path copies fn/ctx under the lock and fires outside
     // it so re-entrant set calls from inside the callback do not
     // deadlock (same pattern as #1989's on_compact_hook_).
-    void set_on_layout_change(LiveCompactLayoutChangeCallback cb) {
+    void set_on_layout_change(LayoutChangeHookFn fn, void* ctx = nullptr) noexcept {
         std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
-        on_layout_change_ = std::move(cb);
+        on_layout_change_.fn = fn;
+        on_layout_change_.ctx = ctx;
     }
     // Move out the current callback (leaves arena with no callback).
-    [[nodiscard]] LiveCompactLayoutChangeCallback take_on_layout_change() {
+    [[nodiscard]] LayoutChangeHook take_on_layout_change() noexcept {
         std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
-        return std::move(on_layout_change_);
+        LayoutChangeHook out = on_layout_change_;
+        on_layout_change_.fn = nullptr;
+        on_layout_change_.ctx = nullptr;
+        return out;
     }
     [[nodiscard]] bool has_on_layout_change() const noexcept {
         std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
-        return static_cast<bool>(on_layout_change_);
+        return on_layout_change_.fn != nullptr;
     }
-    // Issue #2267: RootRemapPass install + invoke. The compiler installs a
-    // callback that scans StableNodeRef live set + Closure capture cells
-    // and rewrites them via the old→new object_remap. Concurrent set/take
-    // is serialized via root_remap_mtx_ (same pattern as on_layout_change_mtx_).
-    void set_root_remap_callback(RootRemapCallback cb) {
+    // Issue #2267 / #3124: RootRemapPass install + invoke. The compiler
+    // installs a function-pointer that scans StableNodeRef live set +
+    // Closure capture cells and rewrites them via the old→new object_remap.
+    // Concurrent set/take is serialized via root_remap_mtx_.
+    void set_root_remap_callback(RootRemapHookFn fn, void* ctx = nullptr) noexcept {
         std::lock_guard<std::mutex> lock(root_remap_mtx_);
-        root_remap_ = std::move(cb);
+        root_remap_.fn = fn;
+        root_remap_.ctx = ctx;
     }
-    [[nodiscard]] RootRemapCallback take_root_remap_callback() {
+    [[nodiscard]] RootRemapHook take_root_remap_callback() noexcept {
         std::lock_guard<std::mutex> lock(root_remap_mtx_);
-        return std::move(root_remap_);
+        RootRemapHook out = root_remap_;
+        root_remap_.fn = nullptr;
+        root_remap_.ctx = nullptr;
+        return out;
     }
     [[nodiscard]] bool has_root_remap_callback() const noexcept {
         std::lock_guard<std::mutex> lock(root_remap_mtx_);
-        return static_cast<bool>(root_remap_);
+        return root_remap_.fn != nullptr;
     }
 
     // Issue #2775: register an external pointer that the caller holds and
@@ -1201,26 +1299,28 @@ public:
     }
 
     ~ASTArena() {
-        // Issue #2382: clear installed hooks under their mutexes BEFORE
-        // run_destructors() / member teardown. Concurrent invoke_*_ paths
-        // copy under the same locks and early-return when empty, so they
-        // never fire lambdas that capture caller-side Evaluator /
-        // CompilerService state after this arena begins dying. Lock release
-        // is a release barrier for observers of the cleared std::function.
-        //
-        // Contract: callers should not destroy an arena mid-live_compact;
-        // this is safe-side hardening for uninstall-on-dtor (cheap).
+        // Issue #2382 / #3124: clear installed hooks under their mutexes
+        // BEFORE run_destructors() / member teardown. Concurrent invoke_*_
+        // paths copy fn/ctx under the same locks and early-return when
+        // empty, so they never call into a destroyed Evaluator / Service.
+        // Lock release is a release barrier for observers of the cleared
+        // slots. Contract: callers should not destroy an arena mid-live_compact.
         {
             std::lock_guard<std::mutex> lock(hook_mtx_);
-            on_compact_hook_ = nullptr;
+            for (auto& slot : on_compact_hooks_) {
+                slot.fn = nullptr;
+                slot.ctx = nullptr;
+            }
         }
         {
             std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
-            on_layout_change_ = nullptr;
+            on_layout_change_.fn = nullptr;
+            on_layout_change_.ctx = nullptr;
         }
         {
             std::lock_guard<std::mutex> lock(root_remap_mtx_);
-            root_remap_ = nullptr;
+            root_remap_.fn = nullptr;
+            root_remap_.ctx = nullptr;
         }
         // Call all registered destructors in reverse construction
         // order so each T's owned resources (pmr vector fallback
@@ -2690,10 +2790,10 @@ private:
     // pattern as invoke_layout_change_). Passes densify old→new object_remap
     // + new gen; writes per-call stats into result + ArenaStats.
     void invoke_root_remap_callback_(LiveCompactResult& result) noexcept {
-        RootRemapCallback cb_copy;
+        RootRemapHook cb_copy;
         {
             std::lock_guard<std::mutex> lock(root_remap_mtx_);
-            if (!root_remap_)
+            if (!root_remap_.fn)
                 return;
             cb_copy = root_remap_;
         }
@@ -2728,18 +2828,22 @@ private:
     }
 
     void invoke_compact_hook_() {
-        std::function<void()> hook_copy;
+        CompactHook copies[kArenaCompactHookSlots];
+        std::size_t n = 0;
         {
-            // Issue #1989: copy under hook_mtx_, invoke outside the lock so
-            // a hook that re-enters ASTArena (or any code that takes the
-            // same lock in the future) doesn't deadlock. set_on_compact_hook /
-            // take_on_compact_hook are serialized against this copy.
+            // Issue #1989 / #3124: copy fn/ctx under hook_mtx_, invoke
+            // outside the lock so a hook that re-enters ASTArena doesn't
+            // deadlock. set/take serialized against this copy. No heap.
             std::lock_guard<std::mutex> lock(hook_mtx_);
-            if (!on_compact_hook_)
+            for (const auto& slot : on_compact_hooks_) {
+                if (slot.fn)
+                    copies[n++] = slot;
+            }
+            if (n == 0)
                 return;
-            hook_copy = on_compact_hook_;
         }
-        hook_copy();
+        for (std::size_t i = 0; i < n; ++i)
+            copies[i]();
         // Issue #2381: relaxed atomic RMW — concurrent compact_hook invokers
         // must not data-race the per-arena counter (TSAN + no lost updates).
         // Process-wide arena_policy::record_shape_inval_on_compact() is
@@ -2767,16 +2871,16 @@ private:
     // Issue #2089: optional layout-change callback path. Called from
     // live_compact immediately after the generation restamp +
     // invalidate_all_pins_for_arena block (so the callback observes the
-    // same new_gen as the result struct). Copy the std::function under
+    // same new_gen as the result struct). Copy fn/ctx under
     // on_layout_change_mtx_ and invoke outside the lock so re-entrant
     // set_on_layout_change / take_on_layout_change calls from inside the
     // callback do not deadlock — same pattern as #1989's
     // invoke_compact_hook_().
     void invoke_layout_change_(std::uint64_t new_gen) noexcept {
-        LiveCompactLayoutChangeCallback cb_copy;
+        LayoutChangeHook cb_copy;
         {
             std::lock_guard<std::mutex> lock(on_layout_change_mtx_);
-            if (!on_layout_change_)
+            if (!on_layout_change_.fn)
                 return;
             cb_copy = on_layout_change_;
         }
@@ -2819,18 +2923,17 @@ private:
     // Issue #300 Phase 3: see request_defrag() / defrag_requested()
     // / clear_defrag_request() for semantics.
     std::atomic<bool> defrag_requested_{false};
-    // Issue #1989: protect on_compact_hook_ from concurrent assign+invoke (A-003).
-    // std::function move-assign + invoke is UB; std::mutex serializes both.
+    // Issue #1989 / #3124: protect on_compact_hooks_ from concurrent
+    // assign+invoke. Mutex serializes set/take/copy; invoke is outside.
     mutable std::mutex hook_mtx_;
-    std::function<void()> on_compact_hook_;
-    // Issue #2089: layout-change callback (see set_on_layout_change).
-    // Same mutex-guarded std::function pattern as on_compact_hook_ above;
-    // invoke_layout_change_() copies under lock and fires outside.
+    CompactHook on_compact_hooks_[kArenaCompactHookSlots]{};
+    // Issue #2089 / #3124: layout-change callback (see set_on_layout_change).
+    // Same mutex-guarded {fn,ctx} pattern; invoke copies under lock.
     mutable std::mutex on_layout_change_mtx_;
-    LiveCompactLayoutChangeCallback on_layout_change_;
-    // Issue #2267: RootRemapPass callback (StableNodeRef + Closure captures).
+    LayoutChangeHook on_layout_change_{};
+    // Issue #2267 / #3124: RootRemapPass callback (StableNodeRef + Closure).
     mutable std::mutex root_remap_mtx_;
-    RootRemapCallback root_remap_;
+    RootRemapHook root_remap_{};
     // Issue #3055: observe-only residual live ptrs (not a remap registry).
     std::vector<void*> post_moving_live_canaries_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.

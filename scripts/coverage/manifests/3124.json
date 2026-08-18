@@ -1,0 +1,40 @@
+{
+  "issue": 3124,
+  "title": "Issue #3124: non-allocating arena compact/layout/root_remap hooks.",
+  "ok": "OK: Issue #3124 non-allocating arena hooks — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_nonalloc_arena_hooks_3124.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "Issue #3124",
+        "CompactHookFn",
+        "kArenaCompactHookSlots = 4"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "on_arena_compact_hook_thunk"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "slot.fn = nullptr",
+        "root_remap_.fn = nullptr"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/core/test_has_on_compact_hook_lock.cpp",
+      "contains": [
+        "ac3124_1_no_std_function_api",
+        "ac3124_2_two_slots_fire"
+      ]
+    }
+  ]
+}

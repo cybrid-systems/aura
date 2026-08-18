@@ -40,9 +40,9 @@ def main() -> int:
     # AC1 dtor clears under locks
     must("Issue #2382", "AC1", arena)
     must("~ASTArena()", "AC1", arena)
-    must("on_compact_hook_ = nullptr", "AC1", arena)
-    must("on_layout_change_ = nullptr", "AC1", arena)
-    must("root_remap_ = nullptr", "AC1", arena)
+    must("slot.fn = nullptr", "AC1", arena)
+    must("on_layout_change_.fn = nullptr", "AC1", arena)
+    must("root_remap_.fn = nullptr", "AC1", arena)
     must("hook_mtx_", "AC1", arena)
     must("on_layout_change_mtx_", "AC1", arena)
     must("root_remap_mtx_", "AC1", arena)
@@ -54,16 +54,16 @@ def main() -> int:
         fails.append("AC2: ~ASTArena() { not found")
     else:
         dtor_snip = arena[dtor_i : dtor_i + 2500]
-        clear_i = dtor_snip.find("on_compact_hook_ = nullptr")
-        layout_i = dtor_snip.find("on_layout_change_ = nullptr")
-        root_i = dtor_snip.find("root_remap_ = nullptr")
+        clear_i = dtor_snip.find("slot.fn = nullptr")
+        layout_i = dtor_snip.find("on_layout_change_.fn = nullptr")
+        root_i = dtor_snip.find("root_remap_.fn = nullptr")
         run_i = dtor_snip.find("run_destructors();")
         if clear_i < 0 or layout_i < 0 or root_i < 0 or run_i < 0:
             fails.append("AC2: dtor must null all three hooks and call run_destructors()")
         elif not (clear_i < run_i and layout_i < run_i and root_i < run_i):
             fails.append("AC2: hook clears must precede run_destructors() inside ~ASTArena")
     must("ac1_ac2_dtor_clears_all_hooks", "AC2", test)
-    must("use_count() == 1", "AC2", test)
+    must("dtor did not invoke compact hook", "AC2", test)
     must("has_on_compact_hook", "AC2", test)
     must("has_on_layout_change", "AC2", test)
     must("has_root_remap_callback", "AC2", test)
