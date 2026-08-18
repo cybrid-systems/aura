@@ -135,6 +135,9 @@ static void ac4_query_audit_replay_join() {
     CHECK(src.find("wal-enabled") != std::string::npos,
           "AC4: wal-enabled key emitted (joined with WAL)");
     CHECK(src.find("schema-3143") != std::string::npos, "AC4: schema-3143 key emitted");
+    // Lambda must name `args` so the optional mid join compiles under -Werror.
+    CHECK(src.find("const auto& args") != std::string::npos,
+          "AC4: query:capability-effect-stats lambda names args (replay-mid join)");
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 

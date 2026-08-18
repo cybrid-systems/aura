@@ -507,7 +507,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     // #1876 folds sandbox-status fields into this existing surface
     // (no new public query name — primitive freeze #1448).
     ObservabilityPrims::register_stats_impl(
-        "query:capability-effect-stats", [&ev](const auto&) -> EvalValue {
+        "query:capability-effect-stats", [&ev](const auto& args) -> EvalValue {
             using namespace aura::core::capability;
             using namespace aura::core::sandbox;
             const auto snap = snapshot_capability_effect_stats();

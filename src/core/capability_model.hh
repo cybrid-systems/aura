@@ -390,7 +390,7 @@ struct RegistryStateSnapshot {
 
 // Process-wide grant registry + audit ring.
 struct CapabilityRegistry {
-    std::mutex mtx;
+    mutable std::mutex mtx;
     // tenant_id → grants (multiple named grants OR'd for checks)
     std::unordered_map<TenantId, std::vector<CapabilityGrant>> by_tenant;
     // Issue #2023: per-tenant MacroSelfEvo policy limits (paired with
@@ -831,7 +831,7 @@ struct CapabilityRegistry {
         // (Restricted/Strict). If so, strip TenantAdmin + MacroSelfEvo
         // bits from the returned Effect (caller cannot pass
         // require_effect(TenantAdmin)). Soft/Off: zero-cost (no strip).
-        const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
         bool has_wildcard = false;
         bool has_explicit_TenantAdmin = false;
         for (const auto& g : it->second) {
@@ -872,7 +872,7 @@ struct CapabilityRegistry {
         // Issue #3144: same wildcard-only strip as effects_for above. Caller
         // MUST hold mtx (per the existing contract). Production fence strips
         // TenantAdmin + MacroSelfEvo from wildcard-only holders.
-        const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
         bool has_wildcard = false;
         bool has_explicit_TenantAdmin = false;
         for (const auto& g : it->second) {
@@ -1972,8 +1972,11 @@ inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
     // If caller is NOT a wildcard-only holder, the regular effects_for_locked
     // check applies: explicit TenantAdmin (via any non-wildcard string grant)
     // passes; no explicit TenantAdmin fails the standard check.
-    if (!reg.holds_wildcard_only_locked(caller))
-        return reg.effects_for_locked(caller).has(Effect::TenantAdmin);
+    if (!reg.holds_wildcard_only_locked(caller)) {
+        const Effect held = reg.effects_for_locked(caller);
+        return (static_cast<std::uint16_t>(held) &
+                static_cast<std::uint16_t>(Effect::TenantAdmin)) != 0;
+    }
 
     // AC1: wildcard-only holder attempting privilege-bearing grant → deny.
     g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.fetch_add(
@@ -1985,8 +1988,7 @@ inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
     using ::aura::core::security_event_wal::emit_security_event_durable;
     const auto epoch = current_mutation_epoch();
     const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
-    const auto fid = static_cast<std::int64_t>(
-        effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id())));
+    const auto fid = static_cast<std::int64_t>(effect_fiber_id_or(0));
     emit_security_event_durable(SecurityEventKind::EffectDeny, caller, mid, epoch, eff_bits,
                                 "grant_capability",
                                 "wildcard-write-fence-needs-explicit-tenant-admin",
