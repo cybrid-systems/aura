@@ -2323,6 +2323,16 @@ aura_add_issue_test(test_macro_self_evo_reexpand_chokepoint)
 aura_issue_test_link_light(test_macro_self_evo_reexpand_chokepoint)
 add_dependencies(all_test_issue_targets test_macro_self_evo_reexpand_chokepoint)
 
+# Issue #3133: hold-budget synthetic YieldReason::MutationBoundary injection
+# on non-yielding holders (close #3071/#3035 residual). Fiber::inject_
+# synthetic_mutation_boundary_yield() sets force_safepoint_requested_ +
+# last_yield_reason_ synthetically; poll caller replaces request_force_
+# safepoint() with inject() on subsequent polls. Existing #3035 + #3071
+# counters reused. No tests/issues/test_issue_3133.cpp (#81967).
+aura_add_issue_test(test_hold_budget_synthetic_yield_injection)
+aura_issue_test_link_light(test_hold_budget_synthetic_yield_injection)
+add_dependencies(all_test_issue_targets test_hold_budget_synthetic_yield_injection)
+
 # Issue #3095: post-restore macro hygiene invariant enforcement
 # (refine #2959 / #3033 / #2099). After every successful
 # abort_restore_dual_topology / restore_metadata_columns on the

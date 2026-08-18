@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 840 | Preferred destination suites |
-| **Total scanned** | **840** | |
+| `tests/core/test_*.cpp` | 841 | Preferred destination suites |
+| **Total scanned** | **841** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 247 | 247 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 248 | 248 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 54 | 54 | P1 — domain hygiene suite exists |
@@ -486,6 +486,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_hash_table_grow.cpp`
 - `tests/compiler/test_highperf_cpp26_gaps_arena_soa_value_shape_pass.cpp`
 - `tests/core/test_highperf_full_hotpath_matrix.cpp`
+- `tests/serve/test_hold_budget_synthetic_yield_injection.cpp`
 - `tests/core/test_hot_children_columnar.cpp`
 - `tests/compiler/test_hot_contract_placement.cpp`
 - `tests/compiler/test_hot_contract_unify.cpp`
@@ -1151,13 +1152,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (247)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (248)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (247)
+#### domain/ (248)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1252,6 +1253,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_guard_dtor_batch_metrics.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #1747 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_guard_exit_occurrence_refresh.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-round mutate on if-predicate binding → selective invalidate
 - `tests/compiler/test_hard_gate_full_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: Full + injected use-after-move / Moved → rollback; mutation not visible
+- `tests/serve/test_hold_budget_synthetic_yield_injection.cpp` (—) [domain_suite, theme_serve] — AC1: source cites #3133 in fiber.h + fiber.cpp — Fiber::inject_synthetic
 - `tests/compiler/test_hot_pass_dirty_soa.cpp` (—) [domain_suite, theme_compiler] — AC1: DirtySoAEntryPass + kRequireDirtySoAEntry on production wraps
 - `tests/compiler/test_hot_pass_hard_dod.cpp` (—) [domain_suite, theme_compiler] — Issue #3042 — drop residual std::function dirty predicates from
 - `tests/compiler/test_hot_pass_pure_wrap.cpp` (—) [domain_suite, theme_compiler] — AC1: Pipeline registration rejects non-HotPassDodCompliant dirty/inc packs
