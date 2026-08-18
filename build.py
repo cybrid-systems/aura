@@ -842,6 +842,19 @@ def cmd_lint():
             "Issue #3141 kCapWildcard write-fence linter failed — run python3 scripts/coverage/checks/check_wildcard_grant_effect_fence.py"
         )
         return r
+    # Issue #3142: SessionBound grant revoke cascade — nested TenantScope
+    # abort + fiber steal paths must revoke inner SessionBound grants;
+    # stolen flag prevents caller-side double-consume.
+    csb3142_script = COVERAGE_CHECKS / "check_session_bound_dtor_cascade.py"
+    if not csb3142_script.exists():
+        fail(f"missing {csb3142_script}")
+        return 1
+    r = run([sys.executable, str(csb3142_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3142 SessionBound revoke cascade linter failed — run python3 scripts/coverage/checks/check_session_bound_dtor_cascade.py"
+        )
+        return r
     # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.

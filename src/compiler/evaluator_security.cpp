@@ -1131,6 +1131,19 @@ Evaluator::TenantScope::~TenantScope() noexcept {
 void Evaluator::TenantScope::release() noexcept {
     if (!active_ || !ev_)
         return;
+    // Issue #3142 AC1: cascade-revoke SessionBound grants bound to
+    // (prev_tenant_, current mid, this fiber) before restoring prior
+    // principal. Prevents orphan SessionBound grants on nested scope
+    // abort / early-return. fiber_id_ captured at ctor (line 1117).
+    // Zero-cost short-circuit when capability_live_session_grants == 0
+    // (AC3 Soft happy path).
+    using namespace ::aura::core::capability;
+    const auto mid = ::aura::core::current_mutation_epoch();
+    if (mid != 0) {
+        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
+        (void)g_capability_registry().revoke_session_grants_for(prev_tenant_, mid, fiber_id_,
+                                                                "scope-dtor-cascade");
+    }
     // Restore prior principal (name empty → keep id only).
     // Issue #2659: Evaluator-local only — no global write.
     ev_->set_capability_tenant_id(prev_tenant_);

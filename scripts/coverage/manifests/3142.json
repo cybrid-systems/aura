@@ -1,0 +1,82 @@
+{
+  "issue": 3142,
+  "title": "Issue #3142: [P0][security][correctness][area:capability] SessionBound grant 在 nested TenantScope abort + fiber steal 路径下不 revoke,长跑下 grant 表膨胀 (revoke 仅 outermost dtor 触发)",
+  "ok": "OK: Issue #3142 P0 production-readiness AI-mutation residual closed — nested TenantScope::release() now cascade-revoke SessionBound grants bound to (prev_tenant_, mid, fiber_id) tuple BEFORE restoring prior principal (zero-cost early-out when capability_live_session_grants == 0); fiber steal path (evaluator_fiber_mutation.cpp:mark_outermost_mutation_failed + force-degrade revoke) calls mark_session_bound_stolen(tenant, mid, fiber_id) BEFORE revoke_session_grants_on_steal_or_abort; check_and_record_effect now excludes stolen entries from effects_for_locked AND skips stolen entries in the consume loop (no double-consume after steal). AC1: nested abort cascade-revoke with 3-arg revoke_session_grants_for(tenant, mid, fiber_id, 'scope-dtor-cascade'); AC2: stolen entries excluded from effects_for_locked + consume loop (caller check_and_record_effect denies); AC3: 1000 nested aborts → session_bound_entries_alive == 0 (no leak); AC4: 3 additive counters (session_bound_revoked_on_scope_dtor_total + session_bound_revoked_on_steal_total + session_bound_orphan_detected_total) appended at CapabilityEffectMetrics struct END per #2906; AC5: source-cite capability_model.hh + evaluator_security.cpp + evaluator_fiber_mutation.cpp; extends tests/core/test_capability_single_use_consume.cpp with ac3142_1..4 (no docs/design/, no tests/issues/test_issue_3142.cpp per #81967/#1655); scripts/coverage/checks/check_session_bound_dtor_cascade.py + manifest 3142.json; build.py wires cw3142_script into gate stage alongside cw3141_script.",
+  "source_script": "scripts/coverage/checks/check_session_bound_dtor_cascade.py",
+  "checks": [
+    {
+      "ac": "AC1-3142",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #3142",
+        "revoke_session_grants_for(",
+        "scope-dtor-cascade",
+        "session_bound_revoked_on_scope_dtor_total",
+        "session_bound_entries_alive("
+      ]
+    },
+    {
+      "ac": "AC1-3142-eval",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3142",
+        "revoke_session_grants_for(",
+        "scope-dtor-cascade"
+      ]
+    },
+    {
+      "ac": "AC2-3142",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "bool stolen = false",
+        "mark_session_bound_stolen(",
+        "session_bound_revoked_on_steal_total"
+      ]
+    },
+    {
+      "ac": "AC2-3142-fiber",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "mark_session_bound_stolen",
+        "Issue #3142"
+      ]
+    },
+    {
+      "ac": "AC4-3142-counter",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "session_bound_revoked_on_scope_dtor_total{0}",
+        "session_bound_revoked_on_steal_total{0}",
+        "session_bound_orphan_detected_total{0}"
+      ]
+    },
+    {
+      "ac": "AC5-3142-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "ac3142_1_nested_abort_cascade_revoke",
+        "ac3142_2_steal_marks_no_double_consume",
+        "ac3142_3_long_run_no_leak",
+        "ac3142_4_additive_metrics_and_source_cite",
+        "Issue #3142"
+      ]
+    },
+    {
+      "ac": "Linter-3142",
+      "path": "scripts/coverage/checks/check_session_bound_dtor_cascade.py",
+      "contains": [
+        "Issue #3142",
+        "AC1 cite in meta",
+        "AC2 stolen exclusion",
+        "AC4 append at struct END"
+      ]
+    },
+    {
+      "ac": "Build-3142",
+      "path": "build.py",
+      "contains": [
+        "check_session_bound_dtor_cascade.py"
+      ]
+    }
+  ]
+}

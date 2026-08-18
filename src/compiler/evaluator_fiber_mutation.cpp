@@ -1310,9 +1310,16 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
     // bound to this fiber's captured outermost mid even if Guard dtor
     // never runs. Second call (Guard dtor #2944) is a no-op (AC3).
     const auto mid = aura::serve::current_fiber_session_mid();
-    if (mid != 0)
+    if (mid != 0) {
+        // Issue #3142 AC2: mark SessionBound entries as stolen so caller-side
+        // check_and_record_effect fails (no double-consume). Then revoke.
+        auto& reg = ::aura::core::capability::g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        (void)reg.mark_session_bound_stolen(capability_tenant_id_, mid,
+                                            static_cast<std::uint32_t>(aura_fiber_current_id()));
         (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(mid,
                                                                                 /*steal=*/false);
+    }
 }
 
 // Issue #2932: hold-budget overtime forced outermost fail-closed at a
@@ -1439,9 +1446,16 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
         auto mid = aura_fiber_session_mid(fiber_id);
         if (mid == 0)
             mid = g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
-        if (mid != 0)
+        if (mid != 0) {
+            // Issue #3142 AC2: mark SessionBound entries as stolen (no
+            // double-consume) before revoke.
+            auto& reg = ::aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            (void)reg.mark_session_bound_stolen(
+                /*tenant=*/0, mid, fiber_id);
             (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(
                 mid, /*steal=*/false);
+        }
     }
 }
 
