@@ -13621,6 +13621,10 @@ public:
     // restore_hygiene_checkpoint site forces a full restore on > 0).
     [[nodiscard]] std::size_t
     check_macro_hygiene_invariant_post_restore(const char* reason_tag) noexcept;
+    // Issue #3116: production abort dual-clear of TypeChecker last_coercions_
+    // + TLS coercion active mid/predicate. Called with abort_restore /
+    // force_linear_rollback / cancel-forced-fail. Soft/Off: observe only.
+    void dual_clear_coercion_state_on_abort() noexcept;
 
     // Get the current checkpoint stack depth (for testing /
     // observability). Returns 0 if the stack is empty.

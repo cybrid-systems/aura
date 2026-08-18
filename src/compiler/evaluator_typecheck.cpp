@@ -2248,6 +2248,9 @@ bool Evaluator::force_linear_rollback(std::string_view op,
     note_invariant_enforcement_ran(mid);
     capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0, 0,
                                static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+    // Issue #3116: production force-rollback must drop residual CoercionMap
+    // + TLS active context even before Guard dtor runs exit(false).
+    dual_clear_coercion_state_on_abort();
     return true;
 }
 

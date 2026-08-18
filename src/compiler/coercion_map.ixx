@@ -1270,6 +1270,10 @@ export inline std::atomic<std::uint64_t> g_coercion_map_abort_rewind_observe_tot
 export inline std::atomic<std::uint64_t> g_coercion_map_apply_tracker_push_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_map_abort_forced_dirty_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_map_abort_soft_observe_total{0};
+// Issue #3116: dual-clear last_coercions_ + TLS active context on abort.
+export inline std::atomic<std::uint64_t> g_coercion_abort_dual_clear_total{0};
+export inline std::atomic<std::uint64_t> g_coercion_abort_dual_clear_observe_total{0};
+export inline constexpr int kCoercionAbortDualClearIssue = 3116;
 
 export inline void coerced_nodes_tracker_enter_boundary() noexcept {
     ++g_coerced_nodes_in_boundary_depth_tls;
@@ -1298,12 +1302,17 @@ export [[nodiscard]] inline std::size_t coerced_nodes_tracker_size() noexcept {
     return g_coerced_nodes_in_boundary_tls.size();
 }
 
-inline void reset_coercion_map_abort_rewind_for_test() noexcept {
+export inline void reset_coercion_map_abort_rewind_for_test() noexcept {
     g_coercion_map_abort_rewind_total.store(0, std::memory_order_relaxed);
     g_coercion_map_abort_rewind_observe_total.store(0, std::memory_order_relaxed);
     g_coercion_map_apply_tracker_push_total.store(0, std::memory_order_relaxed);
     g_coercion_map_abort_forced_dirty_total.store(0, std::memory_order_relaxed);
     g_coercion_map_abort_soft_observe_total.store(0, std::memory_order_relaxed);
+    g_coercion_abort_dual_clear_total.store(0, std::memory_order_relaxed);
+    g_coercion_abort_dual_clear_observe_total.store(0, std::memory_order_relaxed);
+}
+export inline void clear_coercion_map_abort_rewind_for_test() noexcept {
+    reset_coercion_map_abort_rewind_for_test();
 }
 
 } // namespace aura::compiler
