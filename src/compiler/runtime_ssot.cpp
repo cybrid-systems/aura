@@ -15,6 +15,7 @@
 #include "runtime_shared.h"
 
 #include <atomic>
+#include <cstdint>
 #include <cstdlib>
 #include <vector>
 
@@ -30,6 +31,82 @@ bool g_use_arena = true;
 
 // Flat hash table index space (Phase 4c).
 std::vector<FlatHashTable*> g_hash_tables;
+
+// ── FlatHashTable::create / destroy ──
+// Strong defs used to live only in aura_jit_runtime.cpp (JIT SOs).
+// evaluator_primitives_* in libaura_test_objects.so call create() for
+// every query: hash; CI x86_64 mold --as-needed then strips the JIT
+// lib and load fails:
+//   undefined symbol: _ZN13FlatHashTable6createEm
+// SSOT here (libaura_tl_arena.so) so the evaluator SO always resolves
+// them. rebuild() stays in aura_jit_runtime.cpp and calls create().
+static constexpr std::uint8_t kHashEmptySlot = 0xFF; // hash_meta.h kEmptySlot
+
+FlatHashTable* FlatHashTable::create(uint64_t cap) {
+    auto* ht = static_cast<FlatHashTable*>(std::malloc(total_bytes(cap)));
+    if (!ht)
+        return nullptr;
+    ht->capacity = cap;
+    ht->size = 0;
+    auto* meta = ht->metadata();
+    for (uint64_t i = 0; i < cap; ++i)
+        meta[i] = kHashEmptySlot;
+    auto* k = ht->keys();
+    for (uint64_t i = 0; i < cap; ++i)
+        k[i] = 0;
+    auto* v = ht->values();
+    for (uint64_t i = 0; i < cap; ++i)
+        v[i] = 0;
+    return ht;
+}
+
+void FlatHashTable::destroy(FlatHashTable* ht) {
+    if (ht)
+        std::free(ht);
+}
+
+// ── Live AOT env / linear / table-epoch C ABI ──
+// Same load-order class as aura_set_aot_metrics. Strong defs used to
+// live only in aura_jit_bridge.cpp / the light stub; libaura_test_objects.so
+// then failed (CI mold --as-needed):
+//   undefined symbol: aura_aot_func_table_epoch
+//   undefined symbol: aura_set_aot_live_env_frame_version
+//   undefined symbol: aura_get_aot_live_linear_state_fingerprint
+// SSOT here so the evaluator / HotUpdateRegistry TUs always resolve
+// them. Full JIT (aura_jit_bridge.cpp) fetch_adds the same
+// g_aot_table_epoch object; do NOT weak-stub these in
+// runtime_bridge_stub.cpp (would preempt this pointer).
+std::atomic<std::uint64_t> g_aot_table_epoch{1};
+static std::atomic<std::uint64_t> g_aot_live_env_frame_version{0};
+static std::atomic<std::uint8_t> g_aot_live_linear_state_fingerprint{0};
+
+extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
+    return g_aot_table_epoch.load(std::memory_order_acquire);
+}
+
+// Fallback bump when no JIT SO is loaded. Full JIT's strong
+// aura_aot_bump_func_table_epoch (slot invalidate / notify) interposes
+// via ELF prepend. Light tests use this fetch_add on the same atomic
+// the getter reads.
+extern "C" void aura_aot_bump_func_table_epoch(void) {
+    g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
+}
+
+extern "C" void aura_set_aot_live_env_frame_version(std::uint64_t v) {
+    g_aot_live_env_frame_version.store(v, std::memory_order_release);
+}
+
+extern "C" std::uint64_t aura_get_aot_live_env_frame_version(void) {
+    return g_aot_live_env_frame_version.load(std::memory_order_acquire);
+}
+
+extern "C" void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v) {
+    g_aot_live_linear_state_fingerprint.store(v, std::memory_order_release);
+}
+
+extern "C" std::uint8_t aura_get_aot_live_linear_state_fingerprint(void) {
+    return g_aot_live_linear_state_fingerprint.load(std::memory_order_acquire);
+}
 
 // ── Current-fiber-id hook (Issue #195) ──
 // SSOT lives here (libaura_tl_arena.so) so libaura_test_objects.so

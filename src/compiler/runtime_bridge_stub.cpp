@@ -23,6 +23,7 @@
 #include "aura_jit.h"
 
 #include <cstdint>
+#include <vector>
 
 extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
 
@@ -74,6 +75,10 @@ extern "C" __attribute__((weak)) void
 aura_set_top_cell_getter(std::int64_t (* /*fn*/)(void*, std::int64_t), void* /*user_data*/) {}
 
 // aura_get_aot_metrics / aura_set_aot_metrics live in runtime_ssot.cpp.
+// aura_aot_func_table_epoch / aura_aot_bump_func_table_epoch /
+// aura_set/get_aot_live_env_frame_version /
+// aura_set/get_aot_live_linear_state_fingerprint live in runtime_ssot.cpp
+// (same class: a weak stub here would preempt the SSOT atomic).
 
 // Issue #2544 note: do NOT stub aura_set_aot_defuse_version here. Same class
 // as aura_set_aot_metrics (comment above): an empty weak stub in
@@ -138,6 +143,16 @@ __attribute__((weak)) AuraJIT::AuraJIT()
 __attribute__((weak)) AuraJIT::~AuraJIT() = default;
 __attribute__((weak)) bool AuraJIT::available() const {
     return false;
+}
+
+// service.ixx lowers via run_escape_analysis. Strong body lives in
+// aura_jit.cpp (JIT SOs). Conservative all-ESCAPED when mold
+// --as-needed strips the JIT lib (CI x86_64). Full/light JIT
+// prepended on those test binaries interposes the real analysis.
+__attribute__((weak)) void
+run_escape_analysis(const std::vector<std::vector<FlatInstruction>>& /*flat_instrs*/,
+                    std::uint32_t local_count, std::vector<std::uint8_t>& escape_map) {
+    escape_map.assign(local_count, 1);
 }
 
 } // namespace aura::jit

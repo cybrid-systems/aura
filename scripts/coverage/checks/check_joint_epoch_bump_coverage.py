@@ -58,6 +58,10 @@ ALLOW_LIST = {
     # epoch). The helper itself reads those atomics under mutate_mtx_
     # to publish the joint bump, so the raw reads/writes here are OK.
     "src/compiler/service.ixx",
+    # runtime_ssot.cpp owns the g_aot_table_epoch object + the no-JIT
+    # fallback aura_aot_bump_func_table_epoch (full JIT interposes the
+    # slot-invalidate / notify body). Same helper, same atomic.
+    "src/compiler/runtime_ssot.cpp",
 }
 
 # Patterns that must NOT appear outside the allow-list. The bridge
