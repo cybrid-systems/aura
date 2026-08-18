@@ -5,6 +5,8 @@
 // Plain header (not a module) so contract_handler.cpp, value_tags.h,
 // arena.ixx, and pass_manager can all bump counters without crossing
 // module boundaries.
+
+#include "compiler/typed_mutation_audit.h" // Issue #3139 AC4: production_defaults_active() probe for hot_contract_harden_armed()
 //
 // ── Issue #2142 / #2435: unified hot-path contract policy ────────────────
 //
@@ -270,6 +272,15 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
             std::strcmp(e, "ON") == 0 || std::strcmp(e, "TRUE") == 0 || std::strcmp(e, "On") == 0 ||
             std::strcmp(e, "True") == 0)
             parsed = 1;
+    }
+    // Issue #3139 AC4: under production_defaults_active(), the runtime
+    // probe is implicitly armed for self-modify preset binaries (no env
+    // required). production_defaults_active() is a relaxed atomic load
+    // (single observation; safe on hot path; per #3076 the policy is
+    // production-or-Full hard-face). Soft / unit / sandbox=off paths
+    // keep production_defaults_active() == 0 and stay disarmed (AC2).
+    if (parsed == 0 && aura::compiler::typed_audit::production_defaults_active()) {
+        parsed = 1;
     }
     int expected = -1;
     cached.compare_exchange_strong(expected, parsed, std::memory_order_relaxed);

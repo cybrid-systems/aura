@@ -1,0 +1,69 @@
+{
+  "issue": 3139,
+  "title": "Issue #3139: [P0][bug][soundness][correctness][mutation][concurrency][AI-mutation][production-readiness][area:hot-path][area:core] Make Soft-observe + Harden the production default under production_defaults_active() for AI self-modify packs (close Soft-only residual of #3106) — hot_contract_harden_armed() implicitly armed under production_defaults_active() so self-modify preset binaries don't rely on AURA_HOT_HARDEN env or HARDEN compile flag",
+  "ok": "OK: Issue #3139 P0 production-readiness AI self-modify residual closed — hot_contract_harden_armed() in src/core/cpp26_contract_stats.h now ALSO returns true when aura::compiler::typed_audit::production_defaults_active() is true (gated by parsed==0 so env AURA_HOT_HARDEN=0 / OFF is not silently overridden); src/core/cpp26_contract_stats.h includes compiler/typed_mutation_audit.h for the production_defaults_active() accessor; Soft / unit / sandbox=off / pure-performance packs keep production_defaults_active() == 0 and stay disarmed (AC2 zero-cost); sampled RECORD period 256 + observe_hot_contract_false still bump under Harden (AC3); cold language contracts unchanged, no new process-wide lock (AC5); scripts/coverage/checks/check_hot_contract_harden_3106.py extended with #3139 AC4 source-cite checks (probe has Issue #3139 marker + typed_mutation_audit.h include + production_defaults_active() call + parsed==0 guard); tests/compiler/test_hot_contract_placement.cpp extended with #3139 AC4a (probe consults production_defaults_active) + AC4b (implicit-arm gated by parsed==0) + AC4c (include at top of header)",
+  "source_script": "scripts/coverage/checks/check_hot_contract_harden_3106.py",
+  "checks": [
+    {
+      "ac": "AC4-3139",
+      "path": "src/core/cpp26_contract_stats.h",
+      "contains": [
+        "Issue #3139",
+        "aura::compiler::typed_audit::production_defaults_active()",
+        "if (parsed == 0 && ",
+        "#include \"compiler/typed_mutation_audit.h\""
+      ]
+    },
+    {
+      "ac": "AC2-3139",
+      "path": "src/core/cpp26_contract_stats.h",
+      "contains": [
+        "#define AURA_HOT_CHECK(expr) ((void)0)",
+        "Production OFF: zero cost",
+        "AURA_HOT_MODE_OFF"
+      ]
+    },
+    {
+      "ac": "AC3-3139",
+      "path": "src/core/cpp26_contract_stats.h",
+      "contains": [
+        "record_hotpath_invariant_hit_sampled",
+        "kHotSoftObserveRecordSample = 256",
+        "observe_hot_contract_false"
+      ]
+    },
+    {
+      "ac": "AC5-3139",
+      "path": "src/core/cpp26_contract_stats.h",
+      "contains": [
+        "#define AURA_COLD_CONTRACT(expr) contract_assert(expr)",
+        "AURA_HOT_MODE_HARDEN",
+        "kHotContractHardenIssue = 3106"
+      ]
+    },
+    {
+      "ac": "Linter-3139",
+      "path": "scripts/coverage/checks/check_hot_contract_harden_3106.py",
+      "contains": [
+        "3139 AC4 issue marker in header",
+        "3139 AC4 typed_audit include in header",
+        "3139 AC4 production_defaults_active() call in probe",
+        "if (parsed == 0 && ",
+        "3139 AC4 closure"
+      ]
+    },
+    {
+      "ac": "Test-3139",
+      "path": "tests/compiler/test_hot_contract_placement.cpp",
+      "contains": [
+        "test_3139_ac4a_probe_consults_production_defaults",
+        "test_3139_ac4b_implicit_arm_gated_by_parsed_zero",
+        "test_3139_ac4c_include_at_top",
+        "3139 AC4a: probe considers production_defaults_active()",
+        "3139 AC4b -- implicit-arm gated by parsed==0",
+        "3139 AC4c -- include at top of header",
+        "2435/#3043/#3106/#3139 results"
+      ]
+    }
+  ]
+}

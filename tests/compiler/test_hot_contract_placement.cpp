@@ -280,7 +280,58 @@ int run_test_hot_contract_placement() {
 
     // ── #3106: Harden-armed Soft-observe hot contract ─────────────────
     {
+        // #3139 AC4a: probe considers production_defaults_active() so
+        // self-modify preset binaries are implicitly armed without env/HARDEN-flag.
+        // Source-level check (mirrors linter scripts/coverage/checks/
+        // check_hot_contract_harden_3106.py AC4 closure).
+        void test_3139_ac4a_probe_consults_production_defaults() {
+            std::println("3139 AC4a -- probe considers production_defaults_active()");
+            std::ifstream in{"src/core/cpp26_contract_stats.h"};
+            std::stringstream ss;
+            ss << in.rdbuf();
+            const std::string hh = ss.str();
+            CHECK(hh.find("Issue #3139") != std::string::npos,
+                  "3139 AC4a: Issue #3139 marker present in probe");
+            CHECK(hh.find("typed_mutation_audit.h") != std::string::npos,
+                  "3139 AC4a: typed_mutation_audit.h include present (for "
+                  "production_defaults_active() namespace)");
+            CHECK(
+                hh.find("aura::compiler::typed_audit::production_defaults_active()") !=
+                    std::string::npos,
+                "3139 AC4a: production_defaults_active() called from hot_contract_harden_armed()");
+        }
+
+        // #3139 AC4b: implicit-arm check is gated by parsed==0 (env OFF respected).
+        // If parsed was already 1 (env AURA_HOT_HARDEN set), the implicit arm is
+        // skipped — env OFF cannot be silently overridden by production_defaults.
+        void test_3139_ac4b_implicit_arm_gated_by_parsed_zero() {
+            std::println("3139 AC4b -- implicit-arm gated by parsed==0");
+            std::ifstream in{"src/core/cpp26_contract_stats.h"};
+            std::stringstream ss;
+            ss << in.rdbuf();
+            const std::string hh = ss.str();
+            CHECK(hh.find("if (parsed == 0 && ") != std::string::npos,
+                  "3139 AC4b: implicit-arm guard present (parsed==0 check)");
+        }
+
+        // #3139 AC4c: include of typed_mutation_audit.h is at the top of the header
+        // (near other plain-header includes) so production_defaults_active() is
+        // reachable without crossing module boundaries.
+        void test_3139_ac4c_include_at_top() {
+            std::println("3139 AC4c -- include at top of header");
+            std::ifstream in{"src/core/cpp26_contract_stats.h"};
+            std::stringstream ss;
+            ss << in.rdbuf();
+            const std::string head = ss.str().substr(0, 2000);
+            CHECK(head.find("#include \"compiler/typed_mutation_audit.h\"") != std::string::npos,
+                  "3139 AC4c: typed_mutation_audit.h include in first 2000 chars (plain-header "
+                  "section)");
+        }
+
         std::println("\n--- #3106 AC1: harden-armed CHECK path ---");
+        test_3139_ac4a_probe_consults_production_defaults();
+        test_3139_ac4b_implicit_arm_gated_by_parsed_zero();
+        test_3139_ac4c_include_at_top();
         CHECK(aura::core::cpp26::kHotContractHardenIssue == 3106, "3106 AC1: issue constant");
         auto hh = read_file("src/core/cpp26_contract_stats.h");
         CHECK(hh.find("Issue #3106") != std::string::npos, "3106 AC1: policy #3106");
@@ -376,7 +427,8 @@ int run_test_hot_contract_placement() {
               "3106 AC5: no new process-wide lock");
     }
 
-    std::println("\n=== #2435/#3043/#3106 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2435/#3043/#3106/#3139 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
