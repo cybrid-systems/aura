@@ -23,6 +23,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.arena; // Issue #2775: ASTArena::register_external_root_for_densify direct test
+import aura.core.lifetime_pin;
 
 namespace {
 
@@ -429,6 +430,230 @@ static void ac2775_source_cite() {
     }
 }
 
+// ── Issue #3123: production auto-arm + sticky-clear discipline ──
+
+struct AutoArmPrefGuard {
+    int prev = -1;
+    explicit AutoArmPrefGuard(int enable) {
+        prev = aura::ast::g_production_auto_arm_moving_pref.load(std::memory_order_acquire);
+        aura::ast::g_production_auto_arm_moving_pref.store(enable, std::memory_order_release);
+    }
+    ~AutoArmPrefGuard() {
+        aura::ast::g_production_auto_arm_moving_pref.store(prev, std::memory_order_release);
+    }
+};
+
+struct MovingFlagGuard3123 {
+    int prev = -1;
+    explicit MovingFlagGuard3123(int enable) {
+        prev = aura::ast::moving_compact_enabled();
+        aura::ast::set_moving_compact_enabled(enable);
+    }
+    ~MovingFlagGuard3123() { aura::ast::set_moving_compact_enabled(prev); }
+};
+
+struct Pod16_3123 {
+    std::int32_t a = 0;
+    std::int32_t b = 0;
+    std::int32_t c = 0;
+    std::int32_t d = 0;
+    Pod16_3123() = default;
+    Pod16_3123(std::int32_t a_, std::int32_t b_, std::int32_t c_, std::int32_t d_) noexcept
+        : a(a_)
+        , b(b_)
+        , c(c_)
+        , d(d_) {}
+};
+
+static void ac3123_1_production_auto_arm_soft_never() {
+    std::println("\n--- #3123 AC1: production auto-arm; Soft/sandbox never ---");
+    MovingFlagGuard3123 on(1);
+    aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    CHECK(aura::core::lifetime::live_pin_count() == 0, "AC1: zero pins");
+    {
+        AutoArmPrefGuard prod(1);
+        CHECK(aura::ast::should_production_auto_arm_moving(0.50),
+              "AC1: production + frag 0.50 + quiet → auto-arm");
+        CHECK(aura::ast::should_production_auto_arm_moving(0.40),
+              "AC1: frag at threshold auto-arms");
+        CHECK(!aura::ast::should_production_auto_arm_moving(0.39),
+              "AC1: below threshold does not auto-arm");
+    }
+    {
+        AutoArmPrefGuard soft(0);
+        CHECK(!aura::ast::should_production_auto_arm_moving(0.90),
+              "AC1: Soft pref never auto-arms");
+    }
+    {
+        AutoArmPrefGuard unset(-1);
+        // Derive path: without production_defaults_active the probe is 0
+        // in this unit (or unset). High frag must not arm.
+        if (!aura::ast::production_auto_arm_pack_active()) {
+            CHECK(!aura::ast::should_production_auto_arm_moving(0.90),
+                  "AC1: unset pack does not auto-arm");
+        }
+    }
+    {
+        AutoArmPrefGuard prod(1);
+        MovingFlagGuard3123 off(0);
+        aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+        CHECK(!aura::ast::should_production_auto_arm_moving(0.90),
+              "AC1: Moving flag off does not auto-arm");
+    }
+    {
+        AutoArmPrefGuard prod(1);
+        aura::ast::g_last_moving_compact_ms.store(0, std::memory_order_release);
+        ASTArena arena(64 * 1024);
+        auto* p = arena.create<Pod16_3123>(1, 2, 3, 4);
+        aura::core::lifetime::LifetimePin pin;
+        pin.pin(p, arena.generation(), arena.arena_id());
+        CHECK(!aura::ast::should_production_auto_arm_moving(0.90), "AC1: live pin blocks auto-arm");
+    }
+    CHECK(aura::core::lifetime::live_pin_count() == 0, "AC1: pin released");
+}
+
+static void ac3123_2_untracked_fail_closed_sticky() {
+    std::println("\n--- #3123 AC2: production untracked kept fail-closed + sticky ---");
+    MovingFlagGuard3123 on(1);
+    const auto prev_hard = aura::ast::g_moving_untracked_hard_abort_pref.load();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::reset_moving_densify_health_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16_3123>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16_3123>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16_3123>(9, 10, 11, 12);
+    void* ext = p0;
+    arena.register_external_root_for_densify(ext); // value-only → untracked under hard
+    const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
+    CHECK(r.moving_incomplete_remap || r.moving_blocked_precondition || !r.pin_contract_held ||
+              r.untracked_kept_count > 0,
+          "AC2: production hard untracked is fail-closed");
+    if (r.moving_incomplete_remap || r.untracked_kept_count > 0 || r.moving_blocked_precondition) {
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC2: production hard untracked arms sticky");
+        CHECK(!aura::ast::should_production_auto_arm_moving(0.90),
+              "AC2: sticky-off blocks auto-arm (Moving flag reads 0)");
+    }
+    (void)p1;
+    (void)p2;
+    aura::ast::g_moving_untracked_hard_abort_pref.store(prev_hard, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3123_3_sticky_clears_only_on_healthy() {
+    std::println("\n--- #3123 AC3: sticky clears only after healthy Moving window ---");
+    MovingFlagGuard3123 on(1);
+    const auto prev_hard = aura::ast::g_moving_untracked_hard_abort_pref.load();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::reset_moving_densify_health_for_test();
+
+    // Incomplete window must leave a force-armed sticky set.
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16_3123>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16_3123>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16_3123>(9, 10, 11, 12);
+        void* ext = p0;
+        arena.register_external_root_for_densify(ext);
+        const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
+        if (r.moving_incomplete_remap || r.untracked_kept_count > 0 ||
+            r.moving_blocked_precondition || !r.pin_contract_held) {
+            CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+                  "AC3: incomplete window leaves sticky set");
+        }
+        (void)p1;
+        (void)p2;
+    }
+
+    // Healthy Moving window (no untracked) clears sticky + records reason.
+    aura::ast::g_moving_incomplete_remap_sticky_densify_off.store(1, std::memory_order_release);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16_3123>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16_3123>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16_3123>(9, 10, 11, 12);
+        CHECK(p0 && p1 && p2, "AC3: create");
+        const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
+        CHECK(!r.moving_blocked_precondition, "AC3: healthy window not blocked");
+        CHECK(r.untracked_kept_count == 0, "AC3: zero untracked");
+        CHECK(!r.moving_incomplete_remap, "AC3: complete remap");
+        CHECK(r.pin_contract_held, "AC3: pin held");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "AC3: healthy window clears sticky");
+        const auto reason = mdh::g_sticky_last_clear_reason.load();
+        CHECK(reason == aura::ast::kStickyClearHealthyWindow ||
+                  reason == aura::ast::kStickyClearZeroMoveClean,
+              "AC3: last clear reason is healthy/zero-move");
+    }
+    aura::ast::g_moving_untracked_hard_abort_pref.store(prev_hard, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+}
+
+static void ac3123_4_soft_force_unchanged() {
+    std::println("\n--- #3123 AC4: Soft/Force stay non-moving ---");
+    MovingFlagGuard3123 off(0);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16_3123>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16_3123>(5, 6, 7, 8);
+    void* a0 = p0;
+    void* a1 = p1;
+    const auto rs = arena.live_compact(aura::ast::LiveCompactMode::Soft);
+    CHECK(!rs.moved_live_objects, "AC4: Soft non-moving");
+    CHECK(rs.objects_moved == 0, "AC4: Soft objects_moved 0");
+    const auto rf = arena.live_compact(aura::ast::LiveCompactMode::Force);
+    CHECK(!rf.moved_live_objects, "AC4: Force non-moving");
+    CHECK(p0 == a0 && p1 == a1, "AC4: addresses stable");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("should_production_auto_arm_moving") != std::string::npos,
+          "AC4: auto-arm helper wired");
+    CHECK(arena_src.find("live_compact(LiveCompactMode::Moving)") != std::string::npos,
+          "AC4: auto path requests Moving");
+    CHECK(arena_src.find("Issue #3123") != std::string::npos, "AC4: arena cites #3123");
+}
+
+static void ac3123_5_agent_surface_and_linter() {
+    std::println("\n--- #3123 AC5: Agent surface + linter + no invent file ---");
+    mdh::reset_moving_densify_health_for_test();
+    mdh::note_production_auto_arm();
+    mdh::note_sticky_last_clear_reason(aura::ast::kStickyClearHealthyWindow);
+    auto s = mdh::snapshot();
+    CHECK(s.last_auto_arm_fired, "AC5: snapshot last_auto_arm_fired");
+    CHECK(s.production_auto_arm_total >= 1, "AC5: snapshot auto-arm total");
+    CHECK(s.sticky_last_clear_reason == aura::ast::kStickyClearHealthyWindow,
+          "AC5: snapshot clear reason");
+
+    CompilerService cs;
+    CHECK(href(cs, "production-auto-arm-wired") == 1, "AC5: query wired");
+    CHECK(href(cs, "schema-3123") == 3123, "AC5: schema-3123");
+    CHECK(href(cs, "issue-3123") == 3123, "AC5: issue-3123");
+    CHECK(href(cs, "production-auto-arm-total") >= 1, "AC5: query auto-arm total");
+    CHECK(href(cs, "last-auto-arm-fired") == 1, "AC5: query last-auto-arm-fired");
+    CHECK(href(cs, "sticky-last-clear-reason") == aura::ast::kStickyClearHealthyWindow,
+          "AC5: query sticky-last-clear-reason");
+    CHECK(href(cs, "schema-2619") == 2619, "AC5: legacy schema preserved");
+
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto hh = read_file("src/core/moving_densify_health.hh");
+    const auto t = read_file("tests/compiler/test_arena_moving_densify_health.cpp");
+    const auto build = read_file("build.py");
+    CHECK(q.find("production-auto-arm-total") != std::string::npos, "AC5: query key");
+    CHECK(q.find("sticky-last-clear-reason") != std::string::npos, "AC5: clear-reason key");
+    CHECK(hh.find("kProductionAutoArmMovingIssue = 3123") != std::string::npos,
+          "AC5: health stamp");
+    CHECK(t.find("ac3123_1_production_auto_arm_soft_never") != std::string::npos, "AC5: AC1 test");
+    CHECK(build.find("check_production_auto_arm_moving_3123") != std::string::npos,
+          "AC5: build.py linter");
+    CHECK(read_file("tests/compiler/test_issue_3123.cpp").empty(), "AC5: no test_issue_3123.cpp");
+    std::ifstream design("docs/design/3123-production-auto-arm.md");
+    if (!design)
+        design.open("../docs/design/3123-production-auto-arm.md");
+    CHECK(!design.good(), "AC5: no docs/design/3123-* per #1655");
+}
+
 } // namespace
 
 int run_test_arena_moving_densify_health() {
@@ -449,7 +674,12 @@ int run_test_arena_moving_densify_health() {
     ac2775_prep_publish_snapshot();
     ac2775_prep_default_arg_compat();
     ac2775_source_cite();
-    std::println("\n=== #2619/#2682/#2775: {} passed, {} failed ===", g_passed, g_failed);
+    ac3123_1_production_auto_arm_soft_never();
+    ac3123_2_untracked_fail_closed_sticky();
+    ac3123_3_sticky_clears_only_on_healthy();
+    ac3123_4_soft_force_unchanged();
+    ac3123_5_agent_surface_and_linter();
+    std::println("\n=== #2619/#2682/#2775/#3123: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

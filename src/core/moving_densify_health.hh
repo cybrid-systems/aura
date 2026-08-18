@@ -27,6 +27,8 @@ inline constexpr int kMovingDensifyHealthIssue = 2619;
 // Lineage: #2596 production hard, #2495 untracked incomplete-remap fail-closed.
 inline constexpr int kMovingUntrackedHardIssue = 2596;
 inline constexpr int kMovingDensifyFailClosedIssue = 2495;
+// Issue #3123: production auto-arm + sticky-clear reason on this surface.
+inline constexpr int kProductionAutoArmMovingIssue = 3123;
 
 // ── Last densify window (Soft / no densify → healthy defaults) ──
 inline std::atomic<std::uint64_t> g_last_objects_moved{0};
@@ -50,6 +52,32 @@ inline std::atomic<std::uint64_t> g_last_external_roots_prep_registered{0};
 inline std::atomic<std::uint8_t> g_agent_throttle_for_moving_densify{0};
 inline std::atomic<std::uint64_t> g_agent_throttle_moving_densify_set_total{0};
 inline std::atomic<std::uint64_t> g_agent_throttle_moving_densify_clear_total{0};
+
+// Issue #3123: production auto-arm + last sticky-clear reason (Agent).
+inline std::atomic<std::uint64_t> g_production_auto_arm_moving_total{0};
+inline std::atomic<std::uint8_t> g_last_auto_arm_fired{0};
+inline std::atomic<std::uint8_t> g_sticky_last_clear_reason{0};
+
+inline void note_production_auto_arm() noexcept {
+    g_production_auto_arm_moving_total.fetch_add(1, std::memory_order_relaxed);
+    g_last_auto_arm_fired.store(1, std::memory_order_relaxed);
+}
+
+inline void note_sticky_last_clear_reason(std::uint8_t reason) noexcept {
+    g_sticky_last_clear_reason.store(reason, std::memory_order_release);
+}
+
+[[nodiscard]] inline std::uint64_t production_auto_arm_moving_total() noexcept {
+    return g_production_auto_arm_moving_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool last_auto_arm_fired() noexcept {
+    return g_last_auto_arm_fired.load(std::memory_order_relaxed) != 0;
+}
+
+[[nodiscard]] inline std::uint8_t sticky_last_clear_reason() noexcept {
+    return g_sticky_last_clear_reason.load(std::memory_order_acquire);
+}
 
 // Force-reason codes for Agents (stable ints).
 inline constexpr std::int64_t kForceNone = 0;
@@ -79,6 +107,10 @@ struct MovingDensifyHealthSnapshot {
     bool would_allow_mutate = true;
     std::int64_t force_reason_code = kForceNone;
     bool agent_throttle = false;
+    // Issue #3123: auto-arm fired + last sticky-clear reason.
+    bool last_auto_arm_fired = false;
+    std::uint64_t production_auto_arm_total = 0;
+    std::uint8_t sticky_last_clear_reason = 0;
 };
 
 // Production-hard active when #2596 pref is hard (1). Soft/sandbox
@@ -212,6 +244,9 @@ inline void reset_moving_densify_health_for_test() noexcept {
     g_last_window_seq.store(0, std::memory_order_relaxed);
     g_agent_throttle_for_moving_densify.store(0, std::memory_order_relaxed);
     g_last_external_roots_prep_registered.store(0, std::memory_order_relaxed);
+    g_production_auto_arm_moving_total.store(0, std::memory_order_relaxed);
+    g_last_auto_arm_fired.store(0, std::memory_order_relaxed);
+    g_sticky_last_clear_reason.store(0, std::memory_order_relaxed);
 }
 
 // Pure snapshot for query / orch (no side effects).
@@ -250,6 +285,9 @@ snapshot(const ProcessTotals& totals = {}) noexcept {
                               : compute_force_reason(s.pin_contract_held, s.moving_incomplete_remap,
                                                      s.untracked_kept, s.root_remap_fail_total);
     s.agent_throttle = agent_throttle_for_moving_densify();
+    s.last_auto_arm_fired = last_auto_arm_fired();
+    s.production_auto_arm_total = production_auto_arm_moving_total();
+    s.sticky_last_clear_reason = g_sticky_last_clear_reason.load(std::memory_order_acquire);
     return s;
 }
 

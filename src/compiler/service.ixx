@@ -6880,7 +6880,7 @@ public:
         // fiber skips the lock for zero cost (AC2).
         const bool initial_armed = deferred_hybrid_armed_.load(std::memory_order_acquire) != 0;
         const bool need_lock =
-            initial_armed || aura::core::typed_audit::production_defaults_active();
+            initial_armed || aura::compiler::typed_audit::production_defaults_active();
         std::unique_lock<std::mutex> cascade_guard(cascade_decision_mtx_, std::defer_lock);
         if (need_lock)
             cascade_guard.lock();

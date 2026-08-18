@@ -41,7 +41,11 @@ def main() -> int:
     # AC1 — clean clear (per-arena + Phase-5)
     must("#2905", "AC1", arena)
     must("clear_moving_incomplete_remap_sticky_densify_off", "AC1", arena)
-    must("objects_moved > 0 && !result.moving_incomplete_remap", "AC1 clean", arena)
+    # Issue #3123: auto-clear moved after RootRemap + stale so incomplete
+    # windows cannot clear sticky. Healthy window (incl. zero-move clean)
+    # replaces the early objects_moved>0 && !incomplete site.
+    must("kStickyClearHealthyWindow", "AC1 clean", arena)
+    must("!result.moving_incomplete_remap && result.pin_contract_held", "AC1 healthy", arena)
     must("clear_moving_incomplete_remap_sticky_densify_off", "AC1 Phase-5", mb)
     must("moving_unified_success", "AC1 Phase-5", mb)
     must("#2905", "AC1 Phase-5", mb)

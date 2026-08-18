@@ -3619,6 +3619,18 @@ def cmd_lint():
             "Issue #3122 topology-restore structured linter failed — run python3 scripts/coverage/checks/check_topology_restore_structured_3122.py"
         )
         return r
+    # Issue #3123: production Moving densify auto-arm + sticky-clear.
+    # Extends test_arena_moving_densify_health; no test_issue_3123.cpp.
+    pam3123_script = COVERAGE_CHECKS / "check_production_auto_arm_moving_3123.py"
+    if not pam3123_script.exists():
+        fail(f"missing {pam3123_script}")
+        return 1
+    r = run([sys.executable, str(pam3123_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3123 production Moving auto-arm linter failed — run python3 scripts/coverage/checks/check_production_auto_arm_moving_3123.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
