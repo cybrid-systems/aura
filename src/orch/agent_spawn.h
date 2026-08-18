@@ -579,6 +579,20 @@ struct OrchModuleStats {
     // returned (observability for dashboard fan-out).
     std::atomic<std::uint64_t> agent_directory_total{0};
     std::atomic<std::uint64_t> agent_directory_entries_total{0};
+    // Issue #3125: cross-scope directory merge
+    // (orch:cross-scope-directory). Per-call aggregate across an
+    // explicit span<AgentScope* const> input (caller-supplied; not a
+    // global walk). Mirrors the #2751 per-scope surface but joins
+    // N sources into one snapshot. cross_scope_directory_total =
+    // prim invocations; cross_scope_directory_entries_total = sum of
+    // returned CrossScopeSnapshot::entries.size() across calls;
+    // cross_scope_directory_sources_total = sum of input span size
+    // across calls (so dashboards can chart fan-out independently of
+    // per-call size). NOT a process-global registry — caller passes
+    // the explicit scope list, same contract as #2751.
+    std::atomic<std::uint64_t> cross_scope_directory_total{0};
+    std::atomic<std::uint64_t> cross_scope_directory_entries_total{0};
+    std::atomic<std::uint64_t> cross_scope_directory_sources_total{0};
     // Issue #2231: agent-ask request/response channel metrics.
     // Bumped by the C++ helper agent_ask(...) and the Aura
     // primitive (orch:agent-ask name payload [:timeout-ms n]).

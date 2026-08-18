@@ -45,6 +45,7 @@
 #include "compiler/typed_mutation_audit.h" // #2946 production_defaults_active
 
 #include <atomic>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -57,6 +58,7 @@
 #include <span>
 #include <string>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -107,6 +109,17 @@ struct AgentScopeOptions {
     ScopeConcurrency concurrency = ScopeConcurrency::SingleOwner;
 };
 
+// Issue #3125: cross-scope directory merge surface. Caller passes an
+// explicit span<AgentScope* const> (not a process-global walk). Each
+// non-null source scope contributes its AgentDirectorySnapshot; the
+// merge applies a single CrossScopeFilter (alive_only / name_prefix /
+// source_scope_paths allow-list / dedup_by_name) and labels every entry
+// with the source's bp_scope_id() and a stable source_seq. Counters
+// mirrored into OrchModuleStats (cross_scope_directory_total /
+// entries_total / sources_total) so dashboards can chart fan-out.
+// No global registry — caller owns the source list.
+inline constexpr int kCrossScopeDirectoryIssue = 3125;
+
 // Issue #2751: one row in a session-scoped agent directory snapshot.
 // Best-effort at call time (not transactional with concurrent spawn).
 struct AgentDirectoryEntry {
@@ -129,6 +142,46 @@ struct AgentDirectorySnapshot {
     std::vector<AgentDirectoryEntry> entries;
     std::size_t scopes_visited = 0; // root + descendants walked
     int schema = kAgentDirectoryIssue;
+};
+
+// Issue #3125: one row in a cross-scope merged directory snapshot.
+// Augments AgentDirectoryEntry with source_path (the source scope's
+// bp_scope_id() — "as:7" etc., session-local, stable) and source_seq
+// (0..N-1 index into the input span, stable per call). scope_path
+// stays as the per-source relative path ("" / "root" / "0/1") so the
+// caller's #2751 path readers keep working after a merge.
+struct CrossScopeEntry {
+    std::string name;
+    std::uint64_t id = 0;
+    std::string status;           // "alive" | "done" | "cancelled" | "spawn-failed" | "unknown"
+    std::string scope_path;       // per-source relative scope_path
+    std::string source_path;      // bp_scope_id() of the source scope
+    std::uint64_t source_seq = 0; // input span index (0..N-1)
+    bool ok = false;
+};
+
+// Issue #3125: read-only filter for cross-scope directory merge.
+// source_scope_paths allow-list is matched against each source's
+// bp_scope_id() (string compare). empty = include all sources.
+// dedup_by_name drops later occurrences across sources (first wins).
+struct CrossScopeFilter {
+    bool alive_only = false;                     // drop done/cancelled/spawn-failed
+    std::string name_prefix;                     // empty = no name filter
+    std::vector<std::string> source_scope_paths; // empty = include all sources
+    bool dedup_by_name = true;                   // first wins on duplicate names
+};
+
+// Issue #3125: full snapshot returned by cross_scope_directory().
+// scopes_visited sums across all sources (root + descendants per source).
+// sources_count == input span size (== 0 means caller passed no sources).
+// entries_dropped counts entries filtered out by alive_only / name_prefix
+// / dedup — observability for dashboards without exposing filter internals.
+struct CrossScopeSnapshot {
+    std::vector<CrossScopeEntry> entries;
+    std::size_t scopes_visited = 0;
+    std::size_t sources_count = 0;
+    std::size_t entries_dropped = 0;
+    int schema = kCrossScopeDirectoryIssue;
 };
 
 // Issue #2399 / #2946: concurrent AgentScope enter policy.
@@ -1266,6 +1319,82 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
             break;
         }
     }
+    return out;
+}
+
+// Issue #3125: cross-scope directory merge. Walks an explicit span of
+// AgentScope* sources (caller-owned list — no global registry walk),
+// applies a single CrossScopeFilter, and returns one CrossScopeSnapshot.
+// Per source: 1) source_path = s->bp_scope_id() (session-local, stable),
+// 2) if filter.source_scope_paths non-empty, drop sources not in list,
+// 3) take directory_snapshot({}) (no per-scope filter — merge applies
+// after), 4) for each entry apply alive_only / name_prefix /
+// dedup_by_name, 5) stamp source_path + source_seq on survivors.
+// Bumps OrchModuleStats.cross_scope_directory_total / entries_total /
+// sources_total for dashboard adoption tracking. Not transactional —
+// best-effort at call time (matches AgentDirectorySnapshot #2751).
+// Threading: same single-owner model as #2751 directory_snapshot.
+// Each per-source directory_snapshot() takes its own ScopeEnterGuard
+// (#2777), so concurrent caller + ~AgentScope on the SAME source is
+// detected. Cross-source: caller must serialize access to all sources
+// (matches AgentScope's single-owner model per scope).
+[[nodiscard]] inline CrossScopeSnapshot cross_scope_directory(std::span<AgentScope* const> sources,
+                                                              CrossScopeFilter filter = {}) {
+    CrossScopeSnapshot out;
+    out.sources_count = sources.size();
+
+    auto source_allowed = [&](const std::string& source_path) {
+        if (filter.source_scope_paths.empty())
+            return true;
+        return std::find(filter.source_scope_paths.begin(), filter.source_scope_paths.end(),
+                         source_path) != filter.source_scope_paths.end();
+    };
+
+    std::unordered_set<std::string> seen_names;
+
+    for (std::size_t i = 0; i < sources.size(); ++i) {
+        AgentScope* s = sources[i];
+        if (s == nullptr)
+            continue; // null scope — silently skip (best-effort)
+        const std::string source_path(s->bp_scope_id());
+        if (!source_allowed(source_path))
+            continue; // whole source filtered out by allow-list
+
+        auto snap = s->directory_snapshot({}); // no per-scope filter
+        out.scopes_visited += snap.scopes_visited;
+
+        for (const auto& e : snap.entries) {
+            if (filter.alive_only && e.status != "alive") {
+                ++out.entries_dropped;
+                continue;
+            }
+            if (!filter.name_prefix.empty() &&
+                e.name.compare(0, filter.name_prefix.size(), filter.name_prefix) != 0) {
+                ++out.entries_dropped;
+                continue;
+            }
+            if (filter.dedup_by_name && !seen_names.insert(e.name).second) {
+                ++out.entries_dropped;
+                continue;
+            }
+            CrossScopeEntry ce;
+            ce.name = e.name;
+            ce.id = e.id;
+            ce.status = e.status;
+            ce.scope_path = e.scope_path;
+            ce.source_path = source_path;
+            ce.source_seq = i;
+            ce.ok = e.ok;
+            out.entries.push_back(std::move(ce));
+        }
+    }
+
+    // OrchModuleStats mirrors for query:orch-module-stats facade (#3125).
+    auto& os = g_orch_module_stats;
+    os.cross_scope_directory_total.fetch_add(1, std::memory_order_relaxed);
+    os.cross_scope_directory_entries_total.fetch_add(out.entries.size(), std::memory_order_relaxed);
+    os.cross_scope_directory_sources_total.fetch_add(sources.size(), std::memory_order_relaxed);
+
     return out;
 }
 

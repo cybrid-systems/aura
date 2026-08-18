@@ -1,0 +1,102 @@
+{
+  "issue": 3125,
+  "title": "Issue #3125: cross-scope directory merge — explicit span<AgentScope* const> caller-owned list (NOT a global registry).",
+  "ok": "OK: Issue #3125 cross-scope directory merge — all 6 AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_cross_scope_directory_3125.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "kCrossScopeDirectoryIssue = 3125",
+        "struct CrossScopeEntry",
+        "struct CrossScopeFilter",
+        "struct CrossScopeSnapshot",
+        "cross_scope_directory(std::span<AgentScope* const>",
+        "source_path",
+        "source_seq",
+        "dedup_by_name",
+        "bp_scope_id()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "cross_scope_directory_total",
+        "cross_scope_directory_entries_total",
+        "cross_scope_directory_sources_total",
+        "agent_directory_total",
+        "agent_directory_entries_total",
+        "Issue #3125"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "cross-scope-directory-total",
+        "cross-scope-directory-entries-total",
+        "cross-scope-directory-sources-total",
+        "schema-3125",
+        "issue-3125",
+        "cross-scope-directory-wired",
+        "kCrossScopeDirectoryIssue",
+        "Issue #3125"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/README.md",
+      "contains": [
+        "orch:cross-scope-directory",
+        "Issue #3125",
+        "cross-scope directory merge",
+        "CrossScopeFilter",
+        "CrossScopeEntry",
+        "CrossScopeSnapshot",
+        "cross_scope_directory",
+        "bp_scope_id()",
+        "dedup_by_name",
+        "no process-global registry"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_agent_scope.cpp",
+      "contains": [
+        "ac3125_cross_scope_directory",
+        "kCrossScopeDirectoryIssue = 3125",
+        "cross_scope_directory(std::span<AgentScope* const>",
+        "cross_scope_directory_sources_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_agent_name_table_isolation.cpp",
+      "contains": [
+        "ac3125_cross_scope_isolation",
+        "#3125",
+        "cross_scope_directory",
+        "agent_name_table.h does NOT reference cross_scope_directory"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_orch_scope.cpp",
+      "contains": [
+        "ac3125",
+        "kCrossScopeDirectoryIssue = 3125",
+        "cross-scope-directory-wired",
+        "schema-3125"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/",
+      "contains": [
+        "no tests/issues/test_issue_3125.cpp (per #81967 src/-aligned suite)"
+      ]
+    }
+  ]
+}

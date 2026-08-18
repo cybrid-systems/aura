@@ -585,6 +585,53 @@ int run_test_orch_scope() {
     }
 #endif
 
+    // ── #3125: cross-scope directory merge — facade keys wired ─────────
+    {
+        std::println("\n--- #3125: cross-scope directory merge + facade ---");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        const auto spawn_h = read_file("src/orch/agent_spawn.h");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto readme_src = read_file("src/orch/README.md");
+
+        CHECK(scope_h.find("kCrossScopeDirectoryIssue = 3125") != std::string::npos,
+              "#3125 source: agent_scope.h has kCrossScopeDirectoryIssue = 3125");
+        CHECK(scope_h.find("struct CrossScopeEntry") != std::string::npos,
+              "#3125 source: agent_scope.h has CrossScopeEntry");
+        CHECK(scope_h.find("cross_scope_directory(std::span<AgentScope* const>") !=
+                  std::string::npos,
+              "#3125 source: agent_scope.h has cross_scope_directory free fn");
+        CHECK(spawn_h.find("cross_scope_directory_total") != std::string::npos,
+              "#3125 source: agent_spawn.h has cross_scope_directory_total counter");
+        CHECK(spawn_h.find("cross_scope_directory_entries_total") != std::string::npos,
+              "#3125 source: agent_spawn.h has entries_total counter");
+        CHECK(spawn_h.find("cross_scope_directory_sources_total") != std::string::npos,
+              "#3125 source: agent_spawn.h has sources_total counter");
+        CHECK(prim_src.find("cross-scope-directory-total") != std::string::npos,
+              "#3125 facade: cross-scope-directory-total wired");
+        CHECK(prim_src.find("cross-scope-directory-entries-total") != std::string::npos,
+              "#3125 facade: cross-scope-directory-entries-total wired");
+        CHECK(prim_src.find("cross-scope-directory-sources-total") != std::string::npos,
+              "#3125 facade: cross-scope-directory-sources-total wired");
+        CHECK(prim_src.find("schema-3125") != std::string::npos, "#3125 facade: schema-3125 wired");
+        CHECK(prim_src.find("issue-3125") != std::string::npos, "#3125 facade: issue-3125 wired");
+        CHECK(prim_src.find("cross-scope-directory-wired") != std::string::npos,
+              "#3125 facade: cross-scope-directory-wired sentinel wired");
+        CHECK(readme_src.find("orch:cross-scope-directory") != std::string::npos,
+              "#3125 source: README documents orch:cross-scope-directory");
+        CHECK(readme_src.find("#3125") != std::string::npos,
+              "#3125 source: README references #3125");
+
+        // Confirm the facade keys are observable from the Aura runtime path.
+        reset_all();
+        CompilerService cs;
+        const auto stats_total = href(cs, "cross-scope-directory-total");
+        const auto stats_wired = href(cs, "cross-scope-directory-wired");
+        const auto stats_schema = href(cs, "schema-3125");
+        CHECK(stats_total >= 0, "#3125 facade: cross-scope-directory-total int");
+        CHECK(stats_wired == 1, "#3125 facade: cross-scope-directory-wired = 1");
+        CHECK(stats_schema == 3125, "#3125 facade: schema-3125 = 3125");
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -1101,6 +1101,148 @@ static void ac2976_6_mvp() {
           "AC6: mutex is per-scope only");
 }
 
+// ── Issue #3125: cross_scope_directory merge + filter + counters ────────
+static void ac3125_cross_scope_directory() {
+    std::println("\n--- #3125: cross_scope_directory merge + filters ---");
+
+    // ── AC1: source-cite — agent_scope.h / agent_spawn.h / prim / README
+    {
+        auto scope_h = read_file("src/orch/agent_scope.h");
+        auto spawn_h = read_file("src/orch/agent_spawn.h");
+        auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        auto readme = read_file("src/orch/README.md");
+        CHECK(scope_h.find("kCrossScopeDirectoryIssue = 3125") != std::string::npos,
+              "ac3125 source: agent_scope.h has kCrossScopeDirectoryIssue = 3125");
+        CHECK(scope_h.find("struct CrossScopeEntry") != std::string::npos,
+              "ac3125 source: agent_scope.h has CrossScopeEntry");
+        CHECK(scope_h.find("struct CrossScopeFilter") != std::string::npos,
+              "ac3125 source: agent_scope.h has CrossScopeFilter");
+        CHECK(scope_h.find("struct CrossScopeSnapshot") != std::string::npos,
+              "ac3125 source: agent_scope.h has CrossScopeSnapshot");
+        CHECK(scope_h.find("cross_scope_directory(std::span<AgentScope* const>") !=
+                  std::string::npos,
+              "ac3125 source: agent_scope.h has cross_scope_directory free fn");
+        CHECK(spawn_h.find("cross_scope_directory_total") != std::string::npos,
+              "ac3125 source: agent_spawn.h has cross_scope_directory_total counter");
+        CHECK(spawn_h.find("cross_scope_directory_entries_total") != std::string::npos,
+              "ac3125 source: agent_spawn.h has entries_total counter");
+        CHECK(spawn_h.find("cross_scope_directory_sources_total") != std::string::npos,
+              "ac3125 source: agent_spawn.h has sources_total counter");
+        CHECK(prim.find("cross-scope-directory-total") != std::string::npos,
+              "ac3125 source: prim wires cross-scope-directory-total");
+        CHECK(prim.find("schema-3125") != std::string::npos,
+              "ac3125 source: prim wires schema-3125");
+        CHECK(prim.find("cross-scope-directory-wired") != std::string::npos,
+              "ac3125 source: prim wires cross-scope-directory-wired");
+        CHECK(readme.find("orch:cross-scope-directory") != std::string::npos,
+              "ac3125 source: README documents orch:cross-scope-directory");
+        CHECK(readme.find("#3125") != std::string::npos, "ac3125 source: README references #3125");
+    }
+
+    // ── AC2: functional — 2 sibling scopes + cross-scope merge + counters
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope root(sched);
+        AgentScope peer(sched);
+        root.spawn({.name = "root-A", .body = [] {}});
+        root.spawn({.name = "root-B", .body = [] {}});
+        peer.spawn({.name = "peer-X", .body = [] {}});
+
+        auto& m = g_orch_module_stats;
+        const auto total_before = m.cross_scope_directory_total.load();
+        const auto entries_before = m.cross_scope_directory_entries_total.load();
+        const auto sources_before = m.cross_scope_directory_sources_total.load();
+
+        aura::orch::AgentScope* sources[] = {&root, &peer};
+        auto snap = aura::orch::cross_scope_directory(sources, {});
+
+        CHECK(snap.sources_count == 2, "AC2: sources_count = 2");
+        CHECK(snap.entries.size() == 3, "AC2: 3 entries merged (root-A + root-B + peer-X)");
+        CHECK(snap.entries_dropped == 0, "AC2: 0 dropped with default filter");
+        CHECK(snap.schema == aura::orch::kCrossScopeDirectoryIssue, "AC2: schema = 3125");
+
+        std::size_t root_count = 0, peer_count = 0;
+        for (const auto& e : snap.entries) {
+            CHECK(!e.source_path.empty(), "AC2: entry source_path non-empty");
+            if (e.source_seq == 0)
+                ++root_count;
+            if (e.source_seq == 1)
+                ++peer_count;
+        }
+        CHECK(root_count == 2, "AC2: 2 root entries (source_seq=0)");
+        CHECK(peer_count == 1, "AC2: 1 peer entry (source_seq=1)");
+
+        CHECK(m.cross_scope_directory_total.load() == total_before + 1, "AC2: total counter +1");
+        CHECK(m.cross_scope_directory_entries_total.load() == entries_before + 3,
+              "AC2: entries counter +3");
+        CHECK(m.cross_scope_directory_sources_total.load() == sources_before + 2,
+              "AC2: sources counter +2");
+    }
+
+    // ── AC3: filters — alive_only + name_prefix + dedup_by_name
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope root(sched);
+        AgentScope peer(sched);
+        root.spawn({.name = "worker-A", .body = [] {}});
+        root.spawn({.name = "worker-B", .body = [] {}});
+        root.spawn({.name = "supervisor-Z", .body = [] {}});
+        peer.spawn({.name = "worker-C", .body = [] {}});
+        peer.spawn({.name = "peer-X", .body = [] {}});
+        root.spawn({.name = "dup-name", .body = [] {}});
+        peer.spawn({.name = "dup-name", .body = [] {}});
+
+        aura::orch::AgentScope* sources[] = {&root, &peer};
+
+        // name_prefix="worker-" → 3 (worker-A + worker-B + worker-C)
+        aura::orch::CrossScopeFilter f1;
+        f1.name_prefix = "worker-";
+        auto s1 = aura::orch::cross_scope_directory(sources, f1);
+        CHECK(s1.entries.size() == 3, "AC3: name_prefix='worker-' → 3 entries");
+        CHECK(s1.entries_dropped == 4, "AC3: dropped supervisor-Z + peer-X + 2 dup-name");
+
+        // dedup_by_name=true → exactly 1 'dup-name' (first wins)
+        aura::orch::CrossScopeFilter f2;
+        f2.dedup_by_name = true;
+        auto s2 = aura::orch::cross_scope_directory(sources, f2);
+        std::size_t dup_dedup = 0;
+        for (const auto& e : s2.entries) {
+            if (e.name == "dup-name")
+                ++dup_dedup;
+        }
+        CHECK(dup_dedup == 1, "AC3: dedup_by_name=true → 1 'dup-name'");
+
+        // dedup_by_name=false → 2 'dup-name' (one per source)
+        aura::orch::CrossScopeFilter f3;
+        f3.dedup_by_name = false;
+        auto s3 = aura::orch::cross_scope_directory(sources, f3);
+        std::size_t dup_nodedup = 0;
+        for (const auto& e : s3.entries) {
+            if (e.name == "dup-name")
+                ++dup_nodedup;
+        }
+        CHECK(dup_nodedup == 2, "AC3: dedup_by_name=false → 2 'dup-name' entries");
+    }
+
+    // ── AC4: empty span + null source — best-effort no-crash
+    {
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        std::span<aura::orch::AgentScope* const> empty_span;
+        auto s = aura::orch::cross_scope_directory(empty_span, {});
+        CHECK(s.sources_count == 0, "AC4: empty span → sources_count = 0");
+        CHECK(s.entries.empty(), "AC4: empty span → entries.size() = 0");
+
+        AgentScope root(sched);
+        aura::orch::AgentScope* sources_with_null[] = {&root, nullptr};
+        auto s2 = aura::orch::cross_scope_directory(sources_with_null, {});
+        CHECK(s2.sources_count == 2, "AC4: null source counted (sources_count = 2)");
+        CHECK(s2.entries.empty(), "AC4: root has 0 spawned agents → empty entries");
+    }
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -1126,7 +1268,8 @@ int run_test_agent_scope() {
     ac2976_4_soft_unit_zero_lock();
     ac2976_5_source_linter();
     ac2976_6_mvp();
-    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976: passed={} failed={} ===",
+    ac3125_cross_scope_directory();
+    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125: passed={} failed={} ===",
                  g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

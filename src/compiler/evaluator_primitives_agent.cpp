@@ -5573,6 +5573,28 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2926", 2926);
             insert_kv("issue-2926", 2926);
             insert_kv("scope-resolve-wired", 1);
+            // Issue #3125: cross-scope directory merge (orch:cross-scope-directory).
+            // C++ helper: aura::orch::cross_scope_directory(span<AgentScope* const>,
+            // CrossScopeFilter) — caller passes an explicit source list
+            // (no global registry walk). Returns one CrossScopeSnapshot with
+            // entries stamped with source_path (bp_scope_id()) + source_seq.
+            // Counters mirror OrchModuleStats.cross_scope_directory_total /
+            // entries_total / sources_total for dashboard fan-out observability.
+            // Not a new Aura prim in this ship — Aura scripts that need
+            // cross-scope merge can either call multiple orch:agent-directory
+            // prims and merge at the Aura layer, or invoke the C++ helper.
+            insert_kv("cross-scope-directory-total",
+                      static_cast<std::int64_t>(
+                          os.cross_scope_directory_total.load(std::memory_order_relaxed)));
+            insert_kv("cross-scope-directory-entries-total",
+                      static_cast<std::int64_t>(
+                          os.cross_scope_directory_entries_total.load(std::memory_order_relaxed)));
+            insert_kv("cross-scope-directory-sources-total",
+                      static_cast<std::int64_t>(
+                          os.cross_scope_directory_sources_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3125", aura::orch::kCrossScopeDirectoryIssue);
+            insert_kv("issue-3125", aura::orch::kCrossScopeDirectoryIssue);
+            insert_kv("cross-scope-directory-wired", 1);
             // Issue #2153: secondary drain residual / wait after non-Ok cancel.
             insert_kv("join-drain-residual-total",
                       static_cast<std::int64_t>(
