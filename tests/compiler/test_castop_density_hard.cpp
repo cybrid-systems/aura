@@ -40,6 +40,16 @@ using aura::compiler::castop_density::hot_residual_soft_must_deopt_pending;
 using aura::compiler::castop_density::kCastOpHotResidualNonidentityIssue;
 using aura::compiler::castop_density::kCastOpHotResidualSoftMustDeoptIssue;
 using aura::compiler::castop_density::note_hot_residual_nonidentity_castops;
+using aura::compiler::castop_meta::castop_typed_meta_phase_c_deopt_total;
+using aura::compiler::castop_meta::castop_typed_meta_phase_c_lags;
+using aura::compiler::castop_meta::castop_typed_meta_phase_c_wired;
+using aura::compiler::castop_meta::clear_castop_typed_meta_for_test;
+using aura::compiler::castop_meta::kCastOpTypedMetaPhaseCIssue;
+using aura::compiler::castop_meta::lookup_castop_typed_meta;
+using aura::compiler::castop_meta::make_site_key;
+using aura::compiler::castop_meta::reset_castop_typed_meta_phase_c_for_test;
+using aura::compiler::castop_meta::set_castop_typed_meta_phase_c_wired_for_test;
+using aura::compiler::castop_meta::stamp_castop_typed_meta;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -406,6 +416,151 @@ static void ac3107_5_schema_and_linter() {
 
 } // namespace
 
+// ── Issue #3140 Phase C: JIT deopt on missing / aging typed-meta ────────
+// under Production only. Soft observe unchanged (AC2); Quiet epoch-match
+// zero-cost (AC3); additive counter only (AC4); source-cite castop_typed_meta.h
+// + castop_density_policy.hh (AC5).
+
+static void ac3140_1_production_missing_meta_deopt() {
+    std::println("\n--- #3140 AC1: Production + missing typed-meta → deopt ---");
+    clear_castop_typed_meta_for_test();
+    reset_castop_typed_meta_phase_c_for_test();
+    set_castop_typed_meta_phase_c_wired_for_test(true);
+    const auto before = castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed);
+    const bool fired = aura::compiler::castop_density::castop_typed_meta_phase_c_hot_entry_deopt(
+        /*site_key=*/0xDEADBEEFu, /*current_stamp=*/42, /*fn_name=*/"hot_fn_3140_miss",
+        /*production_override=*/1);
+    CHECK(fired, "3140 AC1: Production + missing meta → deopt fired");
+    CHECK(castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed) == before + 1,
+          "3140 AC1: counter bumps once on deopt");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("Issue #3140 Phase C") != std::string::npos,
+          "3140 AC1: policy cites #3140 Phase C");
+    CHECK(pol.find("castop_typed_meta_phase_c_hot_entry_deopt") != std::string::npos,
+          "3140 AC1: hot entry helper present");
+    CHECK(pol.find("aura_jit_batch_deopt_for(fn_name, current_stamp)") != std::string::npos,
+          "3140 AC1: aura_jit_batch_deopt_for wired as force-relower");
+    const auto meta = read_file("src/compiler/castop_typed_meta.h");
+    CHECK(meta.find("castop_typed_meta_phase_c_deopt_total") != std::string::npos,
+          "3140 AC1: counter in castop_typed_meta.h");
+    CHECK(meta.find("castop_typed_meta_phase_c_lags") != std::string::npos,
+          "3140 AC1: lag helper in castop_typed_meta.h");
+    CHECK(meta.find("epoch_or_mid") != std::string::npos, "3140 AC1: epoch_or_mid field");
+    CHECK(meta.find("kCastOpTypedMetaPhaseCIssue = 3140") != std::string::npos,
+          "3140 AC1: issue stamp");
+    const auto site = make_site_key(1, 2, 3);
+    stamp_castop_typed_meta(site, 11, 22, 33, 44); // no epoch
+    const auto m = lookup_castop_typed_meta(site);
+    CHECK(m.has_value(), "3140 AC1: legacy stamp overload still inserts");
+    CHECK(m->epoch_or_mid == 0, "3140 AC1: legacy stamp leaves epoch_or_mid=0");
+}
+
+static void ac3140_2_production_epoch_lag_deopt() {
+    std::println("\n--- #3140 AC2: Production + epoch lag → deopt ---");
+    clear_castop_typed_meta_for_test();
+    reset_castop_typed_meta_phase_c_for_test();
+    set_castop_typed_meta_phase_c_wired_for_test(true);
+    const auto site = make_site_key(7, 8, 9);
+    stamp_castop_typed_meta(site, 1, 2, 3, 4, /*epoch_or_mid=*/10);
+    const auto before = castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed);
+    const bool fired = aura::compiler::castop_density::castop_typed_meta_phase_c_hot_entry_deopt(
+        site, /*current_stamp=*/20, /*fn_name=*/"hot_fn_3140_lag", /*production_override=*/1);
+    CHECK(fired, "3140 AC2: Production + epoch_lag → deopt fired");
+    CHECK(castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed) == before + 1,
+          "3140 AC2: counter bumps on lag");
+    stamp_castop_typed_meta(site, 1, 2, 3, 4, /*epoch_or_mid=*/20);
+    const auto quiet_before = castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed);
+    const bool quiet_fired =
+        aura::compiler::castop_density::castop_typed_meta_phase_c_hot_entry_deopt(
+            site, /*current_stamp=*/20, /*fn_name=*/"hot_fn_3140_quiet",
+            /*production_override=*/1);
+    CHECK(!quiet_fired, "3140 AC2: epoch==current → no deopt (AC3 Quiet)");
+    CHECK(castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed) == quiet_before,
+          "3140 AC2: Quiet no counter bump");
+}
+
+static void ac3140_3_soft_path_zero_cost() {
+    std::println("\n--- #3140 AC3: Soft path unchanged ---");
+    clear_castop_typed_meta_for_test();
+    reset_castop_typed_meta_phase_c_for_test();
+    set_castop_typed_meta_phase_c_wired_for_test(true);
+    const auto before = castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed);
+    const auto fired = aura::compiler::castop_density::castop_typed_meta_phase_c_hot_entry_deopt(
+        /*site_key=*/0xCAFEBABEu, /*current_stamp=*/99, /*fn_name=*/"hot_fn_3140_soft",
+        /*production_override=*/0);
+    CHECK(!fired, "3140 AC3: Soft path → no deopt fired (AC2)");
+    CHECK(castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed) == before,
+          "3140 AC3: Soft path → zero counter bump");
+    const auto before_missing = aura::compiler::castop_meta::castop_typed_meta_missing_total.load(
+        std::memory_order_relaxed);
+    (void)lookup_castop_typed_meta(0xCAFEBABEu);
+    const auto after_missing = aura::compiler::castop_meta::castop_typed_meta_missing_total.load(
+        std::memory_order_relaxed);
+    CHECK(after_missing == before_missing + 1,
+          "3140 AC3: Soft missing_total++ still on lookup_castop_typed_meta");
+}
+
+static void ac3140_4_quiet_epoch_match_zero_extra() {
+    std::println("\n--- #3140 AC4: Quiet epoch-match → zero extra atomics ---");
+    clear_castop_typed_meta_for_test();
+    reset_castop_typed_meta_phase_c_for_test();
+    set_castop_typed_meta_phase_c_wired_for_test(true);
+    const auto site = make_site_key(2, 4, 6);
+    stamp_castop_typed_meta(site, 1, 2, 3, 4, /*epoch_or_mid=*/100);
+    const auto before_zero = castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed);
+    const bool fired_zero =
+        aura::compiler::castop_density::castop_typed_meta_phase_c_hot_entry_deopt(
+            site, /*current_stamp=*/0, /*fn_name=*/"hot_fn_3140_zero", /*production_override=*/1);
+    CHECK(!fired_zero, "3140 AC4: current_stamp==0 → Quiet (AC3)");
+    CHECK(castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed) == before_zero,
+          "3140 AC4: zero current_stamp → no counter bump");
+    set_castop_typed_meta_phase_c_wired_for_test(false);
+    const auto before_off = castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed);
+    const bool fired_off =
+        aura::compiler::castop_density::castop_typed_meta_phase_c_hot_entry_deopt(
+            site, /*current_stamp=*/200, /*fn_name=*/"hot_fn_3140_off", /*production_override=*/1);
+    CHECK(!fired_off, "3140 AC4: wired=0 → no deopt");
+    CHECK(castop_typed_meta_phase_c_deopt_total.load(std::memory_order_relaxed) == before_off,
+          "3140 AC4: wired=0 → no counter bump");
+    set_castop_typed_meta_phase_c_wired_for_test(true);
+    clear_castop_typed_meta_for_test();
+    reset_castop_typed_meta_phase_c_for_test();
+}
+
+static void ac3140_5_additive_counter_and_source_cite() {
+    std::println("\n--- #3140 AC5: additive counter + source-cite + linter ---");
+    CHECK(kCastOpTypedMetaPhaseCIssue == 3140, "3140 AC5: issue stamp constant");
+    CHECK(castop_typed_meta_phase_c_wired.load(std::memory_order_relaxed) == 1,
+          "3140 AC5: wired flag default 1");
+    const auto pol = read_file("src/compiler/castop_density_policy.hh");
+    CHECK(pol.find("Issue #3140 Phase C") != std::string::npos, "3140 AC5: policy cite");
+    CHECK(pol.find("castop_typed_meta_phase_c_deopt_total") != std::string::npos,
+          "3140 AC5: counter referenced in policy");
+    CHECK(pol.find("production_path_enabled") != std::string::npos,
+          "3140 AC5: gate uses production_path_enabled");
+    const auto meta = read_file("src/compiler/castop_typed_meta.h");
+    CHECK(meta.find("Issue #3140 Phase C") != std::string::npos, "3140 AC5: meta cite");
+    CHECK(meta.find("epoch_or_mid < current_stamp") != std::string::npos,
+          "3140 AC5: lag comparator present");
+    CHECK(meta.find("AC1: missing meta") != std::string::npos, "3140 AC5: missing → lag doc");
+    CHECK(meta.find("AC3 Quiet") != std::string::npos, "3140 AC5: Quiet doc");
+    const auto low = read_file("src/compiler/lowering_impl.cpp");
+    CHECK(low.find("last_type_linear_commit_proof_stamp_v_read") != std::string::npos,
+          "3140 AC5: lowering plumbs current stamp");
+    CHECK(low.find("Issue #3140 Phase C") != std::string::npos, "3140 AC5: lowering cite");
+    CHECK(read_file("scripts/coverage/checks/check_castop_typed_meta_phase_c_3140.py").size() > 0,
+          "3140 AC5: linter exists");
+    CHECK(read_file("build.py").find("check_castop_typed_meta_phase_c_3140.py") !=
+              std::string::npos,
+          "3140 AC5: build.py wires 3140 linter");
+    CHECK(read_file("scripts/coverage/manifests/3140.json").size() > 0,
+          "3140 AC5: manifest 3140.json exists");
+    CHECK(!std::filesystem::exists("docs/design/3140-castop-typed-meta-phase-c.md"),
+          "3140 AC5: no docs/design/3140-*.md");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3140.cpp"),
+          "3140 AC5: no tests/issues/test_issue_3140.cpp");
+}
+
 int run_test_castop_density_hard() {
     std::println("=== Issue #2358: CastOp density HARD force-JIT policy ===");
     ac5_query_and_source();
@@ -424,7 +579,13 @@ int run_test_castop_density_hard() {
     ac3107_3_quiet_zero_cost();
     ac3107_4_additive_counter_only();
     ac3107_5_schema_and_linter();
-    std::println("\n=== #2358/#3046/#3084/#3107: {} passed, {} failed ===", g_passed, g_failed);
+    ac3140_1_production_missing_meta_deopt();
+    ac3140_2_production_epoch_lag_deopt();
+    ac3140_3_soft_path_zero_cost();
+    ac3140_4_quiet_epoch_match_zero_extra();
+    ac3140_5_additive_counter_and_source_cite();
+    std::println("\n=== #2358/#3046/#3084/#3107/#3140: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

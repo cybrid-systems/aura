@@ -19,7 +19,8 @@
 #ifndef AURA_COMPILER_CASTOP_DENSITY_POLICY_HH
 #define AURA_COMPILER_CASTOP_DENSITY_POLICY_HH
 
-#include "aura_jit_bridge.h" // AotReloadFail
+#include "aura_jit_bridge.h"   // AotReloadFail
+#include "castop_typed_meta.h" // Issue #3140 Phase C: castop_typed_meta_phase_c_lags / _wired
 #include "hot_update_registry.hh"
 #include "mutate_type_gate.hh"
 #include "observability_metrics.h"
@@ -209,6 +210,30 @@ inline std::atomic<std::uint32_t> g_hot_residual_soft_relower_wired{1};
 
 [[nodiscard]] inline bool hot_residual_soft_must_deopt_pending() noexcept {
     return g_hot_residual_soft_must_deopt_pending.load(std::memory_order_acquire) != 0;
+}
+
+// Issue #3140 Phase C: per-site JIT hot entry gate. Production only —
+// Soft observe (missing_total++ via Soft path) stays untouched (AC2).
+// Returns true iff Phase C deopt / force-relower fired for this site.
+// Quiet (meta present + epoch >= current_stamp OR current_stamp == 0):
+// zero extra atomic RMW (no counter bump, no deopt branch, AC3/AC4).
+// CastOp sites without a Phase C-wired entry take the existing
+// #3046/#3084/#3107 residual path unchanged.
+inline bool castop_typed_meta_phase_c_hot_entry_deopt(std::uint64_t site_key,
+                                                      std::uint64_t current_stamp,
+                                                      const char* fn_name,
+                                                      int production_override = -1) noexcept {
+    if (!production_path_enabled(production_override))
+        return false; // AC2: Soft / unit → zero cost
+    if (castop_meta::castop_typed_meta_phase_c_wired.load(std::memory_order_relaxed) == 0)
+        return false;
+    if (!castop_meta::castop_typed_meta_phase_c_lags(site_key, current_stamp))
+        return false; // AC3 Quiet: meta present + epoch matches
+    // AC1: missing meta or epoch lag → bump + force-relower.
+    castop_meta::castop_typed_meta_phase_c_deopt_total.fetch_add(1, std::memory_order_relaxed);
+    if (fn_name && fn_name[0] != '\0')
+        (void)aura_jit_batch_deopt_for(fn_name, current_stamp);
+    return true;
 }
 
 inline std::size_t note_hot_residual_nonidentity_castops(std::size_t leftover,
