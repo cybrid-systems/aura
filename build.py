@@ -3567,6 +3567,19 @@ def cmd_lint():
             "Issue #3121 query stable restamp-lag structured linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_lag_3121.py"
         )
         return r
+    # Issue #3133: hold-budget synthetic YieldReason injection on
+    # non-yielding holders (close #3071/#3035 residual). Extends
+    # test_hold_budget_synthetic_yield_injection; no test_issue_3133.cpp.
+    hbs3133_script = COVERAGE_CHECKS / "check_hold_budget_synthetic_yield_3133.py"
+    if not hbs3133_script.exists():
+        fail(f"missing {hbs3133_script}")
+        return 1
+    r = run([sys.executable, str(hbs3133_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3133 hold-budget synthetic yield linter failed — run python3 scripts/coverage/checks/check_hold_budget_synthetic_yield_3133.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

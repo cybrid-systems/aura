@@ -813,6 +813,20 @@ public:
     [[nodiscard]] bool is_force_safepoint_requested() const noexcept {
         return force_safepoint_requested_.load(std::memory_order_acquire);
     }
+    // Issue #3133: synthetic YieldReason::MutationBoundary injection — pair
+    // force_safepoint_requested with last_yield_reason_ = MutationBoundary so
+    // the next cooperative edge (check_gc_safepoint / yield) consumes the
+    // hold-budget cancel AND the next resume sees the synthetic yield reason
+    // (visible to is_at_mutation_boundary_safe / metric sampling). Closes the
+    // #3071/#3035 residual window for non-yielding holders — body must still
+    // hit a cooperative edge for consume to fire (no preemption; AC1), but
+    // synthetic state is set-and-forget so any later edge completes the chain.
+    // Soft / sandbox=off contract: caller gates via
+    // mutation_hold_budget_reject_enabled() before invoking.
+    void inject_synthetic_mutation_boundary_yield() noexcept {
+        force_safepoint_requested_.store(true, std::memory_order_release);
+        last_yield_reason_.store(YieldReason::MutationBoundary, std::memory_order_release);
+    }
     // Process-wide metrics (#2533).
     [[nodiscard]] static std::uint64_t residual_force_safepoint_total() noexcept;
     [[nodiscard]] static std::uint64_t residual_cpu_budget_exceeded_total() noexcept;

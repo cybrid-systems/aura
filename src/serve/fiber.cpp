@@ -271,6 +271,21 @@ bool Fiber::consume_hold_budget_cancel() noexcept {
     return true;
 }
 
+// Issue #3133: synthetic YieldReason::MutationBoundary injection. Pair
+// force_safepoint_requested with last_yield_reason_ = MutationBoundary so
+// the next cooperative edge (check_gc_safepoint / yield) consumes the
+// hold-budget cancel AND the next resume sees the synthetic yield reason
+// (visible to is_at_mutation_boundary_safe / metric sampling). Closes the
+// #3071/#3035 residual window for non-yielding holders — body must still
+// hit a cooperative edge for consume to fire (no preemption; AC1), but
+// synthetic state is set-and-forget so any later edge completes the chain.
+// Soft / sandbox=off contract: caller gates via mutation_hold_budget_
+// reject_enabled() before invoking.
+void Fiber::inject_synthetic_mutation_boundary_yield() noexcept {
+    force_safepoint_requested_.store(true, std::memory_order_release);
+    last_yield_reason_.store(YieldReason::MutationBoundary, std::memory_order_release);
+}
+
 // Issue #2932: hold-budget forced fail-closed at cooperative edges
 // (strong def in evaluator_fiber_mutation.cpp; weak no-op in fiber_bridge).
 // Declared early so #3071 poll can escalate via the existing degrade ABI.
@@ -316,14 +331,25 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     if (fid == 0)
         return 0;
     // First exceed per arm: existing force-degrade (re-arms cancel +
-    // force-safepoint). Later polls only re-arm force-safepoint so
-    // holder-degrade totals stay one-shot per window.
+    // force-safepoint). Later polls re-arm force-safepoint AND inject
+    // synthetic YieldReason::MutationBoundary so the next cooperative
+    // edge (check_gc_safepoint / yield) fires the consume path AND the
+    // next resume sees the synthetic yield state (#3133 close of the
+    // #3071/#3035 residual for non-yielding holders). holder-degrade
+    // totals stay one-shot per window via the escalated flag.
     if (g_hold_budget_cancel_escalated.exchange(1, std::memory_order_acq_rel) == 0) {
         aura_evaluator_force_degrade_outermost_holder(fid);
     } else {
         std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
-        if (Fiber* f = find_fiber_by_id_locked_held(fid))
-            f->request_force_safepoint();
+        if (Fiber* f = find_fiber_by_id_locked_held(fid)) {
+            // Issue #3133: inject synthetic yield reason alongside the
+            // existing force_safepoint re-arm. The synthetic state
+            // travels with the holder; when it next hits a cooperative
+            // edge, check_gc_safepoint consumes force_safepoint_requested_
+            // AND aura_evaluator_try_hold_budget_fail_closed_at_safepoint
+            // runs the outermost Guard exit / Phase-5 consume.
+            f->inject_synthetic_mutation_boundary_yield();
+        }
     }
     return 1;
 }

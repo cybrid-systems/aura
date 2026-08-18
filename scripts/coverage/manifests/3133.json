@@ -1,0 +1,64 @@
+{
+  "issue": 3133,
+  "title": "Issue #3133: P0 \u2014 hold-budget cancel must force outermost fail-closed + cooperative yield for non-poll body (close #3071/#3035 residual)",
+  "ok": "OK: Issue #3133 hold-budget synthetic yield injection \u2014 Fiber::inject_synthetic_mutation_boundary_yield() sets force_safepoint_requested_ + last_yield_reason_ synthetically, poll caller replaces request_force_safepoint() with inject() on subsequent polls; Soft/sandbox=off gated via mutation_hold_budget_reject_enabled(); existing #3035 + #3071 counters reused; no new query key",
+  "source_script": "scripts/coverage/checks/check_hold_budget_synthetic_yield_3133.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.h",
+      "contains": [
+        "Issue #3133",
+        "inject_synthetic_mutation_boundary_yield()",
+        "force_safepoint_requested_.store(true",
+        "last_yield_reason_.store(YieldReason::MutationBoundary"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "void Fiber::inject_synthetic_mutation_boundary_yield()",
+        "force_safepoint_requested_.store(true",
+        "last_yield_reason_.store(YieldReason::MutationBoundary",
+        "aura_hold_budget_poll_inbody_window(void) noexcept",
+        "inject_synthetic_mutation_boundary_yield()",
+        "aura_evaluator_force_degrade_outermost_holder(fid)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/fiber.cpp",
+      "contains": [
+        "mutation_hold_budget_reject_enabled()",
+        "if (!mutation_hold_budget_reject_enabled())",
+        "return 0; // Soft / sandbox=off"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "aura_evaluator_force_degrade_outermost_holder",
+        "mark_outermost_mutation_failed",
+        "outermost"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/mutation_hold_budget.h",
+      "contains": [
+        "g_mutation_hold_budget_forced_fail_closed_total",
+        "g_mutation_hold_budget_inbody_window_exceeded_total"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_hold_budget_synthetic_yield_injection.cpp",
+      "contains": [
+        "Issue #3133",
+        "inject_synthetic_mutation_boundary_yield"
+      ]
+    }
+  ]
+}
