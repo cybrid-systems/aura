@@ -1520,44 +1520,72 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // change), so the rollback path is just "mark the
     // record as RolledBack + bump version" — no data
     // restoration needed.
-    add_mutate("mutate:record-patch", [&ev, safe_str](std::span<const EvalValue> a) -> EvalValue {
-        bool ok = true;
-        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
-        if (!guard_r) {
-            return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
-        }
-        auto guard = std::move(*guard_r);
-        // (Step 0.3 continuation) local merr removed; use centralized make_merr
-        aura::messaging::g_fiber_yield_mutation_boundary
-            ? aura::messaging::g_fiber_yield_mutation_boundary()
-            : (void)0; // safe point before mutation
-        if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2])) {
-            ok = false;
-            return ev.make_merr("bad-arg", "usage: (mutate:record-patch node-id op-name summary)");
-        }
-        auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        auto op_idx = as_string_idx(a[1]);
-        auto sum_idx = as_string_idx(a[2]);
-        if (op_idx >= ev.string_heap_.size() || sum_idx >= ev.string_heap_.size()) {
-            ok = false;
-            return ev.make_merr("bad-arg", "string index out of range");
-        }
-        if (!ev.workspace_flat_) {
-            ok = false;
-            return ev.make_merr("no-workspace", "no workspace AST loaded");
-        }
-        auto& flat = *ev.workspace_flat_;
-        if (node >= flat.size()) {
-            ok = false;
-            return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
-                                                    " >= flat size " + std::to_string(flat.size()));
-        }
+    //
+    // Issue #3131: scalar/metadata mutate must reject MacroIntroduced
+    // nodes under production defaults unless :allow-macro? #t (or
+    // global allow_macro_mutate_ flag). record-patch only logs a
+    // mutation entry, but recording an audit-log mutation against a
+    // MacroIntroduced node is itself a hygiene bypass — closes the
+    // residual default-deny gap that structural prims already enforce.
+    // Lockless / atomic-batch sub-ops that route through record-patch
+    // inherit the same guard via this site.
+    add_mutate(
+        "mutate:record-patch", [&ev, mev, safe_str](std::span<const EvalValue> a) -> EvalValue {
+            bool ok = true;
+            // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
+            auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
+            if (!guard_r) {
+                return ev.make_merr("resource-quota-exceeded", guard_r.error().message);
+            }
+            auto guard = std::move(*guard_r);
+            // (Step 0.3 continuation) local merr removed; use centralized make_merr
+            aura::messaging::g_fiber_yield_mutation_boundary
+                ? aura::messaging::g_fiber_yield_mutation_boundary()
+                : (void)0; // safe point before mutation
+            if (a.size() < 3 || !is_int(a[0]) || !is_string(a[1]) || !is_string(a[2])) {
+                ok = false;
+                return ev.make_merr("bad-arg",
+                                    "usage: (mutate:record-patch node-id op-name summary)");
+            }
+            auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            auto op_idx = as_string_idx(a[1]);
+            auto sum_idx = as_string_idx(a[2]);
+            if (op_idx >= ev.string_heap_.size() || sum_idx >= ev.string_heap_.size()) {
+                ok = false;
+                return ev.make_merr("bad-arg", "string index out of range");
+            }
+            if (!ev.workspace_flat_) {
+                ok = false;
+                return ev.make_merr("no-workspace", "no workspace AST loaded");
+            }
+            auto& flat = *ev.workspace_flat_;
+            if (node >= flat.size()) {
+                ok = false;
+                return ev.make_merr("out-of-range", "node ID " + std::to_string(node) +
+                                                        " >= flat size " +
+                                                        std::to_string(flat.size()));
+            }
+            // Issue #3131: hygiene gate (parity with replace-type / replace-value).
+            const bool allow_macro_rp =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            const bool was_macro_rp = flat.is_macro_introduced(node);
+            if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_rp,
+                                                           "record-patch", mev)) {
+                ok = false;
+                return *err;
+            }
 
-        auto mid = flat.add_mutation(node, ev.string_heap_[op_idx], "<runtime>", "<runtime>",
-                                     ev.string_heap_[sum_idx]);
-        return make_int(static_cast<std::int64_t>(mid));
-    });
+            auto mid = flat.add_mutation(node, ev.string_heap_[op_idx], "<runtime>", "<runtime>",
+                                         ev.string_heap_[sum_idx]);
+            // Issue #3131: allowed MacroIntroduced record-patch still
+            // propagates marker + dirty bit so audit / cache invalidation
+            // stays consistent with structural prims (parity with
+            // replace-type / replace-value restamp).
+            if (allow_macro_rp && was_macro_rp)
+                propagate_macro_introduced_marker(ev, flat, node,
+                                                  parse_no_auto_restamp_opt_out(ev, a));
+            return make_int(static_cast<std::int64_t>(mid));
+        });
     // (#110, #270) mutate:query-and-replace - composes (query:where :field value)
     // predicates with replacement. Query phase snapshots flat.size() and
     // captures StableNodeRef; apply phase uses is_valid_in() + parent-slot

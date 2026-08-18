@@ -1,0 +1,62 @@
+{
+  "issue": 3131,
+  "title": "Issue #3131: P0 residual — Close MacroIntroduced default-deny on scalar/metadata mutate prims (replace-value / replace-type / record-patch); structural covered, scalar residual",
+  "ok": "OK: Issue #3131 record-patch body rejects MacroIntroduced under production + replace-type/replace-value/tweak-literal guards preserved + no new metric keys + src/-aligned regression test",
+  "source_script": "scripts/coverage/checks/check_scalar_mutate_hygiene_3131.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3131",
+        "reject_structural_macro_hygiene(ev, flat, node, allow_macro_rp",
+        "was_macro_rp",
+        "parse_allow_macro_opt_out(ev, a)",
+        "propagate_macro_introduced_marker(ev, flat, node,",
+        "parse_no_auto_restamp_opt_out(ev, a)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "reject_structural_macro_hygiene(ev, flat, node, allow_macro_rt",
+        "reject_structural_macro_hygiene(ev, flat, node, allow_macro_rv",
+        "Issue #3115"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "hygiene_protected_error",
+        "Issue #373"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "mev(\"hygiene\",",
+        "mev(\"hygiene-protected\","
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "naked_macro_mutate_attempt",
+        "macro_hygiene_provenance_hits_total",
+        "last_hygiene_blame_node"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_scalar_mutate_record_patch_hygiene.cpp",
+      "contains": [
+        "Issue #3131",
+        "reject_structural_macro_hygiene"
+      ]
+    }
+  ]
+}
