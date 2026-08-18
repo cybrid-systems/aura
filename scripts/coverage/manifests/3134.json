@@ -1,0 +1,65 @@
+{
+  "issue": 3134,
+  "title": "Issue #3134: P0 \u2014 residual re-arm race / LifetimeProof reject must fail-closed under production multi-worker (chaos soak gate)",
+  "ok": "OK: Issue #3134 production-readiness residual-zero check \u2014 steal_safety_production_residual_zero_v_read() returns 1 iff production_defaults_active() is 0 (Soft) OR both named residual counters (#2901/#3038 + #2957) are 0; wired into schema-3073 + additive schema-3134 / issue-3134; hot path steal_safety_transaction unchanged (zero extra atomics; AC3)",
+  "source_script": "scripts/coverage/checks/check_steal_safety_production_residual_zero_3134.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "Issue #3134",
+        "steal_safety_production_residual_zero_v_read()",
+        "g_steal_safety_residual_rearm_race_total",
+        "g_steal_safety_residual_lifetime_proof_reject_total",
+        "aura_production_defaults_active_probe",
+        "kStealSafetyProductionResidualZeroIssue = 3134",
+        "g_steal_safety_production_residual_zero_wired"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_type_stats.cpp",
+      "contains": [
+        "steal_safety_production_residual_zero_v_read",
+        "production-readiness-steal-residual-zero",
+        "schema-3134",
+        "issue-3134",
+        "Issue #3134"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "aura_production_defaults_active_probe() == 0",
+        "return 1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/serve/steal_safety.cpp",
+      "contains": [
+        "StealSafetyDecision steal_safety_transaction(",
+        "evaluate_residual_hard_and_bits"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/serve/steal_safety.h",
+      "contains": [
+        "g_steal_safety_residual_rearm_race_total",
+        "g_steal_safety_residual_lifetime_proof_reject_total",
+        "g_steal_safety_last_reject_invariant_bits"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/serve/test_steal_safety_production_residual_zero.cpp",
+      "contains": [
+        "Issue #3134",
+        "steal_safety_production_residual_zero_v_read"
+      ]
+    }
+  ]
+}

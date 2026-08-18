@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 841 | Preferred destination suites |
-| **Total scanned** | **841** | |
+| `tests/core/test_*.cpp` | 842 | Preferred destination suites |
+| **Total scanned** | **842** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 248 | 248 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 101 | 101 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 54 | 54 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 84 | 84 | P2 — link-profile heavy; migrate AC smoke first |
@@ -939,6 +939,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/serve/test_steal_complete_strong_entry.cpp`
 - `tests/serve/test_steal_densify_linear_type_hard_and.cpp`
 - `tests/serve/test_steal_layout_stamp.cpp`
+- `tests/serve/test_steal_safety_production_residual_zero.cpp`
 - `tests/serve/test_steal_safety_ticket.cpp`
 - `tests/serve/test_steal_snapshot_hard_invariant.cpp`
 - `tests/serve/test_steal_snapshot_soft_production_lock.cpp`
@@ -1409,13 +1410,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (101)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (102)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (101)
+#### domain/ (102)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1506,6 +1507,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_steal_complete_strong_entry.cpp` (—) [domain_suite, theme_serve] — legacy residual-less path under production).
 - `tests/serve/test_steal_densify_linear_type_hard_and.cpp` (—) [large, domain_suite, theme_serve] — AC1: Inject residual OR linear force under Hard → Cancel+Done; fail +1
 - `tests/serve/test_steal_layout_stamp.cpp` (—) [domain_suite, theme_serve] — AC1: Steal with matching stamp → no mismatch bump
+- `tests/serve/test_steal_safety_production_residual_zero.cpp` (—) [domain_suite, theme_serve] — AC1: source cites #3131 in steal_safety.h + evaluator_primitives_query
 - `tests/serve/test_steal_safety_ticket.cpp` (—) [domain_suite, theme_serve] — AC1: snapshot carries ticket; resume mismatch → hard-fail
 - `tests/serve/test_steal_snapshot_hard_invariant.cpp` (—) [domain_suite, theme_serve] — (fail-closed canary). Soft: mismatch metric only. Hard: mark-failed.
 - `tests/serve/test_steal_snapshot_soft_production_lock.cpp` (—) [domain_suite, theme_serve] — + require force-deopt ABI under production Soft lock.

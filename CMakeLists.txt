@@ -2333,6 +2333,17 @@ aura_add_issue_test(test_hold_budget_synthetic_yield_injection)
 aura_issue_test_link_light(test_hold_budget_synthetic_yield_injection)
 add_dependencies(all_test_issue_targets test_hold_budget_synthetic_yield_injection)
 
+# Issue #3134: production-readiness residual-zero check fail-closed under
+# production multi-worker (chaos soak gate). steal_safety_production_
+# residual_zero_v_read() returns 1 iff production_defaults_active() is 0
+# (Soft) OR both named residual counters (#2901/#3038 + #2957) are 0.
+# Wired into schema-3073 production-readiness-soak-gate-wired + additive
+# schema-3134 / issue-3134. Hot path steal_safety_transaction unchanged.
+# No tests/issues/test_issue_3134.cpp (#81967).
+aura_add_issue_test(test_steal_safety_production_residual_zero)
+aura_issue_test_link_light(test_steal_safety_production_residual_zero)
+add_dependencies(all_test_issue_targets test_steal_safety_production_residual_zero)
+
 # Issue #3095: post-restore macro hygiene invariant enforcement
 # (refine #2959 / #3033 / #2099). After every successful
 # abort_restore_dual_topology / restore_metadata_columns on the

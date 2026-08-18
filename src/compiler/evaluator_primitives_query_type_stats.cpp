@@ -1577,13 +1577,32 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                             // gate (steal residual-zero + hold-after-
                             // cancel max). Additive wired sentinel;
                             // no new hot-path increment.
+                            // Issue #3134: production-readiness residual
+                            // zero AND'd into the gate value so the
+                            // chaos harness fails closed when the named
+                            // residual counters (g_steal_safety_residual
+                            // _rearm_race_total #2901/#3038 +
+                            // g_steal_safety_residual_lifetime_proof_
+                            // reject_total #2957) are non-zero under
+                            // production_defaults_active(). Soft /
+                            // sandbox=off / no-env passes through (1).
+                            // Hot path (steal_safety_transaction's quiet
+                            // Ok) is unchanged — the check is consulted
+                            // once per query, not per steal (zero extra
+                            // atomics on the Ok path; AC3).
                             insert_kv("production-readiness-soak-"
                                       "gate-wired",
                                       static_cast<std::int64_t>(
                                           g_chaos_production_readiness_gate_wired.load(
                                               std::memory_order_relaxed)));
+                            insert_kv("production-readiness-steal-"
+                                      "residual-zero",
+                                      static_cast<std::int64_t>(
+                                          steal_safety_production_residual_zero_v_read()));
                             insert_kv("schema-3073", 3073);
                             insert_kv("issue-3073", 3073);
+                            insert_kv("schema-3134", 3134);
+                            insert_kv("issue-3134", 3134);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail
