@@ -78,6 +78,45 @@ IMPL_REQUIRED: tuple[tuple[str, str], ...] = (
     ("src/compiler/evaluator_primitives_query_workspace.cpp", r"stamp_query_result_full_provenance"),
     ("src/compiler/evaluator_primitives_query_workspace.cpp", r"make_stamped_ref"),
     ("src/compiler/evaluator_primitives_query_workspace.cpp", r"stamp_query_stable_ref_export"),
+    # Issue #3137: schema-2 stamp wired into make_query_result_hash
+    # chokepoint under production_defaults_active gate. The stamp call
+    # + the 5 schema-2 hash keys + the schema-3137 lineage marker must
+    # all appear inside make_query_result_hash so every :as-query-result
+    # / :query-result #t finish path inherits the stamp.
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"qr\.push_match_full\(node_id, gen, 0, 0, 0, 0, 0, 0\)"),
+    (
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        r"stamp_query_result_full_provenance\(qr, ev, \*ws\.workspace_flat, scratch_ref\)",
+    ),
+    (
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        r"aura::compiler::typed_audit::production_defaults_active\(\)",
+    ),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"wrap-epoch\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"cow-epoch-at-capture\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"tenant-id\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"fiber-id\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"mutation-id-at-capture\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"schema-3137\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"query-result-wired-full\""),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"qr\.matches\[0\]\.has_full_provenance\(\)"),
+)
+
+WIRING_REQUIRED: tuple[tuple[str, str, str], ...] = (
+    # (path, regex, label) — each tuple is a substring/regex that must
+    # appear inside the `make_query_result_hash` lambda body. Enforced
+    # via a window-of-2000-chars check after the lambda definition.
+    (
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        r"stamp_query_result_full_provenance",
+        "stamp call inside make_query_result_hash",
+    ),
+    ("src/compiler/evaluator_primitives_query_workspace.cpp", r"insert_kv\(\"wrap-epoch\"", "wrap-epoch key"),
+    (
+        "src/compiler/evaluator_primitives_query_workspace.cpp",
+        r"insert_kv\(\"mutation-id-at-capture\"",
+        "mutation-id-at-capture key",
+    ),
 )
 
 
@@ -140,6 +179,63 @@ def _self_test() -> int:
         scratch_ref = ev.make_stamped_ref(qr.matches[i].node_id);
         ev.stamp_query_stable_ref_export(scratch_ref);
     }
+    // Issue #3137: make_query_result_hash chokepoint — schema-2 stamp
+    // under production_defaults_active. Soft / Quiet / no-matches / hash
+    // OOM → zero-cost (gate early-returns before the transient QueryResult
+    // build + push_match_full walk).
+    auto make_query_result_hash = [ws, &ev](const aura::core::QueryEpoch& epoch,
+                                            EvalValue matches, bool pinned) -> EvalValue {
+        if (aura::compiler::typed_audit::production_defaults_active() && ws.workspace_flat) {
+            aura::core::QueryResult qr;
+            qr.epoch = epoch;
+            bool pushed = false;
+            EvalValue cur = matches;
+            while (is_pair(cur) && cur.val != make_void().val) {
+                const auto outer = as_pair_idx(cur);
+                if (static_cast<std::size_t>(outer) >= ws.pairs.size()) break;
+                const auto car = ws.pairs[outer].car;
+                std::uint32_t node_id = 0;
+                std::uint16_t gen = 0;
+                bool got = false;
+                if (is_int(car)) {
+                    node_id = static_cast<std::uint32_t>(as_int(car));
+                    got = true;
+                } else if (is_pair(car)) {
+                    const auto inner = as_pair_idx(car);
+                    if (static_cast<std::size_t>(inner) < ws.pairs.size()) {
+                        if (is_int(ws.pairs[inner].car)) {
+                            node_id = static_cast<std::uint32_t>(as_int(ws.pairs[inner].car));
+                            got = true;
+                        }
+                        if (is_int(ws.pairs[inner].cdr))
+                            gen = static_cast<std::uint16_t>(as_int(ws.pairs[inner].cdr));
+                    }
+                }
+                if (got && node_id < ws.workspace_flat->size()) {
+                    qr.push_match_full(node_id, gen, 0, 0, 0, 0, 0, 0);
+                    pushed = true;
+                }
+                cur = ws.pairs[outer].cdr;
+            }
+            if (pushed && qr.matches[0].has_full_provenance()) {
+                aura::ast::FlatAST::StableNodeRef scratch_ref{};
+                stamp_query_result_full_provenance(qr, ev, *ws.workspace_flat, scratch_ref);
+                const auto& m = qr.matches[0];
+                insert_kv("wrap-epoch",
+                          make_int(static_cast<std::int64_t>(m.wrap_epoch)));
+                insert_kv("cow-epoch-at-capture",
+                          make_int(static_cast<std::int64_t>(m.cow_epoch_at_capture)));
+                insert_kv("tenant-id",
+                          make_int(static_cast<std::int64_t>(m.tenant_id)));
+                insert_kv("fiber-id",
+                          make_int(static_cast<std::int64_t>(m.fiber_id)));
+                insert_kv("mutation-id-at-capture",
+                          make_int(static_cast<std::int64_t>(m.mutation_id_at_capture)));
+                insert_kv("schema-3137", make_int(3137));
+                insert_kv("query-result-wired-full", make_int(1));
+            }
+        }
+    };
     """
     fixture_header_text = ""  # build inline by concatenating
     fixture_header_text += fixture_header
