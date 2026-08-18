@@ -10,6 +10,8 @@
 // Issue #3007: Production hot-fn residual identity CastOp sweep.
 // Issue #3065: post-DeadCoercion remirror of elim'd / residual CastOp
 //              nodes into the type∪IR dirty cone (production/Full).
+// Issue #3120: persist residual CastOp across type-txn wipe; remirror
+//              after non-empty production cone (Soft observe-only).
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -37,7 +39,13 @@ using aura::compiler::CompilerService;
 using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
 using aura::compiler::dirty::force_dead_coercion_elim_into_cone;
 using aura::compiler::dirty::kDeadCoercionElimConeIssue;
+using aura::compiler::dirty::kResidualCastopTypeTxnRemirrorIssue;
 using aura::compiler::dirty::last_type_cone_ast;
+using aura::compiler::dirty::mirror_type_affected_to_cascade;
+using aura::compiler::dirty::note_residual_castop_sites;
+using aura::compiler::dirty::remirror_persisted_residual_castops;
+using aura::compiler::dirty::reset_residual_castop_persist_for_test;
+using aura::compiler::dirty::residual_castop_persist_size;
 using aura::compiler::dirty::type_ir_union_cone_nonempty;
 using aura::compiler::dirty::type_ir_union_cone_size;
 using aura::compiler::opt_registry::count_identity_castops;
@@ -570,6 +578,138 @@ static void ac3065_4_residual_and_linter() {
           "3065 AC4: no test_issue_3065.cpp");
 }
 
+// ── Issue #3120: persist residual CastOp across type-txn wipe ──
+static void ac3120_1_type_txn_remirrors_skipped_castop() {
+    std::println("\n--- #3120 AC1: type-txn remirror previously cone-skipped CastOp ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kSkip = 202;
+    constexpr aura::compiler::dirty::NodeId kNew = 303;
+    IRFunction fn;
+    fn.name = "cone_skip_then_type";
+    fn.local_count = 4;
+    fn.entry_block = 0;
+    BasicBlock b0;
+    b0.id = 0;
+    b0.instructions = {
+        IRInstruction{IROpcode::ConstI64, {0, 42, 0, 0}, 0, 1},
+        IRInstruction{IROpcode::CastOp, {1, 0, 0, 0}, 0, 1},
+        IRInstruction{IROpcode::Return, {1, 0, 0, 0}, 0, 0},
+    };
+    BasicBlock b1;
+    b1.id = 1;
+    b1.instructions = {
+        IRInstruction{.opcode = IROpcode::ConstI64,
+                      .operands = {2, 7, 0, 0},
+                      .source_ast_node_id = 0,
+                      .type_id = 1},
+        IRInstruction{.opcode = IROpcode::CastOp,
+                      .operands = {3, 2, 1, 0},
+                      .source_ast_node_id = kSkip,
+                      .type_id = 2},
+        IRInstruction{IROpcode::Return, {3, 0, 0, 0}, 0, 0},
+    };
+    fn.blocks.push_back(std::move(b0));
+    fn.blocks.push_back(std::move(b1));
+
+    DeadCoercionPass dce;
+    dce.set_block_dirty_fn([](std::uint32_t bid) { return bid == 0; });
+    const auto skips0 = load_u64(dead_coercion_dirty_cone_skips);
+    dce.run(fn);
+    CHECK(load_u64(dead_coercion_dirty_cone_skips) > skips0, "3120 AC1: cone-skip counted");
+    CHECK(residual_castop_persist_size() >= 1, "3120 AC1: residual persist after sweep");
+    CHECK(cone_contains(kSkip), "3120 AC1: sweep remirror put skip site in last cone");
+
+    // Type txn wipe: post-infer cone is only the new affected site.
+    const aura::compiler::dirty::NodeId new_cone[] = {kNew};
+    CHECK(mirror_type_affected_to_cascade(new_cone) >= 1, "3120 AC1: type txn mirrors new cone");
+    CHECK(cone_contains(kNew), "3120 AC1: new type cone installed");
+    CHECK(!cone_contains(kSkip), "3120 AC1: wipe dropped previously remirrored skip site");
+
+    const auto force0 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
+    CHECK(remirror_persisted_residual_castops() >= 1, "3120 AC1: remirror re-unions skip site");
+    CHECK(cone_contains(kSkip), "3120 AC1: skip site back in type∪IR cone");
+    CHECK(cone_contains(kNew), "3120 AC1: new type cone retained");
+    CHECK(type_ir_union_cone_nonempty(), "3120 AC1: remutate cone nonempty");
+    CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) > force0,
+          "3120 AC1: reused #3065 force-total (no new query key)");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3120_2_soft_zero_cost() {
+    std::println("\n--- #3120 AC2: Soft persist / remirror no-ops ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kSoft = 404;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "3120 AC2: Soft does not persist");
+    const auto force0 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
+    const auto union0 = type_ir_union_cone_size();
+    CHECK(remirror_persisted_residual_castops() == 0, "3120 AC2: Soft remirror no-op");
+    CHECK(type_ir_union_cone_size() == union0, "3120 AC2: Soft union unchanged");
+    CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) == force0,
+          "3120 AC2: Soft force-total unchanged");
+    CHECK(remirror_persisted_residual_castops() == 0, "3120 AC2: empty persist remirror 0");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3120_3_no_new_query_keys() {
+    std::println("\n--- #3120 AC3: reuse residual / type_cone counters ---");
+    CHECK(kResidualCastopTypeTxnRemirrorIssue == 3120, "3120 AC3: issue constant");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto tch = read_file("src/compiler/type_checker.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(dirty.find("Issue #3120") != std::string::npos, "3120 AC3: dirty cites #3120");
+    CHECK(dirty.find("remirror_persisted_residual_castops") != std::string::npos,
+          "3120 AC3: remirror helper");
+    CHECK(dirty.find("note_residual_castop_sites") != std::string::npos, "3120 AC3: persist note");
+    CHECK(opt.find("note_residual_castop_sites") != std::string::npos, "3120 AC3: sweep persists");
+    CHECK(impl.find("remirror_persisted_residual_castops") != std::string::npos,
+          "3120 AC3: type txn remirror");
+    CHECK(tch.find("remirror_persisted_residual_castops") != std::string::npos,
+          "3120 AC3: dirty-txn comment");
+    CHECK(q.find("schema-3120") == std::string::npos, "3120 AC3: no new schema-3120");
+    CHECK(q.find("schema-3065") != std::string::npos, "3120 AC3: reuse schema-3065");
+    CHECK(dirty.find("force_dead_coercion_elim_into_cone") != std::string::npos,
+          "3120 AC3: remirror reuses #3065 force");
+}
+
+static void ac3120_4_linter_no_invent() {
+    std::println("\n--- #3120 AC4: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_residual_castop_type_txn_3120.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac3120_1_type_txn_remirrors_skipped_castop") != std::string::npos,
+          "3120 AC4: AC1");
+    CHECK(t.find("ac3120_2_soft_zero_cost") != std::string::npos, "3120 AC4: AC2");
+    CHECK(t.find("ac3120_3_no_new_query_keys") != std::string::npos, "3120 AC4: AC3");
+    CHECK(!lint.empty() && lint.find("Issue #3120") != std::string::npos, "3120 AC4: linter");
+    CHECK(build.find("check_residual_castop_type_txn_3120") != std::string::npos,
+          "3120 AC4: build.py gate");
+    CHECK(read_file("tests/compiler/test_issue_3120.cpp").empty(),
+          "3120 AC4: no test_issue_3120.cpp");
+    CHECK(read_file("docs/design/3120-residual-castop-type-txn.md").empty(),
+          "3120 AC4: no docs/design");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -588,7 +728,13 @@ int run_test_dead_coercion_dirty_cone() {
     ac3065_2_soft_no_permanent_bits();
     ac3065_3_schema_and_union_metrics();
     ac3065_4_residual_and_linter();
-    std::println("\n=== #2556/#3007/#3046/#3065: {} passed, {} failed ===", g_passed, g_failed);
+    ac3120_1_type_txn_remirrors_skipped_castop();
+    ac3120_2_soft_zero_cost();
+    ac3120_3_no_new_query_keys();
+    ac3120_4_linter_no_invent();
+    reset_residual_castop_persist_for_test();
+    std::println("\n=== #2556/#3007/#3046/#3065/#3120: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

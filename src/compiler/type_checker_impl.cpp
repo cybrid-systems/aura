@@ -8648,6 +8648,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
     //   1. invalidate_type_dep_for_nodes(dirty seeds)  — drop stale edges
     //   2. re-infer affected (engine re-records type_dep)  — loop below
     //   3. mirror_type_affected_to_cascade(post-infer cone) — AFTER phase 2
+    //   3b. remirror_persisted_residual_castops (#3120) after wipe
     // Empty affected already returned above (AC4: no invalidate / no mirror).
     // Pre-#2516 mirrored cascade before re-infer (stale cone risk); mirror
     // is now deferred to after re-infer (see phase-3 block below).
@@ -9167,6 +9168,12 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
                 cone.push_back(id);
         }
         const auto mirrored = dirty::mirror_type_affected_to_cascade(cone);
+        // Issue #3120: remirror persisted residual CastOp source AST /
+        // containing blocks after the type-txn wipe. Previously cone-skipped
+        // CastOps re-enter type∪IR (or force full). Soft persist is empty
+        // → remirror no-ops. Reuses #3065 force_* (no new query keys).
+        if (!cone.empty())
+            (void)dirty::remirror_persisted_residual_castops();
         if (metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(metrics_);
             m->type_dirty_txn_phase3_mirror_total.fetch_add(1, std::memory_order_relaxed);

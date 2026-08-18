@@ -2801,6 +2801,7 @@ export struct TypeChecker {
     //   1. invalidate_type_dep_for_nodes(dirty seeds)
     //   2. re-infer / re-record type dependencies
     //   3. mirror_type_affected_to_cascade(post-infer affected)
+    //   3b. remirror_persisted_residual_castops (#3120) after wipe
     // Empty dirty → no invalidate / no mirror cost. Prefer this name in
     // new call sites; existing infer_flat_partial callers already run
     // the same ordered txn (single production body).
