@@ -1,0 +1,69 @@
+{
+  "issue": 3130,
+  "title": "Issue #3130: P0 residual: IR/JIT Move/Drop fast-path can execute under commit_readiness=false or stale proof face (half-green).",
+  "ok": "OK: Issue #3130 linear_move_drop_elision_ok gates commit_readiness \u2014 all 6 AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_linear_move_drop_elision_3130.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "linear_move_drop_elision_ok",
+        "Issue #3130",
+        "if (!linear_ir_fastpath_try_skip())",
+        "commit_readiness(commit_readiness_live_policy())",
+        "g_linear_fast_path_elide_blocked_production_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/ir_executor_impl.cpp",
+      "contains": [
+        "aura::compiler::typed_audit::linear_move_drop_elision_ok()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "production_defaults_active()",
+        "get_strategy() == AuditStrategy::Full",
+        "cr.would_allow_commit",
+        "return false;"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_occurrence_goal_persist_rehydrate.cpp",
+      "contains": [
+        "ac3032_1_prod_miss_invalidates_fast_path",
+        "ac3032_2_soft_observe_only",
+        "ac3032_3_quiet_zero_cost",
+        "ac3032_4_success_bind",
+        "ac3032_5_schema",
+        "ac3032_6_source_and_linter",
+        "ac3063_1_prod_success_blocks_elide",
+        "ac3063_2_soft_zero_extra",
+        "ac3063_3_schema",
+        "ac3063_4_source_and_linter",
+        "ac3085_1_densify_miss_blocks_elision",
+        "ac3099_1_re_sample_in_try_skip",
+        "ac3099_2_no_new_query_key",
+        "ac3130_linear_move_drop_elision_gates_commit_readiness",
+        "Issue #3130"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "g_linear_fast_path_elide_blocked_production_total"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "src/compiler/observability_metrics.h",
+      "contains": []
+    }
+  ]
+}

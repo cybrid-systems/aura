@@ -1713,6 +1713,36 @@ enum class LinearFastPathExitAction : std::uint8_t {
     g_linear_ir_fastpath_skip_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
+
+// Issue #3130: single pure predicate for IR/JIT Move/Drop elision —
+// closes the half-green residual by also consulting the live
+// commit_readiness face. Wraps the existing linear_ir_fastpath_try_skip
+// (preserves its counter semantics for the linear face check + rehydrate
+// gen re-sample) and adds the readiness gate + production-only counter
+// bump on would_allow_commit=false. Soft: zero extra counter noise
+// (relaxed load only, no bump). Production/Full: never ship Move/Drop
+// under would_allow_commit=false. Call site replaces
+// `linear_ir_fastpath_try_skip()` (or wraps it) per issue #3130 AC1.
+// AI-Native Rationale: Agents must treat "commit_readiness=false =>
+// no linear elision" as an absolute invariant; the prior half-green
+// window broke the self-evo closed loop under concurrent densify/steal.
+[[nodiscard]] inline bool linear_move_drop_elision_ok() noexcept {
+    if (!linear_ir_fastpath_try_skip()) {
+        return false;
+    }
+    // Issue #3130: residual close — also consult the live
+    // commit_readiness face. Under production/Full + !would_allow_commit,
+    // never elide Move/Drop. Soft: zero extra counter noise.
+    const auto cr = commit_readiness(commit_readiness_live_policy());
+    if (!cr.would_allow_commit) {
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        }
+        return false;
+    }
+    return true;
+}
 inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
 // Issue #3030: abort / force-rollback must drop the last TypeLinearCommitProof
