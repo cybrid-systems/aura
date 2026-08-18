@@ -1,0 +1,41 @@
+{
+  "issue": 3121,
+  "title": "Issue #3121: production query:*-stable structured restamp-lag.",
+  "ok": "OK: Issue #3121 query:*-stable structured restamp-lag — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_query_stable_restamp_lag_3121.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/flatast_restamp.hh",
+      "contains": [
+        "Issue #3121",
+        "kQueryStableRestampLagStructuredIssue = 3121",
+        "budget-exceeded"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "budget-exceeded:",
+        "Issue #3121"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3121",
+        "mev(\"restamp-lag\""
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3121 AC1",
+        "error=restamp-lag"
+      ]
+    }
+  ]
+}

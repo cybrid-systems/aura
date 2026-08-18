@@ -1207,7 +1207,7 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
 }
 
-// Issue #3000 / #3037: production query:*-stable must not export a
+// Issue #3000 / #3037 / #3121: production query:*-stable must not export a
 // pre-mutate generation when the last outermost restamp hit
 // AURA_RESTAMP_BUDGET_NODES. Soft / sandbox=off: observe only (stamp
 // proceeds). Quiet path: last-exceeded false → one relaxed load,

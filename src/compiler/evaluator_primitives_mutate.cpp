@@ -2768,15 +2768,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         });
 
     // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
-    add("query:as-stable-ref", [&ev, safe_str](const auto& a) -> EvalValue {
+    add("query:as-stable-ref", [&ev, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
             return make_void();
         const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        // Issue #3058: over-budget torn must not silently stamp a
+        // Issue #3058 / #3121: over-budget torn must not silently stamp a
         // pre-restamp gen (same gate as query:stable-ref). Soft
-        // observe-only (allow returns true). Empty = torn visible.
+        // observe-only (allow returns true). Production: structured
+        // restamp-lag + budget-exceeded (never silent void).
         if (!ev.allow_query_stable_ref_export(id))
-            return make_void();
+            return mev("restamp-lag",
+                       "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
+                       "generation torn for export (Issue #3121 / #3058)");
         // Issue #2224: route Agent-facing ref through export_ref so
         // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
         // required_effects; primary outbound surface for ast: / query: /
