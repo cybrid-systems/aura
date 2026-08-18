@@ -172,7 +172,7 @@ static bool enforce_linear_ownership_state(std::uint8_t state, LinearOpKind op,
     // Issue #3063: steal/densify restamp advances invalidate_gen first so
     // this try_skip cannot stay true across a concurrent success restamp.
     if ((op == LinearOpKind::Move || op == LinearOpKind::Drop) &&
-        aura::compiler::typed_audit::linear_ir_fastpath_try_skip()) {
+        aura::compiler::typed_audit::linear_move_drop_elision_ok()) {
         return true;
     }
     using aura::core::provenance::linear_enforce_require_complete;

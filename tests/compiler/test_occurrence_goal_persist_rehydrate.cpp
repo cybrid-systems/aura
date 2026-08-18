@@ -1493,6 +1493,90 @@ static void ac3099_2_no_new_query_key() {
           "3099 AC5: #3030 comment / cite still present (Abort authoritative)");
 }
 
+// ── Issue #3130: residual close — single pure predicate for IR/JIT
+// Move/Drop elision that ALSO consults the live commit_readiness face.
+// Closes the half-green window where linear_ir_fastpath_try_skip could
+// return true after commit_readiness.would_allow_commit dropped to false
+// (abort / densify-steal / force-rollback). Production/Full: never
+// elide Move/Drop under would_allow_commit=false; Soft: zero extra
+// counter noise (relaxed load only, no bump).
+static void ac3130_linear_move_drop_elision_gates_commit_readiness() {
+    std::println("\n--- #3130: linear_move_drop_elision_ok gates commit_readiness ---");
+
+    // AC1: source-cite — new predicate in typed_mutation_audit.h.
+    {
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("linear_move_drop_elision_ok") != std::string::npos,
+              "ac3130 AC1: new predicate defined in typed_mutation_audit.h");
+        CHECK(tma.find("Issue #3130") != std::string::npos, "ac3130 AC1: tma cites Issue #3130");
+        // Wraps the existing linear_ir_fastpath_try_skip (preserves its
+        // counter semantics for the linear face check + rehydrate gen
+        // re-sample) and adds the readiness gate + production-only counter
+        // bump on would_allow_commit=false.
+        CHECK(tma.find("if (!linear_ir_fastpath_try_skip())") != std::string::npos,
+              "ac3130 AC1: wraps linear_ir_fastpath_try_skip (preserves counters)");
+        CHECK(tma.find("commit_readiness(commit_readiness_live_policy())") != std::string::npos,
+              "ac3130 AC1: consults live commit_readiness face");
+        CHECK(tma.find("g_linear_fast_path_elide_blocked_production_total") != std::string::npos,
+              "ac3130 AC1: reuses existing production counter (no new metric key)");
+    }
+
+    // AC2: source-cite — call site in ir_executor_impl.cpp uses new predicate.
+    {
+        const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+        CHECK(ir.find("aura::compiler::typed_audit::linear_move_drop_elision_ok()") !=
+                  std::string::npos,
+              "ac3130 AC2: IR Move/Drop call site uses linear_move_drop_elision_ok");
+    }
+
+    // AC3: source-cite — production counter is gated on would_allow_commit=false
+    // + production_defaults_active (or AuditStrategy::Full). Soft: zero extra
+    // counter noise (no bump on the relaxed load).
+    {
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        const auto pred_pos = tma.find("linear_move_drop_elision_ok()");
+        const auto pred_end = tma.find("\n}\n", pred_pos);
+        const std::string pred_block =
+            pred_pos != std::string::npos && pred_end != std::string::npos
+                ? tma.substr(pred_pos, pred_end - pred_pos)
+                : std::string{};
+        CHECK(pred_block.find("production_defaults_active()") != std::string::npos,
+              "ac3130 AC3: counter bump gated on production_defaults_active");
+        CHECK(pred_block.find("get_strategy() == AuditStrategy::Full") != std::string::npos,
+              "ac3130 AC3: counter bump gated on AuditStrategy::Full");
+        CHECK(pred_block.find("cr.would_allow_commit") != std::string::npos,
+              "ac3130 AC3: gate checks cr.would_allow_commit");
+    }
+
+    // AC4: existing sibling ACs preserved (#3030 / #3032 / #3063 / #3085 / #3099).
+    {
+        const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+        CHECK(t.find("ac3032_1_prod_miss_invalidates_fast_path") != std::string::npos,
+              "ac3130 AC4: sibling #3032 AC1 preserved");
+        CHECK(t.find("ac3063_1_prod_success_blocks_elide") != std::string::npos,
+              "ac3130 AC4: sibling #3063 AC1 preserved");
+        CHECK(t.find("ac3085_1_densify_miss_blocks_elision") != std::string::npos,
+              "ac3130 AC4: sibling #3085 AC1 preserved");
+        CHECK(t.find("ac3099_1_re_sample_in_try_skip") != std::string::npos,
+              "ac3130 AC4: sibling #3099 AC1 preserved");
+    }
+
+    // AC5: counter reuse (no new query key middle insertion).
+    {
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        // Existing counter — no new metric key.
+        CHECK(tma.find("g_linear_fast_path_elide_blocked_production_total") != std::string::npos,
+              "ac3130 AC5: existing production counter reused (no new query key)");
+    }
+
+    // AC6: no new tests/issues/test_issue_3130.cpp (per #81967).
+    {
+        const auto issue_test = read_file("tests/issues/test_issue_3130.cpp");
+        CHECK(issue_test.empty(),
+              "ac3130 AC6: no new tests/issues/test_issue_3130.cpp (must NOT — src-aligned only)");
+    }
+}
+
 // ── Issue #3085: densify/steal miss blocks lowering elision via gen ──
 // AC1 miss advances gen; lowering block sees it before next lower
 // AC2 linear_fast_path_ok false until green rebind
@@ -1874,6 +1958,9 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3085_5_schema_and_linter();
     ac3099_1_re_sample_in_try_skip();
     ac3099_2_no_new_query_key();
+    // Issue #3130: IR Move/Drop fast-path also consults live
+    // commit_readiness face (closes the half-green residual).
+    ac3130_linear_move_drop_elision_gates_commit_readiness();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
