@@ -216,6 +216,17 @@ int main() {
               "#3020 AC3: playbook-reject-cross-ws sentinel");
         CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")", "overflow") == -1,
               "#3020 AC3: playbook no overflow under default cap");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "schema-3114") ==
+                  3114,
+              "#3114 AC1: evolution-audit-decision schema-3114");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                       "evolution-audit-decision-wired") == 1,
+              "#3114 AC1: wired");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "observe-only") ==
+                  1,
+              "#3114 AC5: observe-only");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "overflow") == -1,
+              "#3114 AC4: no overflow under default cap");
         CHECK(aura_query_hash_overflow_total() == soak0,
               "#3020 AC5: soak — no query_hash_overflow_total bump under default catalog");
 
@@ -225,8 +236,11 @@ int main() {
         CHECK(forced && is_hash(*forced), "#3020 AC2: forced-full posture still returns hash");
         CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") == 1,
               "#3020 AC2: overflow=1 visible when capacity is artificially low");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "overflow") == 1,
+              "#3114 AC4: under-count planned → overflow=1");
         CHECK(aura_query_hash_overflow_total() > overflow0,
               "#3020 AC2: query_hash_overflow_total bumped");
+        aura_query_hash_set_force_cap(0);
         aura_query_hash_reset_overflow_for_test();
 
         const auto ev_src = []() -> std::string {

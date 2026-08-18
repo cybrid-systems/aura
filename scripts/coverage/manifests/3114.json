@@ -1,0 +1,67 @@
+{
+  "issue": 3114,
+  "title": "Issue #3114: query:evolution-audit-decision observe-only mid+reason+playbook+health fold.",
+  "ok": "OK: Issue #3114 evolution-audit-decision — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_evolution_audit_decision_3114.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "query:evolution-audit-decision",
+        "schema-3114",
+        "observe-only",
+        "Issue #3114"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_observability.cpp",
+      "contains": [
+        "query:evolution-audit-decision"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "last-audit-mid",
+        "proof-audit-mid",
+        "typed-trail-miss",
+        "typed-outcome",
+        "playbook-action",
+        "commit-would-allow",
+        "densify-ok",
+        "posture-degraded"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "no should_audit, no WAL scan, no mutate"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "query_hash_capacity_for",
+        "query_hash_finish",
+        "kEvolutionAuditDecisionPlannedKeys"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_security_audit_unify.cpp",
+      "contains": [
+        "3114 AC1",
+        "3114 AC2",
+        "3114 AC3",
+        "3114 AC4",
+        "3114 AC5",
+        "3114 AC6"
+      ]
+    }
+  ]
+}

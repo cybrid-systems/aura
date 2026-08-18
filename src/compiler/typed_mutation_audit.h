@@ -60,6 +60,10 @@ inline constexpr int kProductionSecurityDefaultsIssue = 2053;
 // after wrap; typed details are window-only.
 inline constexpr std::size_t kTypedMutationAuditTrailSize = 256;
 inline constexpr int kTypedTrailWrapMissIssue = 3113;
+// Issue #3114: query:evolution-audit-decision — observe-only fold of
+// last mid + SE + typed outcome + commit readiness + playbook + densify
+// + posture. Not an auto-executor (playbook stays observe-only).
+inline constexpr int kEvolutionAuditDecisionIssue = 3114;
 // Force audit when dirty scope is large (Sampled strategy still hits).
 inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
 // Issue #2053: under production defaults, force critical kinds even if Sampled.

@@ -27,6 +27,7 @@ module;
 #include "compiler/audit_mid_fallback_slo.h" // #2594: g_audit_mid_fallback_slo_counters (query:audit-mid-fallback-slo)
 #include "core/wal_append_fail_slo.h" // #3056: wal-append-fail-breach posture arm
 #include "orch/security_schedule_gate.h" // #2590: g_orch_security_schedule_counters (query:security-schedule-gate)
+#include "core/moving_densify_health.hh" // #3114 densify-ok fold
 
 module aura.compiler.evaluator;
 
@@ -5305,6 +5306,149 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
+        });
+
+    // Issue #3114: query:evolution-audit-decision — observe-only fold of
+    // last mid + SE reason + typed outcome + commit readiness + playbook +
+    // densify + posture. Decision observation, not an auto-executor
+    // (playbook stays observe-only; no reemit / drain / reload).
+    // Pure loads only: no should_audit, no WAL scan, no mutate.
+    // Optional mid arg filters SE + typed join (AC6, does not block AC1–5).
+    ObservabilityPrims::register_stats_impl(
+        "query:evolution-audit-decision", [&ev](const auto& args) -> EvalValue {
+            using aura::compiler::typed_audit::AuditOutcome;
+            using aura::compiler::typed_audit::commit_readiness;
+            using aura::compiler::typed_audit::commit_readiness_live_policy;
+            using aura::compiler::typed_audit::g_last_stamped_audit_mid;
+            using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
+            using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
+            using aura::compiler::typed_audit::get_strategy;
+            using aura::compiler::typed_audit::kEvolutionAuditDecisionIssue;
+            using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+            using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
+            using aura::compiler::typed_audit::production_defaults_active;
+            using aura::compiler::typed_audit::trail_find_by_mutation_id;
+            using aura::compiler::typed_audit::trail_seq;
+            using aura::compiler::typed_audit::TypedMutationAuditEvent;
+            using aura::core::security_event::g_security_event_ring;
+            using aura::core::security_event::kSecurityEventRingSize;
+
+            // 26 live keys; planned 32 → query_hash_capacity_for ≥64.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 32;
+            auto* ht =
+                FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
+            if (!ht)
+                return make_void();
+            bool overflowed = false;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
+                    overflowed = true;
+            };
+
+            const std::uint64_t last_stamped =
+                g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+            const std::uint64_t proof_mid =
+                g_tls_boundary_audit_noted ? g_tls_boundary_audit_mid : last_stamped;
+            const bool filt_mid = !args.empty() && is_int(args[0]) && as_int(args[0]) != 0;
+            const std::uint64_t want_mid =
+                filt_mid ? static_cast<std::uint64_t>(as_int(args[0])) : last_stamped;
+            const std::uint64_t join_mid = want_mid;
+
+            std::int64_t last_se_denied = 0;
+            std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
+            {
+                const auto& ring = g_security_event_ring();
+                const auto head = ring.seq.load(std::memory_order_relaxed);
+                for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
+                    if (head <= i)
+                        break;
+                    const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
+                    if (filt_mid && e.mutation_id != join_mid)
+                        continue;
+                    last_se_denied = e.denied ? 1 : 0;
+                    last_se_reason_code = static_cast<std::int64_t>(e.kind) + 1;
+                    break;
+                }
+            }
+
+            TypedMutationAuditEvent te{};
+            const bool typed_hit = join_mid != 0 && trail_find_by_mutation_id(join_mid, te);
+            const int typed_miss = (join_mid != 0 && !typed_hit) ? 1 : 0;
+            // 0=unknown (miss / no mid) 1=Success 2=Rollback 3=Error
+            std::int64_t typed_outcome = 0;
+            if (typed_hit) {
+                switch (te.outcome) {
+                    case AuditOutcome::Success:
+                        typed_outcome = 1;
+                        break;
+                    case AuditOutcome::Rollback:
+                        typed_outcome = 2;
+                        break;
+                    case AuditOutcome::Error:
+                        typed_outcome = 3;
+                        break;
+                }
+            }
+
+            const auto cr = commit_readiness(commit_readiness_live_policy());
+
+            ReloadRecoveryPlaybookResult pb{};
+            aura_hot_update_reload_recovery_playbook_get(&pb);
+
+            const auto densify = ::aura::core::moving_densify_health::snapshot();
+
+            bool posture_degraded = false;
+            {
+                using ::aura::core::audit_wal::g_mutation_audit_wal;
+                using ::aura::core::audit_wal::snapshot_audit_wal_stats;
+                using ::aura::core::security_event_wal::g_security_event_wal;
+                using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
+                using ::aura::core::wal_slo::evaluate_wal_append_fail_slo;
+                using ::aura::core::wal_slo::make_wal_append_fail_slo_input;
+                const auto mut = snapshot_audit_wal_stats();
+                const auto se = snapshot_security_event_wal_stats();
+                const bool prod = production_defaults_active();
+                const char* sb = std::getenv("AURA_SANDBOX");
+                const bool sandbox_off = sb && sb[0] && (sb[0] == 'o' || sb[0] == 'O') &&
+                                         (sb[1] == 'f' || sb[1] == 'F' || sb[1] == '\0');
+                const auto d = evaluate_wal_append_fail_slo(make_wal_append_fail_slo_input(
+                    mut.append_fail, se.append_fail, mut.persisted, se.persisted,
+                    g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled(),
+                    prod, !prod || sandbox_off));
+                const auto tseq = trail_seq();
+                const auto se_total = g_security_event_ring().total.load(std::memory_order_relaxed);
+                const bool wrap_risk = tseq > kTypedMutationAuditTrailSize && se_total > 0;
+                posture_degraded = d.would_arm_degraded || wrap_risk;
+            }
+
+            insert_kv("last-audit-mid", static_cast<std::int64_t>(join_mid));
+            insert_kv("proof-audit-mid",
+                      static_cast<std::int64_t>(filt_mid && proof_mid != join_mid ? 0 : proof_mid));
+            insert_kv("last-se-reason-code", last_se_reason_code);
+            insert_kv("last-se-denied", last_se_denied);
+            insert_kv("typed-outcome", typed_outcome);
+            insert_kv("typed-trail-miss", typed_miss);
+            insert_kv("commit-would-allow", cr.would_allow_commit ? 1 : 0);
+            insert_kv("commit-force-reason-code", cr.force_reason_code);
+            insert_kv("playbook-action", static_cast<std::int64_t>(pb.action));
+            insert_kv("playbook-wired", pb.playbook_wired);
+            insert_kv("densify-ok", densify.would_allow_mutate ? 1 : 0);
+            insert_kv("posture-degraded", posture_degraded ? 1 : 0);
+            insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
+            insert_kv("audit-strategy", static_cast<std::int64_t>(get_strategy()));
+            insert_kv("schema", kEvolutionAuditDecisionIssue);
+            insert_kv("issue", kEvolutionAuditDecisionIssue);
+            insert_kv("schema-3114", kEvolutionAuditDecisionIssue);
+            insert_kv("issue-3114", kEvolutionAuditDecisionIssue);
+            insert_kv("evolution-audit-decision-wired", 1);
+            insert_kv("observe-only", 1);
+            insert_kv("typed-outcome-unknown", 0);
+            insert_kv("typed-outcome-success", 1);
+            insert_kv("typed-outcome-rollback", 2);
+            insert_kv("typed-outcome-error", 3);
+            insert_kv("schema-3113", kTypedTrailWrapMissIssue);
+            insert_kv("issue-3113", kTypedTrailWrapMissIssue);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 

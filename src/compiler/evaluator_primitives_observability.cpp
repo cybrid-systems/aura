@@ -132,6 +132,10 @@ const std::vector<std::string> kObservabilityStatsPrimitives = {
     // Issue #2897 — type×linear×occurrence evolution snapshot (Agent join reduction;
     // pure last-proof / readiness gauges; sibling of #2860 evolution-epoch-snapshot)
     "query:type-linear-evolution-snapshot",
+    // Issue #3114 — observe-only evolution decision fold (mid + SE + typed
+    // + commit + playbook + densify + posture). Catalog only — SlimSurface
+    // public add() stays frozen (register_stats_impl).
+    "query:evolution-audit-decision",
     // Issue #2379 — single Agent mutation-concurrency health score
     // (hold + steal + residual + mailbox + densify). Pure reads of existing
     // atomics; does not replace per-subsystem queries.
