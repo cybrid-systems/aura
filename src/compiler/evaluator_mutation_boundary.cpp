@@ -486,6 +486,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // partial structural inverse and full restore.
         // Issue #549: bump mutation_log_rollback_count_ when records
         // were actually rolled (stricter subset of failed boundaries).
+        // Issue #3117: publish abort-force fence before restore so a
+        // concurrent lookup cannot serve pre-abort IR as clean.
+        if (abort_ir_cache_begin_force_fn_)
+            abort_ir_cache_begin_force_fn_();
         BoundaryRollbackStats stats;
         stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
             cp.mutation_log_size, std::move(cp.children_snapshot));
@@ -1179,6 +1183,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             }
                             // Issue #2959: dual topology structural undo (same as
                             // failure path) under one structural exclusive.
+                            // Issue #3117: publish abort-force fence before restore.
+                            if (abort_ir_cache_begin_force_fn_)
+                                abort_ir_cache_begin_force_fn_();
                             BoundaryRollbackStats stats;
                             stats.field_records_rolled =
                                 workspace_flat_->abort_restore_dual_topology(
@@ -1304,6 +1311,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // (mirrors invariant hard-gate force-rollback shape).
                     bump_guard_reflect_validate_strict_rollback();
                     // Issue #2959: dual topology undo under one structural exclusive.
+                    // Issue #3117: publish abort-force fence before restore.
+                    if (abort_ir_cache_begin_force_fn_)
+                        abort_ir_cache_begin_force_fn_();
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
                         cp.mutation_log_size, std::move(cp.children_snapshot));

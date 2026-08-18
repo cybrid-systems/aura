@@ -545,6 +545,8 @@ inline void populate_source_to_ir_map_from_irs(const std::vector<aura::ir::IRFun
 }
 
 // Full rebuild: clear + populate from current irs layout.
+// Issue #3117: abort must not call this against pre-abort IR — clear
+// the map and refuse lazy refill until the next successful store.
 inline void rebuild_source_to_ir_map_from_irs(const std::vector<aura::ir::IRFunction>& irs,
                                               SourceToIrMap& out) {
     out.clear();

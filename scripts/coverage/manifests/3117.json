@@ -1,0 +1,41 @@
+{
+  "issue": 3117,
+  "title": "Issue #3117: dual-topology abort restore IR cache + source_to_ir_map fence.",
+  "ok": "OK: Issue #3117 abort restore IR map fence — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_abort_restore_ir_map_fence_3117.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "abort_ir_cache_begin_force_fn_",
+        "Issue #3117"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "abort_map_invalid",
+        "source_to_ir_map.clear()",
+        "begin_abort_ir_cache_force_fence"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "entry.abort_map_invalid = false"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_mutation_rollback_coverage.cpp",
+      "contains": [
+        "3117 AC1",
+        "3117 AC2",
+        "3117 AC3"
+      ]
+    }
+  ]
+}
