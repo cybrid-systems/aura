@@ -2779,7 +2779,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (!ev.allow_query_stable_ref_export(id))
             return mev("restamp-lag",
                        "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
-                       "generation torn for export (Issue #3121 / #3058)");
+                       "generation torn for export (Issue #3121 / #3058); ; // Issue #3138: Agent "
+                       "recovery hint recovery: re-query after budget window or force full restamp "
+                       "before reusing refs");
         // Issue #2224: route Agent-facing ref through export_ref so
         // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
         // required_effects; primary outbound surface for ast: / query: /

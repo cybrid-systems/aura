@@ -1,0 +1,63 @@
+{
+  "issue": 3138,
+  "title": "Issue #3138: [P1][query][agent-memory][restamp] feat(query/restamp): Agent-visible recovery contract when restamp budget exceeded (refine #3000/#3037/#3041/#3104) — single authoritative query:query-epoch-stats surface + stable restamp-lag key + recovery hint on all 5 reject paths (query:children-stable / query:parent-stable / query:stable-ref / query:ensure-ref / query:as-stable-ref)",
+  "ok": "OK: Issue #3138 Agent-visible recovery contract — every restamp-lag reject path (5 sites: query:children-stable / query:parent-stable / query:stable-ref / query:ensure-ref in evaluator_primitives_query_workspace.cpp + query:as-stable-ref in evaluator_primitives_mutate.cpp) now appends '; recovery: re-query after budget window or force full restamp before reusing refs' to the mev() message; query:query-epoch-stats surface (in evaluator_primitives_obs_eval.cpp) already exposes restamp-last-budget-exceeded (bool) + restamp-budget-exceeded-total + restamp-budget-query-epoch-stale-total counters (single authoritative Agent query point); allow_query_stable_ref_export / query_stable_hard_reject_torn remain the sole gates (AC3 — no silent success after torn); Soft / Quiet / sandbox=off zero behavioral change (existing Soft degrade paths untouched); scripts/check_restamp_budget_hard_gate.py extended with RECOVERY_HINT_REQUIRED (5-site recovery-hint enforcement) + STATUS_SURFACE_REQUIRED (3-field surface pinning) + check_recovery_hint + self-test fixture; tests/compiler/test_restamp_budget_hard_gate.cpp extended with AC10 (recovery hint in 5 reject paths) + AC11 (status surface exposes 3 budget fields); no new query keys; counter surface additive; complements #3137 schema-2 stamp so both 'memory' and 'ref validity under budget pressure' are Agent-visible",
+  "source_script": "scripts/check_restamp_budget_hard_gate.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "\"restamp-last-budget-exceeded\"",
+        "\"restamp-budget-exceeded-total\"",
+        "\"restamp-budget-query-epoch-stale-total\"",
+        "restamp_last_budget_exceeded"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_query_workspace.cpp",
+      "contains": [
+        "mev(\"restamp-lag\"",
+        "recovery: re-query after budget window or force full restamp before reusing refs",
+        "query:children-stable",
+        "query:parent-stable",
+        "query:stable-ref",
+        "query:ensure-ref",
+        "Issue #3138"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "mev(\"restamp-lag\"",
+        "recovery: re-query after budget window or force full restamp before reusing refs",
+        "query:as-stable-ref",
+        "allow_query_stable_ref_export"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "scripts/check_restamp_budget_hard_gate.py",
+      "contains": [
+        "RECOVERY_HINT_REQUIRED",
+        "STATUS_SURFACE_REQUIRED",
+        "check_recovery_hint",
+        "re-query after budget window or force full restamp before reusing refs"
+      ]
+    },
+    {
+      "ac": "AC5-test",
+      "path": "tests/compiler/test_restamp_budget_hard_gate.cpp",
+      "contains": [
+        "test_ac10_recovery_hint_in_restamp_lag",
+        "test_ac11_status_surface_exposes_budget_fields",
+        "#3138",
+        "re-query after budget window or force full restamp before reusing refs",
+        "restamp-last-budget-exceeded",
+        "restamp-budget-query-epoch-stale-total"
+      ]
+    }
+  ]
+}
