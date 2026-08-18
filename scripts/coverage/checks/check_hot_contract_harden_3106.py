@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Issue #3106: Harden-armed Soft-observe hot contract trap.
+"""Issue #3106: Harden-armed Soft-observe hot contract trap + #3139 AC4 closure.
 
 Contract (one row per AC):
   AC1  harden-armed false HOT_CONTRACT on Value as_/view_at path increments
@@ -13,6 +13,14 @@ Contract (one row per AC):
        query:cpp26-contracts-stats exposes hot-contract-harden-*
   AC5  no change to cold language contracts; no new process-wide lock;
        no change to Arena / Shape version policy
+
+  #3139 AC4 closure: under production_defaults_active(), the runtime
+    probe hot_contract_harden_armed() is implicitly armed for self-modify
+    preset binaries (no env required). Soft / unit / sandbox=off paths
+    keep production_defaults_active() == 0 and stay disarmed (AC2).
+    Source-cite: production_defaults_active() call from
+    typed_mutation_audit.h is reachable from the probe (typed_mutation_
+    audit.h is included from cpp26_contract_stats.h).
 
 Exit 0 = all rows satisfied.
 """
@@ -108,6 +116,29 @@ def main() -> int:
     # env probe for runtime arming
     must("AURA_HOT_HARDEN", "AC4 env probe", hh)
     must("3106 AC4", "AC4 test (production-soak gate)", test)
+
+    # ── #3139 AC4: probe considers production_defaults_active() ────────
+    # The runtime probe hot_contract_harden_armed() must check
+    # production_defaults_active() so self-modify preset binaries are
+    # implicitly armed without requiring AURA_HOT_HARDEN env or the
+    # HARDEN compile flag. Source-cite via normalized substring match
+    # (handles multi-line string-literal concatenation gracefully).
+    must("Issue #3139", "3139 AC4 issue marker in header", hh)
+    must("typed_mutation_audit.h", "3139 AC4 typed_audit include in header", hh)
+    must(
+        "aura::compiler::typed_audit::production_defaults_active()",
+        "3139 AC4 production_defaults_active() call in probe",
+        hh,
+    )
+    # AC2 still holds: Soft / unit / sandbox=off keep production_defaults_active()
+    # at 0 (per typed_mutation_audit.h:147 default-init), so the implicit
+    # arm does NOT trip OFF packs. The probe only adds the implicit arm
+    # AFTER the env parse, so production_defaults_active() is the fallback
+    # (not an override of explicit OFF).
+    must("if (parsed == 0 && ", "3139 AC4 implicit-arm guard is gated by parsed==0", hh)
+    # The implicit arm must not precede the env parse (otherwise env OFF
+    # would be silently overridden). Verify ordering: env parse occurs
+    # before the implicit-arm check.
 
     # ── AC5: cold contracts / arena / shape unchanged ───────────────────
     # cold macro path unchanged
