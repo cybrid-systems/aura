@@ -140,4 +140,4 @@ the caller. Never `fiber:join` inside a worker (nested-join host residual).
 (swarm:population)
 ```
 
-See also: `examples/swarm_sphere_search.aura` (PSO), epic #2874.
+See also: `tests/suite/swarm_2874.aura` (PSO), epic #2874.

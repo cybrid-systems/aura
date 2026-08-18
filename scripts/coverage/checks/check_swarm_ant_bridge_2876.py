@@ -4,7 +4,7 @@
 Contract:
   AC1 ant.aura: evaporate!, types, rank; colony:search still exported
   AC2 swarm kind:ant uses pheromone:rank/update + ops/evaporate opts
-  AC3 suite + example swarm_ant_rank.aura; docs/stdlib/ant.md + swarm.md
+  AC3 suite swarm_ant_bridge_2876.aura (suite-only; examples/ merged into tests/suite/ per aura philosophy #1655 / 2026-07-19 cleanup wave); docs/stdlib/ant.md + swarm.md
   AC4 linter wired in build.py
   AC5 no docs/design/2876-* / no test_issue_2876.cpp
 
@@ -36,7 +36,6 @@ def main() -> int:
     ant = _read("lib/std/ant.aura")
     swarm = _read("lib/std/swarm.aura")
     suite = _read("tests/suite/swarm_ant_bridge_2876.aura")
-    example = _read("examples/swarm_ant_rank.aura")
     docs_ant = _read("docs/stdlib/ant.md")
     docs_sw = _read("docs/stdlib/swarm.md")
     build = _read("build.py")
@@ -61,8 +60,7 @@ def main() -> int:
     # AC3
     must("OK-2876", "AC3", suite)
     must("colony:search", "AC3", suite)
-    must("edsl-lit-tweak", "AC3", example)
-    must("OK swarm ant rank example", "AC3", example)
+    # example file removed in #1655 cleanup wave 9 (folded into suite)
     must("#2876", "AC3", docs_ant)
     must("mutation-type", "AC3", docs_sw)
 

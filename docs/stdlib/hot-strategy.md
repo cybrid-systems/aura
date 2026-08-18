@@ -99,6 +99,4 @@ Example 04 (hot-strategy-heal / jit-specialization) can call `std/hot-strategy` 
 
 - Issue #2582 / parent denseness tracker #2578
 - Issue **#2684** (H7 compile/JIT dirty after pure-Aura rebind)
-- Aether `examples/04-hot-strategy-heal`
-- Hephaestus `examples/04-jit-specialization`, `notes/host-residuals.md` H7
 - `lib/std/hot-strategy.aura`, `lib/std/hot-update.aura`

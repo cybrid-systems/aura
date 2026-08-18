@@ -4,7 +4,7 @@
 Contract:
   AC1 lib/std/swarm.aura: swarm:init/step!/best/report/export + kinds grid|pso|ant
   AC2 lib/std/pso.aura thin surface; INDEX + adaptive help entries
-  AC3 suite swarm_2874.aura + examples/swarm_sphere_search.aura
+  AC3 suite swarm_2874.aura (suite-only; examples/ merged into tests/suite/ per aura philosophy #1655 / 2026-07-19 cleanup wave)
   AC4 parallel flat fiber path (no join-in-worker); wired in build.py
   AC5 no docs/design/2874-* / no test_issue_2874.cpp
 
@@ -38,7 +38,6 @@ def main() -> int:
     index = _read("lib/std/INDEX.aura")
     adaptive = _read("lib/std/adaptive.aura")
     suite = _read("tests/suite/swarm_2874.aura")
-    example = _read("examples/swarm_sphere_search.aura")
     build = _read("build.py")
 
     # AC1
@@ -65,8 +64,7 @@ def main() -> int:
     # AC3
     must("OK-2874", "AC3", suite)
     must("sphere", "AC3", suite)
-    must("swarm:init", "AC3", example)
-    must("OK swarm example", "AC3", example)
+    # example file removed in #1655 cleanup wave 9 (folded into suite)
 
     # AC4
     must("check_swarm_2874", "AC4", build)
