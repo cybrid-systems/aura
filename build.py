@@ -3555,6 +3555,18 @@ def cmd_lint():
             "Issue #3132 MacroSelfEvo reexpand chokepoint linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_chokepoint_3132.py"
         )
         return r
+    # Issue #3121: production query:*-stable structured restamp-lag.
+    # Extends test_hygiene_mutate_closed_loop; no test_issue_3121.cpp.
+    qrl3121_script = COVERAGE_CHECKS / "check_query_stable_restamp_lag_3121.py"
+    if not qrl3121_script.exists():
+        fail(f"missing {qrl3121_script}")
+        return 1
+    r = run([sys.executable, str(qrl3121_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3121 query stable restamp-lag structured linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_lag_3121.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

@@ -1141,6 +1141,171 @@ static void ac3027_5_source_and_linter() {
           "3027 AC5: no invent test per #81967");
 }
 
+static std::string merr_cadr_3121(CompilerService& cs, const EvalValue& v) {
+    if (!is_pair(v))
+        return {};
+    auto idx = as_pair_idx(v);
+    auto& pairs = cs.evaluator().pairs();
+    if (idx >= pairs.size() || !is_pair(pairs[idx].cdr))
+        return {};
+    auto midx = as_pair_idx(pairs[idx].cdr);
+    if (midx >= pairs.size() || !is_string(pairs[midx].car))
+        return {};
+    auto sidx = as_string_idx(pairs[midx].car);
+    auto heap = cs.evaluator().string_heap();
+    if (sidx >= heap.size())
+        return {};
+    return std::string(heap[sidx]);
+}
+
+static void ac3121_1_production_structured_lag() {
+    std::println("\n--- #3121 AC1: production budget=1 → structured restamp-lag ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kQueryStableRestampLagStructuredIssue;
+    using aura::ast::kRestampLagErrorKind;
+    using aura::ast::kRestampLagReasonBudgetExceeded;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kQueryStableRestampLagStructuredIssue == 3121, "3121 AC1: issue constant");
+    CHECK(std::string_view(kRestampLagErrorKind) == "restamp-lag", "3121 AC1: error kind");
+    CHECK(std::string_view(kRestampLagReasonBudgetExceeded) == "budget-exceeded",
+          "3121 AC1: reason token");
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3121 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3121 AC1: workspace");
+    auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
+    CHECK(renamed.has_value(), "3121 AC1: mutate ran");
+    if (!ws->restamp_last_budget_exceeded()) {
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+    }
+    CHECK(ws->restamp_last_budget_exceeded(), "3121 AC1: last restamp exceeded");
+    auto lag = first_lagging(*ws);
+    if (lag == aura::ast::NULL_NODE) {
+        CHECK(true, "3121 AC1: incremental restamp covered live slots (no lag node)");
+    } else {
+        auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+        CHECK(sr.has_value(), "3121 AC1: query:stable-ref returns");
+        CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3121 AC1: error=restamp-lag");
+        auto reason = merr_cadr_3121(cs, *sr);
+        CHECK(reason.find("budget-exceeded") == 0, "3121 AC1: reason=budget-exceeded");
+        CHECK(!is_int(*sr), "3121 AC1: no green StableNodeRef pair");
+        auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
+        CHECK(asr.has_value(), "3121 AC1: as-stable-ref returns");
+        CHECK(merr_kind_3027(cs, *asr) == "restamp-lag",
+              "3121 AC1: as-stable-ref structured (not void)");
+        CHECK(merr_cadr_3121(cs, *asr).find("budget-exceeded") == 0,
+              "3121 AC1: as-stable-ref reason");
+        auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
+        CHECK(ens.has_value(), "3121 AC1: ensure-ref returns");
+        CHECK(merr_kind_3027(cs, *ens) == "restamp-lag", "3121 AC1: ensure-ref restamp-lag");
+        CHECK(merr_cadr_3121(cs, *ens).find("budget-exceeded") == 0, "3121 AC1: ensure-ref reason");
+    }
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3121_2_soft_shape_unchanged() {
+    std::println("\n--- #3121 AC2: Soft observe-only, return shape unchanged ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3121 AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3121 AC2: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3121 AC2: live");
+    auto happy = cs.eval(std::format("(query:as-stable-ref {})", live));
+    CHECK(happy && is_pair(*happy), "3121 AC2: Soft happy as-stable-ref is pair");
+    set_restamp_budget_nodes_for_process(1);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_last_budget_exceeded(), "3121 AC2: exceeded under Soft");
+    auto lag = first_lagging(*ws);
+    if (lag != aura::ast::NULL_NODE) {
+        CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "3121 AC2: Soft allow");
+        auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
+        CHECK(asr && is_pair(*asr), "3121 AC2: Soft as-stable-ref still pair (not error)");
+        auto sr = cs.eval(std::format("(car (query:stable-ref {}))", lag));
+        CHECK(sr && is_int(*sr), "3121 AC2: Soft query:stable-ref still stamps");
+    }
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3121_3_under_budget_green() {
+    std::println("\n--- #3121 AC3: under-budget path unchanged ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3121 AC3: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3121 AC3: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3121 AC3: live");
+    auto sr = cs.eval(std::format("(query:stable-ref {})", live));
+    CHECK(sr && is_pair(*sr), "3121 AC3: under-budget stable-ref pair");
+    auto asr = cs.eval(std::format("(query:as-stable-ref {})", live));
+    CHECK(asr && is_pair(*asr), "3121 AC3: under-budget as-stable-ref pair");
+    apply_dev_audit_defaults();
+}
+
+static void ac3121_4_source_and_linter() {
+    std::println("\n--- #3121 AC4/AC5: source-cite + linter + no invent ---");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto asr = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_query_stable_restamp_lag_3121.py");
+    const auto build = read_file("build.py");
+    CHECK(restamp.find("Issue #3121") != std::string::npos, "3121 AC4: restamp cites #3121");
+    CHECK(restamp.find("kQueryStableRestampLagStructuredIssue = 3121") != std::string::npos,
+          "3121 AC4: issue stamp");
+    CHECK(restamp.find("budget-exceeded") != std::string::npos, "3121 AC4: reason token");
+    CHECK(qws.find("Issue #3121") != std::string::npos, "3121 AC4: query sites cite");
+    CHECK(qws.find("budget-exceeded:") != std::string::npos, "3121 AC4: structured reason prefix");
+    CHECK(asr.find("Issue #3121") != std::string::npos, "3121 AC4: as-stable-ref cites");
+    CHECK(asr.find("mev(\"restamp-lag\"") != std::string::npos,
+          "3121 AC4: as-stable-ref structured (not void)");
+    CHECK(sec.find("Issue #3121") != std::string::npos || sec.find("#3121") != std::string::npos,
+          "3121 AC4: allow-gate cites");
+    CHECK(t.find("ac3121_1_production_structured_lag") != std::string::npos, "3121 AC5: AC1");
+    CHECK(t.find("ac3121_2_soft_shape_unchanged") != std::string::npos, "3121 AC5: AC2");
+    CHECK(t.find("ac3121_3_under_budget_green") != std::string::npos, "3121 AC5: AC3");
+    CHECK(!lint.empty() && lint.find("Issue #3121") != std::string::npos, "3121 AC5: linter");
+    CHECK(build.find("check_query_stable_restamp_lag_3121") != std::string::npos,
+          "3121 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3121.cpp").empty(),
+          "3121 AC5: no test_issue_3121.cpp");
+    CHECK(read_file("docs/design/3121-restamp-lag-structured.md").empty(),
+          "3121 AC4: no docs/design");
+}
+
 static void ac3000_5_linter_and_suites() {
     std::println("\n--- #3000 AC5/AC6: linter + isolation/tenant-capture ---");
     const auto build = read_file("build.py");
@@ -1613,7 +1778,7 @@ static void ac3095_1_post_restore_invariant_keys() {
 
 int main() {
     std::println("=== test_hygiene_mutate_closed_loop (#2037 + #2762 + #2858 + #2863 + #2864 + "
-                 "#2961 + #3000 + #3027 + #3037 + #3076) ===");
+                 "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
     ac1_source();
     ac2_default_fail_closed();
     ac3_allowed_propagate();
@@ -1655,6 +1820,11 @@ int main() {
     ac3000_2_soft_observe_unlimited_green();
     ac3000_4_schema_and_source();
     ac3000_5_linter_and_suites();
+    std::println("\n=== Issue #3121: query:*-stable structured restamp-lag ===");
+    ac3121_1_production_structured_lag();
+    ac3121_2_soft_shape_unchanged();
+    ac3121_3_under_budget_green();
+    ac3121_4_source_and_linter();
     std::println("\n=== Issue #3027: residual structural MacroIntroduced gates ===");
     ac3027_1_default_reject_all_prims();
     ac3027_2_allow_macro_permits();

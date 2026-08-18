@@ -112,6 +112,13 @@ inline constexpr int kUnifiedRestampIssue = 3019;
 // Issue #3058: over-budget torn must be visible on every query:*-stable
 // surface (as-stable-ref / ensure-ref included). Additive schema only.
 inline constexpr int kUnifiedRestampQueryVisibleIssue = 3058;
+// Issue #3121: production query:*-stable / as-stable-ref / ensure-ref
+// must surface restamp-budget lag as structured Agent-visible error
+// (error="restamp-lag", reason="budget-exceeded"). Soft observe-only.
+// Never a green StableNodeRef carrying a pre-mutate gen.
+inline constexpr int kQueryStableRestampLagStructuredIssue = 3121;
+inline constexpr const char* kRestampLagErrorKind = "restamp-lag";
+inline constexpr const char* kRestampLagReasonBudgetExceeded = "budget-exceeded";
 inline std::atomic<std::uint64_t> g_unified_restamp_torn_visible_total{0};
 inline std::atomic<std::uint64_t> g_unified_restamp_calls_total{0};
 [[nodiscard]] inline std::uint64_t unified_restamp_torn_visible_total_v_read() noexcept {
