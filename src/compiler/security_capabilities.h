@@ -38,6 +38,15 @@ inline constexpr const char* kCapStrategy = "strategy";
 // Issue #2023: macro expansion self-evolution policy gate (depth/passes).
 inline constexpr const char* kCapMacroSelfEvo = "macro-self-evo";
 
+// Issue #3141: kCapWildcard write-fence — production caller holding
+// kCapWildcard but NOT explicit TenantAdmin cannot write privilege-bearing
+// cap names ("self-evo"/"synthesize"/"strategy"/"tenant-admin"/"capability"/
+// "agent"/"workspace"/"fiber") via string-path grant_capability. Closes
+// privilege escalation via wildcard → full Effect mask → check passes →
+// grant succeeds. Counter lives in src/core/capability_model.hh
+// (`capability_wildcard_write_fence_deny_total`); query surface wired via
+// `aura::core::capability::capability_wildcard_write_fence_deny_total_v_read()`.
+
 // Issues #1293/#1294/#1295 Phase 1: compile / fiber / workspace / exception
 // control capability gates (retrofit scaffold for systematic coverage).
 inline constexpr const char* kCapCompile = "compile";

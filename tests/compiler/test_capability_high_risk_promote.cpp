@@ -279,62 +279,200 @@ static void ac5_hard_fiber_deny() {
     CHECK(!allowed2, "AC5: hard fiber isolation denies self-evo on fiber mismatch");
 }
 
-// AC6 / AC7: source-cite gates + SECURITY_EXEMPT residual list documented.
-static void ac6_source_and_security_exempt_doc() {
-    std::println("\n--- #2489 AC6/AC7: source-cite + SECURITY_EXEMPT doc ---");
+// ── Issue #3141: kCapWildcard write-fence for production grant_capability ────
+// Production caller holds kCapWildcard but NOT explicit TenantAdmin cannot
+// write privilege-bearing cap names ("self-evo"/"tenant-admin"/...) via the
+// string path. Soft/off stays zero-cost (AC3). Additive counter only (AC4).
+
+static void ac3141_1_production_wildcard_only_deny() {
+    std::println("\n--- #3141 AC1: production + wildcard-only → deny ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto tenant = ev.capability_tenant_id();
+    // Grant ONLY kCapWildcard (full Effect mask via effect_for_cap_name("*")).
+    g_capability_registry().grant(tenant, "*",
+                                  Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate |
+                                      Effect::Network | Effect::Ffi | Effect::Render |
+                                      Effect::MacroSelfEvo | Effect::TenantAdmin | Effect::Syscall,
+                                  {});
+    ev.set_effect_sandbox_mode(2); // Strict (production)
+
+    const auto before =
+        g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
+
+    // AC1: grant_capability("self-evo") → deny (privilege-bearing)
+    ev.grant_capability(std::string(kCapSelfEvo));
+    // AC1: grant_capability("tenant-admin") → deny
+    ev.grant_capability(std::string(kCapTenantAdmin));
+
+    const auto after =
+        g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
+    CHECK(after == before + 2,
+          "AC1: counter bumps twice (self-evo + tenant-admin both denied under Strict)");
+}
+
+static void ac3141_2_explicit_tenant_admin_path_unchanged() {
+    std::println("\n--- #3141 AC2: production + explicit TenantAdmin → allow ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto tenant = ev.capability_tenant_id();
+    // Grant BOTH wildcard + explicit TenantAdmin string grant.
+    g_capability_registry().grant(tenant, "*",
+                                  Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate |
+                                      Effect::Network | Effect::Ffi | Effect::Render |
+                                      Effect::MacroSelfEvo | Effect::TenantAdmin | Effect::Syscall,
+                                  {});
+    g_capability_registry().grant(tenant, kCapTenantAdmin, Effect::TenantAdmin, {});
+    ev.set_effect_sandbox_mode(2); // Strict
+
+    const auto before =
+        g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
+    // AC2: grant_capability("self-evo") → ALLOW (explicit TenantAdmin)
+    ev.grant_capability(std::string(kCapSelfEvo));
+    const auto after =
+        g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
+    CHECK(after == before,
+          "AC2: counter does NOT bump for explicit TenantAdmin holder (AC2 unchanged path)");
+    CHECK(ev.has_capability(kCapSelfEvo),
+          "AC2: has_capability(self-evo) true after explicit TenantAdmin grant");
+}
+
+static void ac3141_3_soft_off_zero_cost() {
+    std::println("\n--- #3141 AC3: Soft / sandbox=off → zero-cost ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    const auto tenant = ev.capability_tenant_id();
+    // Grant ONLY wildcard (no explicit TenantAdmin).
+    g_capability_registry().grant(tenant, "*",
+                                  Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate |
+                                      Effect::Network | Effect::Ffi | Effect::Render |
+                                      Effect::MacroSelfEvo | Effect::TenantAdmin | Effect::Syscall,
+                                  {});
+    ev.set_effect_sandbox_mode(0); // Off (Soft)
+
+    const auto before =
+        g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
+    ev.grant_capability(std::string(kCapSelfEvo));
+    const auto after =
+        g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
+    CHECK(after == before,
+          "AC3: Soft/Off → counter does NOT bump (zero-cost, fence short-circuits)");
+    CHECK(ev.has_capability(kCapSelfEvo),
+          "AC3: Soft/Off → wildcard contract preserved (privilege-bearing name grants)");
+}
+
+static void ac3141_4_additive_counter_only() {
+    std::println("\n--- #3141 AC4: additive counter + source-cite ---");
+    // Counter additive bump
+    auto& met = g_capability_effect_metrics();
+    const auto before = met.capability_wildcard_write_fence_deny_total.load();
+    met.capability_wildcard_write_fence_deny_total.fetch_add(1, std::memory_order_relaxed);
+    CHECK(met.capability_wildcard_write_fence_deny_total.load() == before + 1,
+          "AC4: counter additive bump works");
+
+    // Source-cite in capability_model.hh
     const auto cap = read_file("src/core/capability_model.hh");
-    CHECK(cap.find("Issue #2489") != std::string::npos, "AC6: capability_model.hh cites #2489");
-    CHECK(cap.find("self-evo") != std::string::npos &&
-              cap.find("synthesize") != std::string::npos &&
-              cap.find("strategy") != std::string::npos,
-          "AC6: self-evo / synthesize / strategy mappings present");
-    CHECK(cap.find("sys-open") != std::string::npos && cap.find("sys-write") != std::string::npos &&
-              cap.find("sys-read") != std::string::npos,
-          "AC6: sys-open / sys-write / sys-read mappings present");
-    CHECK(cap.find("\"agent\"") != std::string::npos &&
-              cap.find("\"capability\"") != std::string::npos,
-          "AC6: agent / capability mappings present");
-    CHECK(cap.find("SECURITY_EXEMPT") != std::string::npos,
-          "AC7: SECURITY_EXEMPT residual list documented");
-    // Residual staged list must contain the low-risk display names and
-    // must NOT contain the newly-promoted ones.
-    CHECK(cap.find("compile-stats") != std::string::npos,
-          "AC7: residual list includes compile-stats");
-    CHECK(cap.find("query") != std::string::npos, "AC7: residual list includes query");
-    CHECK(cap.find("sandbox") != std::string::npos, "AC7: residual list includes sandbox");
+    CHECK(cap.find("Issue #3141") != std::string::npos, "AC4: capability_model.hh cites #3141");
+    CHECK(cap.find("try_grant_capability_string_path_privileged_locked") != std::string::npos,
+          "AC4: fence helper present");
+    CHECK(cap.find("capability_wildcard_write_fence_deny_total") != std::string::npos,
+          "AC4: counter declared");
+    CHECK(cap.find("wildcard-write-fence-needs-explicit-tenant-admin") != std::string::npos,
+          "AC4: SE reason present");
+    CHECK(cap.find("holds_wildcard_only_locked") != std::string::npos,
+          "AC4: wildcard-only detector present");
+    CHECK(cap.find("capability_wildcard_write_fence_deny_total_v_read") != std::string::npos,
+          "AC4: query accessor present");
 
-    const auto sec = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(sec.find("Issue #2489") != std::string::npos, "AC6: evaluator_security.cpp cites #2489");
-    CHECK(sec.find("effect_for_cap_name") != std::string::npos,
-          "AC6: has_capability uses effect_for_cap_name");
+    // Source-cite in evaluator_security.cpp
+    const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(eval_sec.find("try_grant_capability_string_path_privileged_locked") != std::string::npos,
+          "AC4: fence wire-up in evaluator_security.cpp");
 
-    const auto sch = read_file("src/compiler/security_capabilities.h");
-    CHECK(sch.find("Issue #2489") != std::string::npos, "AC6: security_capabilities.h cites #2489");
+    // Source-cite in security_capabilities.h
+    const auto sec_cap = read_file("src/compiler/security_capabilities.h");
+    CHECK(sec_cap.find("Issue #3141") != std::string::npos,
+          "AC4: security_capabilities.h cites #3141");
+    CHECK(sec_cap.find("kCapWildcard write-fence") != std::string::npos,
+          "AC4: kCapWildcard write-fence block present");
 
-    const auto cmake = read_file("CMakeLists.txt");
-    CHECK(cmake.find("test_capability_high_risk_promote") != std::string::npos,
-          "AC6: CMake registers test");
+    // Linter exists
+    const auto linter = read_file("scripts/coverage/checks/check_wildcard_grant_effect_fence.py");
+    CHECK(!linter.empty() && linter.find("Issue #3141") != std::string::npos,
+          "AC4: linter exists and cites #3141");
+
+    // build.py wires linter
     const auto build = read_file("build.py");
-    CHECK(build.find("check_capability_high_risk_promote_2489") != std::string::npos ||
-              build.find("cmd_capability_high_risk_promote_2489_coverage") != std::string::npos,
-          "AC6: build.py gate entry");
-    const auto gate =
-        read_file("scripts/coverage/checks/check_capability_high_risk_promote_2489.py");
-    CHECK(!gate.empty() && gate.find("Issue #2489") != std::string::npos,
-          "AC6: coverage linter present");
+    CHECK(build.find("check_wildcard_grant_effect_fence") != std::string::npos,
+          "AC4: build.py wires linter");
+
+    // No docs/design/, no tests/issues/test_issue_3141.cpp
+    CHECK(!std::filesystem::exists("docs/design/3141-castop-typed-meta-phase-c.md"),
+          "AC4: no docs/design/3141-*.md");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3141.cpp"),
+          "AC4: no tests/issues/test_issue_3141.cpp");
+}
+
+// AC6 / AC7: source-cite gates + SECURITY_EXEMPT residual list documented.static void
+// ac6_source_and_security_exempt_doc() {
+std::println("\n--- #2489 AC6/AC7: source-cite + SECURITY_EXEMPT doc ---");
+const auto cap = read_file("src/core/capability_model.hh");
+CHECK(cap.find("Issue #2489") != std::string::npos, "AC6: capability_model.hh cites #2489");
+CHECK(cap.find("self-evo") != std::string::npos && cap.find("synthesize") != std::string::npos &&
+          cap.find("strategy") != std::string::npos,
+      "AC6: self-evo / synthesize / strategy mappings present");
+CHECK(cap.find("sys-open") != std::string::npos && cap.find("sys-write") != std::string::npos &&
+          cap.find("sys-read") != std::string::npos,
+      "AC6: sys-open / sys-write / sys-read mappings present");
+CHECK(cap.find("\"agent\"") != std::string::npos && cap.find("\"capability\"") != std::string::npos,
+      "AC6: agent / capability mappings present");
+CHECK(cap.find("SECURITY_EXEMPT") != std::string::npos,
+      "AC7: SECURITY_EXEMPT residual list documented");
+// Residual staged list must contain the low-risk display names and
+// must NOT contain the newly-promoted ones.
+CHECK(cap.find("compile-stats") != std::string::npos, "AC7: residual list includes compile-stats");
+CHECK(cap.find("query") != std::string::npos, "AC7: residual list includes query");
+CHECK(cap.find("sandbox") != std::string::npos, "AC7: residual list includes sandbox");
+
+const auto sec = read_file("src/compiler/evaluator_security.cpp");
+CHECK(sec.find("Issue #2489") != std::string::npos, "AC6: evaluator_security.cpp cites #2489");
+CHECK(sec.find("effect_for_cap_name") != std::string::npos,
+      "AC6: has_capability uses effect_for_cap_name");
+
+const auto sch = read_file("src/compiler/security_capabilities.h");
+CHECK(sch.find("Issue #2489") != std::string::npos, "AC6: security_capabilities.h cites #2489");
+
+const auto cmake = read_file("CMakeLists.txt");
+CHECK(cmake.find("test_capability_high_risk_promote") != std::string::npos,
+      "AC6: CMake registers test");
+const auto build = read_file("build.py");
+CHECK(build.find("check_capability_high_risk_promote_2489") != std::string::npos ||
+          build.find("cmd_capability_high_risk_promote_2489_coverage") != std::string::npos,
+      "AC6: build.py gate entry");
+const auto gate = read_file("scripts/coverage/checks/check_capability_high_risk_promote_2489.py");
+CHECK(!gate.empty() && gate.find("Issue #2489") != std::string::npos,
+      "AC6: coverage linter present");
 }
 
 } // namespace
 
 int run_test_capability_high_risk_promote() {
-    std::println("=== Issue #2489: high-risk caps into Effect matrix ===");
+    std::println(
+        "=== Issue #2489/#3141: high-risk caps into Effect matrix + kCapWildcard write-fence ===");
     ac1_registry_only_promoted_caps();
     ac2_revoke_clears_both();
     ac3_strict_deny_and_audit();
     ac4_epoch_fence();
     ac5_hard_fiber_deny();
     ac6_source_and_security_exempt_doc();
-    std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3141_1_production_wildcard_only_deny();
+    ac3141_2_explicit_tenant_admin_path_unchanged();
+    ac3141_3_soft_off_zero_cost();
+    ac3141_4_additive_counter_only();
+    std::println("\n=== #2489/#3140/#3141: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

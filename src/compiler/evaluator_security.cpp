@@ -103,12 +103,26 @@ void Evaluator::grant_capability(std::string cap) {
         if (existing == cap)
             return;
     }
+    using namespace ::aura::core::capability;
+    const auto eff = effect_for_cap_name(cap);
+
+    // Issue #3141: production fence — wildcard-only holder cannot write
+    // privilege-bearing cap names without explicit TenantAdmin. Gate BEFORE
+    // pushing to granted_capabilities_ so dedup state stays consistent on
+    // deny. AC3 Soft/Off zero-cost (sandbox_mode atomic relaxed load).
+    if (eff != Effect::None) {
+        auto& reg = g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        if (!try_grant_capability_string_path_privileged_locked(capability_tenant_id_, cap,
+                                                                static_cast<std::uint16_t>(eff))) {
+            return; // AC1 deny: skip both push and effect-grant
+        }
+    }
+
     granted_capabilities_.push_back(std::move(cap));
     // #1565 / #2055: mirror named grant into effect matrix for current tenant.
     // Stamp WorkspaceEpoch Mutation + fiber (not Bridge) so grant_epoch matches
     // the mutation epoch at grant time and long-running blame stays consistent.
-    using namespace ::aura::core::capability;
-    const auto eff = effect_for_cap_name(granted_capabilities_.back());
     if (eff != Effect::None) {
         const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
         // Issue #2151: honor effect_fiber_id_or so tests can stamp fiber A/B

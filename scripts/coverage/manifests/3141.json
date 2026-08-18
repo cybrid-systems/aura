@@ -1,0 +1,78 @@
+{
+  "issue": 3141,
+  "title": "Issue #3141: [P0][security][privilege-escalation][area:capability] kCapWildcard持卡 tenant 可通过 grant_capability(\"self-evo\"|\"tenant-admin\"|...) 字符串 path 绕过 TenantAdmin 写栅栏(#3029/#3010),获得 MacroSelfEvo / TenantAdmin Effect",
+  "ok": "OK: Issue #3141 P0 production-readiness AI-mutation residual closed — kCapWildcard持卡但不显式持 TenantAdmin 的 tenant,在 Restricted/Strict 下 grant_capability(\"self-evo\"|\"tenant-admin\"|...) 被 deny + capability_wildcard_write_fence_deny_total++ + SecurityEvent EffectDeny with reason 'wildcard-write-fence-needs-explicit-tenant-admin' (mid + fiber + epoch 落 ring + WAL);AC2 显式 TenantAdmin 持卡走 effects_for_locked 原路径 (no double-write, no behavior change);AC3 Soft/off zero-cost (single relaxed load + early-out before scan);AC4 additive counter only (capability_wildcard_write_fence_deny_total in CapabilityEffectMetrics struct END per #2906; no schema change to existing query keys; capability_wildcard_write_fence_deny_total_v_read accessor for query surface);AC5 source-cite capability_model.hh + evaluator_security.cpp + security_capabilities.h; extends tests/compiler/test_capability_high_risk_promote.cpp with ac3141_1..4; no docs/design/, no tests/issues/test_issue_3141.cpp (#81967/#1655 aura philosophy); scripts/coverage/checks/check_wildcard_grant_effect_fence.py + manifest 3141.json; build.py wires ct3141_script into the gate stage alongside ct3140_script.",
+  "source_script": "scripts/coverage/checks/check_wildcard_grant_effect_fence.py",
+  "checks": [
+    {
+      "ac": "AC1-3141",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "Issue #3141",
+        "try_grant_capability_string_path_privileged_locked",
+        "holds_wildcard_only_locked",
+        "wildcard-write-fence-needs-explicit-tenant-admin",
+        "capability_wildcard_write_fence_deny_total"
+      ]
+    },
+    {
+      "ac": "AC1-3141-eval",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3141",
+        "try_grant_capability_string_path_privileged_locked",
+        "AC1 deny: skip both push and effect-grant"
+      ]
+    },
+    {
+      "ac": "AC3-3141",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "AC3: Soft / sandbox=off zero-cost"
+      ]
+    },
+    {
+      "ac": "AC4-3141",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "capability_wildcard_write_fence_deny_total_v_read"
+      ]
+    },
+    {
+      "ac": "AC4-3141-cap",
+      "path": "src/compiler/security_capabilities.h",
+      "contains": [
+        "Issue #3141",
+        "kCapWildcard write-fence"
+      ]
+    },
+    {
+      "ac": "AC5-3141-test",
+      "path": "tests/compiler/test_capability_high_risk_promote.cpp",
+      "contains": [
+        "ac3141_1_production_wildcard_only_deny",
+        "ac3141_2_explicit_tenant_admin_path_unchanged",
+        "ac3141_3_soft_off_zero_cost",
+        "ac3141_4_additive_counter_only",
+        "Issue #3141"
+      ]
+    },
+    {
+      "ac": "Linter-3141",
+      "path": "scripts/coverage/checks/check_wildcard_grant_effect_fence.py",
+      "contains": [
+        "Issue #3141",
+        "AC1 fence helper",
+        "AC4 counter",
+        "AC5 build.py wires linter"
+      ]
+    },
+    {
+      "ac": "Build-3141",
+      "path": "build.py",
+      "contains": [
+        "check_wildcard_grant_effect_fence.py"
+      ]
+    }
+  ]
+}
