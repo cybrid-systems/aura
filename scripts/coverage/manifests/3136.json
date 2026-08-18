@@ -1,0 +1,47 @@
+{
+  "issue": 3136,
+  "title": "Issue #3136: [P0][Incremental] relower-success-path bitmap coherence \u2014 stamp last_reemit_success_region_mask_ on each successful restamp so residual_force_mask = force & ~last_success shrinks for the just-covered region (closes success-path authority split between IR cache stamp and registry residual force; orthogonal to #3129 entry-path completion)",
+  "ok": "OK: Issue #3136 relower-success-path bitmap coherence \u2014 hot_update_registry.hh declares note_relower_success_coverage + last_reemit_success_region_mask_ atomic + accessor; service.ixx has 4 call sites (store_ir_cache_v2:4968, partial peel:6076, per-fn partial:6257, test helper:7072) each gated by aura_production_defaults_active_probe() != 0 with fnv1a_64(name) & 63 bit; service_dirty.cpp has 2 call sites (cascade-reemit root:184 + dependent:191) each gated with std::hash<std::string_view>{}(name_or_d) & 63 (cross-TU deterministic hash, libstdc++ _Hash_bytes process-stable); tests/compiler/test_hot_update_relower_success_coverage.cpp verifies 4 ACs (bit flips, monotonic same name, union distinct names, residual_force_mask strictly shrinks on full force mask)",
+  "source_script": "scripts/check_relower_success_coverage_3136.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.hh",
+      "contains": [
+        "note_relower_success_coverage",
+        "last_reemit_success_region_mask_",
+        "Issue #3136"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63))",
+        "aura_production_defaults_active_probe() != 0",
+        "Issue #3136"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "note_relower_success_coverage(",
+        "std::hash<std::string_view>{}(name)",
+        "std::hash<std::string_view>{}(d)",
+        "aura_production_defaults_active_probe() != 0",
+        "Issue #3136"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hot_update_relower_success_coverage.cpp",
+      "contains": [
+        "Issue #3136",
+        "restamp_cache_entry_for_test",
+        "last_reemit_success_region_mask",
+        "residual_force_mask"
+      ]
+    }
+  ]
+}

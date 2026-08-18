@@ -144,6 +144,25 @@ public:
     [[nodiscard]] std::uint64_t force_jit_regions_mask() const noexcept;
     // Issue #3026: residual = force & ~last_success (agent-actionable bits).
     [[nodiscard]] std::uint64_t residual_force_mask() const noexcept;
+
+    // Issue #3136: relower-success-path bitmap coherence. After a successful
+    // partial / full relower that restamps the IR cache entry for define D,
+    // the producer (service.ixx) maps D → a region bit (e.g.,
+    // `1ULL << (fnv1a_64(D) % 64)`) and calls this hook. The hook ORs the bit
+    // into `last_reemit_success_region_mask_` so the existing
+    // `residual_force_mask() = force & ~last_success` shrinks for the
+    // covered region — closes the success-path authority split between IR
+    // cache stamp and registry residual force (orthogonal to #3129 entry-
+    // path completion). Caller is expected to gate via
+    // `production_defaults_active()` (Soft / Off path zero-cost — no work
+    // here). Lock-free: one `fetch_or`; matches the reemit-pipeline
+    // pattern in `on_reemit_pipeline_call` (hot_update_registry.cpp:161-
+    // 170). Counter surface unchanged — no new query keys.
+    void note_relower_success_coverage(std::uint64_t region_bit) noexcept {
+        if (region_bit == 0)
+            return;
+        last_reemit_success_region_mask_.fetch_or(region_bit, std::memory_order_relaxed);
+    }
     [[nodiscard]] std::uint64_t residual_force_stale_observe_total() const noexcept;
     // Issue #3096: production-only bounded auto-heal when residual force
     // bits age past threshold with exhausted retry budget. Lifetime
