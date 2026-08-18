@@ -3631,6 +3631,18 @@ def cmd_lint():
             "Issue #3123 production Moving auto-arm linter failed — run python3 scripts/coverage/checks/check_production_auto_arm_moving_3123.py"
         )
         return r
+    # Issue #3124: non-allocating arena compact/layout/root_remap hooks.
+    # Extends test_has_on_compact_hook_lock; no test_issue_3124.cpp.
+    nah3124_script = COVERAGE_CHECKS / "check_nonalloc_arena_hooks_3124.py"
+    if not nah3124_script.exists():
+        fail(f"missing {nah3124_script}")
+        return 1
+    r = run([sys.executable, str(nah3124_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3124 non-allocating arena hooks linter failed — run python3 scripts/coverage/checks/check_nonalloc_arena_hooks_3124.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

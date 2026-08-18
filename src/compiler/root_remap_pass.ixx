@@ -429,7 +429,7 @@ run_root_remap_pass(const std::unordered_map<void*, void*>& object_remap) noexce
     return stats;
 }
 
-// Arena RootRemapCallback body — matches arena.ixx 7-arg typedef.
+// Arena RootRemapHookFn body — Issue #3124 ctx-first function pointer.
 inline void root_remap_pass_callback_impl(std::uint64_t /*arena_id*/, std::uint64_t /*new_gen*/,
                                           const std::unordered_map<void*, void*>& object_remap,
                                           std::size_t& out_sr, std::size_t& out_sr_fail,
@@ -456,14 +456,17 @@ inline void (*get_root_remap_pass_test_callback() noexcept)(
     return &root_remap_pass_callback_impl_3;
 }
 
-// std::function for ASTArena::set_root_remap_callback (production install).
-inline auto make_root_remap_arena_callback() {
-    return [](std::uint64_t arena_id, std::uint64_t new_gen,
-              const std::unordered_map<void*, void*>& object_remap, std::size_t& out_sr,
-              std::size_t& out_sr_fail, std::size_t& out_cc, std::size_t& out_cc_fail) {
-        root_remap_pass_callback_impl(arena_id, new_gen, object_remap, out_sr, out_sr_fail, out_cc,
-                                      out_cc_fail);
-    };
+// Issue #3124: function pointer for ASTArena::set_root_remap_callback.
+inline void root_remap_pass_hook_fn(void* /*ctx*/, std::uint64_t arena_id, std::uint64_t new_gen,
+                                    const std::unordered_map<void*, void*>& object_remap,
+                                    std::size_t& out_sr, std::size_t& out_sr_fail,
+                                    std::size_t& out_cc, std::size_t& out_cc_fail) noexcept {
+    root_remap_pass_callback_impl(arena_id, new_gen, object_remap, out_sr, out_sr_fail, out_cc,
+                                  out_cc_fail);
+}
+
+inline auto make_root_remap_arena_callback() noexcept {
+    return &root_remap_pass_hook_fn;
 }
 
 } // namespace aura::compiler

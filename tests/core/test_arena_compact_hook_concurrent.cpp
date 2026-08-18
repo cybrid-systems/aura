@@ -7,6 +7,7 @@
 // move-assign + invoke). With the mutex the run completes without crash and
 // every observed hook invocation has a non-null callable.
 
+#include "arena_nonalloc_hooks.hpp"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -38,8 +39,7 @@ int main() {
     std::atomic<int> hook_errors{0};
 
     // Initial hook.
-    arena.set_on_compact_hook(
-        [&]() noexcept { hook_calls.fetch_add(1, std::memory_order_relaxed); });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_u64, &hook_calls);
     CHECK(arena.has_on_compact_hook(), "initial hook installed");
 
     // Setter threads: alternate set_on_compact_hook / take_on_compact_hook.
@@ -49,8 +49,7 @@ int main() {
         setters.emplace_back([&]() noexcept {
             for (int i = 0; i < kItersPerThread; ++i) {
                 try {
-                    arena.set_on_compact_hook(
-                        [&]() noexcept { hook_calls.fetch_add(1, std::memory_order_relaxed); });
+                    arena.set_on_compact_hook(&arena_hook_compact_bump_u64, &hook_calls);
                 } catch (...) {
                     ++hook_errors;
                 }

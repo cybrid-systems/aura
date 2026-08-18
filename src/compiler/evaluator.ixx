@@ -1627,32 +1627,22 @@ public:
         const bool switching = (arena_ != a);
         if (arena_ && switching) {
             arena_->clear_arena_owner();
-            arena_->set_on_compact_hook({});
+            arena_->set_on_compact_hook(nullptr);
             // Issue #2294: drop RootRemapPass callback with the prior arena
             // (mirrors compact-hook clear — avoids UAF into dead Evaluator).
-            arena_->set_root_remap_callback({});
+            arena_->set_root_remap_callback(nullptr);
         }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
         // compaction re-pins pinned StableNodeRef / COW children in
         // the active Guard stack via on_arena_compact_hook().
         //
-        // Issue #1666: set_on_compact_hook **replaces** (does not append).
-        // On first claim of an arena (switching or empty hook), take any
-        // prior listener and chain: prior first, then re_pin — so external
-        // hooks are not silently dropped. Idempotent set_arena(same):
-        // leave an already-installed hook alone (avoids double re_pin wrap).
-        // Multi-listener installs *after* set_arena must take+chain
-        // (CompilerService ShapeProfiler does this).
+        // Issue #3124: install a non-allocating {fn, ctx} slot. Other
+        // listeners (CompilerService Shape inval, tests) occupy sibling
+        // slots — no take+chain lambda. Idempotent set_arena(same):
+        // set_on_compact_hook is a no-op when fn+ctx already present.
         if (arena_) {
-            if (switching || !arena_->has_on_compact_hook()) {
-                auto prior = arena_->take_on_compact_hook();
-                arena_->set_on_compact_hook([this, prior = std::move(prior)]() {
-                    if (prior)
-                        prior();
-                    this->on_arena_compact_hook();
-                });
-            }
+            arena_->set_on_compact_hook(&Evaluator::on_arena_compact_hook_thunk, this);
             // Issue #2294: install RootRemapPass on first claim / switch so
             // Moving densify rewrites registered stable-object + closure
             // capture slots. Idempotent set_arena(same): leave existing
@@ -13707,6 +13697,8 @@ public:
     // Issue #1446 AC2: arena compact hook entry — registered during
     // Evaluator ctor via set_on_compact_hook().
     void on_arena_compact_hook();
+    // Issue #3124: non-allocating thunk for ASTArena compact hook slots.
+    static void on_arena_compact_hook_thunk(void* ctx) noexcept;
     // Issue #1473: public test accessors for the 3 hook points wired by
     // #1473 (validate_or_refresh sweeps for pinned StableNodeRefs). The
     // production code paths (restore_post_yield_or_rollback,

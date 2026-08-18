@@ -12,6 +12,7 @@
 //   AC7: multi-round mutate stress; false-positive rate readable (<5% target)
 //   AC8: #1621 lineage schema retained
 
+#include "arena_nonalloc_hooks.hpp"
 #include "test_harness.hpp"
 #include "core/arena_auto_policy_stats.h"
 
@@ -365,14 +366,8 @@ static void ac_live_compact_layout_change_callback() {
         objs.push_back(p);
     }
 
-    int fire_count = 0;
-    std::uint64_t last_arena_id = 0;
-    std::uint64_t last_new_gen = 0;
-    arena.set_on_layout_change([&](std::uint64_t arena_id, std::uint64_t new_gen) noexcept {
-        ++fire_count;
-        last_arena_id = arena_id;
-        last_new_gen = new_gen;
-    });
+    ArenaHookLayoutRecord rec{};
+    arena.set_on_layout_change(&arena_hook_layout_record, &rec);
     CHECK(arena.has_on_layout_change(), "callback installed");
 
     // Force compact that does some work — freelist has entries from the
@@ -381,21 +376,22 @@ static void ac_live_compact_layout_change_callback() {
     if (r.invalidates_pins) {
         // Gen actually bumped → callback should have fired exactly once
         // (one compact call, one gen bump, one callback invocation).
-        CHECK(fire_count == 1, "callback fired exactly once on gen bump");
-        CHECK(last_arena_id == arena.arena_id(), "callback observed this arena's arena_id");
-        CHECK(last_new_gen == r.new_gen, "callback observed the same new_gen as LiveCompactResult");
+        CHECK(rec.fire_count == 1, "callback fired exactly once on gen bump");
+        CHECK(rec.last_arena_id == arena.arena_id(), "callback observed this arena's arena_id");
+        CHECK(rec.last_new_gen == r.new_gen,
+              "callback observed the same new_gen as LiveCompactResult");
     } else {
         // No gen bump (nothing to compact) → callback must NOT have fired.
-        CHECK(fire_count == 0, "no gen bump ⇒ no callback fire");
+        CHECK(rec.fire_count == 0, "no gen bump ⇒ no callback fire");
     }
 
     // Move out the callback; subsequent compacts must NOT invoke it.
     auto moved = arena.take_on_layout_change();
     CHECK(moved != nullptr, "take_on_layout_change returned the callback");
     CHECK(!arena.has_on_layout_change(), "callback cleared after take");
-    const int fire_count_before = fire_count;
+    const int fire_count_before = rec.fire_count;
     arena.live_compact(LiveCompactMode::Force);
-    CHECK(fire_count == fire_count_before, "no callback fire after take_on_layout_change");
+    CHECK(rec.fire_count == fire_count_before, "no callback fire after take_on_layout_change");
 }
 
 } // namespace

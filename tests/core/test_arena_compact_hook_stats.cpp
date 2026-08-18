@@ -7,6 +7,7 @@
 //   AC3: GUARDED_BY audit on serial stats_ fields + atomic concurrent-hot
 //   AC4: Existing compact / live_compact surfaces still wired (source-cite)
 
+#include "arena_nonalloc_hooks.hpp"
 #include "test_harness.hpp"
 
 #include <atomic>
@@ -41,8 +42,7 @@ static void ac1_ac2_concurrent_hook_counter() {
     aura::ast::ASTArena arena(/*initial_size=*/64 * 1024);
 
     std::atomic<std::uint64_t> hook_calls{0};
-    arena.set_on_compact_hook(
-        [&]() noexcept { hook_calls.fetch_add(1, std::memory_order_relaxed); });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_u64, &hook_calls);
     CHECK(arena.has_on_compact_hook(), "hook installed");
 
     constexpr int kThreads = 4;
@@ -102,7 +102,7 @@ static void ac4_wiring() {
     // Smoke: real compact() still fires hook when bytes reclaimed.
     aura::ast::ASTArena arena(/*initial_size=*/256 * 1024);
     std::atomic<int> fired{0};
-    arena.set_on_compact_hook([&]() noexcept { fired.fetch_add(1, std::memory_order_relaxed); });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &fired);
     const auto saved = arena.compact();
     if (saved > 0) {
         CHECK(fired.load() >= 1, "AC4: compact() fires hook when reclaimed");

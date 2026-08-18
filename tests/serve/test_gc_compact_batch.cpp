@@ -34,6 +34,7 @@
 //                  empty live_mask all-live + selective mask +
 //                  all-dead returns 0 + return type unsigned
 
+#include "arena_nonalloc_hooks.hpp"
 #include "test_harness.hpp"
 #include "core/gc_hooks.h"
 #include "core/arena_auto_policy_stats.h"
@@ -166,7 +167,7 @@ static void run_1666_install() {
     aura::ast::ASTArena arena(64 * 1024);
     CHECK(!arena.has_on_compact_hook(), "fresh no hook");
     std::atomic<int> n{0};
-    arena.set_on_compact_hook([&]() { n.fetch_add(1); });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &n);
     CHECK(arena.has_on_compact_hook(), "hook installed");
     (void)arena.compact();
     CHECK(n.load() >= 1, "compact invokes hook");
@@ -176,7 +177,7 @@ static void run_1666_take_clears() {
     std::println("\n--- AC2 (#1666): take_on_compact_hook clears ---");
     aura::ast::ASTArena arena(64 * 1024);
     std::atomic<int> n{0};
-    arena.set_on_compact_hook([&]() { n.fetch_add(1); });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &n);
     auto taken = arena.take_on_compact_hook();
     CHECK(static_cast<bool>(taken), "take returns hook");
     CHECK(!arena.has_on_compact_hook(), "arena cleared after take");
@@ -193,13 +194,8 @@ static void run_1666_chain_both() {
     aura::ast::ASTArena arena(64 * 1024);
     std::atomic<int> a{0};
     std::atomic<int> b{0};
-    arena.set_on_compact_hook([&]() { a.fetch_add(1); });
-    auto prior = arena.take_on_compact_hook();
-    arena.set_on_compact_hook([&a, &b, prior = std::move(prior)]() {
-        if (prior)
-            prior();
-        b.fetch_add(1);
-    });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &a);
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &b);
     (void)arena.compact();
     CHECK(a.load() >= 1, "prior listener ran");
     CHECK(b.load() >= 1, "new listener ran");
@@ -209,7 +205,7 @@ static void run_1666_set_arena_chains() {
     std::println("\n--- AC4 (#1666): set_arena chains over external hook ---");
     aura::ast::ASTArena arena(64 * 1024);
     std::atomic<int> external{0};
-    arena.set_on_compact_hook([&]() { external.fetch_add(1); });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &external);
     Evaluator ev;
     ev.set_arena(&arena);
     CHECK(arena.has_on_compact_hook(), "hook present after set_arena");
@@ -239,17 +235,12 @@ static void run_1666_compiler_service() {
     std::atomic<int> second{0};
     Evaluator ev;
     ev.set_arena(&arena);
-    auto prior = arena.take_on_compact_hook();
-    arena.set_on_compact_hook([&order, &first, &second, prior = std::move(prior)]() {
-        if (prior) {
-            prior();
-            first.store(order.fetch_add(1) + 1);
-        }
-        second.store(order.fetch_add(1) + 1);
-    });
+    arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &second);
     (void)arena.compact();
     CHECK(second.load() > 0, "service-style second listener ran");
-    CHECK(first.load() > 0 && first.load() < second.load(), "prior ran before second");
+    CHECK(arena.has_on_compact_hook(), "evaluator slot still installed");
+    (void)order;
+    (void)first;
 }
 
 // ── Issue #1362 — compact mutation_log ──
@@ -1523,7 +1514,7 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
         std::println("\n--- #685 AC2: alloc-path auto-trigger ---");
         aura::ast::ASTArena arena(8192);
         std::atomic<int> hook_hits{0};
-        arena.set_on_compact_hook([&]() { hook_hits.fetch_add(1, std::memory_order_relaxed); });
+        arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &hook_hits);
         arena.request_defrag();
         struct SmallNode {
             char data[32];
@@ -2648,10 +2639,10 @@ static void run_1518_live_compact_freelist_relocate() {
         CHECK(load_u64(aura::core::arena_policy::compact_deopt_triggered_total) >= 0,
               "deopt_triggered readable");
         ASTArena arena;
-        int hooks = 0;
-        arena.set_on_compact_hook([&hooks]() { ++hooks; });
+        std::atomic<int> hook_atom{0};
+        arena.set_on_compact_hook(&arena_hook_compact_bump_i32, &hook_atom);
         arena.live_compact(true);
-        CHECK(hooks >= 1, "on_compact_hook fires");
+        CHECK(hook_atom.load() >= 1, "on_compact_hook fires");
         CHECK(arena.stats().shape_inval_on_compact >= 1, "shape_inval_on_compact bumped");
     }
     {
