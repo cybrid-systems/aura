@@ -1,0 +1,70 @@
+{
+  "issue": 3113,
+  "title": "Issue #3113: typed trail 256 wrap miss must be explicit on query:security-audit (SE 1024 + WAL).",
+  "ok": "OK: Issue #3113 typed trail wrap miss — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_typed_trail_wrap_miss_3113.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "typed-trail-miss",
+        "typed-trail-size={}",
+        "se-ring-size={}",
+        "wal-replay-hint",
+        "Issue #3113"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "kTypedMutationAuditTrailSize = 256",
+        "kTypedTrailWrapMissIssue",
+        "typed_trail_wrap_total"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "wal-replay-hint",
+        "g_mutation_audit_wal().is_enabled()",
+        "g_security_event_wal().is_enabled()",
+        "no disk scan"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_security.cpp",
+      "contains": [
+        "typed-trail-wrap-risk",
+        "typed-trail-wrap-total",
+        "typed-trail-window",
+        "schema-3113"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "in-memory typed join window",
+        "AURA_TYPED_TRAIL_SIZE deferred",
+        "mark typed-trail-miss"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_security_audit_unify.cpp",
+      "contains": [
+        "3113 AC1",
+        "3113 AC2",
+        "3113 AC3",
+        "3113 AC4",
+        "3113 AC5",
+        "3113 AC6",
+        "typed-trail-miss=1"
+      ]
+    }
+  ]
+}

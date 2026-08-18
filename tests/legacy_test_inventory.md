@@ -1358,7 +1358,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_sandbox_mode_atomic.cpp` (—) [domain_suite, theme_core] — AC1: sandbox_mode is atomic-backed (AtomicEffectSandboxMode)
 - `tests/compiler/test_security_audit_fold.cpp` (—) [domain_suite, theme_compiler] — AC1: >128 effect denies under enabled SecurityEvent WAL → after
 - `tests/compiler/test_security_audit_trail.cpp` (—) [domain_suite, theme_compiler] — Issue #2075 — unified SecurityEvent schema + default-on mutation/effect audit WAL.
-- `tests/compiler/test_security_audit_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: check_and_record_effect allow + deny both append SecurityEvent
+- `tests/compiler/test_security_audit_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: check_and_record_effect allow + deny both append SecurityEvent
 - `tests/compiler/test_security_audit_wal_force_restricted.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh process, default Restricted, no multi-tenant env → Security
 - `tests/compiler/test_security_schedule_mutate_admit.cpp` (—) [domain_suite, theme_compiler] — Refines #2590 (gate contract) + #2587 (mailbox-starvation sibling
 - `tests/compiler/test_setcode_rebind_survive.cpp` (—) [domain_suite, theme_compiler] — closures or hash telemetry (Aether closed-loop agent state).

@@ -121,10 +121,10 @@ int run_test_security_posture_trail() {
           "3109 AC1: overflow ring push helper");
     CHECK(sew.find("wal_append_fail_closed_active()") != std::string::npos,
           "3109 AC1: append wires fail-closed check");
-    const auto ev = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(ev.find("wal_append_fail_closed_active()") != std::string::npos &&
-              ev.find("wal_overflow_ring_full()") != std::string::npos &&
-              ev.find("is_strict()") != std::string::npos,
+    const auto ev_src = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(ev_src.find("wal_append_fail_closed_active()") != std::string::npos &&
+              ev_src.find("wal_overflow_ring_full()") != std::string::npos &&
+              ev_src.find("is_strict()") != std::string::npos,
           "3109 AC2: require_effect deny path wired (Strict + fail-closed + overflow full)");
     // Build.py wires the linter
     const auto build = read_file("build.py");

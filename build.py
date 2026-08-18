@@ -3429,6 +3429,20 @@ def cmd_lint():
             "Issue #3111 mailbox held_ref post-steal revalidate linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3111.py"
         )
         return r
+    # Issue #3113: typed trail 256 wrap vs SE ring 1024 + WAL. query:security-audit
+    # must mark typed-trail-miss (plus window / se-ring-size / wal-replay-hint)
+    # so a wrap miss is not read as "never audited". Soft / WAL-off: is_enabled()
+    # only, no disk scan. Extend test_security_audit_unify; no test_issue_3113.cpp.
+    tt3113_script = COVERAGE_CHECKS / "check_typed_trail_wrap_miss_3113.py"
+    if not tt3113_script.exists():
+        fail(f"missing {tt3113_script}")
+        return 1
+    r = run([sys.executable, str(tt3113_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3113 typed trail wrap miss linter failed — run python3 scripts/coverage/checks/check_typed_trail_wrap_miss_3113.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
