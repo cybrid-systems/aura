@@ -1,0 +1,45 @@
+{
+  "issue": 3115,
+  "title": "Issue #3115: mutate:replace-type / replace-value MacroIntroduced gate.",
+  "ok": "OK: Issue #3115 scalar MacroIntroduced hygiene — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_scalar_macro_hygiene_3115.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "Issue #3115",
+        "reject_structural_macro_hygiene",
+        "replace-type",
+        "replace-value"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_mutate.cpp",
+      "contains": [
+        "propagate_macro_introduced_marker",
+        "parse_allow_macro_opt_out"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "Issue #3115",
+        "cannot replace-value MacroIntroduced",
+        "record_hygiene_violation_attempt"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3115 AC1",
+        "3115 AC2",
+        "3115 AC5",
+        "3115 AC6"
+      ]
+    }
+  ]
+}
