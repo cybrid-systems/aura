@@ -3494,6 +3494,18 @@ def cmd_lint():
             "Issue #3117 abort restore IR map fence linter failed — run python3 scripts/coverage/checks/check_abort_restore_ir_map_fence_3117.py"
         )
         return r
+    # Issue #3118: production hold-budget cancel force-unlock + depth clear.
+    # Extends test_mutation_hold_hard_timeout + hold-starvation; no test_issue_3118.cpp.
+    hbc3118_script = COVERAGE_CHECKS / "check_hold_budget_cancel_force_release_3118.py"
+    if not hbc3118_script.exists():
+        fail(f"missing {hbc3118_script}")
+        return 1
+    r = run([sys.executable, str(hbc3118_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3118 hold-budget cancel force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_cancel_force_release_3118.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"

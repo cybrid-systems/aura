@@ -251,6 +251,26 @@ static void ac6_query_schema() {
     cs.evaluator().set_compiler_metrics(nullptr);
 }
 
+// Issue #3118: production cancel force-unlock + depth clear after restore.
+static void ac3118_source_cite() {
+    std::println("\n--- #3118: source-cite force-release after dual restore ---");
+    auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+    auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(emb.find("Issue #3118") != std::string::npos, "3118 AC6: emb cite");
+    CHECK(emb.find("force_release_hold_after_cancel_") != std::string::npos,
+          "3118 AC1: force-release helper");
+    CHECK(emb.find("cancel_forced_fail && outermost") != std::string::npos,
+          "3118 AC1: after restore");
+    CHECK(mhb.find("kMutationHoldBudgetCancelForceReleaseIssue = 3118") != std::string::npos,
+          "3118 AC6: issue stamp");
+    CHECK(ev.find("cancel_force_released_") != std::string::npos, "3118 AC1: Phase-5 skip flag");
+    CHECK(read_file("tests/compiler/test_issue_3118.cpp").empty(),
+          "3118 AC6: no invent test_issue_3118.cpp");
+    CHECK(read_file("docs/design/3118-hold-budget-cancel-force-release.md").empty(),
+          "3118 AC6: no docs/design");
+}
+
 } // namespace
 
 int run_test_mutation_hold_hard_timeout() {
@@ -261,6 +281,7 @@ int run_test_mutation_hold_hard_timeout() {
     ac4_scheduler_hook();
     ac5_ordering();
     ac6_query_schema();
+    ac3118_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

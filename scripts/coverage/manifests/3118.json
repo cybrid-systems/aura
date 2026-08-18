@@ -1,0 +1,39 @@
+{
+  "issue": 3118,
+  "title": "Issue #3118: production hold-budget cancel force-unlock + depth clear.",
+  "ok": "OK: Issue #3118 hold-budget cancel force-release — all AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_hold_budget_cancel_force_release_3118.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "force_release_hold_after_cancel_",
+        "cancel_forced_fail && outermost",
+        "Issue #3118"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator.ixx",
+      "contains": [
+        "cancel_force_released_"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_mutation_hold_hard_timeout.cpp",
+      "contains": [
+        "ac3118_source_cite"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "tests/serve/test_mailbox_hold_starvation_hard.cpp",
+      "contains": [
+        "3118 AC1",
+        "3118 AC2"
+      ]
+    }
+  ]
+}
