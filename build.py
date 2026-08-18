@@ -868,6 +868,19 @@ def cmd_lint():
             "Issue #3143 typed_mid provenance linter failed — run python3 scripts/coverage/checks/check_mid_provenance_unified.py"
         )
         return r
+    # Issue #3144: kCapWildcard effects_for() 查询 path strip TenantAdmin +
+    # MacroSelfEvo bits (独立于 #3141 grant_capability 字符串 path 的查询
+    # path)。 closes Gap A 旁路。
+    cwe3144_script = COVERAGE_CHECKS / "check_wildcard_effects_for_fence.py"
+    if not cwe3144_script.exists():
+        fail(f"missing {cwe3144_script}")
+        return 1
+    r = run([sys.executable, str(cwe3144_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3144 kCapWildcard effects_for fence linter failed — run python3 scripts/coverage/checks/check_wildcard_effects_for_fence.py"
+        )
+        return r
     # Issue #3044: exhaustive bidirectional synthesize/check NodeTag
     # coverage. Missing tag → Production TypeError; Soft Warning.
     # Extends test_bidirectional_match_check (#81967); no docs/design/.
