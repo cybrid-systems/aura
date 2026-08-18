@@ -1,0 +1,56 @@
+{
+  "issue": 3129,
+  "title": "Issue #3129: [P0][Hot-Update] production facade must absorb full invalidate semantics (epoch + dirty cascade); hard_invalidate_via_facade is currently reemit-only and breaks mutate\u2192dirty\u2192reemit closed loop.",
+  "ok": "OK: Issue #3129 facade owns full invalidate semantics \u2014 all 6 AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_facade_owns_full_invalidate_3129.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #3129",
+        "aura_aot_bump_func_table_epoch()",
+        "aura_aot_note_cross_eval_hard_owner_scoped()",
+        "decide_and_reemit(aura_get_aot_defuse_version(), reason)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_aot_func_table_epoch"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "Issue #3112",
+        "aura_production_defaults_active_probe() == 0",
+        "hard_invalidate_via_facade"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_reemit_aot_for_dirty(defuse_version)"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "tests/compiler/test_compiler_hot_update_facade.cpp",
+      "contains": [
+        "ac3129_facade_owns_full_invalidate",
+        "Issue #3129",
+        "aura_aot_bump_func_table_epoch()",
+        "aura_aot_func_table_epoch",
+        "ac1_facade_ownership_matches_production",
+        "ac2_atomic_counters_no_lost_updates",
+        "ac3_concurrent_facade_no_crash",
+        "ac4_linter_strict_clean",
+        "ac5_decide_and_reemit_wired"
+      ]
+    }
+  ]
+}
