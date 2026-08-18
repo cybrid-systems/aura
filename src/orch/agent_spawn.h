@@ -299,6 +299,19 @@ struct ScopeBpGauge {
 inline std::mutex g_scope_bp_map_mtx{};
 inline std::unordered_map<std::string, std::shared_ptr<ScopeBpGauge>> g_scope_bp_map{};
 
+// Issue #3127: overflow-only BP gauge for named scopes that hit
+// kMailboxBpScopeMapCap under production. Single shared counter
+// (not per-scope) — preserves multi-tenant isolation by keeping
+// process-bucket recent un-inflated (process-bucket is empty-
+// scope_id path only; named-scope events never bump it). Soft/Off
+// never touches this gauge (zero extra cost). Decay in
+// maybe_decay_mailbox_bp_recent (production-gated).
+struct ScopeBpOverflowGauge {
+    std::atomic<std::uint64_t> recent{0};
+    std::atomic<std::uint64_t> last_event_us{0};
+};
+inline ScopeBpOverflowGauge g_scope_bp_overflow{};
+
 // Short drain for keepalive helper fiber after body join (#2159).
 inline constexpr std::uint64_t kDefaultKeepaliveHelperDrainMs = 500;
 // Issue #2783: keepalive helper must exit when body is hard-reclaimed
@@ -697,6 +710,13 @@ struct OrchModuleStats {
     // force_reason_code (0=ok … 6=deferred-reemit).
     std::atomic<std::uint64_t> orch_hot_update_health_throttle_total{0};
     std::atomic<std::int64_t> orch_hot_update_health_last_force_reason{0};
+    // Issue #3127: overflow-only bucket dropped event counter
+    // (production-gated). Bumped when a named scope hits
+    // kMailboxBpScopeMapCap and is redirected to g_scope_bp_overflow
+    // under production_defaults_active. Soft/Off keeps the existing
+    // LRU-evict + insert behavior (this counter stays 0). Additive at
+    // struct end (per #2906; never insert mid-struct).
+    std::atomic<std::uint64_t> spawn_bp_scope_overflow_dropped_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -893,6 +913,23 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
                 g_scope_bp_map.erase(coldest);
                 g_orch_module_stats.spawn_bp_scope_overflow_total.fetch_add(
                     1, std::memory_order_relaxed);
+                // Issue #3127: production-gated overflow-only bucket.
+                // Under production, prefer fail-closed isolation over masking
+                // the overflowed scope with a fresh per-scope gauge (which
+                // would misrepresent BP pressure and leave a multi-tenant
+                // mis-fire window open). Soft/Off falls through to existing
+                // LRU-evict + insert (zero extra cost: overflow gauge never
+                // touched under Soft).
+                if (production_defaults_active()) {
+                    g_scope_bp_overflow.recent.fetch_add(1, std::memory_order_relaxed);
+                    g_scope_bp_overflow.last_event_us.store(now_us, std::memory_order_release);
+                    g_orch_module_stats.spawn_bp_scope_overflow_dropped_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    // Skip insert — gauge stays nullptr. The outer
+                    // `if (!gauge) return;` exits before the per-scope
+                    // gauge bump. Lock_guard dtor releases on scope exit.
+                    return;
+                }
             }
             auto g = std::make_shared<ScopeBpGauge>();
             gauge = g.get();
@@ -936,6 +973,14 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
     }
     if (auto gauge = lookup_scope_bp_gauge(scope_id))
         return gauge->recent.load(std::memory_order_relaxed);
+    // Issue #3127: overflow-only bucket fallback. Named scope that hit
+    // map cap under production was redirected to g_scope_bp_overflow
+    // (process bucket recent is NOT touched — preserves AC1 "not silently
+    // inflated"). Soft/Off returns 0 (overflow gauge never bumped under
+    // Soft, no mis-fire signal).
+    if (production_defaults_active()) {
+        return g_scope_bp_overflow.recent.load(std::memory_order_relaxed);
+    }
     return 0;
 }
 
@@ -1015,6 +1060,17 @@ inline void maybe_decay_mailbox_bp_recent() noexcept {
         if (last != 0 && now_us - last <= window_us)
             continue;
         g->recent.store(0, std::memory_order_release);
+    }
+    // Issue #3127: also decay the overflow gauge (production-gated).
+    // Soft/Off never bumps overflow gauge, so last_event_us stays 0 and
+    // this branch is a no-op.
+    if (production_defaults_active()) {
+        const auto overflow_last =
+            g_scope_bp_overflow.last_event_us.load(std::memory_order_acquire);
+        if (overflow_last != 0 && now_us - overflow_last > window_us) {
+            g_scope_bp_overflow.recent.store(0, std::memory_order_release);
+            g_scope_bp_overflow.last_event_us.store(0, std::memory_order_release);
+        }
     }
 }
 

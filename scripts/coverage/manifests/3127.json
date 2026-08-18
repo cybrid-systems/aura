@@ -1,0 +1,75 @@
+{
+  "issue": 3127,
+  "title": "Issue #3127: [P0][orch/mailbox] Scope BP gauge map overflow falls back to process-global bucket \u2014 multi-tenant / multi-scope storm can mis-admit or mis-deny.",
+  "ok": "OK: Issue #3127 mailbox BP scope map overflow isolation \u2014 all 6 AC rows satisfied",
+  "source_script": "scripts/coverage/checks/check_mailbox_bp_overflow_3127.py",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "struct ScopeBpOverflowGauge",
+        "inline ScopeBpOverflowGauge g_scope_bp_overflow{}",
+        "spawn_bp_scope_overflow_dropped_total",
+        "Issue #3127",
+        "production_defaults_active()",
+        "kMailboxBpScopeMapCap",
+        "spawn_bp_scope_overflow_total",
+        "g_scope_bp_map"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "if (production_defaults_active())",
+        "g_scope_bp_overflow.recent.fetch_add",
+        "g_scope_bp_overflow.last_event_us.store",
+        "spawn_bp_scope_overflow_dropped_total.fetch_add",
+        "return;",
+        "g_scope_bp_map.erase(coldest)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "return gauge->recent.load(std::memory_order_relaxed)",
+        "g_scope_bp_overflow.recent.load(std::memory_order_relaxed)",
+        "if (production_defaults_active())",
+        "return 0;"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "g_scope_bp_overflow.recent.store(0, std::memory_order_release)",
+        "g_scope_bp_overflow.last_event_us.store(0, std::memory_order_release)",
+        "production_defaults_active()",
+        "for (const auto& [_, g] : g_scope_bp_map)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_mailbox_bp_admit.cpp",
+      "contains": [
+        "#3127",
+        "ScopeBpOverflowGauge",
+        "spawn_bp_scope_overflow_dropped_total",
+        "production_defaults_active()",
+        "load_mailbox_bp_recent",
+        "Soft/Off",
+        "kMailboxBpScopeMapCap"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/orch/test_per_scope_bp_admit.cpp",
+      "contains": [
+        "Issue #2591",
+        "spawn_bp_admit_reject_override_total"
+      ]
+    }
+  ]
+}
