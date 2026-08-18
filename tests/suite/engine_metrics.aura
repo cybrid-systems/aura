@@ -57,7 +57,11 @@
   (check (or (eq? sp (void)) (and (hash? sp) (= 2534 (hash-ref sp "schema-2534"))
                                   (eq? (hash-ref sp "overflow") (void)))))
   (check (or (eq? tl (void)) (and (hash? tl) (= 2613 (hash-ref tl "schema-2613"))
-                                  (eq? (hash-ref tl "overflow") (void))))))
+                                  (eq? (hash-ref tl "overflow") (void)))))
+  (define evd (engine:metrics "query:evolution-audit-decision"))
+  (check (or (eq? evd (void)) (and (hash? evd) (= 3114 (hash-ref evd "schema-3114"))
+                                   (= 1 (hash-ref evd "observe-only"))
+                                   (eq? (hash-ref evd "overflow") (void))))))
 
 ; Full-mode parity: direct stats prim matches facade by-name.
 (test-suite "engine:metrics-parity"

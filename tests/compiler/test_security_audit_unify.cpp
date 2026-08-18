@@ -16,6 +16,7 @@
 //   #3113 AC4: in-memory join is last 256; SE 1024 + WAL for full replay
 //   #3113 AC5: keep 256+WAL (no AURA_TYPED_TRAIL_SIZE)
 //   #3113 AC6: Soft / WAL-off miss mark OK, no extra I/O
+//   #3114 AC1–AC6: query:evolution-audit-decision observe-only fold
 
 #include "test_harness.hpp"
 
@@ -87,6 +88,22 @@ using aura::test::g_passed;
 std::int64_t href_stats(CompilerService& cs, std::string_view key) {
     auto r = cs.eval(
         std::format("(hash-ref (engine:metrics \"query:security-audit-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+std::int64_t href_evol(CompilerService& cs, std::string_view key) {
+    auto r = cs.eval(
+        std::format("(hash-ref (engine:metrics \"query:evolution-audit-decision\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+std::int64_t href_evol_mid(CompilerService& cs, std::uint64_t mid, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" {}) \"{}\")", mid, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
@@ -512,6 +529,50 @@ int run_test_security_audit_unify() {
         CHECK(saw_hint, "3113 AC2: miss + WAL enabled → wal-replay-hint=1");
         cs.evaluator().disable_mutation_audit_wal();
         fs::remove_all(dir, ec);
+    }
+
+    // ── Issue #3114: evolution-audit-decision observe-only fold ──
+    {
+        std::println("\n--- 3114 AC1/AC3: idle Soft fold ---");
+        reset_process();
+        CompilerService cs;
+        CHECK(href_evol(cs, "schema-3114") == 3114, "3114 AC1: schema-3114");
+        CHECK(href_evol(cs, "issue-3114") == 3114, "3114 AC1: issue-3114");
+        CHECK(href_evol(cs, "evolution-audit-decision-wired") == 1, "3114 AC1: wired");
+        CHECK(href_evol(cs, "observe-only") == 1, "3114 AC5: observe-only fold");
+        CHECK(href_evol(cs, "last-audit-mid") == 0, "3114 AC3: no boundary → mid=0");
+        CHECK(href_evol(cs, "typed-trail-miss") == 0, "3114 AC3: no mid → miss=0");
+        CHECK(href_evol(cs, "typed-outcome") == 0, "3114 AC3: unknown when no trail");
+        const auto pb = href_evol(cs, "playbook-action");
+        CHECK(pb >= 0 && pb <= 6, "3114 AC3: playbook-action in idle..reject-cross-ws");
+        CHECK(href_evol(cs, "playbook-wired") == 1, "3114 AC2: playbook-wired");
+        CHECK(href_evol(cs, "overflow") == -1, "3114 AC4: no overflow at planned cap");
+        CHECK(href_evol(cs, "densify-ok") == 1, "3114 AC2: densify-ok default healthy");
+    }
+
+    {
+        std::println("\n--- 3114 AC2/AC6: wrap → typed-outcome=unknown + miss ---");
+        reset_process();
+        CompilerService cs;
+        const std::uint64_t mid = 8115;
+        append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny,
+                              /*tenant=*/10, mid, /*epoch=*/1, kEffectMutate, "op-3114",
+                              "evol-wrap-deny", true, /*fiber=*/7);
+        aura::compiler::typed_audit::capture_security_correlated_audit(mid, "op-3114", /*epoch=*/1,
+                                                                       /*denied=*/true, 0, 7);
+        CHECK(href_evol_mid(cs, mid, "typed-trail-miss") == 0, "3114: pre-wrap miss=0");
+        CHECK(href_evol_mid(cs, mid, "typed-outcome") == 3, "3114: pre-wrap Error");
+        CHECK(href_evol_mid(cs, mid, "last-se-denied") == 1, "3114: SE denied");
+        CHECK(href_evol_mid(cs, mid, "last-audit-mid") == static_cast<std::int64_t>(mid),
+              "3114 AC6: mid arg");
+        for (std::size_t i = 0; i < kTypedMutationAuditTrailSize; ++i) {
+            capture_audit_event_forced(94000 + i, "wrap-fill-3114", MutationKind::Other, 1, 1,
+                                       AuditOutcome::Success);
+        }
+        CHECK(href_evol_mid(cs, mid, "typed-trail-miss") == 1, "3114 AC6: wrap typed-trail-miss=1");
+        CHECK(href_evol_mid(cs, mid, "typed-outcome") == 0, "3114 AC6: wrap typed-outcome=unknown");
+        CHECK(href_evol_mid(cs, mid, "last-se-denied") == 1, "3114: SE still present after wrap");
+        CHECK(href_evol(cs, "observe-only") == 1, "3114 AC5: still observe-only after wrap");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

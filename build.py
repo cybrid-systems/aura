@@ -3443,6 +3443,20 @@ def cmd_lint():
             "Issue #3113 typed trail wrap miss linter failed — run python3 scripts/coverage/checks/check_typed_trail_wrap_miss_3113.py"
         )
         return r
+    # Issue #3114: query:evolution-audit-decision — observe-only fold of
+    # last mid + SE + typed outcome + commit + playbook + densify + posture.
+    # register_stats_impl only (SlimSurface public add frozen). Soft: no WAL
+    # scan / no extra audit. Extend test_security_audit_unify + facade.
+    ead3114_script = COVERAGE_CHECKS / "check_evolution_audit_decision_3114.py"
+    if not ead3114_script.exists():
+        fail(f"missing {ead3114_script}")
+        return 1
+    r = run([sys.executable, str(ead3114_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3114 evolution-audit-decision linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_3114.py"
+        )
+        return r
     # Issue #2992: non-strict ground-type Agent feedback.
     # Extends test_bidirectional_annotation + test_bidirectional_stats (#81967); no docs/design/.
     gp_script = COVERAGE_CHECKS / "check_gradual_permissiveness_2992.py"
