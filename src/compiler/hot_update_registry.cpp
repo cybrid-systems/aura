@@ -129,6 +129,15 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
         return false;
     }
     (void)name; // Reserved for future scoped reemit / audit log wiring.
+    // Issue #3129: facade must own the *full* invalidate / soft-dirty
+    // contract under production — not just reemit. Advance the AOT
+    // table epoch + mark the cross-eval cascade so the subsequent
+    // aura_reemit_aot_for_dirty sees the mutated define as dirty. The
+    // decide_and_reemit body below handles the C-ABI reemit +
+    // region-mask coverage. Soft / Off path above is unchanged
+    // (zero extra work; returns false).
+    aura_aot_bump_func_table_epoch();
+    aura_aot_note_cross_eval_hard_owner_scoped();
     // decide_and_reemit is the canonical production reemit entry; it
     // forwards to aura_reemit_aot_for_dirty (the low-level C ABI which
     // owns storm / Defer / SoftEnter / owner / provider-not-wired gates)
