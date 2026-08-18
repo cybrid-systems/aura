@@ -108,6 +108,24 @@ function(aura_issue_test_observability TARGET)
     target_sources(${TARGET} PRIVATE src/compiler/observability_metrics.h)
 endfunction()
 
+# Keep a JIT shared lib in the test binary's DT_NEEDED even when the
+# test TU does not reference it (refs live in libaura_test_objects.so).
+# CI x86_64 mold --as-needed otherwise strips it → rc=127
+#   symbol lookup error: libaura_test_objects.so: undefined symbol: …
+# Prepend so JIT strong defs win ELF search against weak stubs in
+# libaura_test_objects.so. Do NOT put the JIT SO on aura_test_objects
+# itself (light reemit stubs would bind before full-JIT strong defs).
+function(aura_issue_test_keep_jit TARGET JIT_LIB)
+    target_link_libraries(${TARGET} PRIVATE ${JIT_LIB})
+    get_target_property(_aura_jit_link_libs ${TARGET} LINK_LIBRARIES)
+    if(_aura_jit_link_libs)
+        list(REMOVE_ITEM _aura_jit_link_libs ${JIT_LIB})
+        list(INSERT _aura_jit_link_libs 0
+            "-Wl,--no-as-needed" ${JIT_LIB} "-Wl,--as-needed")
+        set_property(TARGET ${TARGET} PROPERTY LINK_LIBRARIES "${_aura_jit_link_libs}")
+    endif()
+endfunction()
+
 # Light JIT/ABI via shared aura_jit_light_test_objects (no LLVM).
 # Default for issue tests that only need CompilerService / AOT bridge
 # symbols resolved — not real OrcJIT. See CMakeLists.txt comment on
@@ -122,7 +140,7 @@ function(aura_issue_test_link_light TARGET)
         src/compiler/observability_metrics.h
         src/compiler/observability_snapshot.h
     )
-    target_link_libraries(${TARGET} PRIVATE aura_jit_light_test_objects)
+    aura_issue_test_keep_jit(${TARGET} aura_jit_light_test_objects)
 endfunction()
 
 # Full LLVM OrcJIT via shared aura_jit_test_objects (see CMakeLists.txt).
@@ -143,15 +161,7 @@ function(aura_issue_test_link_llvm_jit TARGET)
         src/compiler/observability_snapshot.h
     )
     # AURA_HAVE_LLVM + LLVM includes + llvm_libs come PUBLIC from the lib.
-    target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
-    # Prepend so full-JIT strong defs (AuraJIT ctor, reemit body) win
-    # ELF search order against weak stubs in libaura_test_objects.so.
-    get_target_property(_aura_jit_link_libs ${TARGET} LINK_LIBRARIES)
-    if(_aura_jit_link_libs)
-        list(REMOVE_ITEM _aura_jit_link_libs aura_jit_test_objects)
-        list(INSERT _aura_jit_link_libs 0 aura_jit_test_objects)
-        set_property(TARGET ${TARGET} PROPERTY LINK_LIBRARIES "${_aura_jit_link_libs}")
-    endif()
+    aura_issue_test_keep_jit(${TARGET} aura_jit_test_objects)
 endfunction()
 
 # LLVM JIT without observability headers (light JIT API tests).
@@ -161,7 +171,7 @@ function(aura_issue_test_link_llvm_jit_minimal TARGET)
             "aura_issue_test_link_llvm_jit_minimal(${TARGET}): aura_jit_test_objects missing")
     endif()
     target_include_directories(${TARGET} PRIVATE src/compiler)
-    target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
+    aura_issue_test_keep_jit(${TARGET} aura_jit_test_objects)
 endfunction()
 
 # LLVM JIT + observability + contract stub.
@@ -210,5 +220,5 @@ function(aura_issue_test_link_llvm_fiber_stubs TARGET)
         src/core/contract_stub.cpp
         src/compiler/aura_jit_prim_dispatch_stub.cpp
     )
-    target_link_libraries(${TARGET} PRIVATE aura_jit_test_objects)
+    aura_issue_test_keep_jit(${TARGET} aura_jit_test_objects)
 endfunction()

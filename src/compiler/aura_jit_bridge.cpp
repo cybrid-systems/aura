@@ -657,8 +657,9 @@ static std::uint64_t g_aot_emit_env_frame_version = 0;
 // .c's `aot_linear_state` symbol computation — same logic,
 // surfaced as a process-global so emit paths don't need an
 // Evaluator handle).
-static std::atomic<std::uint64_t> g_aot_live_env_frame_version{0};
-static std::atomic<std::uint8_t> g_aot_live_linear_state_fingerprint{0};
+// Live env / linear atomics + C ABI live in runtime_ssot.cpp
+// (libaura_tl_arena.so) so libaura_test_objects.so resolves them when
+// the JIT SOs are mold --as-needed stripped.
 
 // Issue #2091: process-global snapshot of the AURA_AOT_FORCE_ENV_LINEAR_SUFFIX
 // env var (read once at first emit so test harnesses that flip the flag
@@ -679,27 +680,8 @@ static void aot_seed_force_env_linear_suffix_from_env() {
     }
 }
 
-// Issue #2091: live env_frame_version setter (called by the Evaluator
-// whenever env_generation_ bumps). The atomic is the canonical
-// process-global that every emit / reemit / registration site reads
-// when constructing mangle_aot_name / aot_link_name args.
-extern "C" void aura_set_aot_live_env_frame_version(std::uint64_t v) {
-    g_aot_live_env_frame_version.store(v, std::memory_order_release);
-}
-
-extern "C" std::uint64_t aura_get_aot_live_env_frame_version(void) {
-    return g_aot_live_env_frame_version.load(std::memory_order_acquire);
-}
-
-// Issue #2091: live linear_state fingerprint setter (uint8 — mirrors
-// the max linear_ownership_state observed in the active EnvFrames).
-extern "C" void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v) {
-    g_aot_live_linear_state_fingerprint.store(v, std::memory_order_release);
-}
-
-extern "C" std::uint8_t aura_get_aot_live_linear_state_fingerprint(void) {
-    return g_aot_live_linear_state_fingerprint.load(std::memory_order_acquire);
-}
+// Issue #2091: live env_frame_version / linear_state fingerprint
+// C ABI lives in runtime_ssot.cpp (libaura_tl_arena.so).
 
 // Issue #2091: C-linkage bridge for the force flag in aot_mangle.h.
 // Honors AURA_AOT_FORCE_ENV_LINEAR_SUFFIX on first call so tests can
@@ -722,7 +704,7 @@ extern "C" int aura_aot_get_force_env_linear_suffix(void) {
 // are 0 (the legacy defuse-only shape).
 static std::uint64_t aot_resolve_emit_env_frame_version() noexcept {
     const std::uint64_t host = g_aot_emit_env_frame_version;
-    const std::uint64_t live = g_aot_live_env_frame_version.load(std::memory_order_acquire);
+    const std::uint64_t live = aura_get_aot_live_env_frame_version();
     return host > live ? host : live;
 }
 
@@ -731,8 +713,7 @@ static std::uint64_t aot_resolve_emit_env_frame_version() noexcept {
 // path is the per-function FlatFunction loop in
 // generate_registration_c; the fingerprint is the module-level max.
 static std::uint8_t aot_resolve_emit_linear_state_fingerprint() noexcept {
-    const std::uint8_t live = g_aot_live_linear_state_fingerprint.load(std::memory_order_acquire);
-    return live;
+    return aura_get_aot_live_linear_state_fingerprint();
 }
 
 // Issue #2091: metric bumper helper. Picks stamped vs default_zero
@@ -1201,7 +1182,7 @@ struct AotFuncSlot {
 };
 
 AotFuncSlot g_aot_func_slots[kMaxAotFuncs];
-std::atomic<std::uint64_t> g_aot_table_epoch{1};
+// g_aot_table_epoch is SSOT in runtime_ssot.cpp (runtime_shared.h).
 // Issue #971: count silent drops when func_id >= kMaxAotFuncs.
 std::atomic<std::uint64_t> g_aot_register_dropped{0};
 // Issue #2299: TLS owner for aura_register_fn_tracked (and staging apply).
@@ -1504,9 +1485,7 @@ void note_reload_rollback() noexcept {
 
 } // namespace
 
-extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
-    return g_aot_table_epoch.load(std::memory_order_acquire);
-}
+// aura_aot_func_table_epoch lives in runtime_ssot.cpp.
 
 // Issue #2012 / #2046: diagnostics / tests — read live fn_ptr.
 // Returns 0 for out-of-range, empty, or generation-behind slots.

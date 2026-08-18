@@ -54,31 +54,10 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_defuse_version(void)
     return g_aot_defuse_version_stub;
 }
 
-// Issue #2091: weak stubs for the live env_frame_version +
-// linear_state_fingerprint mirror atomics. Test binaries that
-// link aura_jit.cpp + a stub need these to compile; production
-// aura_jit_bridge.cpp provides the strong definitions. The live
-// values stay 0 in tests unless the test explicitly bumps them
-// (mirrors the pre-#2091 behavior — captures the legacy
-// defuse-only shape).
-static std::uint64_t g_aot_live_env_frame_version_stub = 0;
-static std::uint8_t g_aot_live_linear_state_fingerprint_stub = 0;
-
-extern "C" __attribute__((weak)) void aura_set_aot_live_env_frame_version(std::uint64_t v) {
-    g_aot_live_env_frame_version_stub = v;
-}
-
-extern "C" __attribute__((weak)) std::uint64_t aura_get_aot_live_env_frame_version(void) {
-    return g_aot_live_env_frame_version_stub;
-}
-
-extern "C" __attribute__((weak)) void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v) {
-    g_aot_live_linear_state_fingerprint_stub = v;
-}
-
-extern "C" __attribute__((weak)) std::uint8_t aura_get_aot_live_linear_state_fingerprint(void) {
-    return g_aot_live_linear_state_fingerprint_stub;
-}
+// Issue #2091: live env_frame_version + linear_state_fingerprint
+// C ABI lives in runtime_ssot.cpp (libaura_tl_arena.so). Do not
+// weak-stub here — a light-JIT copy would split-brain against the
+// SSOT atomics evaluator_env.cpp writes.
 
 // Issue #2091: weak stubs for the force flag bridge + the env-var
 // seed call. The stub returns 0 (force off) by default so tests
@@ -215,11 +194,8 @@ aura_get_aot_env_frame_version_for_eval(void* /*eval*/) {
     return g_aot_env_frame_version_for_eval_stub;
 }
 extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
-// aura_aot_state_map_size lives in runtime_ssot.cpp (hook, default 0).
-static std::atomic<std::uint64_t> g_aot_table_epoch_stub{1};
-extern "C" __attribute__((weak)) std::uint64_t aura_aot_func_table_epoch(void) {
-    return g_aot_table_epoch_stub.load(std::memory_order_relaxed);
-}
+// aura_aot_state_map_size / aura_aot_func_table_epoch /
+// aura_aot_bump_func_table_epoch live in runtime_ssot.cpp.
 extern "C" __attribute__((weak)) void aura_aot_note_cross_eval_epoch_force_bump(void) {}
 extern "C" __attribute__((weak)) void aura_aot_note_cross_eval_hard_owner_scoped(void) {}
 extern "C" __attribute__((weak)) int aura_aot_cross_eval_hard_owner_scoped_armed(void) {
@@ -242,13 +218,10 @@ extern "C" __attribute__((weak)) void aura_aot_mark_peer_slots_soft_stale(void* 
 extern "C" __attribute__((weak)) int aura_aot_slot_is_soft_stale(std::int64_t /*func_id*/) {
     return 0;
 }
-extern "C" void aura_aot_bump_func_table_epoch(void) {
-    g_aot_table_epoch_stub.fetch_add(1, std::memory_order_relaxed);
-}
 extern "C" __attribute__((weak)) bool
 aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                           std::uint64_t captured_defuse_or_env_version) {
-    const auto cur_b = g_aot_table_epoch_stub.load(std::memory_order_relaxed);
+    const auto cur_b = aura_aot_func_table_epoch();
     const auto cur_d = g_aot_defuse_version_stub;
     // Issue #2930: match full bridge semantics — captured==0 while tracking
     // active is NOT fresh (unstamped observed during tracking), so stale

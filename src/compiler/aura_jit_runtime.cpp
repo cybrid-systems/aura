@@ -817,28 +817,9 @@ extern "C" const FlatHashTable* aura_hash_get_flat_table(int64_t hash_val) {
 }
 
 // ── FlatHashTable allocation ──
-FlatHashTable* FlatHashTable::create(uint64_t cap) {
-    auto* ht = (FlatHashTable*)std::malloc(total_bytes(cap));
-    if (!ht)
-        return nullptr;
-    ht->capacity = cap;
-    ht->size = 0;
-    auto meta = ht->metadata();
-    for (uint64_t i = 0; i < cap; ++i)
-        meta[i] = HASH_EMPTY;
-    auto k = ht->keys();
-    for (uint64_t i = 0; i < cap; ++i)
-        k[i] = 0;
-    auto v = ht->values();
-    for (uint64_t i = 0; i < cap; ++i)
-        v[i] = 0;
-    return ht;
-}
-
-void FlatHashTable::destroy(FlatHashTable* ht) {
-    if (ht)
-        std::free(ht);
-}
+// create / destroy live in runtime_ssot.cpp (libaura_tl_arena.so) so
+// libaura_test_objects.so resolves them when the JIT SOs are mold
+// --as-needed stripped (CI issues suite rc=127).
 
 void FlatHashTable::rebuild(uint64_t new_cap) {
     auto old_cap = capacity;

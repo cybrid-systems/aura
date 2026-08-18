@@ -4,6 +4,7 @@
 
 #include <cstdint>
 #include <cstddef>
+#include <atomic>
 #include <vector>
 
 // ── PairSlot: unified pair storage format ──
@@ -119,12 +120,16 @@ struct FlatHashTable {
     const int64_t* keys() const { return const_cast<FlatHashTable*>(this)->keys(); }
     const int64_t* values() const { return const_cast<FlatHashTable*>(this)->values(); }
 
-    static FlatHashTable* create(uint64_t cap);
+    static FlatHashTable* create(uint64_t cap); // runtime_ssot.cpp (libaura_tl_arena.so)
     static void destroy(FlatHashTable* ht);
-    void rebuild(uint64_t new_cap); // rehash (grow/shrink)
+    void rebuild(uint64_t new_cap); // rehash (grow/shrink) — aura_jit_runtime.cpp
 };
 
 extern std::vector<FlatHashTable*> g_hash_tables;
+
+// AOT table epoch SSOT (runtime_ssot.cpp). aura_jit_bridge.cpp fetch_adds
+// this same object; the C getter is aura_aot_func_table_epoch().
+extern std::atomic<std::uint64_t> g_aot_table_epoch;
 
 // ── TL Arena API ──
 // Returns true on success. On OOM leaves base==nullptr and returns false (no exit).
