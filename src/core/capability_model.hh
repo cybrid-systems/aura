@@ -1195,8 +1195,18 @@ struct CapabilityRegistry {
     // Single lock scope (grant/revoke also lock — do not nest).
     // Callers should pass make_grant_provenance(...) when available; empty
     // prov is filled with non-zero Mutation epoch (force-bind style).
+    //
+    // Issue #3145 AC4: `caller_principal` is the explicit caller principal
+    // (Evaluator::capability_tenant_id_). Default 0 falls back to the
+    // process-global `default_tenant` for legacy direct callers without an
+    // Evaluator context (tests / tooling); production Evaluator paths MUST
+    // pass the explicit principal so the admin check resolves the real
+    // per-Evaluator principal instead of the often-zero default_tenant.
+    // The check already runs under `mtx`, so no additional lock is needed
+    // (TOCTOU closure is implicit — the read is atomic w.r.t. concurrent
+    // grant/revoke).
     void grant_macro_self_evo(TenantId tenant, MacroSelfEvoPolicy policy = {},
-                              const EffectProvenance& prov_in = {}) {
+                              const EffectProvenance& prov_in = {}, TenantId caller_principal = 0) {
         EffectProvenance prov = prov_in;
         // Always ensure non-zero epoch stamp (parity with make_grant_provenance).
         if (prov.epoch == 0) {
@@ -1210,8 +1220,11 @@ struct CapabilityRegistry {
 
         std::lock_guard<std::mutex> lock(mtx);
         // Issue #3029: production Restricted/Strict requires TenantAdmin
-        // (or "tenant-admin" / "capability") on the caller (default_tenant)
-        // or the target tenant. Soft/Off (sandbox_mode==Off) is zero-cost.
+        // (or "tenant-admin" / "capability") on the caller or the target
+        // tenant. Soft/Off (sandbox_mode==Off) is zero-cost.
+        // Issue #3145 AC4: caller_principal is the explicit principal
+        // (Evaluator::capability_tenant_id_); fallback to default_tenant
+        // only for legacy direct callers.
         {
             const auto mode = sandbox_mode.load(std::memory_order_acquire);
             if (mode != EffectSandboxMode::Off) {
@@ -1229,7 +1242,9 @@ struct CapabilityRegistry {
                     }
                     return false;
                 };
-                const auto caller = default_tenant.load(std::memory_order_acquire);
+                const auto caller = caller_principal != 0
+                                        ? caller_principal
+                                        : default_tenant.load(std::memory_order_acquire);
                 if (!has_admin(caller) && !has_admin(tenant)) {
                     auto& met = g_capability_effect_metrics();
                     met.capability_macro_self_evo_grant_deny_total.fetch_add(

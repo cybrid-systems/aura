@@ -1165,14 +1165,19 @@ void Evaluator::grant_cross_tenant_access(std::uint64_t from_tenant, std::uint64
     using namespace ::aura::core::workspace_isolation;
     // Issue #3086: fence moved into WorkspaceIsolationPolicy::grant_cross_tenant
     // (the SSOT method). Evaluator wrapper is now a thin stamp+call —
-    // no second policy, no double-count of deny metrics. The SSOT helper
-    // `try_grant_cross_tenant_privileged` is invoked by the method body and
-    // resolves caller principal via g_capability_registry().default_tenant
-    // (Evaluator-internal `capability_tenant_id_` is intentionally NOT used
-    // here: cross-tenant grant writes the process-global table, so the
-    // gate authority must also be process-global — same shape as
-    // CapabilityRegistry::grant_macro_self_evo post-#3029).
-    g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, effect_bits);
+    // no second policy, no double-count of deny metrics.
+    // Issue #3145 AC2: forward this Evaluator's `capability_tenant_id_`
+    // (the per-Evaluator principal restored by TenantScope) as the explicit
+    // caller principal to the SSOT helper. The SSOT helper
+    // `try_grant_cross_tenant_privileged` previously resolved the caller
+    // via the process-global `default_tenant`, which is almost always 0
+    // under multi-Evaluator production. The helper takes the registry mtx
+    // and reads `effects_for_locked(caller_principal)` so a concurrent
+    // revoke of TenantAdmin from another Evaluator / fiber cannot race
+    // past the fence (TOCTOU closure — #3126). Soft/Off stays zero-cost
+    // (the SSOT helper short-circuits before any lock or principal load).
+    g_workspace_isolation().grant_cross_tenant(from_tenant, to_tenant, effect_bits,
+                                               capability_tenant_id_);
 }
 
 bool Evaluator::check_workspace_isolation(std::uint64_t target_tenant, std::uint64_t ref_tenant,

@@ -163,7 +163,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
             const bool force_bind = ev.sandbox_mode() || ev.effect_sandbox_mode() != 0;
             auto prov = make_grant_provenance(/*mid=*/0, force_bind, /*node=*/0, fiber);
-            g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov);
+            // Issue #3145 AC4: forward this Evaluator's principal
+            // (capability_tenant_id_, restored by TenantScope) as the
+            // explicit caller so the #3029 admin fence resolves the real
+            // per-Evaluator principal instead of the process-global
+            // default_tenant (almost always 0 under multi-Evaluator).
+            g_capability_registry().grant_macro_self_evo(tenant, MacroSelfEvoPolicy{}, prov,
+                                                         ev.capability_tenant_id());
         }
         return make_bool(true);
     });

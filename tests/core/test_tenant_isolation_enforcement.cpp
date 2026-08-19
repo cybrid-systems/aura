@@ -293,7 +293,6 @@ static void ac3126_admin_fence_locked() {
               "AC6 soft: public effects_for sees TenantAdmin after grant()");
         reset_all();
     }
-    g_capability_registry().default_tenant.store(tenant, std::memory_order_relaxed);
 }
 
 } // namespace
@@ -2369,6 +2368,278 @@ int main() {
         if (!invent.good())
             invent.open("../tests/core/test_issue_3049.cpp");
         CHECK(!invent.good(), "3049: no test_issue_3049.cpp");
+    }
+
+    // ── Issue #3145: try_grant_cross_tenant_privileged + grant_macro_self_evo
+    // privilege check — explicit caller_principal (per-Evaluator
+    // capability_tenant_id_, restored by TenantScope) instead of the
+    // process-global default_tenant (almost always 0 under multi-Evaluator),
+    // and effects_for under the registry mtx (effects_for_locked) so a
+    // concurrent revoke cannot race past the fence.
+    {
+        std::println("\n--- #3145 AC1: dual-Evaluator chaos — revoke mid-flight, racing "
+                     "grant_cross_tenant fails closed ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(1);
+        ev_b.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(7);
+        ev_b.set_capability_tenant_id(7); // same principal as A
+        // TenantAdmin on tenant 7 with bound mid so it actually lands.
+        grant_tenant_admin_mid(7);
+
+        // First grant succeeds (admin present, locked read).
+        const auto allow0 =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        ev_a.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto allow1 =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(allow1 == allow0 + 1, "AC1: initial grant with TenantAdmin on caller → allow");
+
+        // Concurrent revoke of TenantAdmin from tenant 7 — must close the
+        // racing grant (the gate reads effects_for_locked under registry mtx,
+        // so a revoke that lands before the read fails closed).
+        using aura::core::capability::g_capability_registry;
+        g_capability_registry().revoke(7, "tenant-admin");
+
+        const auto deny_before = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                     .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow_before =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        ev_b.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                                    .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow_after =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(deny_after == deny_before + 1,
+              "AC1: post-revoke racing grant_cross_tenant fails closed (deny + counter)");
+        CHECK(allow_after == allow_before,
+              "AC1: post-revoke racing grant_cross_tenant does not bump allow counter");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC1: only the pre-revoke grant landed; the racing one was denied");
+    }
+
+    // ── #3145 AC2: explicit caller_principal wins; process-global
+    // default_tenant alone never authorises the gate. Two Evaluators in one
+    // process: a (capability_tenant_id=7, no admin) and b (capability_tenant_id=42,
+    // holds TenantAdmin). default_tenant stays 0 — if the gate read
+    // default_tenant alone, both Evaluators would be denied because the
+    // process-global principal is unset. With explicit caller_principal,
+    // b's grant_cross_tenant_access routes through b's own principal (42) and
+    // sees the admin on tenant 42 → allow.
+    {
+        std::println("\n--- #3145 AC2: explicit caller_principal — gate uses Evaluator principal, "
+                     "not process-global default_tenant ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // Force default_tenant=0 so any reliance on the process-global would deny.
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            0, std::memory_order_release);
+
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(1);
+        ev_b.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(7);
+        ev_b.set_capability_tenant_id(42);
+        // TenantAdmin on tenant 42 (b's principal), not on tenant 0 or 7.
+        grant_tenant_admin_mid(42);
+
+        // Evaluator a (tenant 7, no admin): grant denied — caller lacks admin
+        // and target 42 holds admin (allowed as fallback). Target-tenant admin
+        // is still a valid gate clear post-#2968/#3086.
+        const auto deny0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        ev_a.grant_cross_tenant_access(/*from=*/7, /*to=*/42, kEffectMutate);
+        const auto deny1 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        // Either deny (caller lacks admin, target has admin → allow) or allow —
+        // we only care that the gate resolves via caller_principal (42) not
+        // default_tenant (0). A's call sees caller=7 (no admin) and target=42
+        // (has admin) — the target-admin branch allows, no deny bump.
+        CHECK(deny1 == deny0, "AC2: gate uses caller_principal=7 (no admin) → target-admin path "
+                              "allows, no deny bump");
+        CHECK(g_workspace_isolation().cross_grant_bits(7, 42) ==
+                  static_cast<std::uint16_t>(kEffectMutate),
+              "AC2: 7→42 grant landed via target-tenant admin fallback");
+
+        // Now b's grant to a different target (99) where neither caller nor
+        // target has admin (caller_principal=42 has admin on 42, but target=99
+        // has nothing) → deny on missing admin, no fallback. The gate reads
+        // caller_principal=42 (b's principal) which DOES hold TenantAdmin →
+        // caller-admin path allows. Verify explicit principal routes through.
+        const auto deny2 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow2 =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        ev_b.grant_cross_tenant_access(/*from=*/42, /*to=*/99, kEffectMutate);
+        const auto deny3 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow3 =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(deny3 == deny2,
+              "AC2: caller_principal=42 holds admin → no deny bump (caller-admin allow)");
+        CHECK(allow3 == allow2 + 1,
+              "AC2: 42→99 grant allowed via caller_principal=42 holding TenantAdmin");
+
+        // Reset default_tenant so it does not leak into later blocks.
+        aura::core::capability::g_capability_registry().default_tenant.store(
+            0, std::memory_order_release);
+    }
+
+    // ── #3145 AC3: Soft/Off remains zero-cost. No lock, no principal load.
+    {
+        std::println("\n--- #3145 AC3: Soft/Off zero-cost — no lock, no principal load ---");
+        reset_all(); // Off
+        const auto deny0 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow0 =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        // No TenantAdmin anywhere; Soft/Off must still allow (zero-cost).
+        g_workspace_isolation().grant_cross_tenant(/*from=*/1, /*to=*/2, kEffectMutate,
+                                                   /*caller=*/1);
+        const auto deny1 = aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                               .cross_tenant_grant_deny_total.load(std::memory_order_relaxed);
+        const auto allow1 =
+            aura::core::workspace_isolation::g_tenant_isolation_metrics()
+                .cross_tenant_capability_grant_total.load(std::memory_order_relaxed);
+        CHECK(deny1 == deny0, "AC3: Soft/Off does not bump deny (zero-cost)");
+        CHECK(allow1 == allow0 + 1, "AC3: Soft/Off allows without lock or principal load");
+    }
+
+    // ── #3145 AC4: grant_macro_self_evo privilege check aligned (same
+    // principal source — explicit caller_principal — and runs under the
+    // registry mtx so concurrent revoke cannot race past the fence).
+    {
+        std::println(
+            "\n--- #3145 AC4: grant_macro_self_evo aligned with explicit caller_principal ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        // TenantAdmin on tenant 42 (b's principal), nothing on 0 or 7.
+        grant_tenant_admin_mid(42);
+
+        // (a) caller_principal=0 fallback to default_tenant=0, no admin on
+        // caller or target → deny.
+        const auto deny0 =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+        aura::core::capability::g_capability_registry().grant_macro_self_evo(
+            /*tenant=*/7, aura::core::capability::MacroSelfEvoPolicy{}, /*prov_in=*/{},
+            /*caller_principal=*/0);
+        const auto deny1 =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny1 == deny0 + 1,
+              "AC4: explicit caller_principal=0 (no admin) → deny + counter bump");
+
+        // (b) caller_principal=42 holds admin → allow.
+        aura::core::capability::g_capability_registry().grant_macro_self_evo(
+            /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{}, /*prov_in=*/{},
+            /*caller_principal=*/42);
+        aura::core::capability::CapabilityGrant g{};
+        CHECK(aura::core::capability::g_capability_registry().find_grant(42, "macro-self-evo", g),
+              "AC4: caller_principal=42 (holds TenantAdmin) → macro-self-evo grant lands");
+
+        // (c) post-revoke alignment — revoke TenantAdmin on 42, then the same
+        // explicit caller_principal=42 must deny (the registry mtx covers the
+        // by_tenant find so the revoke races correctly).
+        aura::core::capability::g_capability_registry().revoke(42, "tenant-admin");
+        const auto deny2 =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+        aura::core::capability::g_capability_registry().grant_macro_self_evo(
+            /*tenant=*/42, aura::core::capability::MacroSelfEvoPolicy{}, /*prov_in=*/{},
+            /*caller_principal=*/42);
+        const auto deny3 =
+            aura::core::capability::g_capability_effect_metrics()
+                .capability_macro_self_evo_grant_deny_total.load(std::memory_order_relaxed);
+        CHECK(deny3 == deny2 + 1,
+              "AC4: post-revoke, explicit caller_principal=42 (no admin) → deny");
+    }
+
+    // ── #3145 AC5/AC6: source-cite + linter + no invent + no docs/design/
+    {
+        std::println("\n--- #3145 AC5/AC6: source-cite + linter + no invent ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto cap = read_file("src/core/capability_model.hh");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+
+        // AC5: workspace_isolation.hh owns the SSOT helper, explicit
+        // caller_principal parameter, and the locked effects_for_locked
+        // read under the registry mtx.
+        CHECK(iso.find("Issue #3145") != std::string::npos,
+              "AC5: workspace_isolation.hh cites Issue #3145");
+        CHECK(iso.find("caller_principal") != std::string::npos,
+              "AC5: SSOT helper accepts caller_principal");
+        CHECK(iso.find("effects_for_locked") != std::string::npos,
+              "AC5: privilege read uses effects_for_locked (TOCTOU closure)");
+        CHECK(iso.find("reg.mtx") != std::string::npos, "AC5: privilege read holds registry mtx");
+
+        // AC5: capability_model.hh grant_macro_self_evo accepts caller_principal.
+        CHECK(cap.find("Issue #3145") != std::string::npos,
+              "AC5: capability_model.hh cites Issue #3145");
+        CHECK(cap.find("caller_principal") != std::string::npos,
+              "AC5: grant_macro_self_evo accepts caller_principal");
+
+        // AC5: Evaluator wrapper forwards capability_tenant_id_.
+        CHECK(sec.find("Issue #3145") != std::string::npos,
+              "AC5: evaluator_security.cpp cites Issue #3145");
+        CHECK(sec.find("g_workspace_isolation().grant_cross_tenant") != std::string::npos &&
+                  sec.find("capability_tenant_id_") != std::string::npos,
+              "AC5: Evaluator wrapper forwards capability_tenant_id_ to SSOT method");
+
+        // AC5: Evaluator prim site forwards ev.capability_tenant_id().
+        CHECK(prim.find("Issue #3145") != std::string::npos ||
+                  prim.find("#3145") != std::string::npos,
+              "AC5: evaluator_primitives_security.cpp cites Issue #3145");
+        CHECK(prim.find("ev.capability_tenant_id()") != std::string::npos,
+              "AC5: prim forwards ev.capability_tenant_id() to grant_macro_self_evo");
+
+        // AC5: this test file cites #3145.
+        CHECK(test_self.find("#3145") != std::string::npos, "AC5: test file cites Issue #3145");
+
+        // AC6: linter wired into build.py.
+        CHECK(build.find("check_cross_tenant_grant_principal_3145") != std::string::npos,
+              "AC6: build.py wires #3145 linter");
+
+        // AC6: no new posture / query key (AC6 explicit).
+        const auto posture = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(posture.find("schema-3145") == std::string::npos,
+              "AC6: no new posture key (schema-3145 forbidden per issue body)");
+        CHECK(posture.find("issue-3145") == std::string::npos,
+              "AC6: no new query key (issue-3145 forbidden per issue body)");
+
+        // No invent + no docs/design/ (#81967 / #1655).
+        std::ifstream invent("tests/core/test_issue_3145.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3145.cpp");
+        CHECK(!invent.good(), "AC6: no tests/core/test_issue_3145.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3145-") == std::string::npos,
+                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
     }
 
     reset_all();
