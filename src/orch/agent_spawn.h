@@ -2244,6 +2244,13 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
     auto wr = wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault);
     h.wait_reclaimed_used = true;
     h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+    // Issue #3146: mirror the join_agent Timeout arm — leave
+    // must_wait_reclaimed=true on Timeout so long-term-handle hosts still
+    // know the body is running and reservation/mailbox are still held
+    // (#2661 no-early-free). Ok path clears the flag (#3110 AC1 — host
+    // sees cleanup completed). wait_reclaimed_body does not release /
+    // detach on Timeout, so the flag is the only host-visible signal.
+    h.must_wait_reclaimed = (wr.status == serve::JoinStatus::Timeout);
     return wr;
 }
 
@@ -2493,7 +2500,13 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         jr.wait_us += wr3110.wait_us;
         h.wait_reclaimed_used = true;
         h.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout);
-        h.must_wait_reclaimed = false; // auto-waited, clear flag (host sees false)
+        // Issue #3146: on Timeout, retain must_wait_reclaimed so the host
+        // still knows the body is running and reservation/mailbox are
+        // still held (#2661 no-early-free; wait_reclaimed_body does not
+        // release / detach on Timeout, so the flag is the only host-
+        // visible signal). Ok path clears the flag (#3110 AC1 — host
+        // sees cleanup completed).
+        h.must_wait_reclaimed = (wr3110.status == serve::JoinStatus::Timeout);
     }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
@@ -2605,7 +2618,12 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             jr.wait_us += wr3110.wait_us;
             a.wait_reclaimed_used = true;
             a.wait_reclaimed_timeout = (wr3110.status == serve::JoinStatus::Timeout);
-            a.must_wait_reclaimed = false; // auto-waited, clear flag
+            // Issue #3146: on Timeout, retain must_wait_reclaimed so the
+            // host still knows the body is running and reservation/mailbox
+            // are still held (#2661 no-early-free). Ok path clears the
+            // flag (#3110 AC1 — host sees cleanup completed). Mirrors the
+            // single-handle join_agent fix.
+            a.must_wait_reclaimed = (wr3110.status == serve::JoinStatus::Timeout);
         }
         if (local.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
             auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);

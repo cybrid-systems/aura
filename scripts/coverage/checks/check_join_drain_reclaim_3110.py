@@ -3,8 +3,10 @@
 
 Contract (one row per AC):
   AC1  Production + Reclaimed + unset wait → join_agent auto-waits via
-       wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault=50); flag
-       cleared after auto-wait; host sees must_wait_reclaimed == false
+       wait_reclaimed_body(h, kProductionWaitReclaimedMsDefault=50). Ok
+       path clears must_wait_reclaimed (host sees false). Timeout path
+       refined by #3146 — must_wait_reclaimed stays true so the host
+       knows the body is still running (#2661 preserved).
   AC2  Explicit wait path unchanged (policy.wait_reclaimed_ms.has_value())
   AC3  Soft / Off stays zero cost (production_reclaimed_must_wait() gate
        preserved; no new atomic / no extra counter)
@@ -15,6 +17,16 @@ Contract (one row per AC):
   AC6  Extend tests/orch/test_join_drain_reclaim.cpp (no test_issue_3110.cpp
        per #81967; no docs/design/3110-* per #1655)
   AC7  Source-cite + build.py wiring + join_agents span variant same pattern
+       (mirrors #3146 conditional flag update in both single-handle and
+       span variants)
+
+Refinement lineage:
+  Issue #3146 — production auto-wait Timeout retains must_wait_reclaimed
+  while reservation/mailbox still held. Refines AC1 above (Timeout arm).
+  Sibling linter: scripts/coverage/checks/check_join_drain_reclaim_3146.py.
+  Verifies that the unconditional clear after auto-wait has been replaced
+  with `must_wait_reclaimed = (status == Timeout)` in join_agent /
+  join_agents / ensure_reclaimed_cleanup SSOT.
 
 Exit 0 = all rows satisfied.
 """
@@ -51,8 +63,12 @@ def main() -> int:
         "AC1 join_agent auto-wait calls wait_reclaimed_body(50ms default)",
         spawn,
     )
-    # Flag cleared after auto-wait (host sees false)
-    must("h.must_wait_reclaimed = false; // auto-waited, clear flag", "AC1 flag cleared after auto-wait", spawn)
+    # Flag is updated after auto-wait. #3110 AC1 originally required an
+    # unconditional clear; #3146 refined this — on Timeout the flag must
+    # stay true (host still has a live body + held reservation, per #2661).
+    # The strict unconditional-clear text is no longer required here; the
+    # conditional update is verified by the #3146 linter (sibling).
+    must("h.must_wait_reclaimed =", "AC1 must_wait_reclaimed updated after auto-wait", spawn)
     # join_agent single-handle path
     must(
         "[[nodiscard]] inline serve::JoinResult join_agent(AgentHandle& h, JoinPolicy policy)",

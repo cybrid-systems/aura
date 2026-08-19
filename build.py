@@ -3499,6 +3499,23 @@ def cmd_lint():
             "Issue #3110 join drain reclaim auto-wait linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3110.py"
         )
         return r
+    # Issue #3146: production auto-wait Timeout retains must_wait_reclaimed
+    # while reservation/mailbox still held. Refines the Timeout arm of
+    # #3110: must_wait_reclaimed = (auto_wait_status == Timeout) so the host
+    # still sees the truth (body running + reservation held) on Timeout. Ok
+    # path clears the flag (#3110 AC1 retained). Extends
+    # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655);
+    # additive observability only (reuses wait_reclaimed_* surface).
+    jd3146_script = COVERAGE_CHECKS / "check_join_drain_reclaim_3146.py"
+    if not jd3146_script.exists():
+        fail(f"missing {jd3146_script}")
+        return 1
+    r = run([sys.executable, str(jd3146_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3146 join drain reclaim Timeout-retention linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3146.py"
+        )
+        return r
     # Issue #3111: production mailbox post-steal re-validate of held_ref
     # messages. Close the Fiber steal × held_ref / handoff_completed
     # consistency residual. Soft / sandbox=off: counter bumps only (may
