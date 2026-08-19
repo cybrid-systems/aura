@@ -1489,7 +1489,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_pcv_tls_scratch.cpp` (—) [domain_suite, theme_core] — AC1: Soft / default: behavior identical (TLS off → same cow_alloc path)
 - `tests/compiler/test_per_defuse_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_per_defuse_batch.cpp — batch driver for per_defuse_index family.
 - `tests/serve/test_per_fiber_stack_pool_high_concurrency.cpp` (—) [domain_suite, theme_serve] — test_per_fiber_stack_pool_high_concurrency.cpp — Issue #652:
-- `tests/orch/test_per_scope_bp_admit.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_per_scope_bp_admit.cpp
+- `tests/orch/test_per_scope_bp_admit.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_per_scope_bp_admit.cpp
 - `tests/compiler/test_pmr_alloc_fiber_safe.cpp` (—) [domain_suite, theme_compiler] — Issue #2997 — 4–8 fiber concurrent list construction + lock SLO.
 - `tests/compiler/test_post_densify_linear_type_revalidate.cpp` (—) [domain_suite, theme_compiler] — AC1: Ordered phase helper runs after Moving densify (or stamp-mismatch
 - `tests/serve/test_prompt6_epoch_atomic_visibility_fiber_steal.cpp` (—) [domain_suite, theme_serve] — test_prompt6_epoch_atomic_visibility_fiber_steal.cpp — Issue #739:
