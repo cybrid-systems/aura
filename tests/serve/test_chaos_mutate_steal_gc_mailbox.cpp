@@ -765,6 +765,30 @@ static long run_chaos_pass(const char* label, int workers, int n_fibers, int dur
         }
     }
 
+    // Issue #3164: hard soak invariant for max hold-after-cancel latency.
+    // The #3073 check above only fires when cancel is *currently* armed
+    // OR the holder is *currently* still held — but a holder that was
+    // eventually released after a long hold-after-cancel latency is the
+    // residual: Agents see schedule-deny + cancel armed, holder runs
+    // past SLO, then eventually clears, but the latency window itself
+    // is unbounded under mailbox×mutation denseness. This new hard
+    // assert fires under prod_ready_gate regardless of current
+    // armed/held state — the max observed during the soak (tracked
+    // via max_hold_after_cancel_us above) is the SSOT.
+    // Soft / unit: print only (prod_ready_gate requires
+    // residual_zero_gate + production_defaults_active).
+    {
+        const auto bound = aura::compiler::mutation_hold_inbody_window_bound_us();
+        const bool prod_ready_gate = (residual_zero_gate || prod_gate) &&
+                                     aura::compiler::typed_audit::production_defaults_active();
+        if (prod_ready_gate && bound > 0) {
+            CHECK(max_hold_after_cancel_us <= bound,
+                  "#3164: max hold-after-cancel latency exceeds bound (soak fail-closed)");
+        }
+        std::println("  #3164 hold-after-cancel max: max_hold_after_us={} bound_us={} (gate={})",
+                     max_hold_after_cancel_us, bound, prod_ready_gate ? 1 : 0);
+    }
+
     CHECK(st.ops.load() > 0, "ops progressed");
     // Issue #2513: soak/full should exercise non-yield path (LLM-style).
     if ((soak || chaos_full()) && n_fibers >= 16)
