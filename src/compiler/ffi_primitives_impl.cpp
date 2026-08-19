@@ -41,6 +41,8 @@ struct FfiRenderHotpathGuard {
 void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::string>* string_heap,
                                      std::vector<void*>* opaque_heap,
                                      std::array<std::uint64_t, 16>* coverage_counters) {
+    // Issue #3176: Evaluator ctor wraps `add` so c-* names go to
+    // defer_std_host_prim (installed on require std/ffi + kEffectFfi).
     auto* sh = string_heap;
     auto* oh = opaque_heap;
 

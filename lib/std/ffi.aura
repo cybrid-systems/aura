@@ -1,0 +1,33 @@
+; ffi.aura — C FFI host prims (Issue #3176)
+; (require "std/ffi" all:)
+;
+; Core boot no longer registers c-*. Require installs the host prims
+; (capability-gated under sandbox: effect:ffi). Value aliases, same
+; pattern as std/socket (#2865) — do not wrap as (define (c-func …) (c-func …)).
+; FFI is an explicit dangerous capability (dlopen / native memory).
+;
+;   (c-load path)              → lib handle | 0
+;   (c-func lib name sig)      → procedure
+;   (c-alloc n)                → opaque
+;   (c-free p)                 → void
+;   (c-opaque addr)            → opaque
+;   (c-opaque? x)              → bool
+;   (c-opaque->int p)          → int
+;   (c-struct-size …)          → int
+;   (c-struct-set! p off v)    → void
+;   (c-struct-ref p off ty)    → value
+
+(export c-load c-func c-alloc c-free
+        c-opaque c-opaque? c-opaque->int
+        c-struct-size c-struct-set! c-struct-ref)
+
+(define c-load c-load)
+(define c-func c-func)
+(define c-alloc c-alloc)
+(define c-free c-free)
+(define c-opaque c-opaque)
+(define c-opaque? c-opaque?)
+(define c-opaque->int c-opaque->int)
+(define c-struct-size c-struct-size)
+(define c-struct-set! c-struct-set!)
+(define c-struct-ref c-struct-ref)

@@ -2095,6 +2095,15 @@ def cmd_lint():
             "Issue #3175 query: surface reduction linter failed — run python3 scripts/coverage/checks/check_query_surface_3175.py"
         )
         return r
+    # Issue #3176: demote C FFI c-* off core boot (std/ffi + kEffectFfi).
+    ffi3176_script = COVERAGE_CHECKS / "check_ffi_surface_3176.py"
+    if not ffi3176_script.exists():
+        fail(f"missing {ffi3176_script}")
+        return 1
+    r = run([sys.executable, str(ffi3176_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3176 C FFI surface linter failed — run python3 scripts/coverage/checks/check_ffi_surface_3176.py")
+        return r
     # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
@@ -4527,6 +4536,15 @@ def cmd_lint():
         fail(
             "Issue #3175 query: surface reduction linter failed — run python3 scripts/coverage/checks/check_query_surface_3175.py"
         )
+        return r
+    # Issue #3176: demote C FFI c-* off core boot (std/ffi + kEffectFfi).
+    ffi3176b = COVERAGE_CHECKS / "check_ffi_surface_3176.py"
+    if not ffi3176b.exists():
+        fail(f"missing {ffi3176b}")
+        return 1
+    r = run([sys.executable, str(ffi3176b)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3176 C FFI surface linter failed — run python3 scripts/coverage/checks/check_ffi_surface_3176.py")
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
     rml3085b = COVERAGE_CHECKS / "check_rehydrate_miss_lowering_elision_3085.py"
@@ -12967,6 +12985,30 @@ def cmd_query_surface_3175():
     return cmd_query_surface_3175_coverage()
 
 
+def cmd_ffi_surface_3176_coverage():
+    """Issue #3176: demote C FFI c-* prims off core boot (static)."""
+    print(f"{B}=== C FFI surface reduction coverage (#3176) ==={N}")
+    script = COVERAGE_CHECKS / "check_ffi_surface_3176.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("C FFI surface reduction (#3176) coverage contract rows failed")
+        return 1
+    ok("C FFI surface reduction (#3176) coverage clean")
+    return 0
+
+
+def cmd_ffi_surface_3176():
+    """Issue #3176: c-* install on (require std/ffi) with kEffectFfi.
+
+    Sandbox without grant-effect refuses the module.
+    """
+    print(f"{B}=== C FFI surface reduction (#3176) ==={N}")
+    return cmd_ffi_surface_3176_coverage()
+
+
 def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
@@ -17702,6 +17744,8 @@ def main():
         "io-net-git-surface-3174-coverage": cmd_io_net_git_surface_3174_coverage,
         "query-surface-3175": cmd_query_surface_3175,
         "query-surface-3175-coverage": cmd_query_surface_3175_coverage,
+        "ffi-surface-3176": cmd_ffi_surface_3176,
+        "ffi-surface-3176-coverage": cmd_ffi_surface_3176_coverage,
         "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,
