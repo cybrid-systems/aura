@@ -2248,6 +2248,242 @@ int run_test_join_drain_reclaim() {
               "3110 AC7: #2661 complete_agent_join_cleanup preserved");
     }
 
+    // ── Issue #3146: production auto-wait Timeout clears must_wait_reclaimed
+    // while reservation/mailbox still held. Refines the Timeout arm of
+    // #3110: on Timeout, retain must_wait_reclaimed=true so the host still
+    // knows the body is running and reservation/mailbox are still held
+    // (#2661 no-early-free). Ok path clears (#3110 AC1 — host sees cleanup
+    // completed). Explicit JoinPolicy{.wait_reclaimed_ms = N} unchanged.
+    {
+        std::println(
+            "\n--- #3146 AC1: production auto-wait Timeout retains must_wait_reclaimed ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        // Production auto-wait path: non-yielding body past the 50ms deadline
+        // so wait_reclaimed_body returns Timeout. Canonical fixture pattern
+        // matches #2970 AC3 (line 1191) — real Fiber marked Reclaimed, body
+        // never exits within the auto-wait deadline.
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 4096; // synthetic reservation
+        JoinPolicy policy{};
+        policy.primary_ms = 1; // join returns Reclaimed quickly
+        policy.drain_ms = 0;
+        // wait_reclaimed_ms stays unset → join_agent runs the production
+        // 50ms auto-wait via wait_reclaimed_body. Body never exits → Timeout.
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3146 AC1: join status Reclaimed");
+        CHECK(h.wait_reclaimed_used, "3146 AC1: production auto-wait ran");
+        CHECK(h.wait_reclaimed_timeout, "3146 AC1: wait_reclaimed_timeout flag set");
+        CHECK(h.must_wait_reclaimed,
+              "3146 AC1: production auto-wait Timeout → must_wait_reclaimed == true");
+        CHECK(h.reserved_memory_bytes == 4096,
+              "3146 AC1: reservation NOT released on Timeout (#2661 preserved)");
+        CHECK(h.reclaimed_deferred_cleanup, "3146 AC1: deferred cleanup still set");
+        // Cleanup so dtor does not leak reservation accounting.
+        fiber_owned->set_state(FiberState::Done);
+        fiber_owned->note_body_exit_if_reclaimed();
+        (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+    }
+
+    // ── #3146 AC2: production auto-wait Ok → must_wait_reclaimed == false;
+    // body exited inside 50ms; cleanup completed (existing #3110 behaviour).
+    {
+        std::println("\n--- #3146 AC2: production auto-wait Ok clears must_wait_reclaimed ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        // Body is already Done at join time → wait_reclaimed_body returns Ok
+        // inside the 50ms auto-wait deadline. Pre-mark Done before join so
+        // the auto-wait sees is_done() == true and exits immediately.
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        fiber_owned->set_state(FiberState::Done);
+        fiber_owned->note_body_exit_if_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 4096;
+        JoinPolicy policy{};
+        policy.primary_ms = 1;
+        policy.drain_ms = 0;
+        // wait_reclaimed_ms unset → production 50ms auto-wait; body is
+        // already Done so the wait returns Ok and clears must_wait_reclaimed.
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3146 AC2 setup: join status Reclaimed");
+        CHECK(h.wait_reclaimed_used, "3146 AC2: production auto-wait ran");
+        CHECK(!h.wait_reclaimed_timeout, "3146 AC2: wait_reclaimed_timeout NOT set on Ok");
+        CHECK(!h.must_wait_reclaimed,
+              "3146 AC2: production auto-wait Ok → must_wait_reclaimed == false (#3110 AC1)");
+    }
+
+    // ── #3146 AC3: explicit JoinPolicy{.wait_reclaimed_ms = N} path unchanged.
+    {
+        std::println(
+            "\n--- #3146 AC3: explicit JoinPolicy{.wait_reclaimed_ms = N} path unchanged ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 2048;
+        JoinPolicy policy{};
+        policy.primary_ms = 1;
+        policy.drain_ms = 0;
+        policy.wait_reclaimed_ms = 1; // 1ms deadline — body never exits
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3146 AC3: join status Reclaimed");
+        CHECK(h.wait_reclaimed_used, "3146 AC3: explicit wait ran");
+        CHECK(h.wait_reclaimed_timeout, "3146 AC3: explicit wait timeout surfaced");
+        // The explicit path pre-clears must_wait_reclaimed before the wait
+        // block runs (per #3110 AC2). Caller chose a deadline; the
+        // production-gate flag must not be re-armed by the explicit wait.
+        CHECK(!h.must_wait_reclaimed,
+              "3146 AC3: explicit path leaves must_wait_reclaimed == false (caller-controlled)");
+        CHECK(h.reserved_memory_bytes == 2048,
+              "3146 AC3: explicit Timeout preserves reservation (#2661)");
+        // Cleanup so dtor does not leak reservation accounting.
+        fiber_owned->set_state(FiberState::Done);
+        fiber_owned->note_body_exit_if_reclaimed();
+        (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+    }
+
+    // ── #3146 AC4: Soft / Off — zero extra wait, flag stays false.
+    {
+        std::println("\n--- #3146 AC4: Soft / Off zero-cost (no auto-wait, flag false) ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 1024;
+        JoinPolicy policy{};
+        policy.primary_ms = 1;
+        policy.drain_ms = 0;
+        const auto before_timeout_total =
+            g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed);
+        const auto before_total =
+            g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3146 AC4: Soft join status Reclaimed");
+        CHECK(!h.wait_reclaimed_used,
+              "3146 AC4: Soft/Off does not run production auto-wait (zero-cost no-op)");
+        CHECK(!h.must_wait_reclaimed, "3146 AC4: Soft/Off leaves must_wait_reclaimed == false");
+        const auto after_timeout_total =
+            g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed);
+        const auto after_total =
+            g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+        CHECK(after_timeout_total == before_timeout_total,
+              "3146 AC4: Soft/Off does not bump wait_reclaimed_timeout_total");
+        CHECK(after_total == before_total, "3146 AC4: Soft/Off does not bump wait_reclaimed_total");
+        // Cleanup so dtor does not leak reservation accounting.
+        fiber_owned->set_state(FiberState::Done);
+        fiber_owned->note_body_exit_if_reclaimed();
+        (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+    }
+
+    // ── #3146 AC5: #2661 preserved — Timeout never releases reservation or
+    // detaches mailbox while body still running. Same shape as #3110 AC4.
+    {
+        std::println("\n--- #3146 AC5: #2661 preserved on Timeout (no early free) ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        auto fiber_owned = std::make_unique<Fiber>([] {});
+        fiber_owned->mark_reclaimed();
+        AgentHandle h;
+        h.ok = true;
+        h.fiber = fiber_owned.get();
+        h.reserved_memory_bytes = 8192; // synthetic arena reservation
+        JoinPolicy policy{};
+        policy.primary_ms = 1;
+        policy.drain_ms = 0;
+        // Production auto-wait (no explicit wait_reclaimed_ms) on a body
+        // that never exits. Timeout must preserve the reservation.
+        const auto jr = join_agent(h, policy);
+        CHECK(jr.status == JoinStatus::Reclaimed, "3146 AC5: join status Reclaimed");
+        CHECK(h.wait_reclaimed_timeout, "3146 AC5: wait_reclaimed_timeout surfaced");
+        CHECK(h.reserved_memory_bytes == 8192,
+              "3146 AC5: reservation NOT released on Timeout (#2661 preserved)");
+        // The host now sees must_wait_reclaimed == true + reservation held +
+        // wait_reclaimed_timeout == true — the full contract for "you must
+        // still wait or drop the handle".
+        CHECK(h.must_wait_reclaimed && h.wait_reclaimed_timeout && h.reserved_memory_bytes == 8192,
+              "3146 AC5: Timeout contract — must_wait_reclaimed && wait_reclaimed_timeout && held");
+        // Cleanup so dtor does not leak reservation accounting.
+        fiber_owned->set_state(FiberState::Done);
+        fiber_owned->note_body_exit_if_reclaimed();
+        (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+    }
+
+    // ── #3146 AC8: source-cite + linter + no AgentRegistry + Soft/Off
+    // not treated as vulnerability.
+    {
+        std::println("\n--- #3146 AC8: source-cite + linter + no AgentRegistry ---");
+        const auto spawn3146 = read_file("src/orch/agent_spawn.h");
+        const auto test3146_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+        const auto build3146 = read_file("build.py");
+
+        // AC8: agent_spawn.h applies the conditional flag update in all three
+        // sites (SSOT helper + join_agent + join_agents span variant).
+        CHECK(spawn3146.find("Issue #3146") != std::string::npos,
+              "3146 AC8: agent_spawn.h cites Issue #3146");
+        CHECK(spawn3146.find("(wr3110.status == serve::JoinStatus::Timeout)") != std::string::npos,
+              "3146 AC8: join_agent Timeout arm sets must_wait_reclaimed conditionally");
+        // ensure_reclaimed_cleanup SSOT must also apply the conditional update
+        // (mirrors join_agent for the long-term-handle host path).
+        const auto ssot_idx = spawn3146.find("ensure_reclaimed_cleanup(AgentHandle& h)");
+        CHECK(ssot_idx != std::string::npos,
+              "3146 AC8: ensure_reclaimed_cleanup SSOT helper present");
+        if (ssot_idx != std::string::npos) {
+            const auto snip = spawn3146.substr(ssot_idx, 1500);
+            CHECK(snip.find("(wr.status == serve::JoinStatus::Timeout)") != std::string::npos,
+                  "3146 AC8: ensure_reclaimed_cleanup SSOT also applies conditional update");
+        }
+        // join_agents span variant must mirror single-handle fix.
+        const auto span_idx = spawn3146.find("join_agents(std::span<AgentHandle> agents");
+        CHECK(span_idx != std::string::npos, "3146 AC8: join_agents span variant present");
+        if (span_idx != std::string::npos) {
+            const auto snip = spawn3146.substr(span_idx, 2500);
+            CHECK(snip.find("(wr3110.status == serve::JoinStatus::Timeout)") != std::string::npos,
+                  "3146 AC8: join_agents span variant mirrors single-handle fix");
+        }
+
+        // AC8: test file cites #3146.
+        CHECK(test3146_self.find("#3146") != std::string::npos,
+              "3146 AC8: test file cites Issue #3146");
+
+        // AC8: no test_issue_3146.cpp + no docs/design/3146-* (#81967/#1655).
+        std::ifstream invent_3146("tests/orch/test_issue_3146.cpp");
+        if (!invent_3146.good())
+            invent_3146.open("../tests/orch/test_issue_3146.cpp");
+        CHECK(!invent_3146.good(),
+              "3146 AC8: no tests/orch/test_issue_3146.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design_3146 = "docs/design";
+        std::error_code ec_3146;
+        if (std::filesystem::is_directory(docs_design_3146, ec_3146)) {
+            for (const auto& entry :
+                 std::filesystem::directory_iterator(docs_design_3146, ec_3146)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3146-") == std::string::npos,
+                      std::string("3146 AC8: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+
+        // AC8: linter wired into build.py.
+        const auto lint3146 = read_file("scripts/coverage/checks/check_join_drain_reclaim_3146.py");
+        CHECK(!lint3146.empty() && lint3146.find("Issue #3146") != std::string::npos,
+              "3146 AC8: #3146 linter exists");
+        CHECK(build3146.find("check_join_drain_reclaim_3146") != std::string::npos,
+              "3146 AC8: build.py wires #3146 linter");
+
+        // AC8: no process-global AgentRegistry (Soft/Off not a vulnerability;
+        // Soft/Off path is unchanged zero-cost no-op).
+        CHECK(spawn3146.find("global_agent_registry") == std::string::npos &&
+                  spawn3146.find("process_agent_registry") == std::string::npos,
+              "3146 AC8: no process-global AgentRegistry (lineage preserved)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
