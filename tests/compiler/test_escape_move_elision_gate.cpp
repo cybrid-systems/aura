@@ -1208,6 +1208,48 @@ static void ac3085_hermetic_lowering_block() {
     clear_type_linear_commit_proof_for_test();
 }
 
+static void ac3171_hermetic_clear_and_invalidate() {
+    std::println("\n--- #3171 AC: hermetic clear + invalidate blocks skip ---");
+    using namespace aura::compiler::typed_audit;
+    using aura::compiler::clear_escape_move_elision_gate_for_eval;
+    using aura::compiler::escape_blocks_move_elision_for_key;
+    using aura::compiler::publish_escape_move_elision_gate_for_key;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(31710);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(linear_fast_path_ok(), "3171: green ok");
+    CHECK(linear_ir_fastpath_try_skip(), "3171: skip before");
+    void* metrics = reinterpret_cast<void*>(0xA3171);
+    publish_escape_move_elision_gate_for_key(metrics, 3, true,
+                                             std::unordered_set<std::string>{"x"});
+    CHECK(escape_blocks_move_elision_for_key(metrics, 3, "x"), "3171: pre-clear blocks x");
+    CHECK(invalidate_fast_path_before_steal_densify_restamp(), "3171: hard invalidate");
+    (void)clear_escape_move_elision_gate_for_eval(metrics);
+    CHECK(!escape_blocks_move_elision_for_key(metrics, 3, "x"), "3171: post-clear no stale");
+    CHECK(!linear_fast_path_ok(), "3171: !ok after gen + clear");
+    CHECK(!linear_ir_fastpath_try_skip(), "3171: cannot skip after restamp");
+    {
+        CompilerService cs;
+        CHECK(href(cs, "schema-3171") == 3171, "3171: schema-3171 on escape-postmutate");
+        CHECK(href(cs, "linear-fast-path-steal-densify-clear-complete-wired") == 1, "3171: wired");
+    }
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_type_linear_commit_proof_for_test();
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1262,6 +1304,8 @@ int run_test_escape_move_elision_gate() {
     ac3063_hermetic_success_invalidate();
     std::println("\n=== Issue #3085: densify/steal miss blocks lowering elision ===");
     ac3085_hermetic_lowering_block();
+    std::println("\n=== Issue #3171: steal/densify restamp complete-clear ===");
+    ac3171_hermetic_clear_and_invalidate();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

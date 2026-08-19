@@ -1558,6 +1558,97 @@ static void ac3063_4_source_and_linter() {
           "3063 AC4: no invent test_issue_3063");
 }
 
+// ── Issue #3171: steal/densify/cross-eval restamp complete-clear ──
+
+static void ac3171_1_prod_clear_blocks_elide() {
+    std::println("\n--- #3171 AC1: production restamp clear → !elide ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::reset_linear_ir_fastpath_counters_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    typed_audit::stamp_type_linear_commit_proof(31711);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3171 AC1: green before restamp");
+    CHECK(typed_audit::linear_ir_fastpath_try_skip(), "3171 AC1: skip before");
+    const auto inv0 = typed_audit::steal_densify_success_invalidate_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3171 AC1: production invalidate");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0 + 1,
+          "3171 AC1: invalidate_gen advanced");
+    CHECK(typed_audit::steal_densify_success_invalidate_total_v_read() == inv0 + 1,
+          "3171 AC1: reuse #3063 success invalidate total");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3171 AC1: !ok after gen advance");
+    CHECK(!typed_audit::linear_ir_fastpath_try_skip(), "3171 AC1: Move/Drop cannot skip");
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3171 AC1: green after rebind");
+    apply_dev_audit_defaults();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3171_2_soft_zero_extra() {
+    std::println("\n--- #3171 AC2: Soft zero extra atomics ---");
+    apply_dev_audit_defaults();
+    typed_audit::set_strategy(typed_audit::AuditStrategy::Sampled);
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    const auto inv0 = typed_audit::steal_densify_success_invalidate_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(!typed_audit::invalidate_fast_path_before_steal_densify_restamp(),
+          "3171 AC2: Soft returns false");
+    CHECK(typed_audit::steal_densify_success_invalidate_total_v_read() == inv0,
+          "3171 AC2: no new counter");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0, "3171 AC2: no gen bump");
+}
+
+static void ac3171_3_schema() {
+    std::println("\n--- #3171 AC3: schema-3171 + SSOT ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3171 AC3: warm");
+    CHECK(href(svc, "schema-3171") == 3171, "3171 AC3: schema-3171");
+    CHECK(href(svc, "issue-3171") == 3171, "3171 AC3: issue-3171");
+    CHECK(href(svc, "linear-fast-path-steal-densify-clear-complete-wired") == 1, "3171 AC3: wired");
+    CHECK(href(svc, "schema-3063") == 3063, "3171 AC3: schema-3063 preserved");
+    CHECK(href(svc, "schema-3085") == 3085, "3171 AC3: schema-3085 preserved");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("linear_fast_path_ok") != std::string::npos, "3171 AC3: SSOT predicate");
+    CHECK(tma.find("kLinearFastPathStealDensifyClearCompleteIssue") != std::string::npos,
+          "3171 AC3: issue stamp");
+}
+
+static void ac3171_4_source_and_linter() {
+    std::println("\n--- #3171 AC4: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto low = read_file("src/compiler/lowering_linear_types_impl.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("Issue #3171") != std::string::npos, "3171 AC4: tma cite");
+    CHECK(efm.find("clear_escape_move_elision_gate_for_eval") != std::string::npos,
+          "3171 AC4: unified_restamp clear");
+    CHECK(mb.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+          "3171 AC4: densify relocate invalidate");
+    CHECK(low.find("Issue #3085 / #3171") != std::string::npos ||
+              low.find("#3171") != std::string::npos,
+          "3171 AC4: lowering consumer");
+    CHECK(t.find("ac3171_1_prod_clear_blocks_elide") != std::string::npos, "3171 AC4: AC1");
+    CHECK(!lint.empty() && lint.find("3171") != std::string::npos, "3171 AC4: linter");
+    CHECK(build.find("check_linear_fast_path_clear_on_restamp_3171") != std::string::npos,
+          "3171 AC4: build.py");
+    CHECK(read_file("docs/design/3171-linear-fast-path-clear.md").empty(),
+          "3171 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3171.cpp").empty(),
+          "3171 AC4: no invent test_issue_3171");
+}
+
 // ── Issue #3099: residual close — re-sample invalidate_gen after
 // linear_fast_path_ok() returns true inside linear_ir_fastpath_try_skip.
 // Closes the half-green linear state window where a concurrent
@@ -2100,6 +2191,11 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3063_2_soft_zero_extra();
     ac3063_3_schema();
     ac3063_4_source_and_linter();
+    std::println("\n=== #3171 steal/densify restamp complete-clear ===");
+    ac3171_1_prod_clear_blocks_elide();
+    ac3171_2_soft_zero_extra();
+    ac3171_3_schema();
+    ac3171_4_source_and_linter();
     std::println("\n=== #3085 densify/steal miss blocks lowering elision ===");
     ac3085_1_densify_miss_blocks_elision();
     ac3085_2_green_rebind_restores();

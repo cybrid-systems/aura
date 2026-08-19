@@ -816,14 +816,21 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
         r.skipped_extra = true;
         return r;
     }
-    // Issue #3063: production steal/densify restamp advances invalidate_gen
-    // *before* node/pin restamp so in-flight IR Move cannot elide on the
-    // pre-restamp green proof. Soft already returned above (zero extra).
-    if ((site == UnifiedRestampSite::StealComplete || site == UnifiedRestampSite::Densify) &&
-        typed_audit::invalidate_fast_path_before_steal_densify_restamp()) {
-        const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
-        (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
-        aura_aot_record_deopt_on_steal();
+    // Issue #3063 / #3171: production steal/densify restamp advances
+    // invalidate_gen *before* node/pin restamp so in-flight IR Move cannot
+    // elide on the pre-restamp green proof. Soft already returned above
+    // (zero extra lock / atomics). #3171 also drops keyed escape summaries
+    // for this eval identity — GC compact / resume / steal-adjacent
+    // restamps were missing the #2507 clear (canonical steal-complete /
+    // Phase-5 still bump path counters via note_*).
+    if (site == UnifiedRestampSite::StealComplete || site == UnifiedRestampSite::Densify) {
+        if (typed_audit::invalidate_fast_path_before_steal_densify_restamp()) {
+            const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+            (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+            aura_aot_record_deopt_on_steal();
+        }
+        if (void* m = compiler_metrics_)
+            (void)aura::compiler::clear_escape_move_elision_gate_for_eval(m);
     }
     if (ws) {
         ws->restamp_all_node_generations();
@@ -3440,11 +3447,14 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
         }
     }
 
-    // (6) Issue #2507: invalidate OwnershipEscapeSummary / MoveOp elision
-    // gate for the stolen eval (and previous host when known). Steal may
-    // leave a live summary under an un-advanced cache_epoch — clear by
-    // metrics* identity (all cow_gen) so next lower cannot stale-elide.
-    // Soft: single map walk; free when no matching entries.
+    // (6) Issue #2507 / #3171: invalidate OwnershipEscapeSummary / MoveOp
+    // elision gate for the stolen eval (and previous host when known).
+    // Steal may leave a live summary under an un-advanced cache_epoch —
+    // clear by metrics* identity (all cow_gen) so next lower cannot
+    // stale-elide. unified_restamp already dropped this eval's keys
+    // (#3171); this site still bumps the #2507 path counter and covers
+    // prev_eval_id (cross-eval handoff). Soft: single map walk; free
+    // when no matching entries.
     //
     // Production yield checkpoints store a live Evaluator* as evaluator_id.
     // Opaque GC-key tokens (tests / foreign arms) must NOT be cast to

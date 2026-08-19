@@ -581,6 +581,15 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                       aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue);
             insert_kv("issue-3085",
                       aura::compiler::typed_audit::kLinearFastPathRehydrateGenElisionIssue);
+            insert_kv("linear-fast-path-steal-densify-clear-complete-wired",
+                      static_cast<std::int64_t>(
+                          aura::compiler::typed_audit::
+                              g_linear_fast_path_steal_densify_clear_complete_wired.load(
+                                  std::memory_order_relaxed)));
+            insert_kv("schema-3171",
+                      aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
+            insert_kv("issue-3171",
+                      aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
 
             return query_hash_finish(ht, string_heap, overflowed);
         });

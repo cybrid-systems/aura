@@ -98,9 +98,10 @@ extern std::atomic<std::uint32_t> g_linear_escape_gate_key_contract_wired;
 // could survive into a subsequent independent mutate in the same
 // process / same eval).
 extern std::atomic<std::uint64_t> g_linear_escape_gate_clear_on_rollback_total;
-// Issue #2507: steal-complete / densify-success clear-by-eval counters.
-// Bumped once per production site call (path wired); map erase is free
-// when no matching entries (single walk under lock).
+// Issue #2507 / #3171: steal-complete / densify-success clear-by-eval
+// counters. Bumped once per canonical production site call (path wired);
+// map erase is free when no matching entries (single walk under lock).
+// #3171 also silent-clears from unified_restamp (no second counter).
 extern std::atomic<std::uint64_t> g_linear_escape_gate_steal_clear_total;
 extern std::atomic<std::uint64_t> g_linear_escape_gate_densify_clear_total;
 extern std::atomic<std::uint64_t> g_linear_escape_gate_steal_clear_entries_total;

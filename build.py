@@ -2039,6 +2039,18 @@ def cmd_lint():
             "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
         )
         return r
+    # Issue #3171: steal/densify/cross-eval restamp complete-clear.
+    # Extends persist-rehydrate + escape-elision + steal-clear (#81967).
+    lfp3171_script = COVERAGE_CHECKS / "check_linear_fast_path_clear_on_restamp_3171.py"
+    if not lfp3171_script.exists():
+        fail(f"missing {lfp3171_script}")
+        return 1
+    r = run([sys.executable, str(lfp3171_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
+        )
+        return r
     # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
@@ -4415,6 +4427,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3063 half-green IR steal/densify linter failed — run python3 scripts/coverage/checks/check_half_green_ir_steal_densify_3063.py"
+        )
+        return r
+    # Issue #3171: steal/densify/cross-eval restamp complete-clear.
+    lfp3171b = COVERAGE_CHECKS / "check_linear_fast_path_clear_on_restamp_3171.py"
+    if not lfp3171b.exists():
+        fail(f"missing {lfp3171b}")
+        return 1
+    r = run([sys.executable, str(lfp3171b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
         )
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
@@ -12735,6 +12758,31 @@ def cmd_half_green_ir_steal_densify_3063():
     return cmd_half_green_ir_steal_densify_3063_coverage()
 
 
+def cmd_linear_fast_path_clear_on_restamp_3171_coverage():
+    """Issue #3171: steal/densify restamp complete-clear (static)."""
+    print(f"{B}=== linear-fast-path restamp complete-clear coverage (#3171) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_fast_path_clear_on_restamp_3171.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear-fast-path restamp complete-clear (#3171) coverage contract rows failed")
+        return 1
+    ok("linear-fast-path restamp complete-clear (#3171) coverage clean")
+    return 0
+
+
+def cmd_linear_fast_path_clear_on_restamp_3171():
+    """Issue #3171: production steal/densify/cross-eval restamp complete-clear.
+
+    Escape-gate clear + invalidate_gen so linear_fast_path_ok is false
+    until a fresh green bind. Soft/Off zero extra. SSOT preserved.
+    """
+    print(f"{B}=== linear-fast-path restamp complete-clear (#3171) ==={N}")
+    return cmd_linear_fast_path_clear_on_restamp_3171_coverage()
+
+
 def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
@@ -17460,6 +17508,8 @@ def main():
         "rehydrate-miss-invalidate-3032-coverage": cmd_rehydrate_miss_invalidate_3032_coverage,
         "half-green-ir-steal-densify-3063": cmd_half_green_ir_steal_densify_3063,
         "half-green-ir-steal-densify-3063-coverage": cmd_half_green_ir_steal_densify_3063_coverage,
+        "linear-fast-path-clear-on-restamp-3171": cmd_linear_fast_path_clear_on_restamp_3171,
+        "linear-fast-path-clear-on-restamp-3171-coverage": cmd_linear_fast_path_clear_on_restamp_3171_coverage,
         "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,
