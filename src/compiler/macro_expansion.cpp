@@ -1760,6 +1760,21 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                     }
                 }
             }
+            // Issue #3154: NodeTag::Quote is a data boundary, not code.
+            // pre_scan must NOT descend into Quote children — bindings
+            // under (quote (let ((x 1)) x)) are data, not template
+            // scope, and must NOT be gensym'd. Same caller-scope stop
+            // as unquote / unquote-splicing. Without this early-return,
+            // quoted forms containing Let / Lambda / Define / MacroDef
+            // get their bindings rename_binding_pre'd, producing
+            // unexpected __x_N inside the quoted data structure
+            // (depth inconsistency vs the qq Call-head paths handled
+            // above). Quote is a first-class NodeTag — distinct from
+            // the Call-named "quote" form. qq / unquote / unquote-
+            // splicing behaviour from #2807 unchanged. Soft / Off
+            // contract preserved — no new metrics middle-layer.
+            if (nv.tag == NodeTag::Quote)
+                return;
             // If this node is a binding position, gensym its name
             // (into the name_map) but don't generate any target node.
             if (nv.tag == NodeTag::Let || nv.tag == NodeTag::LetRec || nv.tag == NodeTag::Define) {
