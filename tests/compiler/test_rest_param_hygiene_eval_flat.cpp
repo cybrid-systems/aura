@@ -92,6 +92,14 @@ static void ac2_eval_flat_dotted_rest_call() {
     std::println("\n--- AC2: eval_flat dotted-rest calls stamp_rest_param_hygiene ---");
     auto eef = read_file("src/compiler/evaluator_eval_flat.cpp");
     CHECK(!eef.empty(), "evaluator_eval_flat.cpp readable");
+    // Compile-unblock (asan-build / ubsan-smoke / reproducible-build /
+    // deployment-health): the helper is exported from
+    // aura.compiler.macro_expansion; eval_flat is aura.compiler. A
+    // using-declaration at namespace scope makes the two call sites
+    // resolve without rewriting the source-cite strings below.
+    CHECK(eef.find("using aura::compiler::macro_exp::stamp_rest_param_hygiene;") !=
+              std::string::npos,
+          "eval_flat imports stamp_rest_param_hygiene from macro_exp (cross-module using)");
     // Find the eval_flat dotted-rest block (list_var = add_variable("list") +
     // list_call = add_call(list_var, remaining)).
     const auto list_var_pos = eef.find("add_variable(p->intern(\"list\"))");
