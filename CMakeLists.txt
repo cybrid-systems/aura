@@ -2209,6 +2209,13 @@ add_dependencies(all_test_issue_targets test_evolution_audit_decision_forensic)
 aura_add_issue_test(test_rest_param_hygiene_eval_flat)
 aura_issue_test_link_light(test_rest_param_hygiene_eval_flat)
 add_dependencies(all_test_issue_targets test_rest_param_hygiene_eval_flat)
+# Issue #3154: pre_scan treated NodeTag::Quote as code, gensym'ing bindings
+# under (quote (let ((x 1)) x)). Adjacent to closed #2807 (qq / unquote /
+# unquote-splicing); residual is Quote node tag only. Quote is a first-class
+# NodeTag — must be a data boundary, not template scope. Minimal early-return.
+aura_add_issue_test(test_pre_scan_quote_boundary)
+aura_issue_test_link_light(test_pre_scan_quote_boundary)
+add_dependencies(all_test_issue_targets test_pre_scan_quote_boundary)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
