@@ -17,6 +17,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -198,8 +199,9 @@ static void ac_1158_1176() {
         CHECK(r && is_void(*r), "write-file /proc/self/mem → void");
     }
 
-    // #1160 http-get: returns without shell crash
+    // #1160 / #3174 http-get: returns without shell crash (std/net host prim)
     {
+        (void)cs.evaluator().ensure_std_host_prims("std/net");
         auto r = cs.eval("(http-get \"http://example.com/x\")");
         CHECK(r, "http-get returns");
     }
@@ -1424,8 +1426,9 @@ static void ac_1325_1330() {
         CHECK(ticks >= 1, "agent tick counted");
     }
 
-    // #1329: sys-open / sys-read / sys-write (non-sandbox: allowed)
+    // #1329 / #3174: sys-open / sys-read / sys-write (std/process host prims)
     {
+        (void)cs.evaluator().ensure_std_host_prims("std/process");
         // Open /dev/null read-only
         auto fd = cs.eval("(sys-open \"/dev/null\" 0)");
         CHECK(fd && is_int(*fd) && as_int(*fd) >= 0, "sys-open /dev/null");

@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**73** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**74** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -31,6 +31,7 @@
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/fss` | `fss:init` `fss:init-hash` `fss:step!` `fss:best` `fss:population` `fss:report` `fss:export` `fss:help` … (+8) | lib/std/fss.aura — Issue #2880 Fish School Search surface |
+| `std/git` | `git-status` `git-diff` `git-log` `git-commit` `git-branch-current` `git-stage` `git-rev-parse` | git.aura — Git integration host prims (Issue #3174) |
 | `std/hash` | `hash-set` `hash-ref` `hash-get` `hash-remove` `hash-keys` `hash-values` `hash-length` `hash->list` … (+6) | hash.aura -- Hash table operations |
 | `std/heal` | `heal` | — |
 | `std/hot-strategy` | `hot-strategy:version` `hot-strategy:last-good-body` `hot-strategy:last-good-snap` `hot-strategy:active-name` `hot-strategy:snapshot!` `hot-strategy:register!` `hot-strategy:swap!` `hot-strategy:heal!` … (+3) | lib/std/hot-strategy.aura — Issue #2582 (Aether denseness H7) |
@@ -86,7 +87,7 @@ Low-level capabilities are **not** stdlib modules; they are C++ `PrimRegistrar` 
 
 - `(require "std/primitives" all:)` → `primitives:help` / `primitives:list` / `primitives:discover`
 - `(require "std/INDEX" all:)` → `(stdlib:help "primitives")`
-- Full name catalog: [primitives.md](primitives.md) (466 scanned registrations)
+- Full name catalog: [primitives.md](primitives.md) (438 scanned registrations)
 - Registry map: [primitives-registry.md](primitives-registry.md)
 - Authoring scaffold (#2915): [primitive-authoring-contract.md](../stdlib/primitive-authoring-contract.md)
 

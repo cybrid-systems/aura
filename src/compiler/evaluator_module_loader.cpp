@@ -8,6 +8,8 @@ module;
 #include <unistd.h>
 #include "runtime_shared.h"
 #include "lock_order_audit.h" // Issue #2354: Module rank
+#include "primitives_detail.h"
+#include "security_capabilities.h"
 
 module aura.compiler.evaluator;
 
@@ -135,6 +137,77 @@ std::string Evaluator::resolve_module_path(const std::string& path) const {
     return {};
 }
 
+void Evaluator::defer_std_host_prim(std::string name, PrimFn fn) {
+    deferred_std_prims_.emplace_back(std::move(name), std::move(fn));
+}
+
+types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) {
+    using aura::compiler::security::kEffectExec;
+    using aura::compiler::security::kEffectNetwork;
+    using aura::compiler::security::kEffectRead;
+    using aura::compiler::security::kEffectWrite;
+
+    auto is_mod = [&](std::string_view mod) -> bool {
+        const auto needle = std::string("/std/") + std::string(mod);
+        if (module_path.find(needle) != std::string_view::npos)
+            return true;
+        const auto logical = std::string("std/") + std::string(mod);
+        return module_path == logical || module_path.starts_with(logical + ".") ||
+               module_path.starts_with(logical + "/");
+    };
+
+    std::uint32_t want = 0;
+    std::uint16_t bits = 0;
+    const char* op = "std-module";
+    if (is_mod("net") || is_mod("socket")) {
+        want = 1u << 1;
+        bits = kEffectNetwork;
+        op = "std/net";
+    } else if (is_mod("git")) {
+        want = 1u << 2;
+        bits = static_cast<std::uint16_t>(kEffectExec | kEffectWrite);
+        op = "std/git";
+    } else if (is_mod("process")) {
+        want = 1u << 3;
+        bits = kEffectExec;
+        op = "std/process";
+    } else if (is_mod("io") || is_mod("fs")) {
+        want = 1u << 0;
+        bits = static_cast<std::uint16_t>(kEffectRead | kEffectWrite);
+        op = "std/io";
+    } else {
+        return types::make_void();
+    }
+
+    if (sandbox_mode() || effect_sandbox_mode() != 0) {
+        if (!require_effect(bits, op)) {
+            return primitives_detail::make_primitive_error(
+                string_heap_, error_values_,
+                aura::compiler::security::format_deny_reason(bits, capability_tenant_id(), op),
+                primitive_error_counter_ptr());
+        }
+    }
+    if ((std_host_prims_mask_ & want) != 0)
+        return types::make_void();
+
+    auto add = prim_registrar();
+    for (auto& [name, fn] : deferred_std_prims_) {
+        bool match = false;
+        if (want == (1u << 1))
+            match = name.starts_with("tcp-") || name.starts_with("http-");
+        else if (want == (1u << 2))
+            match = name.starts_with("git-");
+        else if (want == (1u << 3))
+            match = name == "shell" || name.starts_with("command-") || name.starts_with("sys-");
+        else if (want == (1u << 0))
+            match = name.starts_with("file-") || name == "directory-list";
+        if (match)
+            add(name, fn);
+    }
+    std_host_prims_mask_ |= want;
+    return types::make_void();
+}
+
 // Issue #2653 / #2649 H10: refuse paths that cannot be legitimate module
 // names (empty, NULs, control chars, whitespace free-text, env numbers).
 // Under heap corruption / UAF the "path" may be a dangling view into a
@@ -207,6 +280,13 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         std::println(std::cerr, "load_module_file: cannot resolve '{}'",
                      truncate_path_for_log(path));
         return types::make_void();
+    }
+    // Issue #3174: install deferred host prims (git/tcp/http/shell/sys/file-*)
+    // before evaluating the std module. Sandbox without grant → error.
+    {
+        const auto gate = ensure_std_host_prims(resolved);
+        if (types::is_error(gate))
+            return gate;
     }
 
     // 2. Check cache

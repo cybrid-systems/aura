@@ -46,6 +46,11 @@ static void grant_io_cap(CompilerService& cs, const char* cap) {
         ev.capability_tenant_id(), cap, aura::core::capability::effect_for_cap_name(cap), prov);
 }
 
+// #3174: command-line is a std/process host prim, not core boot.
+static void install_process_prims(CompilerService& cs) {
+    (void)cs.evaluator().ensure_std_host_prims("std/process");
+}
+
 static std::string read_file(const char* path) {
     for (const auto& p :
          {std::string(path), std::string("../") + path, std::string("../../") + path}) {
@@ -62,6 +67,7 @@ static void ac1_denied_without_cap() {
     std::println("\n--- #2478 AC1: sandbox without io-read → denied ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
+    install_process_prims(cs);
     // Engage legacy deny_io path (sandbox_mode_ true).
     ev.set_effect_sandbox_mode(2); // Strict → sandbox_mode_ on
     CHECK(ev.sandbox_mode(), "AC1: sandbox active");
@@ -78,6 +84,7 @@ static void ac2_allowed_with_io_read() {
     std::println("\n--- #2478 AC2: sandbox + io-read → allowed ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
+    install_process_prims(cs);
     ev.set_effect_sandbox_mode(2);
     grant_io_cap(cs, kCapIoRead);
     const auto den0 = ev.capability_denial_count();
@@ -94,6 +101,7 @@ static void ac2b_allowed_with_io() {
     std::println("\n--- #2478 AC2b: sandbox + kCapIo → allowed ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
+    install_process_prims(cs);
     ev.set_effect_sandbox_mode(2);
     grant_io_cap(cs, kCapIo);
     auto r = cs.eval("(command-line)");
@@ -105,6 +113,7 @@ static void ac2c_allowed_with_wildcard() {
     std::println("\n--- #2478 AC2c: sandbox + wildcard → allowed ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
+    install_process_prims(cs);
     ev.set_effect_sandbox_mode(2);
     grant_io_cap(cs, kCapWildcard);
     auto r = cs.eval("(command-line)");
@@ -116,6 +125,7 @@ static void ac3_sandbox_off() {
     std::println("\n--- #2478 AC3: sandbox off → allowed ---");
     CompilerService cs;
     auto& ev = cs.evaluator();
+    install_process_prims(cs);
     ev.set_effect_sandbox_mode(0); // Off → sandbox_mode_ false
     CHECK(!ev.sandbox_mode(), "AC3: sandbox off");
     auto r = cs.eval("(command-line)");
@@ -128,7 +138,7 @@ static void ac4_source() {
     auto src = read_file("src/compiler/evaluator_primitives_file.cpp");
     CHECK(!src.empty(), "AC4: read evaluator_primitives_file.cpp");
     CHECK(src.find("Issue #2478") != std::string::npos, "AC4: cites #2478");
-    auto pos = src.find("add(\"command-line\"");
+    auto pos = src.find("defer_std_host_prim(\"command-line\"");
     CHECK(pos != std::string::npos, "AC4: command-line present");
     if (pos != std::string::npos) {
         auto win = src.substr(pos, 900);

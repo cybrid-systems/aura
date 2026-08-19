@@ -662,6 +662,7 @@
 
 (test-suite "fs:file-write-temp"
   (require "std/fs" all:)
+  (require "std/process" all:)
   (let* ((p "/tmp/_aura_test_write.txt")
          (c "hello fs test"))
     (file-write p c)

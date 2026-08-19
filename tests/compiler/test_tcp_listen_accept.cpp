@@ -23,6 +23,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
@@ -50,11 +51,17 @@ static bool eval_bool(CompilerService& cs, std::string_view expr) {
     return r && is_bool(*r) && as_bool(*r);
 }
 
+// #3174: tcp-* are std/socket host prims, not core boot.
+static void install_socket_prims(CompilerService& cs) {
+    (void)cs.evaluator().ensure_std_host_prims("std/socket");
+}
+
 static void ac1_prims_registered() {
     std::println("\n--- #2771 AC1: server prims registered ---");
     CompilerService cs;
     setenv("AURA_SANDBOX", "off", 1);
     setenv("AURA_PIPELINE_STRICT", "0", 1);
+    install_socket_prims(cs);
     for (const char* name : {"tcp-listen", "tcp-local-port", "tcp-accept", "tcp-accept-timeout",
                              "tcp-connect", "tcp-send", "tcp-recv", "tcp-close"}) {
         CHECK(eval_bool(cs, std::string("(procedure? ") + name + ")"),
@@ -67,6 +74,7 @@ static void ac2_ac3_echo_fiber_client() {
     setenv("AURA_SANDBOX", "off", 1);
     setenv("AURA_PIPELINE_STRICT", "0", 1);
     CompilerService cs;
+    install_socket_prims(cs);
 
     // Thread-backend fiber client + blocking accept (stdin denseness).
     const char* prog = R"AURA(
@@ -95,6 +103,7 @@ static void ac3b_accept_timeout_idle() {
     std::println("\n--- #2771 AC3b: accept-timeout idle → not integer ---");
     setenv("AURA_SANDBOX", "off", 1);
     CompilerService cs;
+    install_socket_prims(cs);
     CHECK(eval_bool(cs, "(begin (define L (tcp-listen 0)) "
                         "(define r (tcp-accept-timeout L 0)) "
                         "(tcp-close L) "

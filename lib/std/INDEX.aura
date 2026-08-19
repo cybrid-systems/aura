@@ -140,6 +140,21 @@
       (list "Hot-update health monitor poll helpers"
             "(require \"std/hot-update-monitor\" all:)"))
     ; ── IO / system ──
+    (list "io"
+      (list "File I/O host prims (file-exists?/copy/delete/size, directory-list) — sandbox requires io effects (#3174)"
+            "(require \"std/io\" all:)"))
+    (list "net"
+      (list "HTTP client host prims — sandbox requires network effect (#3174)"
+            "(require \"std/net\" all:)"))
+    (list "socket"
+      (list "TCP client+server host prims — sandbox requires network effect (#3174)"
+            "(require \"std/socket\" all:)"))
+    (list "git"
+      (list "Git host prims — sandbox requires exec+write (#3174)"
+            "(require \"std/git\" all:)"))
+    (list "process"
+      (list "shell/command/sys-* host prims — sandbox requires exec (#3174)"
+            "(require \"std/process\" all:)"))
     (list "fs"
       (list "Filesystem helpers"
             "(fs:read \"/tmp/foo.txt\")"))

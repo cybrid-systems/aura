@@ -53,7 +53,7 @@ def main() -> int:
         "tcp-accept",
         "tcp-accept-timeout",
     ):
-        must(f'add("{name}"', "AC1", io)
+        must(f'defer_std_host_prim("{name}"', "AC1", io)
         must(name, "AC1 type_checker", tc)
     must("#2771", "AC1", io)
     must("INADDR_LOOPBACK", "AC1", io)
