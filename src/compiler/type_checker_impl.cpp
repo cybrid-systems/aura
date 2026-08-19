@@ -2784,6 +2784,10 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
                     static_cast<struct CompilerMetrics*>(metrics_)
                         ->delta_timeout_reject_total.fetch_add(1, std::memory_order_relaxed);
                 }
+                // Issue #3169: clear any partial goal / unresolved state
+                // before returning (uniform enforcement on every
+                // Production exit path — I3 半解不得出厂).
+                clear_partial_goals_and_unresolved();
                 return SolveResult::CONFLICT;
             }
             // TIMEOUT residual → full escalate after repair.
@@ -2820,6 +2824,13 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
             static_cast<struct CompilerMetrics*>(metrics_)->delta_timeout_reject_total.fetch_add(
                 1, std::memory_order_relaxed);
         }
+        // Issue #3169: clear any partial goal / unresolved state before
+        // returning (uniform enforcement on every Production exit path —
+        // I3 半解不得出厂). unresolved_out was just populated by the
+        // failed full solve; drop it + reset goal state so subsequent
+        // query:type / Agent loops don't treat stale partial CS as
+        // authoritative.
+        clear_partial_goals_and_unresolved();
     }
     return full;
 }
@@ -2847,6 +2858,30 @@ void ConstraintSystem::handoff_locality_residual_to_pending() {
             continue;
         note(constraints_[i].lhs);
         note(constraints_[i].rhs);
+    }
+}
+
+// Issue #3169: production fail-closed after TIMEOUT / instance-repair
+// failure — clear any partial goal / unresolved state that would
+// otherwise leak into subsequent query:type / Agent loops. Called from
+// escalate_if_production on every Production exit path where the
+// post-repair full solve did not reach SOLVED (or repair itself
+// returned CONFLICT). Counter only bumps under production_defaults
+// _active() (Soft / Off / unit-test default untouched, AC2). Quiet:
+// zero extra work on the happy SOLVED path (gated on production +
+// non-SOLVED condition, AC3).
+void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return;
+    touched_roots_.clear();
+    pending_full_solve_roots_.clear();
+    occurrence_priority_roots_.clear();
+    let_poly_dirty_roots_.clear();
+    dirty_count_ = 0;
+    production_escalated_ = true;
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)->solve_delta_partial_cleared_total.fetch_add(
+            1, std::memory_order_relaxed);
     }
 }
 

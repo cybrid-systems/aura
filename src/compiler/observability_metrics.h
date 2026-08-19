@@ -9486,6 +9486,14 @@ struct CompilerMetrics {
     // continues to bump partial_forced_full_by_impact_total (#3097).
     // Additive, struct-end layout-stable (#2906) — Agent dashboards.
     std::atomic<std::uint64_t> cascade_rearm_new_edge_only_total{0};
+    // Issue #3169: production solve_delta fail-closed after TIMEOUT /
+    // instance-repair failure — clear_partial_goals_and_unresolved bumps
+    // this on every Production exit path where the post-repair full
+    // solve() did not reach SOLVED (or repair itself returned
+    // CONFLICT). Soft / Off / unit-test default untouched (counter
+    // only bumps under production_defaults_active(), AC3 invariant).
+    // Additive, struct-end layout-stable (#2906) — Agent dashboards.
+    std::atomic<std::uint64_t> solve_delta_partial_cleared_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header

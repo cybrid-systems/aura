@@ -702,6 +702,18 @@ private:
     void update_blame_chain_completeness_rate() noexcept;
     bool reverify_clean_constraints_for_touched();
     void clear_touched_roots() { touched_roots_.clear(); }
+    // Issue #3169: production fail-closed after TIMEOUT / instance-repair
+    // failure — clears any partial goal / unresolved state that would
+    // otherwise leak into subsequent query:type / Agent loops (I3 from
+    // 2026-08 type-system review: 半解不得出厂). Called from
+    // escalate_if_production on every Production exit path where the
+    // post-repair full solve did not reach SOLVED. Soft / Off / unit-test
+    // default: counter not bumped (production_defaults_active gate),
+    // zero behavioural change (AC2). Quiet: only called on production
+    // + non-SOLVED path — zero extra atomics on the happy SOLVED path
+    // (AC3). Bumps solve_delta_partial_cleared_total on metrics_ when
+    // production_defaults_active() (AC4 additive observability).
+    void clear_partial_goals_and_unresolved() noexcept;
     // Issue #466: when true, consistent_unify records constraints
     // via add_delta for incremental solve_delta replay.
     bool delta_record_mode_ = false;
