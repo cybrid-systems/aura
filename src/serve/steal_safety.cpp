@@ -323,6 +323,19 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             g_steal_safety_last_reject_invariant_bits.store(fail_bits, std::memory_order_relaxed);
             aura_evaluator_on_steal_complete(stolen);
             g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3162: production multi-worker sticky readiness-fail.
+            // When residual is observed non-zero under production, set the
+            // sticky-fail bit so schema-3073 / production-readiness query
+            // reports it continuously (not only per-query consult of
+            // steal_safety_production_residual_zero_v_read). Soft / sandbox=
+            // off / single-worker: zero behavioural change (bit stays 0).
+            // Cleared by steal_safety_production_residual_zero_v_read when
+            // residual returns to 0 (per-query poll = schema-3073 readiness
+            // poll). Quiet Ok path: zero extra atomics (this branch is the
+            // residual-fail path, not the Ok path).
+            if (steal_safety_production_residual_zero_v_read() == 0) {
+                g_steal_safety_production_residual_sticky_fail.store(1, std::memory_order_relaxed);
+            }
             return StealSafetyDecision::RejectHard;
         }
 

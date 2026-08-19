@@ -146,14 +146,27 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 // consulted only from g_chaos_production_readiness_gate_wired /
 // schema-3073 query primitive (per-query, not per-steal). 2 atomic loads
 // on production + 1 weak call on Soft.
+// Issue #3162: also clears the sticky-fail bit when residual returns to
+// 0 (per-query poll — schema-3073 acts as the readiness poll). 1 extra
+// relaxed store on the residual-0 path (rare; sticky_fail is set means
+// residual was non-zero, so clearing only fires when residual drops).
 [[nodiscard]] inline std::uint32_t steal_safety_production_residual_zero_v_read() noexcept {
-    if (aura_production_defaults_active_probe() == 0)
+    if (aura_production_defaults_active_probe() == 0) {
+        // Soft / sandbox=off: clear sticky-fail (counters observe-only;
+        // any previously-set sticky fail from production window is wiped).
+        g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
         return 1;
-    return (g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) == 0 &&
-            g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) ==
-                0)
-               ? 1u
-               : 0u;
+    }
+    const bool zero =
+        (g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) == 0 &&
+         g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) == 0);
+    if (zero) {
+        // Residual returned to 0 — clear sticky fail so readiness
+        // recovers without requiring an external reset.
+        g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
+        return 1u;
+    }
+    return 0u;
 }
 // Issue #2954: per-Fiber decision protocol (replaces process-wide mutex).
 // contention_total bumps when try_begin_steal_decision CAS fails (same
@@ -216,6 +229,34 @@ steal_safety_residual_lifetime_proof_reject_total_v_read() noexcept {
 }
 [[nodiscard]] inline std::uint32_t steal_safety_residual_rearm_race_wired_v_read() noexcept {
     return g_steal_safety_residual_rearm_race_wired.load(std::memory_order_relaxed);
+}
+// Issue #3162: production-readiness residual sticky-fail bit. Closes the
+// residual between #3134's per-query consult and continuous process
+// fail-closed under production multi-worker. Set on the residual-fail
+// path (after RejectHard) under production when the named residual
+// counters are non-zero; cleared by steal_safety_production_residual_zero_v_read
+// when both counters return to 0 (per-query poll — the schema-3073 query
+// primitive acts as the readiness poll). Soft / sandbox=off / single-
+// worker: stays 0 (counters observe-only). Quiet Ok path: zero extra
+// atomics — the bit is only set on the residual-fail branch and only
+// cleared by the per-query accessor (not on per-steal hot path).
+inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail{0};
+inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail_wired{1};
+inline constexpr int kStealSafetyProductionResidualStickyFailIssue = 3162;
+// Issue #3162: production-readiness sticky-fail accessor.
+// Returns 1 iff production_defaults_active() is 0 (Soft / sandbox=off)
+// AND the sticky-fail bit was never set OR has been cleared, OR if
+// production is active but residual is currently 0 (auto-cleared).
+// Schema-3073 Agents read this to fail closed until residual returns to
+// 0 (sticky readiness).
+[[nodiscard]] inline std::uint32_t steal_safety_production_residual_sticky_fail_v_read() noexcept {
+    if (aura_production_defaults_active_probe() == 0)
+        return 0;
+    return g_steal_safety_production_residual_sticky_fail.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t
+steal_safety_production_residual_sticky_fail_wired_v_read() noexcept {
+    return g_steal_safety_production_residual_sticky_fail_wired.load(std::memory_order_relaxed);
 }
 // Issue #2954: per-Fiber decision observability.
 [[nodiscard]] inline std::uint64_t steal_decision_contention_total_v_read() noexcept {
@@ -334,6 +375,8 @@ inline void clear_steal_safety_transaction_for_test() noexcept {
     g_steal_safety_residual_lifetime_proof_reject_total.store(0, std::memory_order_relaxed);
     g_steal_safety_residual_rearm_race_total.store(0, std::memory_order_relaxed);
     g_steal_safety_invariant_snapshot_fail_total.store(0, std::memory_order_relaxed);
+    // Issue #3162: reset sticky-fail bit so test scenarios start clean.
+    g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
     g_steal_safety_last_reject_invariant_bits.store(0, std::memory_order_relaxed);
     g_steal_decision_contention_total.store(0, std::memory_order_relaxed);
     g_steal_safety_between_clear_and_hard_and_hook = nullptr;

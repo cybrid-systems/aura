@@ -23,6 +23,17 @@
 //        schema-3134 / issue-3134 (per AC4 acceptable).
 //   AC5: No tests/issues/test_issue_3134.cpp (#81967); no docs/design/3134-*
 //        (#1655). Extend existing test_steal_complete_restamp_txn lineage.
+//   AC6 (Issue #3162): sticky-fail atomic wired + accessor +
+//        schema-3073 production-readiness-steal-residual-sticky-fail +
+//        schema-3162 / issue-3162. Set on residual-fail path under
+//        production; cleared when residual returns to 0 (per-query poll).
+//   AC7 (Issue #3162): Soft / sandbox=off / single-worker: zero
+//        behavioural change — sticky-fail bit stays 0, accessor returns 0.
+//   AC8 (Issue #3162): quiet Ok path: zero extra atomics — bit only set
+//        on residual-fail branch, cleared by per-query accessor (not on
+//        per-steal hot path).
+//   AC9 (Issue #3162): existing #3134 accessor + schema-3073 keys
+//        non-regressing; additive sticky-fail key + schema-3162 / issue-3162.
 
 #include "test_harness.hpp"
 
@@ -197,6 +208,85 @@ int run_test_steal_safety_production_residual_zero() {
         CHECK(read_file("tests/serve/test_steal_complete_restamp_txn.cpp").find("StealInvariant") !=
                   std::string::npos,
               "AC5: steal-invariant lineage preserved");
+    }
+
+    // ── AC6 (Issue #3162): sticky-fail atomic + accessor + schema surface ─
+    {
+        std::println("\n--- AC6: sticky-fail wired (#3162) ---");
+        auto sh = read_file("src/serve/steal_safety.h");
+        auto qts = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        // Atomic + wired sentinel + accessor in steal_safety.h.
+        must_inline(sh, "g_steal_safety_production_residual_sticky_fail{0}");
+        must_inline(sh, "g_steal_safety_production_residual_sticky_fail_wired{1}");
+        must_inline(sh, "kStealSafetyProductionResidualStickyFailIssue = 3162");
+        must_inline(sh, "steal_safety_production_residual_sticky_fail_v_read");
+        // Set site in steal_safety.cpp RejectHard path under production.
+        auto cpp = read_file("src/serve/steal_safety.cpp");
+        auto fn_pos = cpp.find("StealSafetyDecision steal_safety_transaction(");
+        CHECK(fn_pos != std::string::npos, "AC6: transaction function present");
+        auto fn_end = cpp.find("\n}\n", fn_pos);
+        if (fn_end == std::string::npos)
+            fn_end = fn_pos + 8000;
+        auto fn_win = cpp.substr(fn_pos, fn_end - fn_pos);
+        must_inline(fn_win, "Issue #3162");
+        must_inline(fn_win, "steal_safety_production_residual_sticky_fail.store(1");
+        must_inline(fn_win, "steal_safety_production_residual_zero_v_read() == 0");
+        // Schema surface additive keys.
+        must_inline(qts, "production-readiness-steal-residual-sticky-fail");
+        must_inline(qts, "schema-3162");
+        must_inline(qts, "issue-3162");
+        must_inline(qts, "steal_safety_production_residual_sticky_fail_v_read");
+    }
+
+    // ── AC7 (Issue #3162): Soft pass-through — sticky_fail stays 0 ─
+    {
+        std::println("\n--- AC7: Soft pass-through sticky_fail (#3162) ---");
+        auto sh = read_file("src/serve/steal_safety.h");
+        auto accessor_pos = sh.find("steal_safety_production_residual_sticky_fail_v_read");
+        auto acc_end = accessor_pos + 800;
+        auto acc_win = sh.substr(accessor_pos, acc_end - accessor_pos);
+        must_inline(acc_win, "aura_production_defaults_active_probe() == 0");
+        must_inline(acc_win, "return 0");
+    }
+
+    // ── AC8 (Issue #3162): quiet Ok path zero extra atomics ─
+    {
+        std::println("\n--- AC8: Ok path zero extra atomics (#3162) ---");
+        auto cpp = read_file("src/serve/steal_safety.cpp");
+        auto fn_pos = cpp.find("StealSafetyDecision steal_safety_transaction(");
+        auto fn_end = cpp.find("\n}\n", fn_pos);
+        if (fn_end == std::string::npos)
+            fn_end = fn_pos + 8000;
+        auto fn_win = cpp.substr(fn_pos, fn_end - fn_pos);
+        // The sticky_fail.store(1) must be INSIDE the residual-fail branch
+        // (after RejectHard return). The Ok path (ticket stamp + return
+        // Ok) must NOT touch sticky_fail.
+        auto store_pos = fn_win.find("steal_safety_production_residual_sticky_fail.store(1");
+        auto ok_pos = fn_win.find("set_resume_safety_ticket(snap.ticket)");
+        CHECK(store_pos != std::string::npos, "AC8: sticky_fail set site present");
+        CHECK(ok_pos != std::string::npos, "AC8: Ok path ticket stamp present");
+        if (store_pos != std::string::npos && ok_pos != std::string::npos) {
+            // sticky_fail.store(1) must be AFTER the Ok stamp (in the
+            // residual-fail branch, not before Ok returns).
+            CHECK(store_pos > ok_pos,
+                  "AC8: sticky_fail set is on RejectHard branch (after Ok stamp)");
+        }
+    }
+
+    // ── AC9 (Issue #3162): #3134 accessor + schema-3073 keys non-regressing ─
+    {
+        std::println("\n--- AC9: #3134 non-regression + additive (#3162) ---");
+        auto sh = read_file("src/serve/steal_safety.h");
+        auto qts = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        // Existing #3134 accessor still present.
+        must_inline(sh, "steal_safety_production_residual_zero_v_read");
+        must_inline(qts, "production-readiness-steal-residual-zero");
+        must_inline(qts, "schema-3134");
+        must_inline(qts, "issue-3134");
+        // Additive sticky-fail key + schema-3162.
+        must_inline(qts, "production-readiness-steal-residual-sticky-fail");
+        must_inline(qts, "schema-3162");
+        must_inline(qts, "issue-3162");
     }
 
     std::println("\n=== #3134 production-readiness residual-zero: {} passed, {} failed ===",
