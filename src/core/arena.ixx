@@ -598,16 +598,37 @@ inline constexpr int kIntermediateCreateWithCoverIssue = 3093;
 // path — recovery is sticky-off + Agent re-registration.
 export inline std::atomic<std::uint64_t> g_intermediate_create_value_only_total{0};
 
+inline constexpr int kIntermediateCreateValueOnlyIssue = 3093;
+
+// Issue #3156: uncovered-under-required counter (residual #3017 / #3093).
+// Bumped when a small-pool intermediate create hits required_active +
+// slot==null + reason==null path under note_intermediate_create_with_cover_
+// (or maybe_note_allocate_intermediate_ via the same helper). NOT safe
+// cover — caller has neither slot rewrite, pin, nor EXEMPT declaration.
+// Inventory still records into intermediate_creates_ so the existing
+// pre-densify has_unpinned_intermediate_creates_() scan fail-closes
+// (block + sticky-off) per #3017. Production invariant:
+// g_intermediate_create_value_only_total_v_read() == 0 in production soak
+// (Soft / Off / render-hotpath still observability-only, single atomic load).
+export inline std::atomic<std::uint64_t> g_intermediate_create_uncovered_under_required_total{0};
+
+inline constexpr int kIntermediateCreateUncoveredUnderRequiredIssue = 3156;
+
 [[nodiscard]] inline std::uint64_t intermediate_create_with_cover_total_v_read() noexcept {
     return g_intermediate_create_with_cover_total.load(std::memory_order_relaxed);
 }
 [[nodiscard]] inline std::uint64_t intermediate_create_value_only_total_v_read() noexcept {
     return g_intermediate_create_value_only_total.load(std::memory_order_relaxed);
 }
+[[nodiscard]] inline std::uint64_t
+intermediate_create_uncovered_under_required_total_v_read() noexcept {
+    return g_intermediate_create_uncovered_under_required_total.load(std::memory_order_relaxed);
+}
 
 inline void reset_intermediate_create_with_cover_for_test() noexcept {
     g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
     g_intermediate_create_value_only_total.store(0, std::memory_order_relaxed);
+    g_intermediate_create_uncovered_under_required_total.store(0, std::memory_order_relaxed);
 }
 
 // Issue #3123: last sticky-clear reason (0=none). Production auto-clear
@@ -2464,8 +2485,11 @@ private:
     //     (`GENERAL_OBJECT_PIN_EXEMPT(reason)` at the call site + this
     //     helper marks the intermediate as exempt so inventory does not
     //     false-block densify).
-    //   - both null → fallback to value-only auto-wire (backward compat;
-    //     bumps g_intermediate_create_value_only_total for #3093 linter).
+    //   - both null + production required (Issue #3156) → inventory
+    //     intermediate_creates_ for pre-densify fail-closed scan + bump
+    //     g_intermediate_create_uncovered_under_required_total (additive
+    //     migration metric, NOT value-only). Soft / Off / render-hotpath
+    //     fallback remains value-only auto-wire (backward compat).
     // Quiet path: required-off / Soft / null p → no extra work.
     void note_intermediate_create_with_cover_(void* p, void** slot, const char* reason) noexcept {
         if (!p)
@@ -2489,15 +2513,40 @@ private:
             g_intermediate_create_with_cover_total.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        // Value-only fallback (value-only prep per #3017 — observability
-        // only, not safe cover). Bumped to value-only counter so the #3093
-        // linter can flag production call sites that don't declare cover.
+        // Issue #3156: required + both null is the closed dual-track.
+        // Inventory into intermediate_creates_ so the pre-densify
+        // has_unpinned_intermediate_creates_() scan fail-closes
+        // (block + sticky-off via existing #3017/#3093 path) and bump
+        // the new uncovered metric. NEVER call note_intermediate_create_
+        // auto_wire_ here under required — that path bumps
+        // g_intermediate_create_value_only_total which must stay 0 in
+        // production soak (AC4). Migration cue: callers should switch
+        // to wire_general_object_create_pair_or_exempt(..., "reason") or
+        // pass slot=nullptr from a known-stable field.
+        if (aura::core::lifetime::general_object_pin_required_active()) {
+            intermediate_creates_.push_back(p);
+            g_intermediate_create_uncovered_under_required_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return;
+        }
+        // Soft / Off / render-hotpath: backward-compat value-only fallback
+        // (value-only prep per #3017 — observability only, not safe cover).
+        // Bumped to value-only counter so the #3093 linter can flag
+        // production call sites that don't declare cover (AC3 zero-cost
+        // contract — single load + branch + atomic bump on Soft path).
         note_intermediate_create_auto_wire_(p);
     }
 
     // Issue #3053: try_allocate / allocate_checked / create share
     // allocate_raw_impl. Only small-pool pointers can relocate; Soft
     // / unset / render is a single required-active load (AC3).
+    // Issue #3156: under production required, route through
+    // note_intermediate_create_with_cover_(ptr, nullptr, nullptr) instead
+    // of the legacy note_intermediate_create_auto_wire_ (value-only).
+    // with_cover_ under required + both null now fail-closes via the
+    // new uncovered metric + intermediate_creates_ inventory
+    // (has_unpinned_intermediate_creates_() → block + sticky-off).
+    // Soft / Off / render-hotpath unchanged (single required load + branch).
     void maybe_note_allocate_intermediate_(void* ptr, std::size_t size) noexcept {
         if (!ptr)
             return;
@@ -2507,7 +2556,7 @@ private:
             return;
         if (size > SmallObjectPool::kMaxSmallSize || !small_pool_.owns(ptr))
             return;
-        note_intermediate_create_auto_wire_(ptr);
+        note_intermediate_create_with_cover_(ptr, /*slot=*/nullptr, /*reason=*/nullptr);
     }
 
     void erase_intermediate_create_(void* p) noexcept {
