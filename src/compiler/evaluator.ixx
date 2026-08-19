@@ -3662,6 +3662,18 @@ public:
     [[nodiscard]] void* commit_type_checker_handle() const noexcept {
         return commit_type_checker_opaque_;
     }
+    // Issue #3170: fingerprint of the staged occurrence persist snapshot.
+    // 0 = nothing staged (quiet / first persist). Outermost success
+    // compares live goals against this; mismatch → clear + bump.
+    [[nodiscard]] std::uint64_t expected_occurrence_snapshot_fp() const noexcept {
+        return expected_occurrence_fp_;
+    }
+    void bump_occurrence_persist_fingerprint_mismatch() noexcept {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+            m->occurrence_persist_fingerprint_mismatch_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
+    }
     // Issue #2105: Agent-visible flag — composite/nested txn still open
     // (half-typed views must not be treated as committed).
     [[nodiscard]] bool txn_dirty() const noexcept {
@@ -15093,6 +15105,8 @@ private:
     // Production: false until persist + Full audit success (#3004).
     bool type_export_authoritative_ = true;
     bool type_export_inflight_ = false;
+    // Issue #3170: staged occurrence-persist fingerprint (0 = unstaged).
+    std::uint64_t expected_occurrence_fp_ = 0;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
     void* commit_occurrence_vars_opaque_ = nullptr;
     void destroy_commit_type_checker() noexcept;

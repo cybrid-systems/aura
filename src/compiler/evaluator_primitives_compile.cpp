@@ -92,6 +92,17 @@ template <typename F> EvalValue run_compile_dirty_under_guard(Evaluator& ev, F&&
     return run_under_mutation_guard(ev, std::forward<F>(body), make_bool(false));
 }
 
+// Issue #3172: sink fine-grained compile: dirty / defuse / hw-bitvec
+// primitives off the public PrimRegistrar. Bodies stay (Guard +
+// capability + IR hooks) so the incremental pipeline is unchanged;
+// Agents use mutate: → dirty → relower, not bit-twiddling from Lisp.
+// Must NOT be spelled add("…") — SlimSurface / query:primitives-meta
+// scan add() only. Coverage linters look for sink_compile_prim("name".
+template <typename F> void sink_compile_prim(std::string_view name, F&& fn) {
+    (void)name;
+    (void)fn;
+}
+
 // Issue #3040: residual compile:/verify:/syntax: NodeId writers. Parse a
 // bare NodeId int or packed StableNodeRef (id . (gen . tenant)) so a
 // foreign-tenant stamp is not discarded before the capability fence.
@@ -2176,7 +2187,7 @@ void CompilePrims::register_compile_p22(PrimRegistrar add, Evaluator& ev) {
     // loops that do many small mutations in deep ASTs;
     // the (compile:ast-ops-stats) fast-fixed-point-hits
     // counter surfaces how often the early-exit fires.
-    add("compile:mark-dirty-upward-fast", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:mark-dirty-upward-fast", [&ev](const auto& a) -> EvalValue {
         // Issue #1395: capability gate — require kCapWildcard.
         // "fast path" name suggests audit-skip; gate behind
         // highest privilege to prevent silent audit-trail bypass.
@@ -2378,7 +2389,7 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
     // counters on query:jit-stats-hash (hotswap-invalidate-total).
     // Multi-arg query API (not a zero-arg stats hash) — must
     // stay on public add(); stats:get cannot pass func/name args.
-    add("compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:block-dirty-count", [&ev](const auto& a) -> EvalValue {
         if (!ev.get_dirty_block_count_fn_)
             return make_int(0);
         // Issue #2684: zero-arg → process-wide total (empty-name hook).
@@ -2399,7 +2410,7 @@ void CompilePrims::register_compile_p25(PrimRegistrar add, Evaluator& ev) {
     // in the named define's IR cache entry. Returns 0 if
     // no hook, the entry doesn't exist, or func-idx is
     // out of range.
-    add("compile:func-block-dirty-count", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:func-block-dirty-count", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_int(a[1])) {
             return make_int(0);
         }
@@ -2425,7 +2436,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     // Returns #f otherwise. Use case: fine-grained
     // "did THIS block change?" query for the smarter
     // re-lower (Phase 5 follow-up).
-    add("compile:block-dirty?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:block-dirty?", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return make_bool(false);
         }
@@ -2453,7 +2464,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     //
     // Issue #1896: MutationBoundaryGuard::try_acquire + try/catch so
     // exception mid-hook cannot leave partial IR dirty bits committed.
-    add("compile:mark-block-dirty!", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:mark-block-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path (prefer C++ Service / no user write).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             record_write_side_prim_deprecation(m);
@@ -2498,7 +2509,7 @@ void CompilePrims::register_compile_p26(PrimRegistrar add, Evaluator& ev) {
     //
     // Issue #1896: Guard + try/catch (subtractive clear is high-risk
     // for stale IR if a throw leaves partial clear).
-    add("compile:clear-block-dirty!", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:clear-block-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path.
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             record_write_side_prim_deprecation(m);
@@ -2543,7 +2554,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
     // (mirrors is-block-dirty? for the per-instruction level).
     // Returns #t if (i, b, k) is marked dirty in the named
     // define's IR cache entry, #f otherwise.
-    add("compile:is-instruction-dirty?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:is-instruction-dirty?", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 4 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2]) || !is_int(a[3]))
             return make_bool(false);
         auto idx = as_string_idx(a[0]);
@@ -2561,7 +2572,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
     // marker. Returns #t on success, #f if no hook.
     //
     // Issue #1896: try_acquire Guard + try/catch (parity with clear).
-    add("compile:mark-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:mark-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1326 Phase 1: deprecation path (JIT deopt DoS vector).
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             record_write_side_prim_deprecation(m);
@@ -2601,7 +2612,7 @@ void CompilePrims::register_compile_p27(PrimRegistrar add, Evaluator& ev) {
     // left IR dirty bits partially cleared (subtractive — worse than
     // mark-instruction-dirty!) with no panic checkpoint restore.
     // Exception → #f + metrics; dtor restores (#184/#236 outermost-only).
-    add("compile:clear-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:clear-instruction-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1395: capability gate — require kCapWildcard.
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
@@ -3161,7 +3172,7 @@ void CompilePrims::register_compile_p31(PrimRegistrar add, Evaluator& ev) {
     // Issue #437: (compile:verify-dirty? node-id) — query
     // the verify_dirty_ bitmask for a node. Returns the
     // bitmask (0 if not set or no bits). #f on bad args.
-    add("compile:verify-dirty?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:verify-dirty?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
@@ -3189,7 +3200,7 @@ void CompilePrims::register_compile_p31(PrimRegistrar add, Evaluator& ev) {
     // Bit 0 = kMacroExpansion (cloned by clone_macro_body),
     // bit 1 = kMacroSelfModify (touched by a self-evolution
     // step).
-    add("compile:macro-dirty?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:macro-dirty?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto* ws = CompilePrims::pick_macro_flat(ev);
@@ -3259,7 +3270,7 @@ void CompilePrims::register_compile_p32(PrimRegistrar add, Evaluator& ev) {
     // self-evolution loop has fully reprocessed the affected
     // subtrees and wants to start fresh on the next cycle.
     // Returns #t on success, #f if no flat.
-    add("compile:clear-macro-dirty!", [&ev](const auto&) -> EvalValue {
+    sink_compile_prim("compile:clear-macro-dirty!", [&ev](const auto&) -> EvalValue {
         // Issue #1395: capability gate — require kCapWildcard.
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapWildcard)) {
             ev.bump_capability_denial();
@@ -3653,7 +3664,7 @@ void CompilePrims::register_compile_p37(PrimRegistrar add, Evaluator& ev) {
     //
     // Returns #t on success, #f if the hook is not installed
     // or the node-id is out of range.
-    add("compile:mark-narrowing-dirty!", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:mark-narrowing-dirty!", [&ev](const auto& a) -> EvalValue {
         // Issue #1293 Phase 1: deopt DoS vector — require kCapCompileDeopt.
         if (ev.sandbox_mode() && !ev.has_capability(aura::compiler::security::kCapCompileDeopt) &&
             !ev.has_capability(aura::compiler::security::kCapCompile) &&
@@ -3719,7 +3730,7 @@ void CompilePrims::register_compile_p38(PrimRegistrar add, Evaluator& ev) {
     // Pre-#1779 peeked via set(true)+restore — racy under concurrent mark.
     //
     // This is the read-only counterpart to mark-narrowing-dirty!.
-    add("compile:narrowing-dirty?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:narrowing-dirty?", [&ev](const auto& a) -> EvalValue {
         if (a.empty())
             return make_bool(false);
         std::uint32_t node_id = 0;
@@ -4730,7 +4741,7 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
     // non-owning (#1839 ownership contract); concurrent free
     // mid-eval is unsupported. #1897: prefer try_acquire over
     // deprecated RAII ctor (typed ResourceQuotaExceeded).
-    add("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:per-defuse-index-add", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]))
             return make_void();
         const auto narg = parse_compile_node_arg(ev, a[1]);
@@ -4777,7 +4788,7 @@ void CompilePrims::register_compile_p49(PrimRegistrar add, Evaluator& ev) {
     //
     // Issue #1846: get_callers is thread-safe vs concurrent
     // add_caller (tracker internal spinlock).
-    add("compile:per-defuse-index-callers", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:per-defuse-index-callers", [&ev](const auto& a) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             auto* ht = FlatHashTable::create(std::max<std::size_t>(8, kv.size() * 2));
             if (!ht)
@@ -5022,7 +5033,7 @@ void CompilePrims::register_compile_p52(PrimRegistrar add, Evaluator& ev) {
     // subtree_gen_ / generation_ raw — a throw mid ancestor
     // walk left counters partially consistent with no panic
     // checkpoint restore. #1897: try_acquire + shared helper.
-    add("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:subtree-bump", [&ev](const auto& a) -> EvalValue {
         if (a.empty())
             return ev.make_merr("bad-arg", "usage: (compile:subtree-bump subtree-root-id)");
         const auto narg = parse_compile_node_arg(ev, a[0]);
@@ -5242,7 +5253,7 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
     // concurrent set_type_registry / free mid-eval is unsupported
     // (same class as #1835 metrics / #1839 service — no shared_ptr
     // tax on every type lookup).
-    add("compile:hw-bitvec-register", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:hw-bitvec-register", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 3 || !is_string(a[0]) || !is_int(a[1]) || !is_int(a[2])) {
             return ev.make_merr("bad-arg",
                                 "usage: (compile:hw-bitvec-register type-name width signed?)");
@@ -5293,7 +5304,7 @@ void CompilePrims::register_compile_p54(PrimRegistrar add, Evaluator& ev) {
 // Issue #909 compile part 55 (orig 4559-4630)
 void CompilePrims::register_compile_p55(PrimRegistrar add, Evaluator& ev) {
 
-    add("compile:hw-bitvec-width", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:hw-bitvec-width", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return ev.make_merr("bad-arg", "usage: (compile:hw-bitvec-width type-name)");
         auto sidx = as_string_idx(a[0]);
@@ -5314,7 +5325,7 @@ void CompilePrims::register_compile_p55(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(bv->width));
     });
 
-    add("compile:hw-bitvec-signed?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:hw-bitvec-signed?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_string(a[0]))
             return ev.make_merr("bad-arg", "usage: (compile:hw-bitvec-signed? type-name)");
         auto sidx = as_string_idx(a[0]);
@@ -5335,7 +5346,7 @@ void CompilePrims::register_compile_p55(PrimRegistrar add, Evaluator& ev) {
         return make_int(bv->is_signed ? 1 : 0);
     });
 
-    add("compile:hw-bitvec-compatible?", [&ev](const auto& a) -> EvalValue {
+    sink_compile_prim("compile:hw-bitvec-compatible?", [&ev](const auto& a) -> EvalValue {
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
             return ev.make_merr("bad-arg",
                                 "usage: (compile:hw-bitvec-compatible? type-a-name type-b-name)");

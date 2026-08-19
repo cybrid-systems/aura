@@ -36,6 +36,7 @@ using aura::compiler::per_defuse_index::Caller;
 using aura::compiler::per_defuse_index::DefUseIndex;
 using aura::compiler::per_defuse_index::PerDefUseIndexTracker;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 
@@ -218,12 +219,18 @@ static void run_1845_add_guard() {
     {
         std::println("\n--- AC2: per-defuse-index-add returns size ---");
         CompilerService cs;
-        auto r = cs.eval("(compile:per-defuse-index-add \"foo\" 0)");
-        CHECK(r && is_int(*r), "returns int");
-        CHECK(as_int(*r) >= 0, "size >= 0");
-        auto r2 = cs.eval("(compile:per-defuse-index-add \"foo\" 1)");
-        CHECK(r2 && is_int(*r2), "second add returns int");
-        CHECK(as_int(*r2) >= as_int(*r), "size non-decreasing");
+        using aura::compiler::per_defuse_index::Caller;
+        using aura::compiler::per_defuse_index::DefUseIndex;
+        auto& tr = cs.per_defuse_index_tracker();
+        const auto n0 = tr.size_for_index(DefUseIndex{"foo"});
+        tr.add_caller(DefUseIndex{"foo"}, Caller{0});
+        const auto n1 = tr.size_for_index(DefUseIndex{"foo"});
+        CHECK(n1 >= n0, "size >= 0");
+        tr.add_caller(DefUseIndex{"foo"}, Caller{1});
+        const auto n2 = tr.size_for_index(DefUseIndex{"foo"});
+        CHECK(n2 >= n1, "size non-decreasing");
+        auto sunk = cs.eval("(compile:per-defuse-index-add \"foo\" 0)");
+        CHECK(sunk && is_error(*sunk), "Lisp per-defuse-index-add sunk #3172");
     }
 
     // AC3: nested guard
@@ -235,8 +242,11 @@ static void run_1845_add_guard() {
         {
             Evaluator::MutationBoundaryGuard outer(ev, &ok);
             CHECK(outer.is_outermost(), "outer is outermost");
-            auto r = cs.eval("(compile:per-defuse-index-add \"bar\" 3)");
-            CHECK(r && is_int(*r) && as_int(*r) >= 0, "add under outer Guard ok");
+            using aura::compiler::per_defuse_index::Caller;
+            using aura::compiler::per_defuse_index::DefUseIndex;
+            cs.per_defuse_index_tracker().add_caller(DefUseIndex{"bar"}, Caller{3});
+            CHECK(cs.per_defuse_index_tracker().size_for_index(DefUseIndex{"bar"}) >= 1,
+                  "add under outer Guard ok");
             CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held");
         }
         CHECK(ok, "outer guard_ok");
@@ -285,12 +295,19 @@ static void run_1846_tracker_lock() {
     {
         std::println("\n--- AC2/AC4: add then callers ---");
         CompilerService cs;
-        auto a = cs.eval("(compile:per-defuse-index-add \"idx-a\" 42)");
-        CHECK(a && is_int(*a), "add returns int");
-        auto c = cs.eval("(compile:per-defuse-index-callers \"idx-a\")");
-        CHECK(c && is_hash(*c), "callers returns hash");
-        auto v = cs.eval("(hash-ref (compile:per-defuse-index-callers \"idx-a\") \"42\")");
-        CHECK(v && is_int(*v), "node 42 present");
+        using aura::compiler::per_defuse_index::Caller;
+        using aura::compiler::per_defuse_index::DefUseIndex;
+        auto& tr = cs.per_defuse_index_tracker();
+        tr.add_caller(DefUseIndex{"idx-a"}, Caller{42});
+        CHECK(tr.size_for_index(DefUseIndex{"idx-a"}) >= 1, "add returns size");
+        auto callers = tr.get_callers(DefUseIndex{"idx-a"});
+        bool found = false;
+        for (const auto& c : callers)
+            if (c.node_id == 42)
+                found = true;
+        CHECK(found, "node 42 present");
+        auto sunk = cs.eval("(compile:per-defuse-index-callers \"idx-a\")");
+        CHECK(sunk && is_error(*sunk), "Lisp per-defuse-index-callers sunk #3172");
     }
 
     // AC3: concurrent stress

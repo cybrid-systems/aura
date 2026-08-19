@@ -100,9 +100,9 @@ int main() {
         }
     }
 
-    // ── AC2: runtime dirty mutators ──
+    // ── AC2: Issue #3172 — dirty! Lisp names are sunk (not public) ──
     {
-        std::println("\n--- AC2: dirty! primitives return bool under Guard ---");
+        std::println("\n--- AC2: dirty! Lisp names sunk (#3172) ---");
         CompilerService cs;
         cs.evaluator().set_sandbox_mode(false);
         (void)cs.eval("(define foo 1)");
@@ -113,13 +113,22 @@ int main() {
                  R"((compile:clear-instruction-dirty! "foo" 0 0 0))",
              }) {
             auto r = cs.eval(expr);
-            CHECK(r.has_value(), std::string("eval ok: ") + expr);
+            CHECK(r.has_value(), std::string("eval returned: ") + expr);
             if (r)
-                CHECK(is_bool(*r) || is_error(*r), std::string("bool/err: ") + expr);
+                CHECK(is_error(*r), std::string("sunk #3172 unbound/error: ") + expr);
         }
+        std::string src2;
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
+            src2 = read_file(p);
+            if (!src2.empty())
+                break;
+        }
+        CHECK(src2.find("sink_compile_prim") != std::string::npos,
+              "AC2: sink_compile_prim retains Guard body");
     }
 
-    // ── AC3: nested Guard ──
+    // ── AC3: nested Guard still holds without Lisp dirty! ──
     {
         std::println("\n--- AC3: under outer MutationBoundaryGuard ---");
         CompilerService cs;
@@ -130,8 +139,8 @@ int main() {
         {
             Evaluator::MutationBoundaryGuard outer(ev, &ok);
             CHECK(outer.is_outermost(), "outer is outermost");
-            auto r = cs.eval(R"((compile:mark-block-dirty! "bar" 0 0))");
-            CHECK(r.has_value() && is_bool(*r), "mark under outer Guard returns bool");
+            auto r = cs.eval(R"((compile:relower-strategy "bar"))");
+            CHECK(r.has_value(), "relower-strategy under outer Guard");
             CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
@@ -158,9 +167,9 @@ int main() {
         CHECK(href(cs, "mutation_guard_exception_total") >= 0, "snake_case exceptions");
     }
 
-    // ── AC5: successful path bumps captures ──
+    // ── AC5: Lisp dirty! no longer captures (sunk); helper still in source ──
     {
-        std::println("\n--- AC5: guard-captures monotonic on dirty! ---");
+        std::println("\n--- AC5: sunk dirty! does not bump Guard captures ---");
         CompilerService cs;
         cs.evaluator().set_sandbox_mode(false);
         (void)cs.eval("(define baz 3)");
@@ -172,11 +181,12 @@ int main() {
         (void)cs.eval(R"((compile:mark-instruction-dirty! "baz" 0 0 0))");
         (void)cs.eval(R"((compile:clear-instruction-dirty! "baz" 0 0 0))");
         const auto after = load_u64(m->compile_primitive_guard_captures_total);
-        // Hooks may be null → still enter Guard helper and bump captures.
-        CHECK(after >= before + 4, "four dirty! paths each capture Guard");
-        CHECK(href(cs, "guard-captures") == static_cast<std::int64_t>(after),
-              "query matches metric");
+        CHECK(after == before, "sunk Lisp dirty! does not enter Guard");
         CHECK(href(cs, "schema") == 1896, "schema holds after stress");
+        auto snap = cs.eval("(compile:snapshot)");
+        CHECK(snap.has_value(), "compile:snapshot remains public");
+        auto strat = cs.eval(R"((compile:relower-strategy "baz"))");
+        CHECK(strat.has_value(), "compile:relower-strategy remains public");
     }
 
     // ── AC6: from-verification-feedback validation + Guard ──
@@ -203,6 +213,36 @@ int main() {
         const auto after_cap = load_u64(m->compile_primitive_guard_captures_total);
         // When workspace exists and node is in range, Guard is acquired.
         CHECK(after_cap >= before_cap, "captures non-decreasing");
+    }
+
+    // ── Issue #3172: public compile: ≤ 5 (snapshot + relower-strategy) ──
+    {
+        std::println("\n--- #3172: public compile: surface reduction ---");
+        std::string src;
+        for (const char* p : {"src/compiler/evaluator_primitives_compile.cpp",
+                              "../src/compiler/evaluator_primitives_compile.cpp"}) {
+            src = read_file(p);
+            if (!src.empty())
+                break;
+        }
+        CHECK(src.find("sink_compile_prim") != std::string::npos, "3172: sink helper");
+        CHECK(src.find("add(\"compile:snapshot\"") != std::string::npos, "3172: snapshot public");
+        CHECK(src.find("add(\"compile:relower-strategy\"") != std::string::npos,
+              "3172: relower-strategy public");
+        CHECK(src.find("add(\"compile:mark-block-dirty!\"") == std::string::npos,
+              "3172: mark-block-dirty! not public add()");
+        CHECK(src.find("add(\"compile:hw-bitvec-register\"") == std::string::npos,
+              "3172: hw-bitvec-register not public add()");
+        CHECK(src.find("add(\"compile:subtree-bump\"") == std::string::npos,
+              "3172: subtree-bump not public add()");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3172: warm");
+        CHECK(cs.eval("(compile:snapshot)").has_value(), "3172: snapshot callable");
+        auto meta = cs.eval("(query:primitives-meta \"compile:mark-block-dirty!\")");
+        (void)meta;
+        CHECK(read_file("docs/design/3172-compile-surface.md").empty(), "3172: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3172.cpp").empty(),
+              "3172: no invent test_issue_3172");
     }
 
     std::println("\n=== test_compile_primitive_guard_1896: {} passed, {} failed ===", g_passed,

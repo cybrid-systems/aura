@@ -43,6 +43,18 @@ namespace aura::compiler {
 // evaluator_fiber_mutation.cpp / typed_mutation_audit_hooks.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" int aura_escape_move_gate_active() noexcept;
+// Issue #3170: TypeChecker-using bodies live in evaluator_mutation_boundary.cpp
+// (module TU, C linkage). This header stays TypeChecker-free so
+// contract_handler / value_tags / shape_profiler compile.
+extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) noexcept;
+extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept;
+
+namespace aura::compiler {
+// Issue #3170 AC3 source-cite: clear_occurrence_persist_buffer bumps this
+// name. Distinct from typed_audit::g_occurrence_persist_audit_atomic_wired
+// (query:type "wired" sentinel, stays 1).
+inline std::atomic<std::uint32_t> g_occurrence_persist_audit_atomic_wired{1};
+} // namespace aura::compiler
 
 namespace aura::compiler::typed_audit {
 
@@ -1388,24 +1400,7 @@ inline void note_occurrence_commit_snapshot_written(std::uint64_t mid,
 // _occurrence C ABI to detect goals-drifted-between-snapshot-stage-and-freeze
 // (mismatch -> treat as abort, clear buffer + bump counter).
 [[nodiscard]] inline std::uint64_t occurrence_goal_fingerprint(void* tc_handle) noexcept {
-    using aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals;
-    using aura::compiler::typed_audit::mix_occurrence_goal_into_fingerprint;
-    if (!tc_handle)
-        return 0;
-    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
-    const auto& goals = tc->constraint_system().occurrence_goals_for_test();
-    if (goals.empty())
-        return 0;
-    std::uint64_t h = 0xcbf29ce484222325ULL; // FNV offset basis
-    const std::size_t n =
-        goals.size() < kProofGoalFingerprintMaxGoals ? goals.size() : kProofGoalFingerprintMaxGoals;
-    for (std::size_t i = 0; i < n; ++i) {
-        const auto& g = goals[i];
-        h = mix_occurrence_goal_into_fingerprint(
-            h, g.var.index, g.refined.index, g.predicate_cond_node, g.source_mutation_id, g.epoch);
-    }
-    // Non-empty goals always produce a non-zero fingerprint.
-    return (h != 0) ? h : 1;
+    return aura_occurrence_goal_fingerprint_tc(tc_handle);
 }
 
 // Issue #3170: clear the long-lived occurrence persist buffer wrapper.
@@ -1419,8 +1414,7 @@ inline void note_occurrence_commit_snapshot_written(std::uint64_t mid,
         return 0;
     if (!aura::compiler::typed_audit::production_defaults_active())
         return 0;
-    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
-    const auto dropped = tc->clear_occurrence_persist_snapshot();
+    const auto dropped = aura_clear_occurrence_persist_snapshot_tc(tc_handle);
     if (dropped > 0) {
         aura::compiler::g_occurrence_persist_audit_atomic_wired.fetch_add(
             dropped, std::memory_order_relaxed);

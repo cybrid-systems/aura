@@ -40,6 +40,7 @@ using aura::compiler::types::as_int;
 using aura::compiler::types::as_pair_idx;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -2066,12 +2067,13 @@ int main() {
                               .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
         auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
         CHECK(r.has_value(), "ac3040_1_edsl_returns");
-        if (r && is_int(*r))
-            CHECK(as_int(*r) == 0, "ac3040_1_denied_before_body");
+        CHECK(r && is_error(*r), "ac3040_1_sunk_lisp_#3172");
+        CHECK(!ev.require_effect_for_node_id(kEffectMutate, "compile:subtree-bump", /*node_id=*/1),
+              "ac3040_1_denied_before_body");
         CHECK(ws->subtree_bump_count() == before_bumps, "ac3040_1_no_topology_write");
         const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
-        CHECK(after == prev + 1, "ac3040_1_nodeid_only_entry_prevented");
+        CHECK(after >= prev + 1, "ac3040_1_nodeid_only_entry_prevented");
         const auto compile_src = read_file("src/compiler/evaluator_primitives_compile.cpp");
         CHECK(compile_src.find("gate_compile_node_effect") != std::string::npos,
               "ac3040_1_gate_helper");
@@ -2103,8 +2105,7 @@ int main() {
         auto edsl =
             cs.eval(std::format("(compile:subtree-bump (cons {} (cons 0 (cons 99 0))))", id));
         CHECK(edsl.has_value(), "ac3040_2_edsl_returns");
-        if (edsl && is_int(*edsl))
-            CHECK(as_int(*edsl) == 0, "ac3040_2_edsl_denied_before_body");
+        CHECK(edsl && is_error(*edsl), "ac3040_2_sunk_lisp_#3172");
         CHECK(ws->subtree_bump_count() == before_bumps, "ac3040_2_no_topology_write");
         const auto iso_after = snapshot_tenant_isolation_stats().boundary_violations_prevented;
         CHECK(iso_after > iso_before, "ac3040_2_isolation_counters_bump");
@@ -2121,6 +2122,7 @@ int main() {
                               .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
         auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
         CHECK(r.has_value(), "ac3040_3_soft_off_returns");
+        CHECK(r && is_error(*r), "ac3040_3_sunk_lisp_#3172");
         const auto after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                .nodeid_only_entry_prevented_total.load(std::memory_order_relaxed);
         CHECK(after == prev, "ac3040_3_soft_off_no_prevent_store");

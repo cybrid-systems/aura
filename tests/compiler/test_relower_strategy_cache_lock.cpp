@@ -23,6 +23,7 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_keyword;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -114,15 +115,15 @@ int main() {
         (void)cs.eval("(eval-current)");
         // May no-op if not cached; must not hang/crash under lock.
         auto m = cs.eval(R"((compile:mark-block-dirty! "bar" 0 0))");
-        CHECK(m.has_value(), "mark-block-dirty eval ok");
+        CHECK(m && is_error(*m), "mark-block-dirty sunk #3172");
         auto s = cs.eval(R"((compile:relower-strategy "bar"))");
-        CHECK(s.has_value(), "strategy after mark ok");
+        CHECK(s.has_value(), "strategy still public");
         if (s)
-            CHECK(is_keyword(*s) || is_bool(*s), "strategy shape after mark");
+            CHECK(is_keyword(*s) || is_bool(*s), "strategy shape");
         auto c = cs.eval(R"((compile:clear-block-dirty! "bar" 0 0))");
-        CHECK(c.has_value(), "clear-block-dirty eval ok");
+        CHECK(c && is_error(*c), "clear-block-dirty sunk #3172");
         auto s2 = cs.eval(R"((compile:relower-strategy "bar"))");
-        CHECK(s2.has_value(), "strategy after clear ok");
+        CHECK(s2.has_value(), "strategy after sunk mark/clear ok");
     }
 
     std::println("\n=== test_relower_strategy_cache_lock_1855: {} passed, {} failed ===", g_passed,

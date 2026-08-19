@@ -174,6 +174,19 @@ freeze_proof_goal_truth_from_type_checker(void* tc_handle) noexcept {
     return t;
 }
 
+// Issue #3170: C ABI so typed_mutation_audit.h stays TypeChecker-free
+// (global-module header included from contract_handler / value_tags).
+extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) noexcept {
+    return freeze_proof_goal_truth_from_type_checker(tc_handle).goal_fingerprint;
+}
+
+extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept {
+    if (!tc_handle)
+        return 0;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    return static_cast<std::uint64_t>(tc->clear_occurrence_persist_snapshot());
+}
+
 // Issue #2641 / #2938: C ABI for outermost-success OccurrenceGoal persist
 // (tests + dtor). Soft / env=0 / no type-checker / empty goals → zero cost
 // inside maybe_persist_occurrence_snapshot. Issue #2938: successful commit

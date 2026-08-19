@@ -925,14 +925,10 @@ static void ac_1291_1295() {
         if (mode && aura::compiler::types::is_bool(*mode) &&
             aura::compiler::types::as_bool(*mode)) {
             auto d1 = sand.eval("(compile:mark-narrowing-dirty! 0)");
-            CHECK(d1.has_value() && is_error(*d1),
-                  "mark-narrowing-dirty! denied in sandbox (#1293)");
+            CHECK(d1.has_value() && is_error(*d1), "mark-narrowing-dirty! sunk #3172 (not public)");
             auto d2 = sand.eval("(jit:exception-fibers-clear)");
             CHECK(d2.has_value() && is_error(*d2),
                   "exception-fibers-clear denied in sandbox (#1295)");
-            auto denials =
-                href(sand, "query:production-sweep-1291-1295-stats", "capability-compile-denials");
-            CHECK(denials >= 1, "compile denials bumped");
         } else {
             CHECK(true, "sandbox mode not enforced in this harness — skip deny checks");
         }
@@ -1418,11 +1414,8 @@ static void ac_1325_1330() {
 
     // #1326: write-side deprecation counter (call still works outside sandbox)
     {
-        auto before = href(cs, Q, "write-side-deprecation-hits");
         auto r = cs.eval("(compile:mark-block-dirty! \"no-such\" 0 0)");
-        CHECK(r, "mark-block-dirty still callable (deprecation cycle)");
-        auto after = href(cs, Q, "write-side-deprecation-hits");
-        CHECK(after > before, "write-side deprecation hit counted");
+        CHECK(r && is_error(*r), "mark-block-dirty sunk #3172 (not a deprecation cycle)");
     }
 
     // #1327: agent:tick / agent:running?

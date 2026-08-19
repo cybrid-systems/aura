@@ -107,6 +107,7 @@ namespace {
     using aura::compiler::CompilerService;
     using aura::compiler::types::as_bool;
     using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_error;
     using aura::test::g_failed;
     using aura::test::g_passed;
 
@@ -174,12 +175,9 @@ int run_narrowing_dirty_1779() {
         CHECK(ws && ws->size() > 0, "workspace non-empty");
         const auto target = static_cast<std::int64_t>(ws->size() - 1);
         auto set_r = cs.eval(std::format("(compile:mark-narrowing-dirty! {})", target));
-        CHECK(set_r && is_bool(*set_r), "mark returns bool");
+        CHECK(set_r && is_error(*set_r), "mark-narrowing-dirty! sunk #3172");
         auto peek1 = cs.eval(std::format("(compile:narrowing-dirty? {})", target));
-        CHECK(peek1 && is_bool(*peek1) && as_bool(*peek1), "peek #t after mark");
-        auto peek2 = cs.eval(std::format("(compile:narrowing-dirty? {})", target));
-        CHECK(peek2 && is_bool(*peek2) && as_bool(*peek2),
-              "second peek still #t (no restore clear)");
+        CHECK(peek1 && is_error(*peek1), "narrowing-dirty? sunk #3172");
     }
 
     // ── AC4: many peeks never clear a marked bit ──
@@ -193,7 +191,7 @@ int run_narrowing_dirty_1779() {
         (void)cs.eval(std::format("(compile:mark-narrowing-dirty! {})", target));
         for (int i = 0; i < 50; ++i) {
             auto p = cs.eval(std::format("(compile:narrowing-dirty? {})", target));
-            CHECK(p && is_bool(*p) && as_bool(*p), "peek stays #t across iterations");
+            CHECK(p && is_error(*p), "narrowing-dirty? stays sunk across iterations");
         }
     }
 

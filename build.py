@@ -2051,6 +2051,17 @@ def cmd_lint():
             "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
         )
         return r
+    # Issue #3172: sink fine-grained compile: dirty primitives.
+    cs3172_script = COVERAGE_CHECKS / "check_compile_surface_3172.py"
+    if not cs3172_script.exists():
+        fail(f"missing {cs3172_script}")
+        return 1
+    r = run([sys.executable, str(cs3172_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3172 compile: surface reduction linter failed — run python3 scripts/coverage/checks/check_compile_surface_3172.py"
+        )
+        return r
     # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
@@ -4438,6 +4449,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3171 linear-fast-path restamp clear linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_clear_on_restamp_3171.py"
+        )
+        return r
+    # Issue #3172: sink fine-grained compile: dirty primitives.
+    cs3172b = COVERAGE_CHECKS / "check_compile_surface_3172.py"
+    if not cs3172b.exists():
+        fail(f"missing {cs3172b}")
+        return 1
+    r = run([sys.executable, str(cs3172b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3172 compile: surface reduction linter failed — run python3 scripts/coverage/checks/check_compile_surface_3172.py"
         )
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
@@ -12783,6 +12805,30 @@ def cmd_linear_fast_path_clear_on_restamp_3171():
     return cmd_linear_fast_path_clear_on_restamp_3171_coverage()
 
 
+def cmd_compile_surface_3172_coverage():
+    """Issue #3172: sink fine-grained compile: dirty primitives (static)."""
+    print(f"{B}=== compile: surface reduction coverage (#3172) ==={N}")
+    script = COVERAGE_CHECKS / "check_compile_surface_3172.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("compile: surface reduction (#3172) coverage contract rows failed")
+        return 1
+    ok("compile: surface reduction (#3172) coverage clean")
+    return 0
+
+
+def cmd_compile_surface_3172():
+    """Issue #3172: public compile: ≤ 5 (snapshot + relower-strategy).
+
+    Fine-grained dirty/defuse/hw-bitvec/subtree-bump sunk to C++.
+    """
+    print(f"{B}=== compile: surface reduction (#3172) ==={N}")
+    return cmd_compile_surface_3172_coverage()
+
+
 def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
@@ -17510,6 +17556,8 @@ def main():
         "half-green-ir-steal-densify-3063-coverage": cmd_half_green_ir_steal_densify_3063_coverage,
         "linear-fast-path-clear-on-restamp-3171": cmd_linear_fast_path_clear_on_restamp_3171,
         "linear-fast-path-clear-on-restamp-3171-coverage": cmd_linear_fast_path_clear_on_restamp_3171_coverage,
+        "compile-surface-3172": cmd_compile_surface_3172,
+        "compile-surface-3172-coverage": cmd_compile_surface_3172_coverage,
         "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,
