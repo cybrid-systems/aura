@@ -655,12 +655,50 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // Issue #3019: outermost triad (node → stable → pin) runs in the
     // Guard dtor via unified_restamp_after_boundary. Nested still
     // restamps node gen here (outer owns pin/stable).
+    // Issue #3166: I5 residual for multi-round Agent — nested exit
+    // must close the window between this nested exit and the outermost
+    // exit under production/Full. Nested path here does NOT run
+    // refresh_occurrence_on_guard_exit / LayoutStamp publish / Phase-5
+    // densify / unified_restamp_after_boundary (full triad). On the
+    // success path defuse_index_ also stays cached until outermost
+    // exits, so the next Agent query:*-stable / eval-current
+    // (called BEFORE outermost dtor) can observe pre-cascade IR /
+    // stale DefUse / half-dirty cone.
+    //
+    // Per AC1: production/Full closes the window by invalidating
+    // defuse_index_ inline (next query rebuilds against the
+    // post-mutate state — mark_dirty_upward already ran via
+    // push_post_mutate_incremental_cascade at L915 below). Per AC2:
+    // soft / Off observe counter only (existing Soft behavior
+    // unchanged). Outermost path unaffected (zero AC3 regression).
     if (workspace_flat_ && !stack.empty()) {
         const bool wrap_pending = workspace_flat_->auto_restamp_pending();
         workspace_flat_->restamp_all_node_generations();
         if (wrap_pending) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->generation_auto_restamp_on_wrap.fetch_add(1, std::memory_order_relaxed);
+        }
+        // Issue #3166: nested structural mutate detection. AC1 +
+        // AC2 production/Full vs Soft/Off split.
+        const bool nested_structural_mutate =
+            workspace_flat_->mutation_log_size() > cp.mutation_log_size;
+        if (nested_structural_mutate) {
+            if (typed_audit::production_defaults_active() ||
+                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                // Production / Full: minimal cone invalidate — force
+                // defuse_index_ rebuild so next Agent query sees the
+                // post-mutate state (no pre-cascade IR leak between
+                // nested exit and outermost exit).
+                defuse_index_ = nullptr;
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->nested_exit_dirty_pending_forced_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            } else {
+                // Soft / Off: observe counter only (AC2 — existing Soft
+                // behavior unchanged, dashboards see pending count).
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                    m->nested_exit_dirty_pending_total.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
     // Issue #1283: unified provenance capture at Guard boundary exit.
