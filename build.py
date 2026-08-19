@@ -2062,6 +2062,17 @@ def cmd_lint():
             "Issue #3172 compile: surface reduction linter failed — run python3 scripts/coverage/checks/check_compile_surface_3172.py"
         )
         return r
+    # Issue #3173: sink fine-grained arena: compact/defrag knobs.
+    as3173_script = COVERAGE_CHECKS / "check_arena_surface_3173.py"
+    if not as3173_script.exists():
+        fail(f"missing {as3173_script}")
+        return 1
+    r = run([sys.executable, str(as3173_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3173 arena: surface reduction linter failed — run python3 scripts/coverage/checks/check_arena_surface_3173.py"
+        )
+        return r
     # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
@@ -4460,6 +4471,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3172 compile: surface reduction linter failed — run python3 scripts/coverage/checks/check_compile_surface_3172.py"
+        )
+        return r
+    # Issue #3173: sink fine-grained arena: compact/defrag knobs.
+    as3173b = COVERAGE_CHECKS / "check_arena_surface_3173.py"
+    if not as3173b.exists():
+        fail(f"missing {as3173b}")
+        return 1
+    r = run([sys.executable, str(as3173b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3173 arena: surface reduction linter failed — run python3 scripts/coverage/checks/check_arena_surface_3173.py"
         )
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
@@ -12829,6 +12851,30 @@ def cmd_compile_surface_3172():
     return cmd_compile_surface_3172_coverage()
 
 
+def cmd_arena_surface_3173_coverage():
+    """Issue #3173: sink fine-grained arena: compact/defrag knobs (static)."""
+    print(f"{B}=== arena: surface reduction coverage (#3173) ==={N}")
+    script = COVERAGE_CHECKS / "check_arena_surface_3173.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("arena: surface reduction (#3173) coverage contract rows failed")
+        return 1
+    ok("arena: surface reduction (#3173) coverage clean")
+    return 0
+
+
+def cmd_arena_surface_3173():
+    """Issue #3173: public arena: ≤ 4 (compact + policy + request + threshold).
+
+    Fine-grained defrag/live-compact/adaptive/sticky-densify sunk to C++.
+    """
+    print(f"{B}=== arena: surface reduction (#3173) ==={N}")
+    return cmd_arena_surface_3173_coverage()
+
+
 def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
@@ -17558,6 +17604,8 @@ def main():
         "linear-fast-path-clear-on-restamp-3171-coverage": cmd_linear_fast_path_clear_on_restamp_3171_coverage,
         "compile-surface-3172": cmd_compile_surface_3172,
         "compile-surface-3172-coverage": cmd_compile_surface_3172_coverage,
+        "arena-surface-3173": cmd_arena_surface_3173,
+        "arena-surface-3173-coverage": cmd_arena_surface_3173_coverage,
         "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,

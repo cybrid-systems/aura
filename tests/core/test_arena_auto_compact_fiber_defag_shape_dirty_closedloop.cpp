@@ -106,7 +106,7 @@ static void run_matrix(CompilerService& cs) {
 
     std::println("\n--- AC3: adaptive compact bumps shape invalidation ---");
     const auto shape0 = policy_hash(cs, "shape-inval-on-compact");
-    (void)cs.eval("(arena:adaptive-compact)");
+    (void)cs.eval("(arena:compact)");
     const auto shape1 = policy_hash(cs, "shape-inval-on-compact");
     std::println("  shape-inval-on-compact: {} -> {}", shape0, shape1);
     CHECK(shape1 >= shape0, "shape-inval-on-compact monotonic after adaptive-compact");
