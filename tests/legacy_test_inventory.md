@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 848 | Preferred destination suites |
-| **Total scanned** | **848** | |
+| `tests/core/test_*.cpp` | 849 | Preferred destination suites |
+| **Total scanned** | **849** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 251 | 251 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 56 | 56 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 57 | 57 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 85 | 85 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
@@ -758,6 +758,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_post_mutate_push_cascade.cpp`
 - `tests/serve/test_post_steal_closed_loop.cpp`
 - `tests/compiler/test_post_steal_linear_revalidate.cpp`
+- `tests/compiler/test_pre_scan_quote_boundary.cpp`
 - `tests/compiler/test_predicate_meet_join_lattice.cpp`
 - `tests/compiler/test_predicate_memo_boundary_selective.cpp`
 - `tests/core/test_prim_call_count_clamp.cpp`
@@ -1562,13 +1563,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2897 — query:type-linear-evolution-snapshot single atomic
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (56)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (57)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (56)
+#### domain/ (57)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1602,6 +1603,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_node_tag_align_b1.cpp` (—) [small, domain_suite, theme_reflect] — Wave B1: NodeTag P2996 identifiers ↔ kNodeTagNames alignment.
 - `tests/reflect/test_opcode_info_align_a3.cpp` (—) [small, domain_suite, theme_reflect] — Wave A3: IROpcode PascalCase (P2996) ↔ display kebab table alignment.
 - `tests/reflect/test_opcode_reflect.cpp` (—) [domain_suite, theme_reflect] — Issue #2289: GCC 16.1 reflection workaround cleanup.
+- `tests/compiler/test_pre_scan_quote_boundary.cpp` (—) [domain_suite, theme_compiler] — AC1: pre_scan returns without descending into NodeTag::Quote children
 - `tests/compiler/test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp` (—) [domain_suite, theme_compiler] — test_prompt2_6_impact_scope_quote_lambda_bridge_env.cpp — Issue #741:
 - `tests/compiler/test_qq_unwrap_targeted_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: expand_inner_macros cites #2809; restamp_after_qq_unwrap; no full
 - `tests/compiler/test_query_hygiene_default.cpp` (—) [domain_suite, theme_compiler] — AC1: Default query:pattern / query:filter skip MacroIntroduced; include
