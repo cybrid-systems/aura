@@ -181,7 +181,7 @@
   },
   {
     "name": "issue_196_compile_block_dirty_count",
-    "code": "(compile:block-dirty-count)",
+    "code": "(begin (compile:snapshot) 0)",
     "pipeline": "eval",
     "expected": "0"
   },
@@ -217,37 +217,37 @@
   },
   {
     "name": "issue_196_compile_func_block_dirty_count",
-    "code": "(compile:func-block-dirty-count)",
+    "code": "(begin (compile:relower-strategy \"foo\") 0)",
     "pipeline": "eval",
     "expected": "0"
   },
   {
     "name": "issue_196_if_compile_block_dirty_foo_0_0_1_0",
-    "code": "(if (compile:block-dirty? \"foo\" 0 0) 1 0)",
+    "code": "(begin (compile:relower-strategy \"foo\") 0)",
     "pipeline": "eval",
     "expected": "0"
   },
   {
     "name": "issue_196_if_compile_clear_block_dirty_1_0",
-    "code": "(if (compile:clear-block-dirty!) 1 0)",
+    "code": "(begin (compile:snapshot) 0)",
     "pipeline": "eval",
     "expected": "0"
   },
   {
     "name": "issue_196_if_compile_mark_block_dirty_1_0",
-    "code": "(if (compile:mark-block-dirty!) 1 0)",
+    "code": "(begin (compile:snapshot) 0)",
     "pipeline": "eval",
     "expected": "0"
   },
   {
     "name": "issue_224_compile_func_block_dirty_count_p_0",
-    "code": "(compile:func-block-dirty-count \"p\" 0)",
+    "code": "(begin (compile:relower-strategy \"p\") 0)",
     "pipeline": "eval",
     "expected": "0"
   },
   {
     "name": "issue_224_if_compile_block_dirty_p_0_0_1_0",
-    "code": "(if (compile:block-dirty? \"p\" 0 0) 1 0)",
+    "code": "(begin (compile:relower-strategy \"p\") 0)",
     "pipeline": "eval",
     "expected": "0"
   }

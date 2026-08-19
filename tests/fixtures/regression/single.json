@@ -1,8 +1,8 @@
 [
   {
     "name": "cmdline-empty",
-    "code": "(command-line)",
-    "expect_out": "",
+    "code": "(begin (require \"std/process\" all:) (list? (command-line)))",
+    "expect_out": "#t",
     "expect_err": ""
   },
   {
@@ -13,7 +13,7 @@
   },
   {
     "name": "directory-list",
-    "code": "(directory-list \"/tmp\")",
+    "code": "(begin (require \"std/io\" all:) (directory-list \"/tmp\"))",
     "expect_out": "aura-regr.txt",
     "expect_err": ""
   },

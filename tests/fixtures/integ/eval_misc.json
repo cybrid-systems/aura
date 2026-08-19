@@ -97,13 +97,13 @@
   },
   {
     "name": "ffi_strlen",
-    "code": "((c-func -1 \"strlen\" \"(String) -> Int\") \"hello\")",
+    "code": "(begin (require \"std/ffi\" all:) ((c-func -1 \"strlen\" \"(String) -> Int\") \"hello\"))",
     "pipeline": "eval",
     "expected": "5"
   },
   {
     "name": "ffi_strlen_empty",
-    "code": "((c-func -1 \"strlen\" \"(String) -> Int\") \"\")",
+    "code": "(begin (require \"std/ffi\" all:) ((c-func -1 \"strlen\" \"(String) -> Int\") \"\"))",
     "pipeline": "eval",
     "expected": "0"
   },

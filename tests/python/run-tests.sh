@@ -436,11 +436,11 @@ echo ""
 # Read-only primitives only. git-commit/git-stage are stateful
 # and not exercised here.
 
-run_test "git:branch-current" "$(printf '(string? (git-branch-current))')" "#t"
-run_test "git:rev-parse" "$(printf '(string? (git-rev-parse))')" "#t"
-run_test "git:status" "$(printf '(string? (git-status))')" "#t"
-run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
-run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
+run_test "git:branch-current" "$(printf '(begin (require "std/git" all:) (string? (git-branch-current)))')" "#t"
+run_test "git:rev-parse" "$(printf '(begin (require "std/git" all:) (string? (git-rev-parse)))')" "#t"
+run_test "git:status" "$(printf '(begin (require "std/git" all:) (string? (git-status)))')" "#t"
+run_test "git:diff" "$(printf '(begin (require "std/git" all:) (string? (git-diff)))')" "#t"
+run_test "git:log" "$(printf '(begin (require "std/git" all:) (string? (git-log 5)))')" "#t"
 
 # safe-refactor module loads cleanly
 run_test "safe-refactor:loaded" "$(printf '(begin (require std/safe-refactor all:) #t)')" "#t"
@@ -472,11 +472,11 @@ echo ""
 echo "=== FFI Tests ==="
 
 # Opaque pointer basics
-run_test "ffi:opaque-bool" "$(printf '(c-opaque? (c-opaque 42))')" "#t"
-run_test "ffi:opaque-int" "$(printf '(c-opaque->int (c-opaque 42))')" "42"
-run_test "ffi:opaque-alloc" "$(printf '(begin (define p (c-alloc 64)) (c-free p) (c-opaque? p))')" "#t"
-run_test "ffi:opaque-not" "$(printf '(c-opaque? 42)')" "#f"
-run_test "ffi:alloc-free" "$(printf '(begin (define p (c-alloc 1024)) (c-free p) (c-opaque? p))')" "#t"
+run_test "ffi:opaque-bool" "$(printf '(begin (require "std/ffi" all:) (c-opaque? (c-opaque 42)))')" "#t"
+run_test "ffi:opaque-int" "$(printf '(begin (require "std/ffi" all:) (c-opaque->int (c-opaque 42)))')" "42"
+run_test "ffi:opaque-alloc" "$(printf '(begin (require "std/ffi" all:) (define p (c-alloc 64)) (c-free p) (c-opaque? p))')" "#t"
+run_test "ffi:opaque-not" "$(printf '(begin (require "std/ffi" all:) (c-opaque? 42))')" "#f"
+run_test "ffi:alloc-free" "$(printf '(begin (require "std/ffi" all:) (define p (c-alloc 1024)) (c-free p) (c-opaque? p))')" "#t"
 
 
 # --emit-binary: standalone native binary
@@ -689,11 +689,11 @@ run_test "bridge:nested-lambda" "$(printf '(define (twice f) (lambda (x) (f (f x
 # arena-offset returns an integer >= 0 when arena is active
 run_test "arena:offset-nonneg" "$(printf '(>= (arena-offset) 0)')" "#t"
 run_test "arena:offset-usable" "$(printf '(let ((a (arena-offset))) (cons (* 2 3) (* 4 5)) (>= (arena-offset) a))')" "#t"
-run_test "git:branch-current" "$(printf '(string? (git-branch-current))')" "#t"
-run_test "git:rev-parse" "$(printf '(string? (git-rev-parse))')" "#t"
-run_test "git:status" "$(printf '(string? (git-status))')" "#t"
-run_test "git:diff" "$(printf '(string? (git-diff))')" "#t"
-run_test "git:log" "$(printf '(string? (git-log 5))')" "#t"
+run_test "git:branch-current" "$(printf '(begin (require "std/git" all:) (string? (git-branch-current)))')" "#t"
+run_test "git:rev-parse" "$(printf '(begin (require "std/git" all:) (string? (git-rev-parse)))')" "#t"
+run_test "git:status" "$(printf '(begin (require "std/git" all:) (string? (git-status)))')" "#t"
+run_test "git:diff" "$(printf '(begin (require "std/git" all:) (string? (git-diff)))')" "#t"
+run_test "git:log" "$(printf '(begin (require "std/git" all:) (string? (git-log 5)))')" "#t"
 
 
 echo ""
