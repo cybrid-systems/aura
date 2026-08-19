@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 845 | Preferred destination suites |
-| **Total scanned** | **845** | |
+| `tests/core/test_*.cpp` | 846 | Preferred destination suites |
+| **Total scanned** | **846** | |
 
 ### Related artifacts
 
@@ -36,7 +36,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 250 | 250 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 54 | 54 | P1 — domain hygiene suite exists |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 55 | 55 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 85 | 85 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 135 | 135 | P2 — often thin schema probes; collapse into obs matrix |
@@ -617,6 +617,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp`
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp`
 - `tests/compiler/test_macro_hygiene_limits.cpp`
+- `tests/compiler/test_macro_inner_expand_marker.cpp`
 - `tests/compiler/test_macro_intro_restamp.cpp`
 - `tests/compiler/test_macro_reflect_batch.cpp`
 - `tests/compiler/test_macro_restamp_after_flat.cpp`
@@ -1558,13 +1559,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2897 — query:type-linear-evolution-snapshot single atomic
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (54)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (55)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (54)
+#### domain/ (55)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1588,6 +1589,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_macro_hygiene_depth_concurrent_obs.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2021; peak / in-flight atomics + snapshot helper
 - `tests/compiler/test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp` (—) [domain_suite, theme_compiler] — test_macro_hygiene_fiber_panic_aot_soa_self_evo.cpp — Issue #654:
 - `tests/compiler/test_macro_hygiene_limits.cpp` (—) [large, domain_suite, theme_compiler] — AC1: lower runtime cap → expand at depth=cap+1 clamps/NULL_NODE + metric;
+- `tests/compiler/test_macro_inner_expand_marker.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3151 + expand_inner_macros passes
 - `tests/compiler/test_macro_reflect_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_macro_reflect_batch.cpp — batch driver for macro+reflect+self-evo family.
 - `tests/compiler/test_macro_restamp_after_flat.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2019 + restamp_macro_introduced_generations
 - `tests/compiler/test_macro_self_evo_capability.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2023; MacroSelfEvoPolicy + check_macro_self_evo
