@@ -6242,6 +6242,20 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> edsl_nested_atomic_rollback_total{0};
     std::atomic<std::uint64_t> edsl_mutate_invalidate_precision_total{0};
 
+    // Issue #3166: nested MutationBoundaryGuard exit dirty pending
+    // (I5 residual for multi-round Agent — closes the window between
+    // nested exit and outermost exit under production/Full).
+    //   - nested_exit_dirty_pending_total: Soft / Off observe counter
+    //     (AC2 — no behavior change, observable in dashboards).
+    //   - nested_exit_dirty_pending_forced_total: Production / Full
+    //     forced invalidation counter (AC1 — defuse_index_ invalidate
+    //     inline so next Agent query rebuilds against post-mutate
+    //     state, never pre-cascade IR).
+    // Non-duplicative with #3019 unified restamp / #2988 post-mutate
+    // cascade / #2105 txn-dirty / #31966 nested-pending.
+    std::atomic<std::uint64_t> nested_exit_dirty_pending_total{0};
+    std::atomic<std::uint64_t> nested_exit_dirty_pending_forced_total{0};
+
     // Issue #657: compiler core incremental self-mod gaps — cache bridge
     // epoch sync, impact-scope partial re-lower, JIT unhandled deopt,
     // linear metadata flow, quote fallback refresh (non-duplicative with

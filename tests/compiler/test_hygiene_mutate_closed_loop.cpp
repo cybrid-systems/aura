@@ -1738,6 +1738,182 @@ static void ac3115_5_source_and_linter() {
           "3115 AC4: no invent test per #81967");
 }
 
+static void ac3166_1_production_forced_invalidate() {
+    std::println(
+        "\n--- #3166 AC1: Production + nested structural mutate → forced counter bumped ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3166 AC1: dense workspace");
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "3166 AC1: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3166 AC1: compiler_metrics");
+    const auto forced_before = m->nested_exit_dirty_pending_forced_total.load();
+    const auto observe_before = m->nested_exit_dirty_pending_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+        CHECK(ok, "3166 AC1: outer guard acquired");
+        {
+            Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &ok);
+            CHECK(ok, "3166 AC1: inner guard acquired");
+            // Structural mutation in inner: insert_child advances mutation_log_size.
+            const auto extra = flat->add_literal(42);
+            flat->insert_child(0, 0, extra);
+        }
+        // Inner exited. AC1: production + structural mutate → forced counter bumped.
+        const auto forced_after = m->nested_exit_dirty_pending_forced_total.load();
+        CHECK(forced_after > forced_before,
+              "3166 AC1: forced counter bumped (production + nested structural mutate)");
+        // AC1 corollary: observe counter NOT bumped under production.
+        const auto observe_after = m->nested_exit_dirty_pending_total.load();
+        CHECK(observe_after == observe_before,
+              "3166 AC1: observe counter NOT bumped under production");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3166_2_soft_observe_only() {
+    std::println(
+        "\n--- #3166 AC2: Soft / Off + nested structural mutate → observe counter bumped ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3166 AC2: dense workspace");
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "3166 AC2: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3166 AC2: compiler_metrics");
+    const auto forced_before = m->nested_exit_dirty_pending_forced_total.load();
+    const auto observe_before = m->nested_exit_dirty_pending_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+        CHECK(ok, "3166 AC2: outer guard acquired");
+        {
+            Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &ok);
+            CHECK(ok, "3166 AC2: inner guard acquired");
+            const auto extra = flat->add_literal(43);
+            flat->insert_child(0, 0, extra);
+        }
+        // Inner exited. AC2: Soft / Off + structural mutate → observe counter bumped.
+        const auto observe_after = m->nested_exit_dirty_pending_total.load();
+        CHECK(observe_after > observe_before,
+              "3166 AC2: observe counter bumped (Soft + nested structural mutate)");
+        // AC2 corollary: forced counter NOT bumped under Soft.
+        const auto forced_after = m->nested_exit_dirty_pending_forced_total.load();
+        CHECK(forced_after == forced_before, "3166 AC2: forced counter NOT bumped under Soft");
+    }
+}
+
+static void ac3166_3_outermost_zero_regression() {
+    std::println("\n--- #3166 AC3: outermost-only path zero regression ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3166 AC3: dense workspace");
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "3166 AC3: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3166 AC3: compiler_metrics");
+    const auto forced_before = m->nested_exit_dirty_pending_forced_total.load();
+    const auto observe_before = m->nested_exit_dirty_pending_total.load();
+    bool ok = true;
+    // Single (outermost) guard — no nesting. AC3: neither counter bumped
+    // because nested_structural_mutate gate only fires when `!stack.empty()`.
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+        CHECK(ok, "3166 AC3: outermost guard acquired");
+        const auto extra = flat->add_literal(44);
+        flat->insert_child(0, 0, extra);
+    }
+    CHECK(m->nested_exit_dirty_pending_forced_total.load() == forced_before,
+          "3166 AC3: forced counter NOT bumped (outermost only)");
+    CHECK(m->nested_exit_dirty_pending_total.load() == observe_before,
+          "3166 AC3: observe counter NOT bumped (outermost only)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3166_4_nested_abort_outermost_no_double() {
+    std::println("\n--- #3166 AC4: nested abort + outermost → no double counter bump ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3166 AC4: dense workspace");
+    auto* flat = cs.evaluator().workspace_flat();
+    CHECK(flat != nullptr, "3166 AC4: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3166 AC4: compiler_metrics");
+    const auto forced_before = m->nested_exit_dirty_pending_forced_total.load();
+    const auto observe_before = m->nested_exit_dirty_pending_total.load();
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(cs.evaluator(), &ok);
+        CHECK(ok, "3166 AC4: outer guard acquired");
+        {
+            // Inner guard aborts via exception path. AC4: nested abort must
+            // not double-bump forced counter (abort has its own dual-restore
+            // path; the nested pending-bump gate is on success only).
+            bool inner_ok = true;
+            bool caught = false;
+            try {
+                Evaluator::MutationBoundaryGuard inner(cs.evaluator(), &inner_ok);
+                CHECK(inner_ok, "3166 AC4: inner guard acquired");
+                const auto extra = flat->add_literal(45);
+                flat->insert_child(0, 0, extra);
+                throw std::runtime_error("3166-abort");
+            } catch (const std::runtime_error&) {
+                caught = true;
+            }
+            CHECK(caught, "3166 AC4: inner abort propagated as exception");
+        }
+    }
+    // AC4: abort path is governed by #2959/#3117/#3033/#3116 dual-restore,
+    // NOT by the new nested-pending branch (success path only). Neither
+    // counter should bump because: (a) abort path is separate, (b) the
+    // nested_structural_mutate gate fires only on success.
+    CHECK(m->nested_exit_dirty_pending_forced_total.load() == forced_before,
+          "3166 AC4: forced counter NOT bumped on nested abort");
+    CHECK(m->nested_exit_dirty_pending_total.load() == observe_before,
+          "3166 AC4: observe counter NOT bumped on nested abort");
+    apply_dev_audit_defaults();
+}
+
+static void ac3166_5_source_and_linter() {
+    std::println("\n--- #3166 AC5/AC6: source-cite + linter + no docs/design/* ---");
+    // Run the linter programmatically — its --strict mode fails on missing
+    // patterns; we just want to assert the script is wired (it executes).
+    int rc = std::system("python3 scripts/check_nested_guard_exit_dirty_pending_3166.py "
+                         "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3166 AC5: linter --self-test passes");
+    // Confirm no docs/design/3166-* (per #1655 + AC6).
+    const auto design_path = std::string("docs/design/");
+    bool design_dir_exists = false;
+    {
+        std::error_code ec;
+        design_dir_exists = std::filesystem::exists(design_path, ec);
+    }
+    if (design_dir_exists) {
+        for (const auto& entry : std::filesystem::directory_iterator(design_path)) {
+            const auto fn = entry.path().filename().string();
+            CHECK(fn.find("3166-") != 0,
+                  std::format("3166 AC6: forbidden docs/design/{} per #1655", fn));
+        }
+    }
+    // Confirm no test_issue_3166.cpp (per #81967 + AC5).
+    for (const auto& rel : {std::string("tests/issues/test_issue_3166.cpp"),
+                            std::string("tests/compiler/test_issue_3166.cpp"),
+                            std::string("tests/serve/test_issue_3166.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3166 AC5: forbidden {} per #81967", rel));
+    }
+}
+
 static void ac3095_1_post_restore_invariant_keys() {
     std::println("\n--- #3095 AC1: post-restore macro hygiene invariant keys ---");
     CompilerService cs;
@@ -1849,6 +2025,12 @@ int main() {
     ac3115_3_atomic_batch_respects();
     ac3115_4_soft_non_macro();
     ac3115_5_source_and_linter();
+    std::println("\n=== Issue #3166: nested guard exit dirty pending (I5 residual) ===");
+    ac3166_1_production_forced_invalidate();
+    ac3166_2_soft_observe_only();
+    ac3166_3_outermost_zero_regression();
+    ac3166_4_nested_abort_outermost_no_double();
+    ac3166_5_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
