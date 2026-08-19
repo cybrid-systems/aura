@@ -1980,7 +1980,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_open_issues_phase1_batch.cpp` (—) [phase_slice, batch_driver, domain_suite, theme_compiler] — test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.
 - `tests/core/test_pair_unchecked_safety.cpp` (—) [domain_suite, theme_core] — Issue #1710 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_panic_checkpoint_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — tests/core/test_panic_checkpoint_batch.cpp
-- `tests/core/test_pcv_workspace_batch.cpp` (—) [small, batch_driver, domain_suite, theme_core] — test_pcv_workspace_batch.cpp — thematic multi-TU batch
+- `tests/core/test_pcv_workspace_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_pcv_workspace_batch.cpp — thematic multi-TU batch
 - `tests/core/test_persist_basic.cpp` (—) [domain_suite, theme_core] — test_persist_basic.cpp — Issue #1381:
 - `tests/core/test_prim_call_count_clamp.cpp` (—) [small, domain_suite, theme_core] — AC1: count > max clamped
 - `tests/compiler/test_primcall_str_intern.cpp` (—) [domain_suite, theme_compiler] — AC1: N× (string-append x "!") — eval heap growth ≪ N
