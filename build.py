@@ -12426,6 +12426,41 @@ def cmd_solve_delta_timeout_fail_closed_3003_coverage():
     return 0
 
 
+def cmd_solve_delta_partial_cleared_3169():
+    """Issue #3169: production solve_delta fail-closed + clear partial
+    goals / unresolved after TIMEOUT / instance-repair failure.
+
+    Wire-up: ConstraintSystem::clear_partial_goals_and_unresolved() is
+    called from escalate_if_production on every Production exit path
+    where the post-repair full solve did not reach SOLVED (or repair
+    itself returned CONFLICT). Resets touched_roots_ +
+    pending_full_solve_roots_ + occurrence_priority_roots_ +
+    let_poly_dirty_roots_ + dirty_count_ + sets production_escalated_
+    to true; bumps solve_delta_partial_cleared_total on metrics_ when
+    production_defaults_active(). Soft / Off / unit-test default:
+    counter never bumps (early-return gate). Quiet / happy SOLVED:
+    zero extra atomics (escalate_if_production early-returns on
+    prior != TIMEOUT, AC3). I3 from 2026-08 type-system review:
+    半解不得出厂.
+
+    Extends test_solve_delta_unresolved_export (extends
+    ac3003_1..ac3003_5 + ac3169_1..ac3169_6); no test_issue_3169.cpp.
+    Rollback / Soft path preserved (no second solver model, no new
+    public query key — reuse existing #3003 / #2963 / #2913 surfaces).
+    """
+    print(f"{B}=== solve_delta partial cleared (#3169) ==={N}")
+    script = COVERAGE_CHECKS / "check_solve_delta_partial_cleared_3169.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("solve_delta partial cleared (#3169) coverage contract rows failed")
+        return 1
+    ok("solve_delta partial cleared (#3169) coverage clean")
+    return 0
+
+
 def cmd_adt_exhaust_dirty_cone_3005_coverage():
     """Issue #3005: ADT variant / pattern mutate → exhaustiveness dirty cone.
 
@@ -17323,6 +17358,8 @@ def main():
         "pcv-span-stale-3167": cmd_pcv_span_stale_coverage_3167,
         "cascade-rearm-new-edge-only-3168": cmd_cascade_rearm_new_edge_only_3168,
         "cascade-rearm-new-edge-only-3168-coverage": cmd_cascade_rearm_new_edge_only_3168,
+        "solve-delta-partial-cleared-3169": cmd_solve_delta_partial_cleared_3169,
+        "solve-delta-partial-cleared-3169-coverage": cmd_solve_delta_partial_cleared_3169,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,

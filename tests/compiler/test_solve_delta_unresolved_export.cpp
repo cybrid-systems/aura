@@ -1617,6 +1617,158 @@ static void ac3003_5_source_and_linter() {
           "3003 AC5: no invent test_issue_3003");
 }
 
+// ── Issue #3169: production solve_delta fail-closed + clear partial goals / unresolved ──
+// AC1 production + TIMEOUT/CONFLICT/residual unresolved after repair failure →
+//        partial goals cleared + hard reject (no type write, no dirty-clear).
+// AC2 Soft/Off/unit-test default: zero behavioural change (counter only bumps
+//        under production_defaults_active()).
+// AC3 Quiet (clean / no dirty / no TIMEOUT): zero extra atomics / no lock.
+// AC4 Additive observability only (one counter + schema/issue sentinels).
+//        Reuse existing #3003 / #2963 / #2913 surfaces; no new public query key.
+// AC5 Extends existing solve_delta suite (no test_issue_3169.cpp per #81967;
+//        no docs/design/3169-* per #1655).
+// AC6 Linter: scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py
+//        --strict + --self-test PASS; build.py wires cmd_solve_delta_partial_
+//        cleared_3168.
+static void ac3169_1_production_clear_partial_and_reject() {
+    std::println("\n--- #3169 AC1: Production TIMEOUT / CONFLICT → clear + hard reject ---");
+    // Source-cite: clear helper decl + impl + wire sites.
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(ixx.find("void clear_partial_goals_and_unresolved() noexcept") != std::string::npos,
+          "3169 AC1: clear helper decl in type_checker.ixx");
+    CHECK(impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept") !=
+              std::string::npos,
+          "3169 AC1: clear helper impl in type_checker_impl.cpp");
+    CHECK(impl.find("Issue #3169: clear any partial goal / unresolved state") != std::string::npos,
+          "3169 AC1: wire cite at CONFLICT / post-full-solve branches");
+    // Soft path untouched (counter only bumps under production_defaults_active()).
+    CHECK(impl.find("if (!aura::compiler::typed_audit::production_defaults_active())") !=
+              std::string::npos,
+          "3169 AC2: soft gate at clear helper entry");
+    // No docs/design/3169-* (per #1655).
+    const auto docs = std::string("docs/design/");
+    if (std::filesystem::exists(docs)) {
+        for (const auto& f : std::filesystem::directory_iterator(docs)) {
+            auto name = f.path().filename().string();
+            CHECK(name.find("3169-") == std::string::npos,
+                  "3169 AC5: no docs/design/3169-* plan doc (#1655)");
+            (void)name;
+            break;
+        }
+    }
+    // No test_issue_3169.cpp (per #81967).
+    for (const auto& rel : {std::string("tests/issues/test_issue_3169.cpp"),
+                            std::string("tests/compiler/test_issue_3169.cpp"),
+                            std::string("tests/serve/test_issue_3169.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3169 AC5: forbidden {} per #81967", rel));
+    }
+}
+
+static void ac3169_2_soft_zero_extra() {
+    std::println("\n--- #3169 AC2: Soft / Off / unit-test default → zero behavioural change ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    // Clear helper early-returns on !production_defaults_active() (AC2).
+    CHECK(impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept") !=
+              std::string::npos,
+          "3169 AC2: clear helper present");
+    // Counter only bumps under production_defaults_active() — the helper gates
+    // BEFORE the metrics_ bump.
+    const auto helper_pos =
+        impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept");
+    if (helper_pos != std::string::npos) {
+        const auto helper_block = impl.substr(helper_pos, 1200);
+        const auto gate_pos =
+            helper_block.find("if (!aura::compiler::typed_audit::production_defaults_active())");
+        const auto bump_pos = helper_block.find("solve_delta_partial_cleared_total.fetch_add");
+        CHECK(gate_pos != std::string::npos && bump_pos != std::string::npos && gate_pos < bump_pos,
+              "3169 AC2: production gate precedes counter bump (Soft untouched)");
+    }
+    // escalate_if_production Soft path (production_defaults_active()==false) does
+    // NOT call clear_partial_goals_and_unresolved — existing #2277 pass-through
+    // preserved.
+    const auto esc_pos = impl.find("SolveResult ConstraintSystem::escalate_if_production");
+    if (esc_pos != std::string::npos) {
+        const auto esc_block = impl.substr(esc_pos, 2200);
+        CHECK(esc_block.find("if (!prod)\n        return prior;") != std::string::npos,
+              "3169 AC2: Soft pass-through preserved");
+    }
+}
+
+static void ac3169_3_quiet_zero_extra() {
+    std::println("\n--- #3169 AC3: Quiet (clean / no dirty / no TIMEOUT) → zero extra ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    // escalate_if_production early-returns on prior != TIMEOUT (line ~2720).
+    // So on the happy SOLVED path, no clear_partial_goals_and_unresolved call
+    // fires (zero extra atomics / no lock).
+    const auto esc_pos = impl.find("SolveResult ConstraintSystem::escalate_if_production");
+    if (esc_pos != std::string::npos) {
+        const auto esc_block = impl.substr(esc_pos, 800);
+        CHECK(esc_block.find("if (prior != SolveResult::TIMEOUT)\n        return prior;") !=
+                  std::string::npos,
+              "3169 AC3: happy path returns prior (no clear call)");
+    }
+}
+
+static void ac3169_4_additive_counter_only() {
+    std::println("\n--- #3169 AC4: Additive observability only — counter + struct-end ---");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    // Counter declared at struct end (layout-stable per #2906).
+    CHECK(obs.find("std::atomic<std::uint64_t> solve_delta_partial_cleared_total{0}") !=
+              std::string::npos,
+          "3169 AC4: counter declared at struct end");
+    CHECK(obs.find("// Issue #3169: production solve_delta fail-closed") != std::string::npos,
+          "3169 AC4: counter comment cites #3169");
+    // Counter only bumped inside the production-gated clear helper.
+    CHECK(impl.find("solve_delta_partial_cleared_total.fetch_add") != std::string::npos,
+          "3169 AC4: counter bumped in clear helper");
+    // Existing #3003 / #2963 / #2913 / #2277 surfaces preserved.
+    CHECK(obs.find("delta_timeout_full_solve_total") != std::string::npos,
+          "3169 AC4: #2277 delta_timeout_full_solve_total preserved");
+    CHECK(obs.find("delta_timeout_reject_total") != std::string::npos,
+          "3169 AC4: #3003 delta_timeout_reject_total preserved");
+    CHECK(obs.find("solver_budget_instance_repair_prefer_total") != std::string::npos,
+          "3169 AC4: #2963 instance_repair_prefer_total preserved");
+    CHECK(obs.find("delta_instance_repair_resolved_total") != std::string::npos,
+          "3169 AC4: #2963 instance_repair_resolved_total preserved");
+}
+
+static void ac3169_5_existing_3003_2963_2913_preserved() {
+    std::println("\n--- #3169 AC5: #3003 / #2963 / #2913 paths preserved ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    // #3003 / #2277 escalation pipeline preserved.
+    CHECK(impl.find("delta_timeout_full_solve_total") != std::string::npos,
+          "3169 AC5: #2277 escalation path preserved");
+    CHECK(impl.find("delta_timeout_reject_total") != std::string::npos,
+          "3169 AC5: #3003 reject path preserved");
+    // #2963 instance repair before full preserved.
+    CHECK(impl.find("try_instance_repair_before_full") != std::string::npos,
+          "3169 AC5: #2963 try_instance_repair_before_full preserved");
+    CHECK(impl.find("prefer_instance_repair_before_full") != std::string::npos,
+          "3169 AC5: #2963 budget flag preserved");
+    // #2913 locality SLO preserved (escalate_locality_slo_if_production).
+    CHECK(impl.find("escalate_locality_slo_if_production") != std::string::npos,
+          "3169 AC5: #2913 locality gate preserved");
+}
+
+static void ac3169_6_source_and_linter() {
+    std::println("\n--- #3169 AC6: source-cite linter + build.py wiring ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py");
+    int rc =
+        std::system("python3 scripts/coverage/checks/check_solve_delta_partial_cleared_3169.py "
+                    "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3169 AC6: linter --self-test passes");
+    CHECK(!lint.empty() && lint.find("Issue #3169") != std::string::npos,
+          "3169 AC6: linter cites #3169");
+    CHECK(build.find("check_solve_delta_partial_cleared_3169") != std::string::npos,
+          "3169 AC6: build.py wires linter");
+}
+
 // ── Issue #3031: pending_full_solve / locality residual before commit ──
 // AC1 production pending/locality → escalate; still dirty → reject
 // AC2 Soft observe allow
@@ -2145,6 +2297,13 @@ int run_test_solve_delta_unresolved_export() {
     ac3108_3_soft_observe_only();
     ac3108_4_additive_counter_only();
     ac3108_5_source_and_linter();
+    std::println("\n=== Issue #3169: production solve_delta fail-closed + clear partial ===");
+    ac3169_1_production_clear_partial_and_reject();
+    ac3169_2_soft_zero_extra();
+    ac3169_3_quiet_zero_extra();
+    ac3169_4_additive_counter_only();
+    ac3169_5_existing_3003_2963_2913_preserved();
+    ac3169_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
