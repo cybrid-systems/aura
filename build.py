@@ -2945,6 +2945,24 @@ def cmd_lint():
             "Issue #3015 scope bp inherit linter failed — run python3 scripts/coverage/checks/check_scope_bp_inherit_3015.py"
         )
         return r
+    # Issue #3147: agent_send / emit_keepalive BP events route to handle's
+    # effective bp_scope_id (populated from AgentSpec.bp_scope_id, which
+    # #3015 auto-fills from AgentScope under production). Closes the
+    # runtime cross-poison window that #3015 left open at admit.
+    # Soft / explicit "-" stay process bucket (zero behavioural change).
+    # Extends test_per_scope_bp_admit.cpp (#81967); no docs/design/ (#1655);
+    # additive observability only (reuses note_mailbox_bp_recent + existing
+    # scope gauge surface; no new query key).
+    mbsh_script = COVERAGE_CHECKS / "check_mailbox_bp_scope_handle_3147.py"
+    if not mbsh_script.exists():
+        fail(f"missing {mbsh_script}")
+        return 1
+    r = run([sys.executable, str(mbsh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3147 mailbox bp scope handle linter failed — run python3 scripts/coverage/checks/check_mailbox_bp_scope_handle_3147.py"
+        )
+        return r
     # Issue #3016: MutationBoundary trail stamps resolve_audit_mutation_id
     # (not total_mutations_). Residual of #2493/#2836. Extends
     # test_audit_mutation_id_unify.cpp (#81967); no docs/design/ (#1655).
