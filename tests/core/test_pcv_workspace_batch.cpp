@@ -102,5 +102,31 @@ int main() {
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);
+    std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard batch smoke check ===");
+    // #3167 smoke check — verify children_safe_view + force_refresh_pcv_span
+    // + pcv_span_stale_across_guard_total are wired across the PCV hotpath
+    // and that batched workspace runs don't regress the counter. Delegates
+    // to run_test_pcv_exclusive_with_set() which carries AC1/AC2/AC4.
+    {
+        int prev_failed = g_failed;
+        int prev_passed = g_passed;
+        g_passed = 0;
+        g_failed = 0;
+        const int rc = run_test_pcv_exclusive_with_set();
+        const int smoke_failed = g_failed;
+        const int smoke_passed = g_passed;
+        g_passed = prev_passed + smoke_passed;
+        g_failed = prev_failed + smoke_failed;
+        std::println("\n--- #3167 smoke (delegated to run_test_pcv_exclusive_with_set): "
+                     "{} passed, {} failed, rc={} ---",
+                     smoke_passed, smoke_failed, rc);
+        if (rc != 0 || smoke_failed != 0)
+            ++members_failed;
+        else
+            ++members_passed;
+    }
+
+    std::println("\n=== Final: {} members: {} ok, {} failed ===", members_passed + members_failed,
+                 members_passed, members_failed);
     return members_failed ? 1 : 0;
 }

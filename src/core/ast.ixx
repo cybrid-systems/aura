@@ -4553,7 +4553,17 @@ public:
             return {};
         auto keep = share_storage(children_[id]);
         std::span<const NodeId> sp(children_[id].data(), children_[id].size());
-        return SafePCVSpan<NodeId>(sp, std::move(keep));
+        // Issue #3167: capture FlatAST node_id + generation_ + wrap_epoch_
+        // + node_gen_[id] at this moment so force_refresh_pcv_span() can
+        // detect staleness after a successful structural Guard mutates
+        // this node (production contract; Soft/Off keeps COW frozen view,
+        // AC1 AC2 AC3 AC4 / I2 residual). captured_node_id_ on the span
+        // doubles as a sentinel — kPcvSpanNoOwner means legacy 2-arg ctor
+        // and force_refresh short-circuits.
+        const auto ng = (id < node_gen_.size()) ? node_gen_[id] : std::uint16_t{0};
+        return SafePCVSpan<NodeId>(sp, std::move(keep), static_cast<std::uint32_t>(id),
+                                   static_cast<std::uint64_t>(generation_),
+                                   wrap_epoch_.load(std::memory_order_relaxed), ng);
     }
 
     [[nodiscard]] SafePCVSpan<NodeId> children_safe(NodeId id) const {
@@ -4577,6 +4587,44 @@ public:
     // ChildColumnar + SoAColumnarFull at compile time (see static_assert below).
     [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
         return children_safe_view(id);
+    }
+
+    // Issue #3167: re-pin a SafePCVSpan against the current FlatAST state
+    // after a successful structural Guard mutates the owner node. If the
+    // captured fingerprint (node_id + generation + wrap_epoch + node_gen)
+    // no longer matches the live FlatAST state, bumps
+    // pcv_span_stale_across_guard_total and returns a fresh SafePCVSpan
+    // pinned to the post-mutate children (AC1 production). If the
+    // fingerprint still matches, returns the original span (AC2 happy
+    // path — zero extra work). Default-constructed / legacy 2-arg spans
+    // short-circuit (no observation possible). Soft/Off: behavior
+    // unchanged from today's COW (frozen pre-mutate view).
+    [[nodiscard]] SafePCVSpan<NodeId> force_refresh_pcv_span(const SafePCVSpan<NodeId>& safe,
+                                                             NodeId id) const {
+        if (!safe.has_fingerprint())
+            return safe; // legacy / default-constructed — nothing to refresh
+        if (id >= children_.size()) {
+            // Node freed between capture and refresh (rare under stable refs);
+            // return empty span — caller treats as stale.
+            return {};
+        }
+        const auto cur_gen = static_cast<std::uint64_t>(generation_);
+        const auto cur_wrap = wrap_epoch_.load(std::memory_order_relaxed);
+        const auto cur_node_gen = (id < node_gen_.size()) ? node_gen_[id] : std::uint16_t{0};
+        if (safe.is_stale(cur_gen, cur_wrap, cur_node_gen)) {
+            g_pcv_hotpath_metrics().pcv_span_stale_across_guard_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return children_safe_view(id); // re-pin to current children
+        }
+        return safe; // AC2 happy path
+    }
+
+    // Issue #3167: stale-across-guard fingerprint mismatch total (auto-
+    // bumped by force_refresh_pcv_span). Exposed for observability / Agent
+    // export alongside pcv_pin_count / pcv_columnar_hit_rate_bp.
+    [[nodiscard]] std::uint64_t pcv_span_stale_across_guard_total() const noexcept {
+        return g_pcv_hotpath_metrics().pcv_span_stale_across_guard_total.load(
+            std::memory_order_relaxed);
     }
 
     // Issue #1624 / #2614: contract-guarded single-child read via columnar path
