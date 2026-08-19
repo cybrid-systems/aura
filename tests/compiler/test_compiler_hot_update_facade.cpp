@@ -219,10 +219,141 @@ static void ac3129_facade_owns_full_invalidate() {
     }
 }
 
+// ── Issue #3150: facade must own full joint epoch (bridge + defuse + aot
+// table) + dirty mark under production. Residual of #3129 (which only
+// advanced the AOT table epoch). Closes the mutate → dirty → reemit
+// closed loop under production. Order mirrors
+// atomic_bump_epochs_and_stamp_bridge (bridge → defuse → aot table).
+// Soft / Off zero-cost contract preserved (facade returns false; nothing
+// bumped, nothing marked dirty).
+static void ac3150_facade_owns_full_joint_epoch_and_dirty() {
+    std::print("\n[ac3150] facade owns full joint epoch + dirty under production\n");
+
+    // AC1: source-cite — facade body advances bridge_epoch +
+    // defuse_version + AOT table epoch + notifies dirty. The two new
+    // C-ABI bumpers live in aura_jit_bridge.cpp near
+    // aura_aot_bump_func_table_epoch.
+    {
+        const auto h = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(h.find("Issue #3150") != std::string::npos,
+              "ac3150 AC1: hard_invalidate_via_facade cites Issue #3150");
+        CHECK(h.find("aura_hot_update_bump_bridge_epoch()") != std::string::npos,
+              "ac3150 AC1: facade calls aura_hot_update_bump_bridge_epoch (joint bridge_epoch++)");
+        CHECK(h.find("aura_hot_update_bump_defuse_version()") != std::string::npos,
+              "ac3150 AC1: facade calls aura_hot_update_bump_defuse_version (joint defuse++)");
+        // Order matters: bridge → defuse → aot table (mirrors
+        // atomic_bump_epochs_and_stamp_bridge).
+        const auto bridge_pos = h.find("aura_hot_update_bump_bridge_epoch()");
+        const auto defuse_pos = h.find("aura_hot_update_bump_defuse_version()");
+        const auto aot_pos = h.find("aura_aot_bump_func_table_epoch()");
+        CHECK(bridge_pos != std::string::npos && defuse_pos != std::string::npos &&
+                  aot_pos != std::string::npos && bridge_pos < defuse_pos && defuse_pos < aot_pos,
+              "ac3150 AC1: joint epoch order is bridge → defuse → aot table (matches "
+              "atomic_bump_epochs_and_stamp_bridge)");
+        // dirty mark via notify_dirty_define(name).
+        CHECK(h.find("notify_dirty_define(name)") != std::string::npos,
+              "ac3150 AC1: facade publishes dirty for the mutated define");
+        // (void)name removed — name is now used.
+        if (h.find("hard_invalidate_via_facade(const char* name, ReemitReason reason)") !=
+                std::string::npos &&
+            h.find("(void)name;") != std::string::npos) {
+            CHECK(false, "ac3150 AC1: (void)name removed (name must be threaded to "
+                         "notify_dirty_define)");
+        }
+        // C-ABI hook definitions live next to aura_aot_bump_func_table_epoch.
+        const auto b = read_file("src/compiler/aura_jit_bridge.cpp");
+        CHECK(b.find("extern \"C\" void aura_hot_update_bump_bridge_epoch(void)") !=
+                  std::string::npos,
+              "ac3150 AC1: aura_hot_update_bump_bridge_epoch defined in aura_jit_bridge.cpp");
+        CHECK(b.find("extern \"C\" void aura_hot_update_bump_defuse_version(void)") !=
+                  std::string::npos,
+              "ac3150 AC1: aura_hot_update_bump_defuse_version defined in aura_jit_bridge.cpp");
+    }
+
+    // AC2: runtime — under production_defaults_active, the facade call
+    // advances bridge_epoch + defuse_version + aot_table_epoch
+    // (observable via aura_get_current_bridge_epoch / aura_get_aot_defuse_version
+    // / aura_aot_func_table_epoch).
+    {
+        const int probe = aura_production_defaults_active_probe();
+        const auto before_bridge = aura_get_current_bridge_epoch();
+        const auto before_defuse = aura_get_aot_defuse_version();
+        const auto before_aot = aura_aot_func_table_epoch();
+        (void)hot_update_registry().hard_invalidate_via_facade(
+            "ac3150_runtime", HotUpdateRegistry::ReemitReason::ResidualForceHeal);
+        const auto after_bridge = aura_get_current_bridge_epoch();
+        const auto after_defuse = aura_get_aot_defuse_version();
+        const auto after_aot = aura_aot_func_table_epoch();
+        if (probe != 0) {
+            CHECK(after_bridge > before_bridge,
+                  "ac3150 AC2: bridge_epoch advances after facade call under production");
+            CHECK(after_defuse > before_defuse,
+                  "ac3150 AC2: defuse_version advances after facade call under production");
+            CHECK(after_aot > before_aot,
+                  "ac3150 AC2: aot_table_epoch advances after facade call under production");
+        } else {
+            // Soft / Off: facade returns false; all three epoch domains stay.
+            CHECK(after_bridge == before_bridge,
+                  "ac3150 AC2: bridge_epoch unchanged under Soft / Off (facade returns false)");
+            CHECK(after_defuse == before_defuse,
+                  "ac3150 AC2: defuse_version unchanged under Soft / Off");
+            CHECK(after_aot == before_aot,
+                  "ac3150 AC2: aot_table_epoch unchanged under Soft / Off");
+        }
+    }
+
+    // AC3: dirty visibility — under production, notify_dirty_define fires
+    // the registered dirty listeners (which include the bridge dirty set
+    // that aura_reemit_aot_for_dirty reads). Source-cite + sibling #3129
+    // cite preserved.
+    {
+        const auto h = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(h.find("notify_dirty_define(name)") != std::string::npos,
+              "ac3150 AC3: facade publishes dirty for the mutated define");
+        CHECK(h.find("Issue #3129") != std::string::npos,
+              "ac3150 AC3: #3129 cite preserved (sibling invariant)");
+        // Soft / Off unchanged: facade returns false before notify_dirty_define.
+        // The early-return branch must remain byte-identical.
+        CHECK(h.find("aura_production_defaults_active_probe() == 0") != std::string::npos,
+              "ac3150 AC3: Soft / Off zero-cost early-return preserved");
+    }
+
+    // AC4: dual-track + #3112 / #3129 lint chain still clean. No new
+    // linter script introduced (extend the #3129 linter only).
+    {
+        const int rc_3129 =
+            std::system("python3 scripts/coverage/checks/check_facade_owns_full_invalidate_3129.py "
+                        "--strict > /tmp/linter_3129_after_3150.log 2>&1");
+        CHECK(rc_3129 == 0, "ac3150 AC4: #3129 facade linter still clean after #3150 extension");
+        const int rc_3112 = std::system("python3 scripts/check_dual_track_facade_3112.py "
+                                        "--strict > /tmp/linter_3112_after_3150.log 2>&1");
+        CHECK(rc_3112 == 0,
+              "ac3150 AC4: #3112 dual-track linter still clean after #3150 extension");
+    }
+
+    // AC5: no new tests/issues/test_issue_3150.cpp (per #81967). The
+    // #3150 ACs extend the existing test_compiler_hot_update_facade.cpp
+    // file. No docs/design/3150-* per #1655.
+    {
+        const auto issue_test = read_file("tests/issues/test_issue_3150.cpp");
+        CHECK(issue_test.empty(),
+              "ac3150 AC5: no new tests/issues/test_issue_3150.cpp (must NOT — src-aligned only)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3150-") == std::string::npos,
+                      std::string("ac3150 AC5: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+}
+
 } // namespace
 
 int run_test_issue_3112() {
-    std::print("[test_issue_3112] running 5 ACs + #3129 extension\n");
+    std::print("[test_issue_3112] running 5 ACs + #3129 + #3150 extensions\n");
 
     ac1_facade_ownership_matches_production();
     ac2_atomic_counters_no_lost_updates();
@@ -234,6 +365,12 @@ int run_test_issue_3112() {
     // cascade) under production — not just reemit. Source-cite + runtime
     // + sibling preservation.
     ac3129_facade_owns_full_invalidate();
+
+    // Issue #3150: facade must own full joint epoch (bridge + defuse +
+    // aot table) + dirty mark under production. Closes the
+    // mutate → dirty → reemit closed loop. Source-cite + runtime +
+    // sibling #3129 + lint chain preservation + no test_issue_3150.cpp.
+    ac3150_facade_owns_full_joint_epoch_and_dirty();
 
     std::print("[test_issue_3112] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

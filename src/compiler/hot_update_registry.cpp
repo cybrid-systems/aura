@@ -128,16 +128,37 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
         // preserved per #3012 / #3043).
         return false;
     }
-    (void)name; // Reserved for future scoped reemit / audit log wiring.
     // Issue #3129: facade must own the *full* invalidate / soft-dirty
-    // contract under production — not just reemit. Advance the AOT
-    // table epoch + mark the cross-eval cascade so the subsequent
-    // aura_reemit_aot_for_dirty sees the mutated define as dirty. The
-    // decide_and_reemit body below handles the C-ABI reemit +
-    // region-mask coverage. Soft / Off path above is unchanged
-    // (zero extra work; returns false).
+    // contract under production — not just AOT table epoch + reemit.
+    // The #3129 fix added aura_aot_bump_func_table_epoch +
+    // aura_aot_note_cross_eval_hard_owner_scoped. Issue #3150 extends
+    // this to advance the joint epoch domains (bridge_epoch +
+    // defuse_version + AOT table epoch) under the same release/acq-rel
+    // discipline as atomic_bump_epochs_and_stamp_bridge so the dual-
+    // fresh check (aura_is_jit_closure_fresh) and mangle _vN cannot
+    // observe a half-updated world. Then publish the mutated define
+    // into the dirty set so aura_reemit_aot_for_dirty sees a non-empty
+    // candidate set for that define. decide_and_reemit then handles
+    // the C-ABI reemit + region-mask coverage. Soft / Off path above
+    // is unchanged (zero extra work; returns false).
+    //
+    // Order matches atomic_bump_epochs_and_stamp_bridge:
+    // bridge_epoch (release) → defuse_version (acq-rel) → aot table
+    // epoch (release). Each bumper is independent under the same
+    // mutate_mtx_ discipline the caller holds in
+    // CompilerService::invalidate_function / mark_define_dirty.
+    aura_hot_update_bump_bridge_epoch();
+    aura_hot_update_bump_defuse_version();
     aura_aot_bump_func_table_epoch();
     aura_aot_note_cross_eval_hard_owner_scoped();
+    // Issue #3150: publish the mutated define into the dirty set that
+    // aura_reemit_aot_for_dirty reads. Without this, production-path
+    // reemit could observe an empty candidate set / mismatched dual-
+    // fresh domains even though bridge_epoch / defuse_version / AOT
+    // table epoch all advanced — closing the mutate → dirty → reemit
+    // closed loop under production (#3150 AC2). Soft / Off unchanged
+    // (returns false before reaching this).
+    notify_dirty_define(name);
     // decide_and_reemit is the canonical production reemit entry; it
     // forwards to aura_reemit_aot_for_dirty (the low-level C ABI which
     // owns storm / Defer / SoftEnter / owner / provider-not-wired gates)

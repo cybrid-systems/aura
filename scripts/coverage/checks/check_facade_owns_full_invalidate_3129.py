@@ -25,6 +25,20 @@ Contract:
   AC5 Bridge audit linter (#3112) still clean.
   AC6 tests/compiler/test_compiler_hot_update_facade.cpp extended with
      ac3129_facade_owns_full_invalidate (no new test_issue_3129.cpp).
+  ──────────────────────────────────────────────────────────────────
+  AC7 (#3150) Facade body now also advances bridge_epoch +
+      defuse_version (joint epoch under production). C-ABI bumpers
+      defined next to aura_aot_bump_func_table_epoch in
+      aura_jit_bridge.cpp. Order: bridge → defuse → aot table
+      (matches atomic_bump_epochs_and_stamp_bridge). Name parameter
+      no longer (void) — used for notify_dirty_define(name).
+  AC8 (#3150) Facade body publishes notify_dirty_define(name) so the
+      subsequent aura_reemit_aot_for_dirty sees a non-empty candidate
+      set for the mutated define (mutate → dirty → reemit closed loop).
+      Soft / Off unchanged (early-return before notify_dirty_define).
+  AC9 (#3150) tests/compiler/test_compiler_hot_update_facade.cpp extended
+      with ac3150_facade_owns_full_joint_epoch_and_dirty (no new
+      test_issue_3150.cpp per #81967; no docs/design/3150-* per #1655).
 
 Exit 0 = all rows satisfied.
 """
@@ -110,6 +124,72 @@ def main() -> int:
     issue_test = _read("tests/issues/test_issue_3129.cpp")
     if issue_test:
         fails.append("AC6: tests/issues/test_issue_3129.cpp exists (must NOT — src/-aligned suite per #81967)")
+
+    # ──────────────────────────────────────────────────────────────────
+    # AC7 (#3150) — facade body advances bridge_epoch + defuse_version
+    # via two new C-ABI bumpers. Order: bridge → defuse → aot table
+    # (matches atomic_bump_epochs_and_stamp_bridge).
+    must("aura_hot_update_bump_bridge_epoch()", "AC7 bridge_epoch bumper in facade", facade_block)
+    must("aura_hot_update_bump_defuse_version()", "AC7 defuse_version bumper in facade", facade_block)
+    bridge_bumper_pos = facade_block.find("aura_hot_update_bump_bridge_epoch()")
+    defuse_bumper_pos = facade_block.find("aura_hot_update_bump_defuse_version()")
+    if bridge_bumper_pos >= 0 and defuse_bumper_pos >= 0 and bridge_bumper_pos > defuse_bumper_pos:
+        fails.append(
+            "AC7: bridge_epoch bumper must precede defuse_version bumper (matches atomic_bump_epochs_and_stamp_bridge)"
+        )
+    # defuse bumper must precede aot table epoch bumper.
+    if defuse_bumper_pos >= 0 and bump_pos >= 0 and defuse_bumper_pos > bump_pos:
+        fails.append(
+            "AC7: defuse_version bumper must precede aot table epoch bumper (matches atomic_bump_epochs_and_stamp_bridge)"
+        )
+    # C-ABI bumper definitions live next to aura_aot_bump_func_table_epoch.
+    must(
+        'extern "C" void aura_hot_update_bump_bridge_epoch(void)',
+        "AC7 bridge_epoch bumper defined in aura_jit_bridge.cpp",
+        bridge,
+    )
+    must(
+        'extern "C" void aura_hot_update_bump_defuse_version(void)',
+        "AC7 defuse_version bumper defined in aura_jit_bridge.cpp",
+        bridge,
+    )
+    # name parameter no longer (void) — used for notify_dirty_define(name).
+    if "(void)name;" in facade_block:
+        fails.append("AC7: name parameter is now used (notify_dirty_define); (void)name must be removed")
+
+    # AC8 (#3150) — facade body publishes dirty for the mutated define.
+    must("notify_dirty_define(name)", "AC8 dirty mark via notify_dirty_define(name)", facade_block)
+    # Soft / Off unchanged: notify_dirty_define must come AFTER the
+    # early-return guard (zero-cost contract). The guard is
+    # `if (aura_production_defaults_active_probe() == 0) { return false; }`.
+    soft_guard_pos = facade_block.find("aura_production_defaults_active_probe() == 0")
+    notify_pos = facade_block.find("notify_dirty_define(name)")
+    if soft_guard_pos >= 0 and notify_pos >= 0:
+        # notify must come after the guard's `return false;` so Soft/Off never bumps.
+        after_return = facade_block.find("return false;", soft_guard_pos)
+        if after_return > 0 and notify_pos < after_return:
+            fails.append("AC8: notify_dirty_define(name) must come AFTER Soft / Off early-return (zero-cost contract)")
+
+    # AC9 (#3150) — test extension. No new test_issue_3150.cpp /
+    # docs/design/3150-* per #81967 / #1655.
+    must(
+        "ac3150_facade_owns_full_joint_epoch_and_dirty",
+        "AC9 test function added to test_compiler_hot_update_facade.cpp",
+        test,
+    )
+    must("Issue #3150", "AC9 test source-cite marker", test)
+    # Joint epoch runtime check (bridge + defuse + aot) in the test.
+    must("aura_get_current_bridge_epoch", "AC9 runtime bridge_epoch check in test", test)
+    must("aura_get_aot_defuse_version", "AC9 runtime defuse_version check in test", test)
+    # No new test_issue_3150.cpp.
+    issue_test_3150 = _read("tests/issues/test_issue_3150.cpp")
+    if issue_test_3150:
+        fails.append("AC9: tests/issues/test_issue_3150.cpp exists (must NOT — src/-aligned suite per #81967)")
+    # No docs/design/3150-*.
+    docs3150 = ROOT / "docs" / "design"
+    if docs3150.is_dir():
+        for f in sorted(docs3150.glob("3150-*")):
+            fails.append(f"AC9: docs/design/{f.name} present (forbidden #1655)")
 
     if fails:
         print("check_facade_owns_full_invalidate_3129: FAIL")
