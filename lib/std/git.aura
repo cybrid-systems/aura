@@ -1,0 +1,24 @@
+; git.aura — Git integration host prims (Issue #3174)
+; (require "std/git" all:)
+;
+; Core boot no longer registers git-*. Require installs the host prims
+; (capability-gated under sandbox). Value aliases, same pattern as
+; std/socket (#2865) — do not wrap as (define (git-status) (git-status)).
+;
+;   (git-status)           → short status string
+;   (git-diff [path])      → diff string
+;   (git-log [n])          → log string
+;   (git-commit msg)       → exit code
+;   (git-branch-current)   → branch name
+;   (git-stage path)       → exit code
+;   (git-rev-parse)        → HEAD sha
+
+(export git-status git-diff git-log git-commit git-branch-current git-stage git-rev-parse)
+
+(define git-status git-status)
+(define git-diff git-diff)
+(define git-log git-log)
+(define git-commit git-commit)
+(define git-branch-current git-branch-current)
+(define git-stage git-stage)
+(define git-rev-parse git-rev-parse)

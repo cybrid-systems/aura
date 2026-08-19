@@ -1,5 +1,7 @@
 (require "std/test" all:)
+(require "std/process" all:)
 ; Shell/Process tests  (command-output, shell, command-line)
+; #3174: these host prims install on std/process, not core boot.
 
 (test-suite "process:command-output"
   (check (string? (command-output "echo ok"))))

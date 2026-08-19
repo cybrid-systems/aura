@@ -41,6 +41,10 @@ using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+static void install_process_prims(CompilerService& cs) {
+    (void)cs.evaluator().ensure_std_host_prims("std/process");
+}
+
 static std::string read_file(const char* path) {
     for (const auto& p :
          {std::string(path), std::string("../") + path, std::string("../../") + path}) {
@@ -63,6 +67,7 @@ static void ac1_proc_self_mem() {
     CHECK(!path_is_denied("/tmp/x"), "AC1: normal path not denied");
 
     CompilerService cs;
+    install_process_prims(cs);
     auto r = cs.eval(R"((sys-open "/proc/self/mem"))");
     CHECK(r && is_int(*r) && as_int(*r) == -1, "AC1: sys-open /proc/self/mem → -1");
     auto r2 = cs.eval(R"((sys-open "/dev/mem"))");
@@ -90,6 +95,7 @@ static void ac2_symlink_nofollow() {
 
     // Direct open of target is fine.
     CompilerService cs;
+    install_process_prims(cs);
     auto ok = cs.eval(std::format(R"((sys-open "{}"))", target));
     CHECK(ok && is_int(*ok) && as_int(*ok) >= 0, "AC2: open real file ok");
     if (ok && is_int(*ok) && as_int(*ok) >= 0)
@@ -114,6 +120,7 @@ static void ac2_symlink_nofollow() {
 static void ac3_dev_null() {
     std::println("\n--- #2487 AC3: /dev/null still opens ---");
     CompilerService cs;
+    install_process_prims(cs);
     auto r = cs.eval(R"((sys-open "/dev/null" 0))");
     CHECK(r && is_int(*r) && as_int(*r) >= 0, "AC3: sys-open /dev/null ≥ 0");
     if (r && is_int(*r) && as_int(*r) >= 0)
@@ -125,7 +132,7 @@ static void ac4_flags_ignored_source() {
     std::println("\n--- #2487 AC4: fixed flags in source ---");
     auto src = read_file("src/compiler/evaluator_primitives_io.cpp");
     CHECK(!src.empty(), "AC4: read io.cpp");
-    auto pos = src.find("add(\"sys-open\"");
+    auto pos = src.find("defer_std_host_prim(\"sys-open\"");
     CHECK(pos != std::string::npos, "AC4: sys-open found");
     auto body = src.substr(pos, 900);
     CHECK(body.find("O_NOFOLLOW") != std::string::npos, "AC4: O_NOFOLLOW");
@@ -162,6 +169,28 @@ static void ac6_gate() {
     CHECK(cm.find("test_sys_open_path_harden") != std::string::npos, "AC6: CMake target");
 }
 
+// Issue #3174: sys-* demoted off core boot; std/process installs them.
+static void ac3174_std_process_surface() {
+    std::println("\n--- #3174: sys-open not on core boot; std/process installs ---");
+    CompilerService cs;
+    auto unbound = cs.eval(R"((sys-open "/dev/null" 0))");
+    CHECK(unbound && is_error(*unbound), "3174: sys-open unbound before std/process");
+    auto inst = cs.evaluator().ensure_std_host_prims("std/process");
+    CHECK(!is_error(inst), "3174: ensure_std_host_prims process ok (sandbox off)");
+    auto r = cs.eval(R"((sys-open "/dev/null" 0))");
+    CHECK(r && is_int(*r) && as_int(*r) >= 0, "3174: sys-open after install");
+    if (r && is_int(*r) && as_int(*r) >= 0)
+        ::close(static_cast<int>(as_int(*r)));
+
+    CompilerService sandboxed;
+    sandboxed.evaluator().set_sandbox_mode(true);
+    auto denied = sandboxed.evaluator().ensure_std_host_prims("std/process");
+    CHECK(is_error(denied), "3174: sandbox without exec grant refuses std/process");
+    CHECK(read_file("docs/design/3174-io-net-git.md").empty(), "3174: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3174.cpp").empty(),
+          "3174: no invent test_issue_3174");
+}
+
 } // namespace
 
 int run_test_sys_open_path_harden() {
@@ -172,6 +201,7 @@ int run_test_sys_open_path_harden() {
     ac4_flags_ignored_source();
     ac5_shared_helper();
     ac6_gate();
+    ac3174_std_process_surface();
     std::println("\n=== #2487 summary: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

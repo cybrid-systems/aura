@@ -4742,6 +4742,12 @@ public:
     types::EvalValue load_module_file(const std::string& path);
     // Resolve a module path (supports AURA_PATH, .aura extension).
     std::string resolve_module_path(const std::string& path) const;
+    // Issue #3174: host prims for std/{io,fs,net,socket,git,process} are
+    // deferred off the boot registrar (SlimSurface / primitives.md). Require
+    // of those modules installs them. Sandbox without the matching effect
+    // refuses the module (security:grant-effect!).
+    void defer_std_host_prim(std::string name, PrimFn fn);
+    [[nodiscard]] types::EvalValue ensure_std_host_prims(std::string_view module_path);
 
 private:
     // Centralized tagged error pair builder ("error" . ("kind" . "message")).
@@ -6110,6 +6116,9 @@ private:
     // Issue #676: sandbox mode — when true, sensitive primitives
     // require matching capabilities (io/mutate/exec).
     bool sandbox_mode_ = false;
+    // Issue #3174: deferred stdlib host prims (git/tcp/http/shell/sys/file-*).
+    std::vector<std::pair<std::string, PrimFn>> deferred_std_prims_;
+    std::uint32_t std_host_prims_mask_{0};
     // Issue #2859: opt-in flag for outermost MutationBoundaryGuard
     // commit-path schema_validate (auto_validate + schema_cache).
     // Default false = zero-overhead Soft path. Set via

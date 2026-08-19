@@ -61,6 +61,8 @@ using types::make_vector;
 using types::make_void;
 
 void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
+    // Issue #3174: read-file / write-file stay on the core boot list.
+    // file-*/directory-list/shell/command-* defer until std/io or std/process.
 
     const auto deny_io = [&ev](std::string_view cap, std::string_view msg) -> EvalValue {
         if (!ev.sandbox_mode() || ev.has_capability(cap) ||
@@ -198,7 +200,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #2478: require io-read — /proc/self/cmdline can leak secrets
     // (API keys, DSNs) from process argv. Same gate as file-exists? recon.
-    add("command-line", [&ev, deny_io](const auto&) -> EvalValue {
+    ev.defer_std_host_prim("command-line", [&ev, deny_io](const auto&) -> EvalValue {
         if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
                                   "capability denied: io-read required");
             is_error(denied))
@@ -226,25 +228,26 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return result;
     });
 
-    add("file-exists?", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
-        // Issue #1172: require io-read for existence probes (recon).
-        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                  "capability denied: io-read required");
-            is_error(denied))
-            return denied;
-        if (a.empty() || !is_string(a[0]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_int(0);
-        auto& path = ev.string_heap_[idx];
-        if (path_is_denied(path))
-            return make_int(0);
-        struct stat st;
-        return make_int(::lstat(path.c_str(), &st) == 0 ? 1 : 0);
-    });
+    ev.defer_std_host_prim("file-exists?",
+                           [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+                               // Issue #1172: require io-read for existence probes (recon).
+                               if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                                         "capability denied: io-read required");
+                                   is_error(denied))
+                                   return denied;
+                               if (a.empty() || !is_string(a[0]))
+                                   return make_int(0);
+                               auto idx = as_string_idx(a[0]);
+                               if (idx >= ev.string_heap_.size())
+                                   return make_int(0);
+                               auto& path = ev.string_heap_[idx];
+                               if (path_is_denied(path))
+                                   return make_int(0);
+                               struct stat st;
+                               return make_int(::lstat(path.c_str(), &st) == 0 ? 1 : 0);
+                           });
 
-    add("file-copy", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
+    ev.defer_std_host_prim("file-copy", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
         if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
                                   "capability denied: io-write required");
             is_error(denied))
@@ -298,30 +301,32 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(1);
     });
 
-    add("file-delete", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
-        if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
-                                  "capability denied: io-write required");
-            is_error(denied))
-            return denied;
-        if (a.empty() || !is_string(a[0]))
-            return make_int(0);
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_int(0);
-        auto& path = ev.string_heap_[idx];
-        // Issue #1164: deny sensitive paths; refuse directories (no rmdir cascade);
-        // use unlinkat AT_FDCWD without following final symlink where possible.
-        if (path_is_denied(path))
-            return make_int(0);
-        struct stat st{};
-        if (::lstat(path.c_str(), &st) != 0)
-            return make_int(0);
-        if (S_ISDIR(st.st_mode))
-            return make_int(0); // directories require explicit rmdir API
-        return make_int(::unlink(path.c_str()) == 0 ? 1 : 0);
-    });
+    ev.defer_std_host_prim("file-delete",
+                           [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+                               if (auto denied = deny_io(aura::compiler::security::kCapIoWrite,
+                                                         "capability denied: io-write required");
+                                   is_error(denied))
+                                   return denied;
+                               if (a.empty() || !is_string(a[0]))
+                                   return make_int(0);
+                               auto idx = as_string_idx(a[0]);
+                               if (idx >= ev.string_heap_.size())
+                                   return make_int(0);
+                               auto& path = ev.string_heap_[idx];
+                               // Issue #1164: deny sensitive paths; refuse directories (no rmdir
+                               // cascade); use unlinkat AT_FDCWD without following final symlink
+                               // where possible.
+                               if (path_is_denied(path))
+                                   return make_int(0);
+                               struct stat st{};
+                               if (::lstat(path.c_str(), &st) != 0)
+                                   return make_int(0);
+                               if (S_ISDIR(st.st_mode))
+                                   return make_int(0); // directories require explicit rmdir API
+                               return make_int(::unlink(path.c_str()) == 0 ? 1 : 0);
+                           });
 
-    add("file-size", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
+    ev.defer_std_host_prim("file-size", [&ev, is_regular, path_is_denied, deny_io](const auto& a) {
         // Issue #1173: require io-read for size probes.
         if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
                                   "capability denied: io-read required");
@@ -341,7 +346,7 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(static_cast<std::int64_t>(st.st_size));
     });
 
-    add("shell", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("shell", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
         if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
             return denied;
         if (a.empty() || !is_string(a[0]))
@@ -370,62 +375,64 @@ void register_file_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(-1);
     });
 
-    add("command-output", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
-        if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
-            return denied;
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_void();
-        auto& cmd = ev.string_heap_[idx];
-        std::array<char, 4096> buf;
-        std::string result;
-        auto* fp = ::popen(cmd.c_str(), "r");
-        if (!fp)
-            return make_void();
-        while (::fgets(buf.data(), buf.size(), fp) != nullptr)
-            result += buf.data();
-        ::pclose(fp);
-        if (!result.empty() && result.back() == '\n')
-            result.pop_back();
-        auto sid = ev.string_heap_.size();
-        ev.string_heap_.push_back(std::move(result));
-        return make_string(sid);
-    });
-
-    add("directory-list", [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
-        // Issue #1162: directory listing is io-read (info disclosure).
-        if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
-                                  "capability denied: io-read required");
-            is_error(denied))
-            return denied;
-        if (a.empty() || !is_string(a[0]))
-            return make_void();
-        auto idx = as_string_idx(a[0]);
-        if (idx >= ev.string_heap_.size())
-            return make_void();
-        auto& dir_path = ev.string_heap_[idx];
-        if (path_is_denied(dir_path))
-            return make_void();
-        EvalValue result = make_void();
-        auto dir = opendir(dir_path.c_str());
-        if (!dir)
-            return make_void();
-        struct dirent* entry;
-        while ((entry = readdir(dir)) != nullptr) {
-            std::string name(entry->d_name);
-            if (name == "." || name == "..")
-                continue;
+    ev.defer_std_host_prim(
+        "command-output", [&ev, deny_exec](std::span<const EvalValue> a) -> EvalValue {
+            if (auto denied = deny_exec("capability denied: exec required"); is_error(denied))
+                return denied;
+            if (a.empty() || !is_string(a[0]))
+                return make_void();
+            auto idx = as_string_idx(a[0]);
+            if (idx >= ev.string_heap_.size())
+                return make_void();
+            auto& cmd = ev.string_heap_[idx];
+            std::array<char, 4096> buf;
+            std::string result;
+            auto* fp = ::popen(cmd.c_str(), "r");
+            if (!fp)
+                return make_void();
+            while (::fgets(buf.data(), buf.size(), fp) != nullptr)
+                result += buf.data();
+            ::pclose(fp);
+            if (!result.empty() && result.back() == '\n')
+                result.pop_back();
             auto sid = ev.string_heap_.size();
-            ev.string_heap_.push_back(name);
-            auto pid = ev.pairs_.size();
-            ev.pairs_.push_back({make_string(sid), result});
-            result = make_pair(pid);
-        }
-        closedir(dir);
-        return result;
-    });
+            ev.string_heap_.push_back(std::move(result));
+            return make_string(sid);
+        });
+
+    ev.defer_std_host_prim("directory-list",
+                           [&ev, path_is_denied, deny_io](std::span<const EvalValue> a) {
+                               // Issue #1162: directory listing is io-read (info disclosure).
+                               if (auto denied = deny_io(aura::compiler::security::kCapIoRead,
+                                                         "capability denied: io-read required");
+                                   is_error(denied))
+                                   return denied;
+                               if (a.empty() || !is_string(a[0]))
+                                   return make_void();
+                               auto idx = as_string_idx(a[0]);
+                               if (idx >= ev.string_heap_.size())
+                                   return make_void();
+                               auto& dir_path = ev.string_heap_[idx];
+                               if (path_is_denied(dir_path))
+                                   return make_void();
+                               EvalValue result = make_void();
+                               auto dir = opendir(dir_path.c_str());
+                               if (!dir)
+                                   return make_void();
+                               struct dirent* entry;
+                               while ((entry = readdir(dir)) != nullptr) {
+                                   std::string name(entry->d_name);
+                                   if (name == "." || name == "..")
+                                       continue;
+                                   auto sid = ev.string_heap_.size();
+                                   ev.string_heap_.push_back(name);
+                                   auto pid = ev.pairs_.size();
+                                   ev.pairs_.push_back({make_string(sid), result});
+                                   result = make_pair(pid);
+                               }
+                               closedir(dir);
+                               return result;
+                           });
 }
 
 } // namespace aura::compiler::primitives_detail

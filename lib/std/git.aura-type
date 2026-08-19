@@ -1,0 +1,7 @@
+git-status: -> String
+git-diff: Any -> String
+git-log: Any -> String
+git-commit: Any -> Int
+git-branch-current: -> String
+git-stage: Any -> Int
+git-rev-parse: -> String

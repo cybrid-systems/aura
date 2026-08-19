@@ -2073,6 +2073,17 @@ def cmd_lint():
             "Issue #3173 arena: surface reduction linter failed — run python3 scripts/coverage/checks/check_arena_surface_3173.py"
         )
         return r
+    # Issue #3174: demote IO/Net/Git/process prims off core boot.
+    ionet3174_script = COVERAGE_CHECKS / "check_io_net_git_surface_3174.py"
+    if not ionet3174_script.exists():
+        fail(f"missing {ionet3174_script}")
+        return 1
+    r = run([sys.executable, str(ionet3174_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3174 IO/Net/Git surface linter failed — run python3 scripts/coverage/checks/check_io_net_git_surface_3174.py"
+        )
+        return r
     # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
@@ -4482,6 +4493,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3173 arena: surface reduction linter failed — run python3 scripts/coverage/checks/check_arena_surface_3173.py"
+        )
+        return r
+    # Issue #3174: demote IO/Net/Git/process prims off core boot.
+    ionet3174b = COVERAGE_CHECKS / "check_io_net_git_surface_3174.py"
+    if not ionet3174b.exists():
+        fail(f"missing {ionet3174b}")
+        return 1
+    r = run([sys.executable, str(ionet3174b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3174 IO/Net/Git surface linter failed — run python3 scripts/coverage/checks/check_io_net_git_surface_3174.py"
         )
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
@@ -12875,6 +12897,30 @@ def cmd_arena_surface_3173():
     return cmd_arena_surface_3173_coverage()
 
 
+def cmd_io_net_git_surface_3174_coverage():
+    """Issue #3174: demote IO/Net/Git/process prims off core boot (static)."""
+    print(f"{B}=== IO/Net/Git surface reduction coverage (#3174) ==={N}")
+    script = COVERAGE_CHECKS / "check_io_net_git_surface_3174.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("IO/Net/Git surface reduction (#3174) coverage contract rows failed")
+        return 1
+    ok("IO/Net/Git surface reduction (#3174) coverage clean")
+    return 0
+
+
+def cmd_io_net_git_surface_3174():
+    """Issue #3174: core boot keeps read-file/write-file/getenv.
+
+    git/tcp/http/shell/sys/file-* extras install on require std/*.
+    """
+    print(f"{B}=== IO/Net/Git surface reduction (#3174) ==={N}")
+    return cmd_io_net_git_surface_3174_coverage()
+
+
 def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
@@ -17606,6 +17652,8 @@ def main():
         "compile-surface-3172-coverage": cmd_compile_surface_3172_coverage,
         "arena-surface-3173": cmd_arena_surface_3173,
         "arena-surface-3173-coverage": cmd_arena_surface_3173_coverage,
+        "io-net-git-surface-3174": cmd_io_net_git_surface_3174,
+        "io-net-git-surface-3174-coverage": cmd_io_net_git_surface_3174_coverage,
         "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,

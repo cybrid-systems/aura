@@ -1,5 +1,6 @@
 (require "std/test" all:)
-; File I/O tests
+(require "std/io" all:)
+; File I/O tests (#3174: file-* host prims live on std/io)
 
 (test-suite "file:write-read"
   (check (= (begin (write-file "/tmp/aura-suite-test.txt" "42")

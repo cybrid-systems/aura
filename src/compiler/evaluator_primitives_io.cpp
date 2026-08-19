@@ -7,7 +7,9 @@
 // Issue #1975: tcp-* client names gated by AURA_ENABLE_TCP in
 // register_network_primitives. Issue #2771: +tcp-listen / tcp-accept /
 // tcp-accept-timeout / tcp-local-port (server path for multi-host denseness).
-// getenv/http/sys stay always on. See docs/git-integration.md + docs/tcp.md.
+// getenv stays always on. http/tcp/sys/git are deferred (#3174) until
+// (require "std/net"|"std/socket"|"std/git"|"std/process"). See docs/git-integration.md +
+// docs/tcp.md.
 
 module;
 
@@ -207,7 +209,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     // Issue #1970: commercial/integration vertical (AURA_ENABLE_GIT).
 
     // (git-status) → short status string (like "git status --short")
-    add("git-status", [&ev](const auto&) -> EvalValue {
+    ev.defer_std_host_prim("git-status", [&ev](const auto&) -> EvalValue {
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
@@ -233,7 +235,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (git-diff ["staged"]) → unified diff
-    add("git-diff", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("git-diff", [&ev](std::span<const EvalValue> a) -> EvalValue {
         bool staged = false;
         if (a.size() >= 1 && is_string(a[0])) {
             auto mi = as_string_idx(a[0]);
@@ -265,7 +267,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (git-log n) → last n commits, one-line format (n=1..1000, default 10)
-    add("git-log", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("git-log", [&ev](std::span<const EvalValue> a) -> EvalValue {
         int n = 10;
         if (a.size() >= 1 && is_int(a[0]))
             n = static_cast<int>(as_int(a[0]));
@@ -299,7 +301,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (git-commit "message") → exit code (0 = ok, no shell escape needed)
-    add("git-commit", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("git-commit", [&ev](std::span<const EvalValue> a) -> EvalValue {
         // Issue #2072: force git-commit through capability effect check
         // (exec + network — git-commit forks a child process AND may push
         // to remote). require_effect() bumps capability_effect_denied_total
@@ -360,7 +362,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (git-branch-current) → current branch name (empty if detached)
-    add("git-branch-current", [&ev](const auto&) -> EvalValue {
+    ev.defer_std_host_prim("git-branch-current", [&ev](const auto&) -> EvalValue {
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
@@ -385,7 +387,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (git-stage "file1" "file2" ...) → exit code
-    add("git-stage", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("git-stage", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty())
             return make_int(-1);
         int rc = -1;
@@ -444,7 +446,7 @@ void register_git_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (git-rev-parse) → current HEAD sha (short, 7 chars)
-    add("git-rev-parse", [&ev](const auto&) -> EvalValue {
+    ev.defer_std_host_prim("git-rev-parse", [&ev](const auto&) -> EvalValue {
         std::string result;
 #ifdef AURA_HAVE_LIBGIT2
         thread_local GitContext ctx;
@@ -514,45 +516,46 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     };
 
     // ── HTTP primitives (libcurl preferred; shell fallback is quoted) ─
-    add("http-get", [&ev, shell_single_quote](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0]))
-            return make_void();
-        const auto uidx = types::as_string_idx(a[0]);
-        if (uidx >= ev.string_heap_.size())
-            return make_void();
-        const auto& url = ev.string_heap_[uidx];
+    ev.defer_std_host_prim(
+        "http-get", [&ev, shell_single_quote](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0]))
+                return make_void();
+            const auto uidx = types::as_string_idx(a[0]);
+            if (uidx >= ev.string_heap_.size())
+                return make_void();
+            const auto& url = ev.string_heap_[uidx];
 
-        std::string result;
-        // Prefer libcurl (no shell) when available.
-        if (get_curl().load()) {
-            CURL* curl = get_curl().easy_init();
-            if (curl) {
-                get_curl().easy_setopt(curl, CURLOPT_URL, url.c_str());
-                get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_fn);
-                get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &result);
-                get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
-                get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
-                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-                get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-                get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
-                get_curl().easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-                CURLcode res = get_curl().easy_perform(curl);
-                get_curl().easy_cleanup(curl);
-                if (res != CURLE_OK && result.empty())
-                    return make_void();
-                auto sidx = ev.string_heap_.size();
-                ev.string_heap_.push_back(std::move(result));
-                return types::make_string(sidx);
+            std::string result;
+            // Prefer libcurl (no shell) when available.
+            if (get_curl().load()) {
+                CURL* curl = get_curl().easy_init();
+                if (curl) {
+                    get_curl().easy_setopt(curl, CURLOPT_URL, url.c_str());
+                    get_curl().easy_setopt(curl, CURLOPT_WRITEFUNCTION, curl_writer_fn);
+                    get_curl().easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+                    get_curl().easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+                    get_curl().easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+                    get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
+                    get_curl().easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
+                    get_curl().easy_setopt(curl, CURLOPT_USERAGENT, "aura/1.0");
+                    get_curl().easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+                    CURLcode res = get_curl().easy_perform(curl);
+                    get_curl().easy_cleanup(curl);
+                    if (res != CURLE_OK && result.empty())
+                        return make_void();
+                    auto sidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(std::move(result));
+                    return types::make_string(sidx);
+                }
             }
-        }
 
-        // Issue #1160: no shell fallback. Without libcurl, refuse rather
-        // than interpolate the URL into popen/curl (command injection).
-        (void)shell_single_quote;
-        return make_void();
-    });
+            // Issue #1160: no shell fallback. Without libcurl, refuse rather
+            // than interpolate the URL into popen/curl (command injection).
+            (void)shell_single_quote;
+            return make_void();
+        });
 
-    add("http-post", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("http-post", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_string(a[1]))
             return make_void();
         // Issue #1077: bounds-check before string_heap_ index.
@@ -696,7 +699,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // for multi-host denseness (Hermes Phase 5 residual). Thin OS E —
     // errors return void/() not process abort. FDs are plain ints;
     // caller owns close for both listener and accepted sockets.
-    add("tcp-connect", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-connect", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_string(a[0]) || !types::is_int(a[1]))
             return make_void();
         auto host = ev.string_heap_[types::as_string_idx(a[0])];
@@ -752,7 +755,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     // (tcp-listen port) → listener-fd | ()
     // Binds 127.0.0.1 (loopback denseness host). port 0 = ephemeral;
     // use (tcp-local-port listener) to discover the assigned port.
-    add("tcp-listen", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-listen", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)ev;
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
@@ -780,7 +783,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (tcp-local-port sock) → port | ()  — getsockname for ephemeral listeners.
-    add("tcp-local-port", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-local-port", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)ev;
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
@@ -793,7 +796,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
     });
 
     // (tcp-accept listener) → client-fd | ()  — blocking accept.
-    add("tcp-accept", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-accept", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)ev;
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
@@ -813,7 +816,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
 
     // (tcp-accept-timeout listener sec) → client-fd | ()
     // sec is integer seconds (0 = poll once). Uses poll then accept.
-    add("tcp-accept-timeout", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-accept-timeout", [&ev](std::span<const EvalValue> a) -> EvalValue {
         (void)ev;
         if (a.size() < 2 || !types::is_int(a[0]) || !types::is_int(a[1]))
             return make_void();
@@ -840,7 +843,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return types::make_int(static_cast<std::int64_t>(cfd));
     });
 
-    add("tcp-send", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-send", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.size() < 2 || !types::is_int(a[0]) || !types::is_string(a[1]))
             return make_int(-1);
         auto fd = static_cast<int>(types::as_int(a[0]));
@@ -852,7 +855,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return types::make_int(static_cast<std::int64_t>(sent));
     });
 
-    add("tcp-recv", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-recv", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         auto fd = static_cast<int>(types::as_int(a[0]));
@@ -870,7 +873,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return types::make_string(sidx);
     });
 
-    add("tcp-close", [&ev](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("tcp-close", [&ev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !types::is_int(a[0]))
             return make_void();
         ::close(static_cast<int>(types::as_int(a[0])));
@@ -910,7 +913,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
                                     ev.primitive_error_counter_ptr());
     };
 
-    add("sys-open", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("sys-open", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
         // (sys-open path [flags]) → fd | -1
         // Issue #2487 (Option A): production hardening —
         //   - path_is_denied blocks /proc/self/mem, /dev/mem, /proc/kcore, …
@@ -939,7 +942,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_int(fd);
     });
 
-    add("sys-read", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("sys-read", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
         // (sys-read fd n) → string | ""
         if (auto d = deny_sys(aura::compiler::security::kCapSysRead,
                               "capability denied: sys-read required");
@@ -962,7 +965,7 @@ void register_network_primitives(PrimRegistrar add, Evaluator& ev) {
         return make_string(ev.push_string_heap(buf));
     });
 
-    add("sys-write", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
+    ev.defer_std_host_prim("sys-write", [&ev, deny_sys](std::span<const EvalValue> a) -> EvalValue {
         // (sys-write fd data) → bytes-written | -1
         if (auto d = deny_sys(aura::compiler::security::kCapSysWrite,
                               "capability denied: sys-write required");

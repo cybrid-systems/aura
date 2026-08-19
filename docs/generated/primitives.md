@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**466** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**438** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,9 +10,9 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 66 primitives (14%)
-- **core**: 355 primitives (76%)
-- **internal-observable**: 44 primitives (9%)
+- **mutation-safety**: 55 primitives (13%)
+- **core**: 338 primitives (77%)
+- **internal-observable**: 44 primitives (10%)
 - **convenience**: 1 primitives (0%)
 
 Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.py` (Issue #559 taxonomy: mutation-safety / internal-observable / convenience / core default). Per-primitive classification overrides via `docs/primitive_categories.yaml` were removed per Anqi 2026-07-19 directive (aura philosophy, no per-issue plan docs).
@@ -150,7 +150,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-set!` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` *[mutation-safety]* — `src/compiler/ffi_primitives_impl.cpp`
 
-## Core builtins (262)
+## Core builtins (234)
 
 - `*allow-macro-inline*` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `abs` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -199,8 +199,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `check-preconditions` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
 - `check-success` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
-- `command-line` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
-- `command-output` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
 - `cons` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `cos` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `current-time` *[core]* — `src/compiler/evaluator_primitives_misc.cpp`
@@ -210,7 +208,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-strategy` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` *[core]* — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` *[core]* — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `directory-list` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
 - `display` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `drop` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `eof-object?` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -221,10 +218,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `eval-expr` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `evolve-strategy` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `exp` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
-- `file-copy` *[mutation-safety]* — `src/compiler/evaluator_primitives_file.cpp`
-- `file-delete` *[mutation-safety]* — `src/compiler/evaluator_primitives_file.cpp`
-- `file-exists?` *[mutation-safety]* — `src/compiler/evaluator_primitives_file.cpp`
-- `file-size` *[mutation-safety]* — `src/compiler/evaluator_primitives_file.cpp`
 - `filter` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `float?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `floor` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
@@ -241,13 +234,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `get-inferred-type` *[core]* — `src/compiler/evaluator_primitives_eval.cpp`
 - `get-memory-policy` *[core]* — `src/compiler/evaluator_primitives_policy.cpp`
 - `getenv` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-branch-current` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-commit` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-diff` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-log` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-rev-parse` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-stage` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
-- `git-status` *[mutation-safety]* — `src/compiler/evaluator_primitives_io.cpp`
 - `hash` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash->alist` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-has-key?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
@@ -258,8 +244,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `hash-set!` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash-values` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash?` *[core]* — `src/compiler/evaluator_primitives_vector.cpp`
-- `http-get` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `http-post` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `import` *[core]* — `src/compiler/evaluator_primitives_module.cpp`
 - `inexact->exact` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `integer->char` *[core]* — `src/compiler/evaluator_primitives_char.cpp`
@@ -352,7 +336,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `set-car!` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` *[core]* — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` *[core]* — `src/compiler/evaluator_primitives_policy.cpp`
-- `shell` *[core]* — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `strategy-field` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
@@ -375,19 +358,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `symbol-append` *[core]* — `src/compiler/evaluator_primitives_runtime.cpp`
 - `symbol?` *[core]* — `src/compiler/evaluator_primitives_core.cpp`
 - `syntax-marker` *[core]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `sys-open` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `sys-read` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `sys-write` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `take` *[core]* — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
-- `tcp-accept` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-accept-timeout` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-close` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-connect` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-listen` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-local-port` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-recv` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-send` *[core]* — `src/compiler/evaluator_primitives_io.cpp`
 - `trunc` *[core]* — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` *[core]* — `src/compiler/evaluator_primitives_reflect.cpp`
 - `type-registry-compact` *[core]* — `src/compiler/evaluator_primitives_memory.cpp`
@@ -614,7 +586,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (66)
+### Mutation safety (must remain primitive) (55)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -645,17 +617,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
 - `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
-- `file-copy` — `src/compiler/evaluator_primitives_file.cpp`
-- `file-delete` — `src/compiler/evaluator_primitives_file.cpp`
-- `file-exists?` — `src/compiler/evaluator_primitives_file.cpp`
-- `file-size` — `src/compiler/evaluator_primitives_file.cpp`
-- `git-branch-current` — `src/compiler/evaluator_primitives_io.cpp`
-- `git-commit` — `src/compiler/evaluator_primitives_io.cpp`
-- `git-diff` — `src/compiler/evaluator_primitives_io.cpp`
-- `git-log` — `src/compiler/evaluator_primitives_io.cpp`
-- `git-rev-parse` — `src/compiler/evaluator_primitives_io.cpp`
-- `git-stage` — `src/compiler/evaluator_primitives_io.cpp`
-- `git-status` — `src/compiler/evaluator_primitives_io.cpp`
 - `mutate:from-verification-feedback` — `src/compiler/evaluator_primitives_compile.cpp`
 - `mutate:set-agent-fingerprint` — `src/compiler/evaluator_primitives_mutate.cpp`
 - `mutate:validate-reflected` — `src/compiler/evaluator_primitives_query_tail.cpp`
@@ -683,7 +644,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `workspace:snapshot` — `src/compiler/evaluator_primitives_workspace.cpp`
 - `workspace:sync-from` — `src/compiler/evaluator_primitives_workspace.cpp`
 
-### Core builtins (must remain primitive) (355)
+### Core builtins (must remain primitive) (338)
 
 - `*allow-macro-inline*` — `src/compiler/evaluator_primitives_compile.cpp`
 - `_agent:list` — `src/compiler/evaluator_primitives_messaging.cpp`
@@ -749,8 +710,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `check-success` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `check=` — `src/compiler/evaluator_primitives_runtime.cpp`
 - `closure:free!` — `src/compiler/evaluator_primitives_memory.cpp`
-- `command-line` — `src/compiler/evaluator_primitives_file.cpp`
-- `command-output` — `src/compiler/evaluator_primitives_file.cpp`
 - `cons` — `src/compiler/evaluator_primitives_pair.cpp`
 - `cos` — `src/compiler/evaluator_primitives_math.cpp`
 - `current-time` — `src/compiler/evaluator_primitives_misc.cpp`
@@ -760,7 +719,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `define-strategy` — `src/compiler/evaluator_primitives_agent.cpp`
 - `deserialize-workspace` — `src/compiler/evaluator_primitives_persist.cpp`
 - `diagnose` — `src/compiler/evaluator_primitives_diagnostic.cpp`
-- `directory-list` — `src/compiler/evaluator_primitives_file.cpp`
 - `dirty:ppa-reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `dirty:reasons` — `src/compiler/evaluator_primitives_memory.cpp`
 - `display` — `src/compiler/evaluator_primitives_runtime.cpp`
@@ -810,8 +768,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `hash-values` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hash?` — `src/compiler/evaluator_primitives_vector.cpp`
 - `hot-swap:fn` — `src/compiler/evaluator_primitives_types.cpp`
-- `http-get` — `src/compiler/evaluator_primitives_io.cpp`
-- `http-post` — `src/compiler/evaluator_primitives_io.cpp`
 - `hygiene:allow-macro-mutate?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `hygiene:protected?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `hygiene:set-allow-macro-mutate!` — `src/compiler/evaluator_primitives_compile.cpp`
@@ -953,7 +909,6 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `set-car!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-cdr!` — `src/compiler/evaluator_primitives_pair.cpp`
 - `set-memory-policy` — `src/compiler/evaluator_primitives_policy.cpp`
-- `shell` — `src/compiler/evaluator_primitives_file.cpp`
 - `sin` — `src/compiler/evaluator_primitives_math.cpp`
 - `sqrt` — `src/compiler/evaluator_primitives_math.cpp`
 - `stats:count` — `src/compiler/evaluator_primitives_obs_jit.cpp`
@@ -993,19 +948,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `synthesize:fill` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:optimize` — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` — `src/compiler/evaluator_primitives_agent.cpp`
-- `sys-open` — `src/compiler/evaluator_primitives_io.cpp`
-- `sys-read` — `src/compiler/evaluator_primitives_io.cpp`
-- `sys-write` — `src/compiler/evaluator_primitives_io.cpp`
 - `take` — `src/compiler/evaluator_primitives_list.cpp`
 - `tan` — `src/compiler/evaluator_primitives_math.cpp`
-- `tcp-accept` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-accept-timeout` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-close` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-connect` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-listen` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-local-port` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-recv` — `src/compiler/evaluator_primitives_io.cpp`
-- `tcp-send` — `src/compiler/evaluator_primitives_io.cpp`
 - `thread_pool:enqueue` — `src/compiler/evaluator_primitives_messaging.cpp`
 - `trunc` — `src/compiler/evaluator_primitives_math.cpp`
 - `type-of` — `src/compiler/evaluator_primitives_reflect.cpp`

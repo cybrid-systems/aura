@@ -38,8 +38,10 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    idx = src.find('add("command-line"')
-    # Include preceding #2478 comment block (~200 chars before add).
+    # #3174: command-line is deferred until (require "std/process");
+    # the kCapIoRead body still lives on the deferred registration.
+    idx = src.find('defer_std_host_prim("command-line"')
+    # Include preceding #2478 comment block (~200 chars before registration).
     start = max(0, idx - 250) if idx >= 0 else 0
     body = src[start : idx + 900] if idx >= 0 else ""
 
