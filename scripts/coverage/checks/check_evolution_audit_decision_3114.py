@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Issue #3114: query:evolution-audit-decision observe-only fold.
 Issue #3149: residual — add last-se-reason string key (additive).
+Issue #3152: residual — add forensic-source enum + 3 sentinels (additive).
+             Maps typed-trail-miss=1 to next forensic step (trail / SE /
+             WAL). Pure loads only — no WAL scan, no mutate.
 
 Contract (one row per AC):
   AC1  register_stats_impl query:evolution-audit-decision + catalog name.
@@ -23,13 +26,22 @@ Contract (one row per AC):
        consistency (matches the SE row for the same mid).
   AC8  (#3149) Soft / no event → empty string semantics same as
        last-se-reason-code == 0. AURA_SANDBOX=off → no extra cost.
-  AC9  (#3149) capacity: kEvolutionAuditDecisionPlannedKeys bumped to
-       cover last-se-reason + schema-3149 + issue-3149. overflow=0
-       on the normal path.
+  AC9  (#3149 + #3152) cumulative capacity:
+       kEvolutionAuditDecisionPlannedKeys bumped from 32 → 33 (#3149)
+       then 33 → 37 (#3152) to cover last-se-reason + schema-3149 +
+       issue-3149 + forensic-source + 3 enum sentinels + schema-3152 +
+       issue-3152. overflow=0 on the normal path.
   AC10 (#3149) source-cite + no test_issue_3149.cpp / docs/design/3149-*
        per #81967 / #1655. Suite + facade tests extended to verify
        last-se-reason equals query:security-audit same-mid row reason
        under force-rollback.
+  AC11 (#3152) additive forensic-source enum + 3 sentinels
+       (forensic-source-trail=1 / -se=2 / -wal=3) inside the same
+       handler. Pure loads: one extra O(kSecurityEventRingSize) scan
+       only when typed miss + mid != 0, plus two WAL is_enabled()
+       bool probes. No file I/O, no mutate, no shadow writes.
+       schema-3152 / issue-3152 sentinels added parallel to
+       schema-3149 / issue-3149.
 
 Extend test_security_audit_unify + test_engine_metrics_facade.
 No test_issue_3114.cpp / test_issue_3149.cpp. No docs/design/{3114,3149}-*
@@ -151,15 +163,47 @@ def main() -> int:
     # (kind=0 / no event) leaves last_se_reason_str empty.
     must("e.reason[0] != '\\0'", "AC8 empty-reason guard (no-event branch)", query)
 
-    # ── AC9 (#3149): capacity bumped from 32 → 33 to cover the new
-    # last-se-reason + schema-3149 + issue-3149 keys. overflow=0 on
-    # the normal path.
-    must("kEvolutionAuditDecisionPlannedKeys = 33", "AC9 planned keys bumped to 33", query)
+    # ── AC9 (#3149 + #3152): cumulative capacity bumped from 32 → 33
+    # (#3149) then 33 → 37 (#3152) to cover last-se-reason + 3 sentinels
+    # + schema-3149 + issue-3149 + forensic-source + 3 enum sentinels +
+    # schema-3152 + issue-3152. overflow=0 on the normal path.
+    must("kEvolutionAuditDecisionPlannedKeys = 37", "AC9 planned keys bumped to 37 (#3149+#3152)", query)
     must("schema-3149", "AC9 schema-3149 sentinel", query)
     must("issue-3149", "AC9 issue-3149 sentinel", query)
     # Coexist with old sentinels (no replacement).
     must("schema-3114", "AC9 schema-3114 still present (coexists)", query)
     must("issue-3114", "AC9 issue-3114 still present (coexists)", query)
+
+    # ── AC11 (#3152): additive forensic-source enum + 3 sentinels
+    # inside the same handler. Pure loads only — one extra
+    # O(kSecurityEventRingSize) scan when typed miss + mid != 0, plus
+    # two WAL is_enabled() bool probes. No file I/O, no mutate, no
+    # shadow writes. schema-3152 / issue-3152 sentinels added.
+    must("Issue #3152", "AC11 source-cite marker in security prims", query)
+    must('insert_kv("forensic-source", forensic_source)', "AC11 forensic-source key inserted", query)
+    must('insert_kv("forensic-source-trail", 1)', "AC11 forensic-source-trail=1 sentinel", query)
+    must('insert_kv("forensic-source-se", 2)', "AC11 forensic-source-se=2 sentinel", query)
+    must('insert_kv("forensic-source-wal", 3)', "AC11 forensic-source-wal=3 sentinel", query)
+    must("schema-3152", "AC11 schema-3152 sentinel", query)
+    must("issue-3152", "AC11 issue-3152 sentinel", query)
+    # Pure-load invariant: no fopen / fread / should_audit in the new
+    # forensic-source path (Soft / zero-cost preserved).
+    must("forensic_source = 0", "AC11 forensic_source zero-initialized (mid==0 short-circuit)", query)
+    must("se_ring_has_mid", "AC11 SE ring has-mid scan", query)
+    must("g_mutation_audit_wal().is_enabled()", "AC11 mutation WAL is_enabled() bool probe", query)
+    must("g_security_event_wal().is_enabled()", "AC11 SE WAL is_enabled() bool probe", query)
+    must("kSecurityEventRingSize", "AC11 SE ring size cap referenced (bounded scan)", query)
+    if "fopen" in query[query.find("Issue #3152") : query.find("Issue #3152") + 4000]:
+        fails.append("AC11: fopen in #3152 forensic-source block (Soft: no I/O)")
+    if "fread" in query[query.find("Issue #3152") : query.find("Issue #3152") + 4000]:
+        fails.append("AC11: fread in #3152 forensic-source block (Soft: no I/O)")
+    # No test_issue_3152.cpp / docs/design/3152-* per #81967 / #1655.
+    if (ROOT / "tests" / "compiler" / "test_issue_3152.cpp").is_file():
+        fails.append("AC11: tests/compiler/test_issue_3152.cpp present (forbidden #81967)")
+    docs3152 = ROOT / "docs" / "design"
+    if docs3152.is_dir():
+        for f in sorted(docs3152.glob("3152-*")):
+            fails.append(f"AC11: docs/design/{f.name} present (forbidden #1655)")
 
     # ── AC10 (#3149): source-cite + no test_issue_3149.cpp /
     # docs/design/3149-* per #81967 / #1655. Suite + facade extended
