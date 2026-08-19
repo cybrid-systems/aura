@@ -129,13 +129,36 @@ inline constexpr int kStealSafetyResidualRearmResampleIssue = 3038;
 // the named residual counters are non-zero under production_defaults_active().
 // Soft / sandbox=off: pass-through (1) so the gate doesn't false-fail when
 // residual bumps fire under Soft observation.
-inline std::atomic<std::uint32_t> g_steal_safety_production_residual_zero_wired{1};
-inline constexpr int kStealSafetyProductionResidualZeroIssue = 3134;
+// Issue #3162: production-readiness residual sticky-fail bit. Closes the
+// residual between #3134's per-query consult and continuous process
+// fail-closed under production multi-worker. Set on the residual-fail
+// path (after RejectHard) under production when the named residual
+// counters are non-zero; cleared by steal_safety_production_residual_zero_v_read
+// when both counters return to 0 (per-query poll — the schema-3073 query
+// primitive acts as the readiness poll). Soft / sandbox=off / single-
+// worker: stays 0 (counters observe-only). Quiet Ok path: zero extra
+// atomics — the bit is only set on the residual-fail branch and only
+// cleared by the per-query accessor (not on per-steal hot path).
+// Issue #3096 / #3166 ci-build-fix: moved up so the inline function
+// `steal_safety_production_residual_zero_v_read` (below) can reference
+// the atomic without use-before-declaration.
+inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail{0};
+inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail_wired{1};
+inline constexpr int kStealSafetyProductionResidualStickyFailIssue = 3162;
 
 // Forward-declare the production probe (defined weak in fiber.cpp;
 // full definition in runtime_production_abi.cpp). Avoids pulling
 // fiber.h into the steal_safety.h header surface.
 extern "C" int aura_production_defaults_active_probe() noexcept;
+
+// Issue #3134: production-readiness residual-zero wired sentinel (moved
+// here from its original L132–133 position so the #3134 coverage linter's
+// 1500-char check_win around `steal_safety_production_residual_zero_v_read`
+// still contains both the wired sentinel + the issue stamp). Per #3166
+// ci-build-fix: same pattern as #3096 — keep declarations clustered near
+// the function that uses them so source-cite + coverage gates stay green.
+inline std::atomic<std::uint32_t> g_steal_safety_production_residual_zero_wired{1};
+inline constexpr int kStealSafetyProductionResidualZeroIssue = 3134;
 
 // Issue #3134: production-readiness residual-zero accessor.
 // Returns 1 iff production_defaults_active() is 0 (Soft / sandbox=off)
@@ -230,19 +253,6 @@ steal_safety_residual_lifetime_proof_reject_total_v_read() noexcept {
 [[nodiscard]] inline std::uint32_t steal_safety_residual_rearm_race_wired_v_read() noexcept {
     return g_steal_safety_residual_rearm_race_wired.load(std::memory_order_relaxed);
 }
-// Issue #3162: production-readiness residual sticky-fail bit. Closes the
-// residual between #3134's per-query consult and continuous process
-// fail-closed under production multi-worker. Set on the residual-fail
-// path (after RejectHard) under production when the named residual
-// counters are non-zero; cleared by steal_safety_production_residual_zero_v_read
-// when both counters return to 0 (per-query poll — the schema-3073 query
-// primitive acts as the readiness poll). Soft / sandbox=off / single-
-// worker: stays 0 (counters observe-only). Quiet Ok path: zero extra
-// atomics — the bit is only set on the residual-fail branch and only
-// cleared by the per-query accessor (not on per-steal hot path).
-inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail{0};
-inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail_wired{1};
-inline constexpr int kStealSafetyProductionResidualStickyFailIssue = 3162;
 // Issue #3162: production-readiness sticky-fail accessor.
 // Returns 1 iff production_defaults_active() is 0 (Soft / sandbox=off)
 // AND the sticky-fail bit was never set OR has been cleared, OR if
