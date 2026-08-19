@@ -339,6 +339,156 @@ static void ac2641_6_source_cite() {
           "AC6: miss counter query key");
 }
 
+// ── Issue #3170: outermost-success occurrence persist fingerprint guard
+// + uniform clear-on-abort/nested (I4 from 2026-08 type-system review —
+// 半解不得出厂). AC1 outermost success + fingerprint match → persist
+// frozen. AC2 fingerprint mismatch OR abort OR OR nested → persist buffer
+// cleared. AC3 Soft / Off / unit-test default: zero behavioural change.
+// AC4 quiet (clean / no dirty / no TIMEOUT): zero extra atomics. AC5
+// extends existing #2608 / #2641 lineage. AC6 source-cite + linter.
+// Source: src/compiler/observability_metrics.h occurrence_persist_fingerprint_mismatch_total,
+// src/compiler/type_checker.ixx clear_occurrence_persist_snapshot,
+// src/compiler/type_checker_impl.cpp ConstraintSystem::clear_occurrence_persist_snapshot,
+// src/compiler/typed_mutation_audit.h occurrence_goal_fingerprint +
+// clear_occurrence_persist_buffer, src/compiler/evaluator_mutation_boundary.cpp
+// aura_clear_occurrence_persist_buffer C ABI + aura_outermost_success_persist_occurrence
+// fingerprint guard + 3 abort/nested clear calls.
+static void ac3170_1_outermost_success_fingerprint_guard() {
+    std::println("\n--- #3170 AC1: outermost success fingerprint guard ---");
+    // Source-cite: clear_occurrence_persist_snapshot decl + impl + TypeChecker wrapper.
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    CHECK(ixx.find("clear_occurrence_persist_snapshot() noexcept") != std::string::npos,
+          "3170 AC1: clear_occurrence_persist_snapshot decl in type_checker.ixx");
+    CHECK(impl.find("ConstraintSystem::clear_occurrence_persist_snapshot") != std::string::npos,
+          "3170 AC1: clear_occurrence_persist_snapshot impl in type_checker_impl.cpp");
+    CHECK(tma.find("occurrence_goal_fingerprint(void* tc_handle)") != std::string::npos,
+          "3170 AC1: occurrence_goal_fingerprint helper in typed_mutation_audit.h");
+    CHECK(tma.find("clear_occurrence_persist_buffer(void* tc_handle)") != std::string::npos,
+          "3170 AC1: clear_occurrence_persist_buffer wrapper in typed_mutation_audit.h");
+    CHECK(emb.find("extern \"C\" void aura_clear_occurrence_persist_buffer(void* ev_ptr)") !=
+              std::string::npos,
+          "3170 AC1: aura_clear_occurrence_persist_buffer C ABI");
+    CHECK(emb.find("Issue #3170: outermost-success fingerprint guard") != std::string::npos,
+          "3170 AC1: fingerprint guard wire-up cite in evaluator_mutation_boundary.cpp");
+    CHECK(obs.find("occurrence_persist_fingerprint_mismatch_total") != std::string::npos,
+          "3170 AC1: counter declared at struct end of observability_metrics.h");
+    CHECK(!read_file("docs/design/3170-occurrence-persist-fingerprint.md").empty() == false,
+          "3170 AC5: no docs/design/3170-* plan doc (per #1655)");
+    for (const auto& rel : {std::string("tests/issues/test_issue_3170.cpp"),
+                            std::string("tests/compiler/test_issue_3170.cpp"),
+                            std::string("tests/serve/test_issue_3170.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3170 AC5: forbidden {} per #81967", rel));
+    }
+}
+
+static void ac3170_2_abort_nested_uniform_clear() {
+    std::println("\n--- #3170 AC2: abort / nested / force-rollback paths uniformly clear ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Three production exit paths must call aura_clear_occurrence_persist_buffer.
+    const auto first_abort = emb.find("if (outermost && !success) {\n"
+                                      "        ev_->bump_mutation_boundary_rollback();");
+    CHECK(first_abort != std::string::npos,
+          "3170 AC2: outermost abort path (line 2757) calls aura_clear_occurrence_persist_buffer");
+    const auto second_abort = emb.find(
+        "} else if (outermost && !success) {\n"
+        "        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {\n"
+        "            m->mutation_boundary_steal_recoveries.fetch_add(1, "
+        "std::memory_order_relaxed);\n"
+        "        }\n"
+        "        // Issue #3004: Full audit / TIMEOUT / reject \u2014 discard provisional\n"
+        "        // OccurrenceGoal live table; no query:type authority.\n"
+        "        if (auto* tc = static_cast<TypeChecker*>(ev_->commit_type_checker_handle())) {\n"
+        "            const auto dropped = tc->discard_provisional_occurrence_snapshot();\n"
+        "            if (dropped > 0)\n"
+        "                "
+        "aura::compiler::typed_audit::note_occurrence_provisional_discard(dropped);\n"
+        "        }\n"
+        "        // Issue #3170: clear occurrence persist buffer on outermost abort\n"
+        "        // (uniform enforcement \u2014 no half-written state survives).\n"
+        "        aura_clear_occurrence_persist_buffer(ev_);\n"
+        "        ev_->clear_type_export_authority();\n"
+        "    }");
+    CHECK(second_abort != std::string::npos,
+          "3170 AC2: second abort path (line 4315) calls aura_clear_occurrence_persist_buffer");
+    const auto nested_path = emb.find("aura_clear_occurrence_persist_buffer(ev_);\n"
+                                      "        ev_->note_type_export_inflight();");
+    CHECK(nested_path != std::string::npos,
+          "3170 AC2: nested path (line 4620) calls aura_clear_occurrence_persist_buffer");
+}
+
+static void ac3170_3_soft_zero_behavioural_change() {
+    std::println(
+        "\n--- #3170 AC3: Soft / Off / unit-test default \u2192 zero behavioural change ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    // clear_occurrence_persist_buffer wrapper gates on production_defaults_active.
+    CHECK(tma.find("if (!aura::compiler::typed_audit::production_defaults_active())\n"
+                   "        return 0;") != std::string::npos,
+          "3170 AC3: clear wrapper production gate (Soft untouched)");
+    // Counter only bumps under production gate.
+    CHECK(tma.find("aura::compiler::g_occurrence_persist_audit_atomic_wired.fetch_add(\n"
+                   "            dropped, std::memory_order_relaxed);") != std::string::npos,
+          "3170 AC3: counter bump gated by production");
+}
+
+static void ac3170_4_quiet_zero_extra_atomics() {
+    std::println(
+        "\n--- #3170 AC4: Quiet (clean / no dirty / no TIMEOUT) \u2192 zero extra atomics ---");
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Outermost success path early-returns on prior != TIMEOUT (existing #2277 contract).
+    CHECK(emb.find("if (prior != SolveResult::TIMEOUT)\n        return prior;") !=
+              std::string::npos,
+          "3170 AC4: escalate_if_production early-return on non-TIMEOUT (Quiet path)");
+    // Fingerprint guard is gated on production_defaults_active.
+    CHECK(emb.find("if (aura::compiler::typed_audit::production_defaults_active() &&\n"
+                   "        ev->expected_occurrence_snapshot_fp() != 0 &&\n"
+                   "        live_fp != ev->expected_occurrence_snapshot_fp()) {") !=
+              std::string::npos,
+          "3170 AC4: fingerprint guard gated on production_defaults_active (zero extra on Soft)");
+}
+
+static void ac3170_5_additive_observability_only() {
+    std::println("\n--- #3170 AC5: Additive observability only ---");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    // Counter at struct end (layout-stable per #2906).
+    CHECK(obs.find("// Issue #3170: outermost-success Occurrence persist fingerprint guard") !=
+              std::string::npos,
+          "3170 AC5: counter comment cites #3170");
+    CHECK(obs.find("std::atomic<std::uint64_t> occurrence_persist_fingerprint_mismatch_total{0}; "
+                   "// #3170") != std::string::npos,
+          "3170 AC5: counter declared at struct end");
+    // Existing #2277 / #3003 / #2963 / #2913 surfaces preserved.
+    CHECK(obs.find("delta_timeout_full_solve_total") != std::string::npos,
+          "3170 AC5: #2277 delta_timeout_full_solve_total preserved");
+    CHECK(obs.find("delta_timeout_reject_total") != std::string::npos,
+          "3170 AC5: #3003 delta_timeout_reject_total preserved");
+    CHECK(obs.find("solver_budget_instance_repair_prefer_total") != std::string::npos,
+          "3170 AC5: #2963 instance_repair_prefer_total preserved");
+    CHECK(obs.find("delta_instance_repair_resolved_total") != std::string::npos,
+          "3170 AC5: #2963 instance_repair_resolved_total preserved");
+}
+
+static void ac3170_6_source_and_linter() {
+    std::println("\n--- #3170 AC6: source-cite linter + build.py wiring ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py");
+    int rc =
+        std::system("python3 scripts/coverage/checks/check_occurrence_persist_fingerprint_3170.py "
+                    "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3170 AC6: linter --self-test passes");
+    CHECK(!lint.empty() && lint.find("Issue #3170") != std::string::npos,
+          "3170 AC6: linter cites #3170");
+    CHECK(build.find("check_occurrence_persist_fingerprint_3170") != std::string::npos,
+          "3170 AC6: build.py wires linter");
+}
+
+
 // ── #2896 AC1: production + non-empty goals → append without env ──
 static void ac2896_1_production_persist_without_env() {
     std::println("\n--- #2896 AC1: production + goals → append without env ---");
@@ -1961,6 +2111,15 @@ int run_test_occurrence_goal_persist_rehydrate() {
     // Issue #3130: IR Move/Drop fast-path also consults live
     // commit_readiness face (closes the half-green residual).
     ac3130_linear_move_drop_elision_gates_commit_readiness();
+    // Issue #3170: outermost-success occurrence persist fingerprint guard
+    // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -
+    // 半解不得出厂).
+    ac3170_1_outermost_success_fingerprint_guard();
+    ac3170_2_abort_nested_uniform_clear();
+    ac3170_3_soft_zero_behavioural_change();
+    ac3170_4_quiet_zero_extra_atomics();
+    ac3170_5_additive_observability_only();
+    ac3170_6_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

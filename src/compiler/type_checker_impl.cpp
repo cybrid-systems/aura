@@ -737,6 +737,19 @@ std::size_t ConstraintSystem::discard_provisional_occurrence_goals() noexcept {
     return dropped;
 }
 
+// Issue #3170: clear the long-lived occurrence persist buffer (live
+// occurrence_goals_ untouched). Called on abort / nested / force-rollback
+// paths and when the outermost-success fingerprint guard rejects the
+// staged snapshot (mismatch → treat as abort, I4 from 2026-08 type-
+// system review — 半解不得出厂). Quiet path (no buffer entries) → 0.
+std::size_t ConstraintSystem::clear_occurrence_persist_snapshot() noexcept {
+    const auto dropped = occurrence_persist_log_.size();
+    if (dropped == 0)
+        return 0;
+    occurrence_persist_log_.clear();
+    return dropped;
+}
+
 void ConstraintSystem::mark_let_poly_dirty(TypeId var) {
     // Issue #1617: Let-Poly free / instantiation vars need
     // re-generalization priority in solve_delta + reverify.
