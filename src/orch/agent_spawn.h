@@ -722,6 +722,18 @@ struct OrchModuleStats {
     // LRU-evict + insert behavior (this counter stays 0). Additive at
     // struct end (per #2906; never insert mid-struct).
     std::atomic<std::uint64_t> spawn_bp_scope_overflow_dropped_total{0};
+    // Issue #3148: cross-Evaluator lifecycle close via HandoffToken
+    // (join_via_handoff C++ helper + orch:join-via-token Aura prim).
+    // handoff_join_via_token_total = all join_via_handoff calls (Ok /
+    // Timeout / Invalid). handoff_join_via_token_timeout_total = the
+    // subset that hit the timeout deadline while the body was still
+    // running (mirrors wait_reclaimed_timeout_total semantics —
+    // importer observation only, no source-side release). Invalid
+    // calls (Soft/Off / unused handoff: token mailbox==null or
+    // fiber==null) bump total only, not timeout. Additive at struct
+    // end per #2906 / AC6.
+    std::atomic<std::uint64_t> handoff_join_via_token_total{0};
+    std::atomic<std::uint64_t> handoff_join_via_token_timeout_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -1376,6 +1388,14 @@ struct HandoffToken {
     std::uint32_t producer_bp_budget = 0;
     // Source provenance for forensics (no global side effect).
     std::uint64_t source_fiber_id = 0;
+    // Issue #3148: read-only mirror of source-side lifecycle flags so
+    // importer can observe still-running / Reclaimed / must-wait state
+    // via join_via_handoff without holding the source handle. Set at
+    // export time; subsequent src-side writes are NOT reflected (token
+    // is a snapshot). Source remains sole reservation owner; these are
+    // observational mirrors, NOT mutators (#2009 / #2661 preserved).
+    bool source_reclaimed_deferred = false;  // mirrors src.reclaimed_deferred_cleanup
+    bool source_must_wait_reclaimed = false; // mirrors src.must_wait_reclaimed
 };
 
 // Issue #3089: export a portable handoff token from a source handle.
@@ -1395,6 +1415,9 @@ inline HandoffToken agent_export_handoff(AgentHandle& src) noexcept {
     tok.reserved_quota_tenant = src.reserved_quota_tenant;
     tok.producer_bp_budget = src.producer_bp_budget;
     tok.source_fiber_id = src.fiber ? src.fiber->id() : 0;
+    // Issue #3148: mirror source-side lifecycle flags (read-only observers).
+    tok.source_reclaimed_deferred = src.reclaimed_deferred_cleanup;
+    tok.source_must_wait_reclaimed = src.must_wait_reclaimed;
     return tok;
 }
 
@@ -2234,6 +2257,97 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
         out.cleanup_completed = false;
     }
     out.status = serve::JoinStatus::Ok;
+    return out;
+}
+
+// Issue #3148: cross-Evaluator lifecycle close via HandoffToken (Option B
+// per the issue body). join_via_handoff is a read-only observer that
+// closes the lifecycle gap left by #3089 (import created a proxy handle
+// but importer had no structured way to wait / observe the source-owned
+// body without holding the source handle). The function polls the
+// fiber through the token's observed pointer, mirrors source-side
+// lifecycle flags onto the result, and returns Ok / Reclaimed / Timeout
+// like wait_reclaimed_body — but does NOT modify source state, does
+// NOT release source reservation, does NOT detach source mailbox, and
+// does NOT take ownership of the body. Soft / Off / unused handoff:
+// token mailbox==null or fiber==null ⇒ Invalid, zero extra atomic
+// (counters unchanged). Source remains sole reservation owner; proxy
+// dtor continues to be a no-op on reservation (#2009 preserved).
+//
+// Counter reuse: bumps handoff_join_via_token_total on every call and
+// handoff_join_via_token_timeout_total on the Timeout subset. Does
+// NOT bump wait_reclaimed_total (different call site — C++ importer
+// observer vs C++ host handle waiter); the additive counter pair at
+// the end of OrchModuleStats is the observability surface per AC6.
+//
+// Same shape as wait_reclaimed_body (#2924): read fiber pointer,
+// cooperative poll loop with host-thread sleep, deadline-driven
+// Timeout arm that preserves #2661 no-early-free (no source-side
+// release on Timeout). The Importer does not own the reservation, so
+// the source-side #2661 invariant is structurally guaranteed — there
+// is nothing for this helper to release.
+struct JoinViaTokenPolicy {
+    std::optional<std::uint64_t> timeout_ms{}; // nullopt = poll-until-done
+    bool observe_only = true; // reserved for future; current impl always observe-only
+};
+
+struct JoinViaTokenResult {
+    serve::JoinStatus status = serve::JoinStatus::Invalid;
+    std::uint64_t wait_us = 0;
+    bool still_running = false;
+    // Issue #3148: mirror of source-side flags at observation time so
+    // importer can branch on lifecycle state without re-importing. Set
+    // from token.source_reclaimed_deferred / source_must_wait_reclaimed
+    // (mirrored at export per #3148).
+    bool source_reclaimed_deferred = false;
+    bool source_must_wait_reclaimed = false;
+};
+
+[[nodiscard]] inline JoinViaTokenResult join_via_handoff(const HandoffToken& tok,
+                                                         JoinViaTokenPolicy jp = {}) noexcept {
+    JoinViaTokenResult out;
+    serve::Fiber* f = tok.fiber;
+    // AC4: Soft / Off / unused handoff — zero extra atomic. Valid path
+    // gate is the shared mailbox + observed fiber pointer; the importer
+    // cannot observe a body the source never exported.
+    if (!f || !tok.mailbox) {
+        out.status = serve::JoinStatus::Invalid;
+        return out;
+    }
+    // Mirror source-side lifecycle flags from token (read-only observers
+    // set at export time). Importer sees what source has at export time
+    // (snapshot semantics — subsequent src-side writes are NOT reflected
+    // because the importer does not have the source handle).
+    out.source_reclaimed_deferred = tok.source_reclaimed_deferred;
+    out.source_must_wait_reclaimed = tok.source_must_wait_reclaimed;
+
+    g_orch_module_stats.handoff_join_via_token_total.fetch_add(1, std::memory_order_relaxed);
+
+    const auto t0 = std::chrono::steady_clock::now();
+    const bool has_deadline = jp.timeout_ms.has_value();
+    const auto deadline = has_deadline ? t0 + std::chrono::milliseconds(*jp.timeout_ms)
+                                       : std::chrono::steady_clock::time_point{};
+
+    while (!f->is_done()) {
+        if (has_deadline && std::chrono::steady_clock::now() >= deadline) {
+            out.status = serve::JoinStatus::Timeout;
+            out.still_running = f->still_running_after_reclaim_counted() || !f->is_done();
+            out.wait_us =
+                static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::microseconds>(
+                                               std::chrono::steady_clock::now() - t0)
+                                               .count());
+            g_orch_module_stats.handoff_join_via_token_timeout_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return out; // AC2: no reservation release / mailbox detach
+        }
+        std::this_thread::sleep_for(std::chrono::microseconds(200));
+    }
+    // Body exited — surface Ok or Reclaimed based on fiber state.
+    out.still_running = false;
+    out.wait_us = static_cast<std::uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0)
+            .count());
+    out.status = f->is_reclaimed() ? serve::JoinStatus::Reclaimed : serve::JoinStatus::Ok;
     return out;
 }
 
