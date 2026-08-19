@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 846 | Preferred destination suites |
-| **Total scanned** | **846** | |
+| `tests/core/test_*.cpp` | 847 | Preferred destination suites |
+| **Total scanned** | **847** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 85 | 85 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 250 | 250 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 251 | 251 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 55 | 55 | P1 — domain hygiene suite exists |
@@ -421,6 +421,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_escape_move_elision_gate.cpp`
 - `tests/compiler/test_eval_current_no_auto_fix.cpp`
 - `tests/compiler/test_eval_relower_hotpath.cpp`
+- `tests/compiler/test_evolution_audit_decision_forensic.cpp`
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp`
 - `tests/orch/test_failure_policy_bridge.cpp`
 - `tests/serve/test_fiber_concurrent_unit_batch.cpp`
@@ -1157,13 +1158,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (250)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (251)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (250)
+#### domain/ (251)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1249,6 +1250,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_envframe_bridge_invalidate.cpp` (—) [domain_suite, theme_compiler] — Issue #1916 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_envframe_dualpath_stale_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #417/#418/#543/#602 (#1978 renamed): issue# moved from filename to header.
 - `tests/reflect/test_error_kind_names_wire.cpp` (—) [domain_suite, theme_reflect] — Wire C1 into business: P2996 validates name tables used by
+- `tests/compiler/test_evolution_audit_decision_forensic.cpp` (—) [domain_suite, theme_compiler] — AC1: additive forensic-source enum (stable int)
 - `tests/compiler/test_exhausted_min_dirty_reemit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Continuous Defuse fail to exhaust → force-JIT mask set +
 - `tests/compiler/test_followup_smoke.cpp` (—) [small, followup, domain_suite, theme_compiler] — tests/test_followup_smoke.cpp — Smoke test for follow-up ship
 - `tests/compiler/test_followups.cpp` (—) [followup, domain_suite, theme_compiler] — (mutation-log:diff / dirty:summary /
