@@ -31,6 +31,8 @@ import aura.compiler.soa_view;
 
 namespace aura::compiler {
 
+using aura::compiler::macro_exp::stamp_rest_param_hygiene;
+
 namespace primitives_detail {
 
     void bump_prim_error_unified_total() noexcept {

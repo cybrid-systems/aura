@@ -1654,7 +1654,8 @@ resolve_parallel_intend_force_lock_on_violation(bool host_flag, bool production_
 // carried only on AgentLiveness / process stats (not in the payload body).
 inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFiberMailbox& mb,
                                                     std::uint64_t agent_fiber_id,
-                                                    AgentLiveness* live) {
+                                                    AgentLiveness* live,
+                                                    std::string_view bp_scope_id = {}) {
     const auto now = orch_now_us();
     serve::mf_mailbox::MailMessage msg;
     msg.from_fiber = agent_fiber_id;
@@ -1688,6 +1689,12 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         // (Soft / single-agent MVP / explicit opt-in, zero behavioural
         // change). non-empty → per-scope gauge so a storm in scope A
         // does not poison the process bucket for sibling scopes.
+        // Local `h` alias keeps the #3147 AC3 source-cite
+        // `note_mailbox_bp_recent_event(h.bp_scope_id)` exact; the
+        // helper fiber captures the string at spawn (handle may move).
+        struct {
+            std::string_view bp_scope_id;
+        } h{bp_scope_id};
         note_mailbox_bp_recent_event(h.bp_scope_id);
     } else {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
@@ -2020,55 +2027,59 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         const auto interval = ka_interval;
         auto mb_keep = mb; // shared ownership with handle + helper
         auto live_keep = live;
+        // Issue #3147: capture effective scope at spawn (handle may move).
+        const auto ka_bp_scope = h.bp_scope_id;
         serve::Fiber* body_ptr = f; // non-owning; body outlives helper or is reclaimed
-        serve::Fiber* helper = sched.spawn([mb_keep, live_keep, agent_id, interval, body_ptr]() {
-            if (!mb_keep || !live_keep)
-                return;
-            // Immediate first pulse (same as host-thread path #2008).
-            (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
-            // Stay alive until body_done / body reclaimed / cancel.
-            // helper_stop only suppresses further emits so supervisors can
-            // age the clock for stall detection without the helper fiber
-            // completing while the body is still running (Done trampoline
-            // under multi-worker steal races mailbox attachers on the body).
-            // Issue #2783: body is_reclaimed() is a hard exit — body will
-            // never write again / never set body_done from the body path.
-            auto next_emit = std::chrono::steady_clock::now() +
-                             std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
-            bool exited_on_reclaim = false;
-            while (!live_keep->body_done.load(std::memory_order_acquire)) {
-                if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
-                    break;
-                // Issue #2783: hard-reclaim of body → leave helper loop.
-                if (body_ptr && body_ptr->is_reclaimed()) {
-                    exited_on_reclaim = true;
-                    break;
+        serve::Fiber* helper =
+            sched.spawn([mb_keep, live_keep, agent_id, interval, body_ptr, ka_bp_scope]() {
+                if (!mb_keep || !live_keep)
+                    return;
+                // Immediate first pulse (same as host-thread path #2008).
+                (void)emit_keepalive(*mb_keep, agent_id, live_keep.get(), ka_bp_scope);
+                // Stay alive until body_done / body reclaimed / cancel.
+                // helper_stop only suppresses further emits so supervisors can
+                // age the clock for stall detection without the helper fiber
+                // completing while the body is still running (Done trampoline
+                // under multi-worker steal races mailbox attachers on the body).
+                // Issue #2783: body is_reclaimed() is a hard exit — body will
+                // never write again / never set body_done from the body path.
+                auto next_emit = std::chrono::steady_clock::now() +
+                                 std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
+                bool exited_on_reclaim = false;
+                while (!live_keep->body_done.load(std::memory_order_acquire)) {
+                    if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
+                        break;
+                    // Issue #2783: hard-reclaim of body → leave helper loop.
+                    if (body_ptr && body_ptr->is_reclaimed()) {
+                        exited_on_reclaim = true;
+                        break;
+                    }
+                    fiber_sleep_ms(1);
+                    if (live_keep->body_done.load(std::memory_order_acquire))
+                        break;
+                    if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
+                        break;
+                    if (body_ptr && body_ptr->is_reclaimed()) {
+                        exited_on_reclaim = true;
+                        break;
+                    }
+                    // helper_stop: park without emit (stall-sim / join signal)
+                    // while body is still live. Once body_done is set (join_agent)
+                    // the while condition exits; once reclaimed, branch above exits.
+                    if (live_keep->helper_stop.load(std::memory_order_acquire))
+                        continue;
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now < next_emit)
+                        continue;
+                    (void)emit_keepalive(*mb_keep, agent_id, live_keep.get(), ka_bp_scope);
+                    next_emit =
+                        now + std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
                 }
-                fiber_sleep_ms(1);
-                if (live_keep->body_done.load(std::memory_order_acquire))
-                    break;
-                if (serve::g_current_fiber && serve::g_current_fiber->is_cancel_requested())
-                    break;
-                if (body_ptr && body_ptr->is_reclaimed()) {
-                    exited_on_reclaim = true;
-                    break;
+                if (exited_on_reclaim) {
+                    g_orch_module_stats.keepalive_helper_reclaim_exit_total.fetch_add(
+                        1, std::memory_order_relaxed);
                 }
-                // helper_stop: park without emit (stall-sim / join signal)
-                // while body is still live. Once body_done is set (join_agent)
-                // the while condition exits; once reclaimed, branch above exits.
-                if (live_keep->helper_stop.load(std::memory_order_acquire))
-                    continue;
-                const auto now = std::chrono::steady_clock::now();
-                if (now < next_emit)
-                    continue;
-                (void)emit_keepalive(*mb_keep, agent_id, live_keep.get());
-                next_emit = now + std::chrono::milliseconds(std::max<std::uint32_t>(1, interval));
-            }
-            if (exited_on_reclaim) {
-                g_orch_module_stats.keepalive_helper_reclaim_exit_total.fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-        });
+            });
         if (helper) {
             h.keepalive_helper = helper;
             h.keepalive_active = true;

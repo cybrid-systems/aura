@@ -35,6 +35,20 @@ extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
 
 namespace aura::compiler::macro_exp {
 
+// Issue #3062 / #3029: lightweight expand checkpoint so a production
+// pass/depth limit can refuse a half-expanded tree even when the
+// caller did not wrap expand in MutationBoundary. Defined here (before
+// clone_macro_body_at_depth's local ExpandCheckpointGuard) — a local
+// class can only see names already declared at its definition point.
+// Returns 1 only when *this* call installed a checkpoint we must later
+// restore or commit. Soft/Off never calls this (zero-cost). Existing
+// NameMapCheckpoint + steal-abort paths are unchanged.
+[[nodiscard]] static int install_macro_expand_checkpoint() noexcept {
+    if (aura_evaluator_mutation_boundary_depth() > 0)
+        return 0;
+    return aura_evaluator_try_save_macro_expand_checkpoint();
+}
+
 namespace detail {
 
     // Quiet by default: expected MacroSelfEvo denials under Restricted
@@ -2517,19 +2531,6 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
         // the rest of the function body continues below with guard in scope.
         return macro_expand_all_body(flat, pool, root, max_passes);
     }
-}
-
-// Issue #3062 / Issue #3029: lightweight expand checkpoint so a
-// production pass/depth limit can refuse a half-expanded tree even
-// when the caller did not wrap expand in MutationBoundary. Reuses
-// save/restore/commit_panic_checkpoint. Returns 1 only when *this*
-// call installed a checkpoint we must later restore or commit.
-// Soft/Off never calls this (zero-cost). Existing NameMapCheckpoint
-// + steal-abort paths are unchanged.
-[[nodiscard]] static int install_macro_expand_checkpoint() noexcept {
-    if (aura_evaluator_mutation_boundary_depth() > 0)
-        return 0;
-    return aura_evaluator_try_save_macro_expand_checkpoint();
 }
 
 // Issue #2023: body of macro_expand_all after capability gate (DepthPolicyGuard
