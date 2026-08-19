@@ -179,10 +179,20 @@ struct WorkspaceIsolationPolicy {
     // (registry default_tenant) or the target tenant. Soft/Off stays zero-cost
     // (AC3). Same shape as CapabilityRegistry::grant_macro_self_evo post-#3029
     // and registry foreign-tenant grant_effect_ post-#2968/#2969.
-    void grant_cross_tenant(TenantId from, TenantId to, std::uint16_t effect_bits) noexcept {
+    //
+    // Issue #3145: `caller_principal` is the explicit caller principal
+    // (Evaluator::capability_tenant_id_) — Evaluator::grant_cross_tenant_access
+    // forwards it. Default 0 falls back to the process-global default_tenant
+    // for legacy direct callers without an Evaluator context (tests / tooling);
+    // production Evaluator paths MUST pass the explicit principal so the gate
+    // resolves the real per-Evaluator principal instead of the often-zero
+    // default_tenant (AC2). AC3 (Soft/Off zero-cost) is unaffected — the
+    // short-circuit precedes any principal load.
+    void grant_cross_tenant(TenantId from, TenantId to, std::uint16_t effect_bits,
+                            TenantId caller_principal = 0) noexcept {
         if (from == 0 || to == 0)
             return;
-        if (!try_grant_cross_tenant_privileged(from, to, effect_bits))
+        if (!try_grant_cross_tenant_privileged(from, to, effect_bits, caller_principal))
             return; // deny path already bumped counter + emitted SE (#2968 stable)
         std::lock_guard<std::mutex> lock(mtx);
         CrossTenantKey key{from, to};
@@ -196,16 +206,39 @@ struct WorkspaceIsolationPolicy {
     // false (with SE + deny-counter bump) otherwise. Soft/Off is zero-cost
     // allow (AC3). Evaluator::grant_cross_tenant_access becomes a thin
     // stamp+call — no second policy to keep in sync, no double-count.
+    //
+    // Issue #3145 AC1/AC2: under production (Restricted/Strict), the
+    // privilege decision must be (a) read under the registry mtx via
+    // `effects_for_locked` so a concurrent revoke of TenantAdmin from another
+    // Evaluator / fiber cannot race past the fence (TOCTOU closure), and
+    // (b) sourced from the explicit `caller_principal` (the calling
+    // Evaluator's capability_tenant_id_) instead of the process-global
+    // `default_tenant` (which is almost always 0 under multi-Evaluator /
+    // TenantScope). When `caller_principal == 0` (legacy direct callers
+    // without an Evaluator context), fall back to default_tenant — the
+    // fallback never widens access (deny remains deny; the test surface
+    // uses it). AC3: Soft/Off short-circuits before any lock or principal
+    // load. SE reason string + counter names unchanged (#2968 stable).
     [[nodiscard]] bool try_grant_cross_tenant_privileged(TenantId from, TenantId to,
-                                                         std::uint16_t effect_bits) noexcept {
+                                                         std::uint16_t effect_bits,
+                                                         TenantId caller_principal) noexcept {
         using ::aura::core::capability::EffectSandboxMode;
         using ::aura::core::capability::g_capability_registry;
         const auto mode = g_capability_registry().sandbox_mode.load(std::memory_order_acquire);
         if (mode == EffectSandboxMode::Off)
             return true; // AC3: zero-cost allow under Soft/Off
-        const auto caller = g_capability_registry().default_tenant.load(std::memory_order_acquire);
-        const auto caller_eff = g_capability_registry().effects_for(caller);
-        const auto target_eff = g_capability_registry().effects_for(to);
+        auto& reg = g_capability_registry();
+        // AC2: explicit caller_principal (Evaluator::capability_tenant_id_)
+        // wins; fallback to default_tenant only for legacy direct callers.
+        const TenantId caller = caller_principal != 0
+                                    ? caller_principal
+                                    : reg.default_tenant.load(std::memory_order_acquire);
+        // AC1: take the registry mtx so a concurrent revoke of TenantAdmin
+        // from another Evaluator / fiber cannot race past this fence
+        // (previous unlocked effects_for() was a TOCTOU window — see #3126).
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        const auto caller_eff = reg.effects_for_locked(caller);
+        const auto target_eff = reg.effects_for_locked(to);
         const bool is_admin =
             ((caller_eff | target_eff) & ::aura::core::capability::Effect::TenantAdmin) !=
             ::aura::core::capability::Effect::None;

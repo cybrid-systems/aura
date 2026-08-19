@@ -2771,6 +2771,25 @@ def cmd_lint():
             "Issue #2968 cross-tenant grant gate linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_gate_2968.py"
         )
         return r
+    # Issue #3145: cross-tenant grant + grant_macro_self_evo principal
+    # source — explicit caller_principal (Evaluator::capability_tenant_id_)
+    # instead of process-global default_tenant (almost always 0 under
+    # multi-Evaluator), and effects_for under registry mtx via
+    # effects_for_locked so concurrent revoke cannot race past the fence
+    # (TOCTOU closure, #3126). Soft/Off zero-cost preserved. No new
+    # posture / query key (per issue body). Extends
+    # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/
+    # (#1655).
+    cgp_script = COVERAGE_CHECKS / "check_cross_tenant_grant_principal_3145.py"
+    if not cgp_script.exists():
+        fail(f"missing {cgp_script}")
+        return 1
+    r = run([sys.executable, str(cgp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3145 cross-tenant grant principal source linter failed — run python3 scripts/coverage/checks/check_cross_tenant_grant_principal_3145.py"
+        )
+        return r
     # Issue #2969: registry write-fence — under production (Restricted/
     # Strict), grant/revoke targeting a foreign tenant id requires
     # TenantAdmin. Deny → SE reason grant-foreign-tenant-needs-tenant-admin
