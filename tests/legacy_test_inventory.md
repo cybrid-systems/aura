@@ -1244,7 +1244,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_defines_referencing_sym.cpp` (—) [domain_suite, theme_core] — AC1: well-formed unique-name case still finds referencing Defines
 - `tests/core/test_densify_pin_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — test_densify_pin_batch.cpp — thematic multi-TU batch
 - `tests/core/test_dep_graph_concurrent.cpp` (—) [domain_suite, theme_core] — test_dep_graph_concurrent.cpp — Issue #1376:
-- `tests/compiler/test_dep_graph_hybrid_cascade.cpp` (—) [domain_suite, theme_compiler] — DepGraph (hybrid cascade). Extended by Issue #2187 — block/instr
+- `tests/compiler/test_dep_graph_hybrid_cascade.cpp` (—) [large, domain_suite, theme_compiler] — DepGraph (hybrid cascade). Extended by Issue #2187 — block/instr
 - `tests/serve/test_depth_safe_mutation_boundary_steal.cpp` (—) [domain_suite, theme_serve] — AC1: Holding MutationBoundary (depth>0) fiber is never steal-safe
 - `tests/compiler/test_dirty_aware_shape_linear_passes.cpp` (—) [domain_suite, theme_compiler] — AC1: ShapeAwareFold with dirty mask only processes dirty blocks
 - `tests/compiler/test_dirty_cascade_optimize.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2063 — Dirty cascade subtree-skip (summary-dirty early-exit) test.
