@@ -2194,6 +2194,13 @@ add_dependencies(all_test_issue_targets test_macro_intro_restamp)
 aura_add_issue_test(test_macro_inner_expand_marker)
 aura_issue_test_link_light(test_macro_inner_expand_marker)
 add_dependencies(all_test_issue_targets test_macro_inner_expand_marker)
+# Issue #3152: query:evolution-audit-decision must surface additive
+# forensic-source enum (typed-trail-miss -> next-step guidance). Pure
+# loads only — no WAL scan, no mutate, single-handler additive change.
+# Parallel residual with #3149 last-se-reason (both in same handler).
+aura_add_issue_test(test_evolution_audit_decision_forensic)
+aura_issue_test_link_light(test_evolution_audit_decision_forensic)
+add_dependencies(all_test_issue_targets test_evolution_audit_decision_forensic)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
