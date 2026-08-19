@@ -11044,20 +11044,31 @@ private:
             // AC2: Off mode is soft — rebuild + no force.
             aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
                                                                       dep_name_to_slot_);
-            // Strict mode (AC1): force all callers dirty so next cascade
-            // picks up the freshly-mirrored edges.
+            // Issue #3165: Strict mode (production) must fail-closed force
+            // dirty of ALL callers in the graph (not just called_by of the
+            // current callee) so a concurrent partial peel that already
+            // decided based on pre-rebuild impact_ub is forced full. The
+            // residual was: parity fail can be observed on a *subset* of
+            // edges, and the previous code only walked called_by of the
+            // specific callee just added — callers of OTHER affected
+            // edges would still peel partial and miss the rebuilt edge.
+            // Walk all callers across dep_graph_ (set dedupes) under the
+            // same dep_graph_mtx_ exclusive window as the rebuild.
             if (aura::compiler::dirty::dual_dep_graph_strict_enabled()) {
-                // Strict: force all callers dirty so next cascade
-                // picks up the freshly-mirrored edges (AC1).
-                auto str_it = dep_graph_.find(callee);
-                if (str_it != dep_graph_.end()) {
-                    for (const auto& caller_name : str_it->second.called_by) {
-                        auto cit2 = ir_cache_v2_.find(caller_name);
-                        if (cit2 != ir_cache_v2_.end()) {
-                            cit2->second.dirty = true;
-                            cit2->second.mark_all_blocks_dirty();
-                            finish_cascade_soa_dirty_sync_(cit2->second);
-                        }
+                std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>
+                    affected;
+                for (const auto& [callee_name, callee_entry] : dep_graph_) {
+                    (void)callee_name;
+                    for (const auto& caller_name : callee_entry.called_by) {
+                        affected.insert(caller_name);
+                    }
+                }
+                for (const auto& caller_name : affected) {
+                    auto cit2 = ir_cache_v2_.find(caller_name);
+                    if (cit2 != ir_cache_v2_.end()) {
+                        cit2->second.dirty = true;
+                        cit2->second.mark_all_blocks_dirty();
+                        finish_cascade_soa_dirty_sync_(cit2->second);
                     }
                 }
             }
@@ -11148,6 +11159,31 @@ private:
                 aura::compiler::dirty::rebuild_node_dep_graph_from_string(
                     node_dep_graph_, dep_graph_, dep_name_to_slot_);
                 metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #3165: under Strict, fail-closed force dirty of
+                // ALL callers in the graph (same all-callers walk as the
+                // record_dependency parity-fail branch) so the deferred
+                // hybrid drain's freshly-restored edges force all affected
+                // callers full on the next relower (no stale partial IR).
+                // Soft / off (non-Strict): rebuild only, zero extra force.
+                if (aura::compiler::dirty::dual_dep_graph_strict_enabled()) {
+                    std::unordered_set<std::string, aura::core::TransparentStringHash,
+                                       std::equal_to<>>
+                        affected;
+                    for (const auto& [callee_name, callee_entry] : dep_graph_) {
+                        (void)callee_name;
+                        for (const auto& caller_name : callee_entry.called_by) {
+                            affected.insert(caller_name);
+                        }
+                    }
+                    for (const auto& caller_name : affected) {
+                        auto cit2 = ir_cache_v2_.find(caller_name);
+                        if (cit2 != ir_cache_v2_.end()) {
+                            cit2->second.dirty = true;
+                            cit2->second.mark_all_blocks_dirty();
+                            finish_cascade_soa_dirty_sync_(cit2->second);
+                        }
+                    }
+                }
             }
         }
     }

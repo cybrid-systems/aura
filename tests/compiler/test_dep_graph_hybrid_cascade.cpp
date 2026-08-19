@@ -450,6 +450,81 @@ static void ac3067_4_soak_and_linter() {
     CHECK(href(qcs, "hybrid-deferred-cascade-total") >= 0, "3067 AC4: total queryable");
 }
 
+// Issue #3165: dual DepGraph parity fail under Strict must fail-closed
+// force dirty of ALL callers in the graph (not just current callee's
+// called_by) so a concurrent partial peel that decided on pre-rebuild
+// impact_ub is forced full. Drain path also fails-closed under Strict.
+// Soft/Off: rebuild only, zero extra force (existing #2247 AC2).
+static void ac3165_strict_fail_closed_all_callers() {
+    std::println("\n--- AC #3165: dual parity Strict fail-closed (all callers) ---");
+    auto svc = read_file("src/compiler/service.ixx");
+
+    // Producer hook #1: record_dependency Strict branch walks all
+    // callers in dep_graph_ (set-deduped) under the same exclusive
+    // dep_graph_mtx_ window as the rebuild.
+    auto rd_pos =
+        svc.find("void record_dependency(const std::string& caller, const std::string& callee)");
+    if (rd_pos == std::string::npos)
+        rd_pos = svc.find("void record_dependency(");
+    CHECK(rd_pos != std::string::npos, "3165: record_dependency definition");
+    auto rd_end = svc.find("\n}\n", rd_pos);
+    if (rd_end == std::string::npos)
+        rd_end = rd_pos + 8000;
+    auto rd_win = svc.substr(rd_pos, rd_end - rd_pos);
+    CHECK(rd_win.find("Issue #3165") != std::string::npos,
+          "3165: record_dependency cite Issue #3165");
+    CHECK(rd_win.find("dual_dep_graph_strict_enabled") != std::string::npos,
+          "3165: record_dependency Strict gate");
+    CHECK(rd_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
+              std::string::npos,
+          "3165: record_dependency walks all callers in dep_graph_");
+
+    // Producer hook #2: drain_deferred_hybrid_cascade_ Strict branch
+    // also force-dirty ALL callers after rebuild.
+    auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
+    CHECK(drain_pos != std::string::npos, "3165: drain_deferred_hybrid_cascade_ present");
+    auto drain_end = svc.find("\n}\n", drain_pos);
+    if (drain_end == std::string::npos)
+        drain_end = drain_pos + 5000;
+    auto drain_win = svc.substr(drain_pos, drain_end - drain_pos);
+    CHECK(drain_win.find("Issue #3165") != std::string::npos, "3165: drain cite Issue #3165");
+    CHECK(drain_win.find("dual_dep_graph_strict_enabled") != std::string::npos,
+          "3165: drain Strict gate");
+    CHECK(drain_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
+              std::string::npos,
+          "3165: drain walks all callers in dep_graph_");
+
+    // Soft / Off zero-cost: Strict force-dirty must NOT be unconditional.
+    // The Strict branch is gated on dual_dep_graph_strict_enabled().
+    // Under Soft the force-dirty is skipped (existing #2247 AC2 contract).
+    CHECK(rd_win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+          "3165: record_dependency still calls rebuild before Strict force-dirty");
+    CHECK(drain_win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+          "3165: drain still calls rebuild before Strict force-dirty");
+
+    // AC3: existing #2247 dual_dep_graph_parity_* metrics non-regressing.
+    CHECK(rd_win.find("dual_dep_graph_parity_fail_total") != std::string::npos,
+          "3165: existing parity_fail counter reused (no new metric key)");
+    CHECK(drain_win.find("dual_dep_graph_parity_fail_total") != std::string::npos,
+          "3165: drain parity_fail counter reused (no new metric key)");
+
+    // AC4: no test_issue_3165.cpp (#81967); no docs/design/3165-* (#1655).
+    auto root = std::filesystem::current_path();
+    CHECK(!std::filesystem::exists(root / "tests" / "issues" / "test_issue_3165.cpp"),
+          "3165: tests/issues/test_issue_3165.cpp absent (#81967)");
+    CHECK(!std::filesystem::exists(root / "tests" / "compiler" / "test_issue_3165.cpp"),
+          "3165: tests/compiler/test_issue_3165.cpp absent (#81967)");
+    auto design = root / "docs" / "design";
+    if (std::filesystem::exists(design)) {
+        for (const auto& f : std::filesystem::directory_iterator(design)) {
+            auto name = f.path().filename().string();
+            CHECK(name.find("3165-") == std::string::npos,
+                  "3165: no docs/design/3165-* plan doc (#1655)");
+            break;
+        }
+    }
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -467,6 +542,7 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3067_2_production_consistent();
     ac3067_3_clean_path_zero_extra();
     ac3067_4_soak_and_linter();
+    ac3165_strict_fail_closed_all_callers();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
