@@ -2226,6 +2226,17 @@ add_dependencies(all_test_issue_targets test_pre_scan_quote_boundary)
 aura_add_issue_test(test_compact_nodes_provenance_schema_remap)
 aura_issue_test_link_light(test_compact_nodes_provenance_schema_remap)
 add_dependencies(all_test_issue_targets test_compact_nodes_provenance_schema_remap)
+# Issue #3156: close value-only dual-track under production required
+# (residual #3017 / #3093). `maybe_note_allocate_intermediate_` and
+# `note_intermediate_create_with_cover_` both-null branch now fail-closed
+# under required_active — inventory into intermediate_creates_ (pre-densify
+# scan) + bump new g_intermediate_create_uncovered_under_required_total,
+# NOT value_only_total. Soft / Off / render-hotpath single-load zero-cost
+# contract preserved. No LifetimePin SSOT change. Lives in tests/core/
+# per #81934/#81967.
+aura_add_issue_test(test_arena_required_cover_no_value_only)
+aura_issue_test_link_light(test_arena_required_cover_no_value_only)
+add_dependencies(all_test_issue_targets test_arena_required_cover_no_value_only)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
