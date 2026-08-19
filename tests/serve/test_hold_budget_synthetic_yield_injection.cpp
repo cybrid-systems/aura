@@ -194,8 +194,222 @@ int run_test_hold_budget_synthetic_yield_injection() {
     return g_failed == 0 ? 0 : 1;
 }
 
+// @category: unit
+// @reason: Issue #3160 — hold-budget inbody window: after synthetic yield
+// inject (from #3133), escalate force_degrade if live outermost holder
+// is still held past 2× inbody bound (post-#3133 residual). #3133 closed
+// the synthetic inject side but it is set-and-forget: if the body never
+// reaches a cooperative edge (check_gc_safepoint / yield / Phase-5),
+// lock + depth stay held past any multiple of the hold SLO. #3160 closes
+// the residual by auditing the existing escalation path under the
+// 2× bound contract + adding regression-guard source-cite for the
+// one-shot force_degrade + re-inject-on-later-exceeds pattern.
+//
+//   AC6: aura_hold_budget_poll_inbody_window escalates after elapsed >
+//        bound_us where bound_us = mutation_hold_inbody_window_bound_us()
+//        (default 2× hold SLO per #3071).
+//   AC7: escalate is one-shot per arm via
+//        g_hold_budget_cancel_escalated.exchange(1, ...) == 0.
+//   AC8: first escalate calls aura_evaluator_force_degrade_outermost_holder
+//        which does request_cancel() + mark_outermost_mutation_failed()
+//        (next edge cannot commit success).
+//   AC9: later exceeds re-inject synthetic yield via
+//        f->inject_synthetic_mutation_boundary_yield() (keeps inject
+//        persistent until next cooperative edge).
+//   AC10: mutation_hold_inbody_window_bound_us() returns slo * 2ULL
+//         (default 2× hold SLO per #3071).
+//   AC11: Soft / sandbox=off path: metric-only, no flag set
+//         (mutation_hold_budget_reject_enabled() gate preserved).
+//   AC12: no preemptive unlock of workspace_mtx_ while body is live
+//         (#3035 dual-topology contract preserved).
+//   AC13: no new middle-of-metrics counter introduced (uses existing
+//         g_mutation_hold_budget_inbody_window_exceeded_total +
+//         g_mutation_hold_budget_forced_fail_closed_total).
+//   AC14: extends existing test_hold_budget_synthetic_yield_injection
+//         suite (#81967); no tests/issues/test_issue_3160.cpp.
+//   AC15: source-cite + coverage linter; no docs/design/3160-* per #1655.
+
+namespace {
+using aura::test::g_failed_3160 = g_failed;
+using aura::test::g_passed_3160 = g_passed;
+} // namespace
+
+int run_test_hold_budget_inbody_escalate() {
+    std::println("=== Issue #3160: hold-budget inbody window escalate after 2× bound ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // ── AC6: 2× bound threshold ──
+    {
+        std::println("\n--- AC6: poll escalates after elapsed > bound_us (2× SLO default) ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        CHECK(!fc.empty(), "AC6: fiber.cpp readable");
+        CHECK(!mhb.empty(), "AC6: mutation_hold_budget.h readable");
+
+        // Poll uses mutation_hold_inbody_window_bound_us() as the threshold.
+        CHECK(fc.find("const auto bound_us = mutation_hold_inbody_window_bound_us();") !=
+                  std::string::npos,
+              "AC6: poll reads bound from mutation_hold_inbody_window_bound_us()");
+        CHECK(fc.find("if (elapsed_us <= bound_us)") != std::string::npos,
+              "AC6: poll escalates when elapsed > bound_us (2× SLO default per #3071)");
+
+        // bound_us function returns slo * 2ULL (default 2× hold SLO).
+        CHECK(mhb.find("return slo * 2ULL;") != std::string::npos,
+              "AC6: bound default = slo * 2ULL (2× hold SLO)");
+    }
+
+    // ── AC7: escalate is one-shot per arm ──
+    {
+        std::println("\n--- AC7: escalate is one-shot via exchange(1) ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        CHECK(poll_pos != std::string::npos, "AC7: poll present");
+        auto poll_end = poll_pos + 6000;
+        auto poll_win = fc.substr(poll_pos, poll_end - poll_pos);
+
+        // exchange(1, std::memory_order_acq_rel) == 0 → first escalate only.
+        CHECK(poll_win.find(
+                  "g_hold_budget_cancel_escalated.exchange(1, std::memory_order_acq_rel)") !=
+                  std::string::npos,
+              "AC7: escalate is one-shot via exchange(1, acq_rel) == 0 "
+              "(holder-degrade totals stay one-shot per window)");
+    }
+
+    // ── AC8: first escalate calls force_degrade_outermost_holder ──
+    {
+        std::println("\n--- AC8: first escalate calls force_degrade_outermost_holder ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto efl = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        auto poll_end = poll_pos + 6000;
+        auto poll_win = fc.substr(poll_pos, poll_end - poll_pos);
+
+        // First escalate: aura_evaluator_force_degrade_outermost_holder(fid).
+        CHECK(poll_win.find("aura_evaluator_force_degrade_outermost_holder(fid)") !=
+                  std::string::npos,
+              "AC8: first escalate calls force_degrade_outermost_holder(fid)");
+
+        // force_degrade_outermost_holder does request_cancel + mark_outermost_mutation_failed
+        // (next edge cannot commit success).
+        CHECK(efl.find("aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id)") !=
+                  std::string::npos,
+              "AC8: force_degrade_outermost_holder defined");
+        auto efl_pos =
+            efl.find("aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id)");
+        auto efl_end = efl_pos + 4000;
+        auto efl_win = efl.substr(efl_pos, efl_end - efl_pos);
+        CHECK(efl_win.find("request_cancel()") != std::string::npos,
+              "AC8: force_degrade calls request_cancel() on the holder fiber");
+        CHECK(efl_win.find("mark_outermost_mutation_failed()") != std::string::npos,
+              "AC8: force_degrade calls mark_outermost_mutation_failed() "
+              "(next commit cannot succeed)");
+    }
+
+    // ── AC9: later exceeds re-inject synthetic yield (keeps inject persistent) ──
+    {
+        std::println("\n--- AC9: later exceeds re-inject synthetic yield ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        auto poll_end = poll_pos + 6000;
+        auto poll_win = fc.substr(poll_pos, poll_end - poll_pos);
+
+        // else branch (escalated already 1) → inject_synthetic_mutation_boundary_yield().
+        CHECK(poll_win.find("f->inject_synthetic_mutation_boundary_yield();") != std::string::npos,
+              "AC9: later exceeds re-inject synthetic yield (keeps inject persistent "
+              "until next cooperative edge)");
+
+        // Issue #3133 cite in the poll.
+        CHECK(poll_win.find("Issue #3133") != std::string::npos,
+              "AC9: poll cites #3133 (synthetic yield inject source)");
+    }
+
+    // ── AC11: Soft / sandbox=off metric-only ──
+    {
+        std::println("\n--- AC11: Soft / sandbox=off metric-only ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        auto poll_end = poll_pos + 6000;
+        auto poll_win = fc.substr(poll_pos, poll_end - poll_pos);
+
+        // Soft gate via mutation_hold_budget_reject_enabled() — returns 0 if Soft.
+        CHECK(poll_win.find("if (!mutation_hold_budget_reject_enabled())") != std::string::npos,
+              "AC11: Soft gate via reject_enabled()");
+        CHECK(poll_win.find("return 0; // Soft / sandbox=off") != std::string::npos,
+              "AC11: Soft returns 0 (metric-only, no escalate / no force_degrade)");
+    }
+
+    // ── AC12: no preemptive workspace_mtx_ unlock while body is live ──
+    {
+        std::println("\n--- AC12: no preemptive workspace_mtx_ unlock while body is live ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        auto poll_end = poll_pos + 6000;
+        auto poll_win = fc.substr(poll_pos, poll_end - poll_pos);
+
+        // poll does NOT call any workspace_mtx_ unlock path.
+        CHECK(poll_win.find("workspace_mtx_") == std::string::npos,
+              "AC12: poll does NOT touch workspace_mtx_ (#3035 dual-topology contract preserved — "
+              "no preemptive unlock while body is live)");
+        CHECK(poll_win.find("unlock") == std::string::npos,
+              "AC12: poll does NOT call unlock on any mutex "
+              "(topology stays consistent until cooperative edge)");
+    }
+
+    // ── AC13: no new middle-of-metrics counter ──
+    {
+        std::println("\n--- AC13: no new middle-of-metrics counter (use existing) ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        // No g_3160_* atomic counter introduced (issue AC4: reuse existing).
+        CHECK(fc.find("g_3160_") == std::string::npos,
+              "AC13: no g_3160_* atomic counter in fiber.cpp (use existing "
+              "g_mutation_hold_budget_inbody_window_exceeded_total)");
+        CHECK(mhb.find("g_3160_") == std::string::npos,
+              "AC13: no g_3160_* atomic counter in mutation_hold_budget.h");
+
+        // Existing counters still present and used.
+        CHECK(mhb.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+              "AC13: existing #3035 forced_fail_closed_total preserved");
+        CHECK(mhb.find("g_mutation_hold_budget_inbody_window_exceeded_total") != std::string::npos,
+              "AC13: existing #3071 inbody_window_exceeded_total preserved");
+        CHECK(mhb.find("g_hold_budget_cancel_escalated") != std::string::npos,
+              "AC13: existing #3071 cancel_escalated flag preserved");
+    }
+
+    // ── AC14: extends existing test suite (#81967); no test_issue_3160.cpp ──
+    {
+        std::println(
+            "\n--- AC14: extends existing test suite (#81967); no test_issue_3160.cpp ---");
+        auto root = std::filesystem::current_path();
+        CHECK(!std::filesystem::exists(root / "tests" / "issues" / "test_issue_3160.cpp"),
+              "AC14: tests/issues/test_issue_3160.cpp absent (#81967)");
+        // Extends existing test_hold_budget_synthetic_yield_injection suite.
+        auto this_test = read_file("tests/serve/test_hold_budget_synthetic_yield_injection.cpp");
+        CHECK(!this_test.empty(), "AC14: existing test suite readable");
+        CHECK(this_test.find("run_test_hold_budget_inbody_escalate") != std::string::npos,
+              "AC14: this test extends existing test_hold_budget_synthetic_yield_injection.cpp "
+              "(run_test_hold_budget_inbody_escalate added)");
+    }
+
+    // ── AC15: no docs/design/3160-* (per #1655) ──
+    {
+        std::println("\n--- AC15: no docs/design/3160-* (per #1655) ---");
+        const auto design = read_file("docs/design/3160-hold-budget-inbody-escalate.md");
+        CHECK(design.empty(), "AC15: no docs/design/3160-* plan doc (per #1655 aura 哲学)");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3160 hold-budget inbody escalate: {} passed, {} failed ===", passed,
+                 failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
-    return run_test_hold_budget_synthetic_yield_injection();
+    const int rc1 = run_test_hold_budget_synthetic_yield_injection();
+    const int rc2 = run_test_hold_budget_inbody_escalate();
+    return rc1 != 0 ? rc1 : rc2;
 }
 #endif
