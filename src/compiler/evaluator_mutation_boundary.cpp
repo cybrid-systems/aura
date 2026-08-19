@@ -348,6 +348,16 @@ void Evaluator::enter_mutation_boundary() {
     // the abort path can truncate the post-apply cone (rewind) and re-add
     // coerced nodes (force-dirty). Quiet (no abort) → unused.
     cp.coercion_cone_size_at_entry = aura::compiler::dirty::last_type_cone_ast().size();
+    // Issue #3158: AC1 — capture occurrence_goals_ size at boundary enter
+    // so the abort path can truncate the post-boundary goals back to the
+    // entry authority under production/Full (avoids residual narrowing
+    // goals poisoning the next delta's priority + fingerprint + stamp
+    // face after a failed high-freq mutate). Soft / Quiet / no
+    // TypeChecker: 0 baseline; abort path bumps observe counter only,
+    // no structural write. Cheap: single handle acquire + size read.
+    if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle())) {
+        cp.occurrence_entry_size = tc->constraint_system().occurrence_goals_size();
+    }
     active_mutation_stack().push_back(std::move(cp));
     // Issue #3102: AC2 — open the per-boundary TLS tracker so apply_coercion_map
     // pushes nodes that the abort path can consume + force-dirty. depth>0
@@ -594,12 +604,30 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
             // AC4: clear coercion commit_readiness on abort (sibling of proof clear).
             typed_audit::clear_coercion_commit_readiness_on_abort();
+            // Issue #3158: AC2 — abort restore-or-clear (production/Full).
+            // Truncates live occurrence_goals_ back to boundary-entry size
+            // so residual narrowing goals added during the failed boundary
+            // don't poison the next delta's priority + fingerprint + stamp
+            // face. Runs AFTER dual-topology restore + proof + coercion
+            // clear, BEFORE any post-abort IR/JIT lookup that could elide
+            // on the stamped face. Soft path bumps observe counter only
+            // (no structural write) — see else branch.
+            if (auto* tc =
+                    static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle())) {
+                const auto dropped = tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                    cp.occurrence_entry_size);
+                aura::compiler::typed_audit::note_3158_occurrence_abort_restore(dropped);
+            }
             aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
         } else {
             aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
                 1, std::memory_order_relaxed);
             (void)aura::compiler::coerced_nodes_tracker_take(); // discard
+            // Issue #3158: Soft / Off path — observe counter only, no
+            // structural write. Per AC3 zero-cost contract: Soft bumps
+            // observe_total without entering the restore_or_clear_ path.
+            aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
         }
         // Issue #3116: last_coercions_ + TLS active context (half-green residual).
         dual_clear_coercion_state_on_abort();
@@ -1265,12 +1293,26 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 }
                                 aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
                                 typed_audit::clear_coercion_commit_readiness_on_abort();
+                                // Issue #3158: AC2 — abort restore-or-clear (production/Full).
+                                // See first abort site for full rationale. Sibling
+                                // of the coercion rewind — runs AFTER dual-topology +
+                                // proof + coercion clear, BEFORE post-abort lookup.
+                                if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                                        commit_type_checker_handle())) {
+                                    const auto dropped = tc->constraint_system()
+                                                             .restore_or_clear_occurrence_to_entry(
+                                                                 cp.occurrence_entry_size);
+                                    aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
+                                        dropped);
+                                }
                                 aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             } else {
                                 aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
                                     1, std::memory_order_relaxed);
                                 (void)aura::compiler::coerced_nodes_tracker_take();
+                                // Issue #3158: Soft / Off path — observe counter only.
+                                aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
                             }
                             // Issue #3116: last_coercions_ + TLS active context.
                             dual_clear_coercion_state_on_abort();
@@ -1380,12 +1422,25 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         }
                         aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
                         typed_audit::clear_coercion_commit_readiness_on_abort();
+                        // Issue #3158: AC2 — abort restore-or-clear (production/Full).
+                        // See first abort site for full rationale. Third
+                        // twin-site sibling of the coercion rewind.
+                        if (auto* tc = static_cast<aura::compiler::TypeChecker*>(
+                                commit_type_checker_handle())) {
+                            const auto dropped =
+                                tc->constraint_system().restore_or_clear_occurrence_to_entry(
+                                    cp.occurrence_entry_size);
+                            aura::compiler::typed_audit::note_3158_occurrence_abort_restore(
+                                dropped);
+                        }
                         aura::compiler::g_coercion_map_abort_rewind_total.fetch_add(
                             1, std::memory_order_relaxed);
                     } else {
                         aura::compiler::g_coercion_map_abort_rewind_observe_total.fetch_add(
                             1, std::memory_order_relaxed);
                         (void)aura::compiler::coerced_nodes_tracker_take();
+                        // Issue #3158: Soft / Off path — observe counter only.
+                        aura::compiler::typed_audit::note_3158_occurrence_abort_observe();
                     }
                     // Issue #3116: last_coercions_ + TLS active context.
                     dual_clear_coercion_state_on_abort();

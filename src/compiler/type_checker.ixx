@@ -1074,6 +1074,30 @@ public:
     [[nodiscard]] const std::vector<OccurrenceGoal>& occurrence_goals_for_test() const noexcept {
         return occurrence_goals_;
     }
+    // Issue #3158: AC2 — abort restore-or-clear. Truncates live
+    // occurrence_goals_ back to the boundary-entry size so residual
+    // narrowing goals added during the failed boundary do not poison
+    // the next delta's priority + fingerprint + stamp face. Reuses
+    // the live table (no parallel goal table per issue non-goals).
+    // If the live table is smaller than the entry baseline (already
+    // pruned mid-boundary by steal / densify), no structural write —
+    // the smaller live table is the post-prune authority and we let
+    // the existing prune_occurrence_goals contract own it. Returns
+    // the number of goals dropped (0 if no-op or underflow).
+    //
+    // Call site: MutationBoundaryGuard abort path (production/Full
+    // only), AFTER clear_type_linear_commit_proof_on_abort +
+    // clear_coercion_commit_readiness_on_abort, BEFORE any post-abort
+    // IR/JIT lookup that could elide on a stale stamp face.
+    [[nodiscard]] std::size_t
+    restore_or_clear_occurrence_to_entry(std::size_t entry_size) noexcept {
+        const auto live = occurrence_goals_.size();
+        if (live <= entry_size)
+            return 0; // no-op: underflow (already pruned) or exact match
+        const auto dropped = live - entry_size;
+        occurrence_goals_.resize(entry_size);
+        return dropped;
+    }
 
     // Issue #2644: batch-level TypeVar refined consistency (anti SOLVED-but-drift).
     // Groups occurrence_goals_ by UF rep and checks pairwise consistent_unify

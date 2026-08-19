@@ -2249,6 +2249,18 @@ add_dependencies(all_test_issue_targets test_arena_required_cover_no_value_only)
 aura_add_issue_test(test_macro_clone_target_atomicity)
 aura_issue_test_link_light(test_macro_clone_target_atomicity)
 add_dependencies(all_test_issue_targets test_macro_clone_target_atomicity)
+# Issue #3158: abort must restore or clear CS occurrence_goals_ to entry
+# authority under production/Full. Captures occurrence_entry_size at
+# boundary enter + truncates occurrence_goals_ back to that size on
+# abort (after dual-topology restore + proof + coercion clear, before
+# any post-abort IR/JIT lookup). Soft / Off bumps observe counter only
+# (zero-cost contract preserved). Closes residual half-green after
+# failed high-freq mutate — non-duplicative of #3030 / #3102 / #2910
+# / #2608 / #3082 (those close proof, coercion, persist, nested discard).
+# Lives in tests/compiler/ per #81934/#81967.
+aura_add_issue_test(test_occurrence_abort_restore)
+aura_issue_test_link_light(test_occurrence_abort_restore)
+add_dependencies(all_test_issue_targets test_occurrence_abort_restore)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
