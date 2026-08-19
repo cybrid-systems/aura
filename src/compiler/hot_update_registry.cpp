@@ -1467,6 +1467,17 @@ bool HotUpdateRegistry::storm_exit_force_full_active() noexcept {
             // set, zero work otherwise.
             aura_clear_partial_relower_threshold_force();
         }
+    } else if (now != 0 && prev == 0) {
+        // Issue #3163: storm entry edge (None → non-None) refreshes the
+        // hysteresis window so alternating Shape↔Global storms get a full
+        // hysteresis on each exit instead of short-oscillating between a
+        // decremented counter and a new storm entry. Without this refresh,
+        // Shape exits, counter decrements over a few consults, a Global
+        // storm enters, Global exits → counter might already be at 0 → no
+        // hysteresis applied → decision flips partial↔full on consecutive
+        // mutates despite each individual gate being correct.
+        storm_exit_force_full_remaining_.store(kStormExitForceFullConsults,
+                                               std::memory_order_release);
     }
     if (now != 0)
         return false;
