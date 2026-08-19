@@ -8728,6 +8728,30 @@ def cmd_pcv_flatast_locked_exclusive_2906():
     return cmd_pcv_flatast_locked_exclusive_2906_coverage()
 
 
+def cmd_pcv_span_stale_coverage_3167():
+    """Issue #3167: SafePCVSpan stale-across-guard fingerprint + force_refresh.
+
+    Wire-up: SafePCVSpan 6-arg ctor captures (node_id, generation,
+    wrap_epoch, node_gen) at children_safe_view time. FlatAST::
+    force_refresh_pcv_span bumps pcv_span_stale_across_guard_total +
+    re-pins via children_safe_view on stale; happy path returns original
+    span (AC2 zero extra). Production contract; Soft/Off unchanged.
+    #2906 (flatast-locked-move-out) MUST NOT regress — fingerprint is
+    observation-only, additive counter only.
+    """
+    print(f"{B}=== pcv span stale coverage (#3167) ==={N}")
+    script = COVERAGE_CHECKS / "check_pcv_span_stale_coverage_3167.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pcv span stale (#3167) coverage contract rows failed")
+        return 1
+    ok("pcv span stale (#3167) coverage clean")
+    return 0
+
+
 def cmd_batch_dirty_cascade_coverage():
     """Issue #2522: batch dirty cascade (mark_blocks_dirty + single bump).
 
@@ -17262,6 +17286,8 @@ def main():
         "outermost-exit-residual-pin-2975-coverage": cmd_outermost_exit_residual_pin_2975_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
+        "pcv-span-stale-coverage-3167": cmd_pcv_span_stale_coverage_3167,
+        "pcv-span-stale-3167": cmd_pcv_span_stale_coverage_3167,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,

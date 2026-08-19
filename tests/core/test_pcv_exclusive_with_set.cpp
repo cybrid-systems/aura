@@ -298,6 +298,11 @@ int run_test_pcv_exclusive_with_set() {
               "AC4: no new test file per #81967");
     }
 
+    std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard fingerprint ===");
+    ac3167_1_production_stale_refresh();
+    ac3167_2_happy_path_zero_extra();
+    ac3167_4_additive_counter_only();
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -307,3 +312,97 @@ int main() {
     return run_test_pcv_exclusive_with_set();
 }
 #endif
+
+// ── Issue #3167 ACs ──
+// SafePCVSpan / children_safe_view must not remain live across a
+// successful MutationBoundaryGuard without pin or forced re-query (I2
+// residual). Children of a mutated node change at the COW boundary; stale
+// spans reading pre-mutate values would be a correctness bug. Production
+// contract: stale → bump pcv_span_stale_across_guard_total + force refresh
+// via children_safe_view; Soft/Off: unchanged (COW frozen view).
+static void ac3167_1_production_stale_refresh() {
+    std::println("\n--- #3167 AC1: Production — stale span → forced refresh + counter bumped ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10) (define other 20)\")").has_value(),
+          "3167 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3167 AC1: workspace");
+    auto* flat = static_cast<aura::ast::FlatAST*>(ws);
+    const auto root = static_cast<aura::ast::NodeId>(0);
+    const auto stale_before = flat->pcv_span_stale_across_guard_total();
+    // 1. Fresh capture has fingerprint, is_stale == false.
+    auto fresh = flat->children_safe_view(root);
+    CHECK(fresh.has_fingerprint(), "3167 AC1: 6-arg span has fingerprint");
+    const auto pre_gen = fresh.captured_generation();
+    const auto pre_wrap = fresh.captured_wrap_epoch();
+    const auto pre_node_gen = fresh.captured_node_gen();
+    const auto post_gen = static_cast<std::uint64_t>(flat->generation());
+    const auto post_wrap = flat->wrap_epoch();
+    CHECK(!fresh.is_stale(post_gen, post_wrap, pre_node_gen), "3167 AC1: fresh span not stale");
+    // 2. Structural mutation advances generation + wrap_epoch + node_gen.
+    const auto extra = flat->add_literal(42);
+    flat->insert_child(root, 0, extra);
+    auto after = flat->children_safe_view(root);
+    const auto after_node_gen = after.captured_node_gen();
+    // 3. Pre-mutate fingerprint vs post-mutate live state → stale.
+    CHECK(fresh.is_stale(static_cast<std::uint64_t>(flat->generation()), flat->wrap_epoch(),
+                         after_node_gen),
+          "3167 AC1: pre-mutate span stale vs post-mutate state");
+    // 4. Force refresh on a captured (now-stale) span → bumps counter.
+    flat->force_refresh_pcv_span(fresh, root);
+    const auto stale_after = flat->pcv_span_stale_across_guard_total();
+    CHECK(stale_after > stale_before, "3167 AC1: pcv_span_stale_across_guard_total bumped");
+    // 5. Refreshed span points at the post-mutate children (size grew).
+    auto refreshed = flat->force_refresh_pcv_span(after, root);
+    CHECK(refreshed.size() >= fresh.size(),
+          "3167 AC1: refreshed span reflects post-mutate children");
+    (void)pre_gen;
+    (void)pre_wrap;
+    apply_dev_audit_defaults();
+}
+
+static void ac3167_2_happy_path_zero_extra() {
+    std::println(
+        "\n--- #3167 AC2: Happy path — no mutation between capture+refresh → zero extra ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "3167 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3167 AC2: workspace");
+    auto* flat = static_cast<aura::ast::FlatAST*>(ws);
+    const auto root = static_cast<aura::ast::NodeId>(0);
+    const auto before = flat->pcv_span_stale_across_guard_total();
+    auto span = flat->children_safe_view(root);
+    const auto refreshed = flat->force_refresh_pcv_span(span, root);
+    CHECK(refreshed.has_fingerprint(), "3167 AC2: refreshed has fingerprint");
+    const auto after = flat->pcv_span_stale_across_guard_total();
+    CHECK(after == before, "3167 AC2: counter unchanged on happy path");
+}
+
+static void ac3167_4_additive_counter_only() {
+    std::println(
+        "\n--- #3167 AC4: Additive only — pcv_pin_count + pcv_columnar_hit_rate_bp intact ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "3167 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC4: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3167 AC4: workspace");
+    auto* flat = static_cast<aura::ast::FlatAST*>(ws);
+    const auto root = static_cast<aura::ast::NodeId>(0);
+    const auto pins_before = flat->pcv_pin_count();
+    const auto hit_rate_before = flat->pcv_columnar_hit_rate_bp();
+    // Multiple captures and refreshes.
+    for (int i = 0; i < 4; ++i) {
+        auto s = flat->children_safe_view(root);
+        flat->force_refresh_pcv_span(s, root);
+    }
+    const auto pins_after = flat->pcv_pin_count();
+    const auto hit_rate_after = flat->pcv_columnar_hit_rate_bp();
+    CHECK(pins_after > pins_before, "3167 AC4: pcv_pin_count incremented (captures)");
+    CHECK(hit_rate_after == hit_rate_before || hit_rate_after > 0,
+          "3167 AC4: pcv_columnar_hit_rate_bp surfaces");
+}

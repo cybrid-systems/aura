@@ -117,6 +117,14 @@ struct PcvHotpathMetrics {
     // wrong offsets corrupt neighboring heap, e.g. IR cache string keys).
     std::atomic<std::uint64_t> flatast_locked_move_out_exclusive_total{0};
     std::atomic<std::uint64_t> flatast_locked_move_out_cow_total{0};
+    // Issue #3167: SafePCVSpan held across a successful structural Guard
+    // whose mutation cone contains the span's owner node. Bumped by
+    // FlatAST::force_refresh_pcv_span() when the captured fingerprint
+    // (node_id + generation + wrap_epoch + node_gen) no longer matches
+    // the live FlatAST state — production default contract: force
+    // refresh on next use or surface stale marker; Soft/Off skips bump
+    // (AC2 happy path keeps zero extra work).
+    std::atomic<std::uint64_t> pcv_span_stale_across_guard_total{0};
 };
 inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
     static PcvHotpathMetrics m;
@@ -135,6 +143,7 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
     m.with_set_cow_total.store(0, std::memory_order_relaxed);
     m.flatast_locked_move_out_exclusive_total.store(0, std::memory_order_relaxed);
     m.flatast_locked_move_out_cow_total.store(0, std::memory_order_relaxed);
+    m.pcv_span_stale_across_guard_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_hit_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_miss_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_recycle_total.store(0, std::memory_order_relaxed);
@@ -149,6 +158,15 @@ inline constexpr int kPcvFlatastLockedExclusiveIssue = 2906;
 // Issue #2521: production default ON (mirror Moving compact / HighMutation).
 inline constexpr int kPcvTlsScratchIssue = 2406;
 inline constexpr int kPcvTlsDefaultOnIssue = 2521;
+// Issue #3167: SafePCVSpan fingerprint (node_id + generation + wrap_epoch
+// + node_gen) captured at children_safe time, checked on force_refresh
+// after a structural Guard exits. AC1 production / AC2 happy path / AC3
+// non-regression / AC4 additive counter only.
+inline constexpr int kPcvSpanStaleAcrossGuardIssue = 3167;
+// Sentinel for an un-captured SafePCVSpan (default-constructed or empty
+// children_safe). captured_node_id() == kPcvSpanNoOwner means callers must
+// not call is_stale / force_refresh on this handle (use_count()==0).
+inline constexpr std::uint32_t kPcvSpanNoOwner = std::numeric_limits<std::uint32_t>::max();
 
 // Issue #2406 / #2521: TLS freelist for exclusive short-lived PCV allocs.
 // Production default ON (AC1). Override:
@@ -787,10 +805,31 @@ public:
     using const_iterator = const T*;
 
     SafePCVSpan() noexcept = default;
+    // Issue #370 / #2036: legacy 2-arg ctor (no fingerprint). is_stale() on
+    // such a span returns false (no captured_node_id_); callers that need
+    // stale detection must use the 6-arg ctor below.
     SafePCVSpan(std::span<const T> sp,
                 std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep)
         : span_(sp)
         , keep_(std::move(keep)) {}
+
+    // Issue #3167: 6-arg ctor captures FlatAST (node_id, generation,
+    // wrap_epoch, node_gen) at the moment of children_safe_view. After a
+    // successful structural Guard mutates the owner node, the captured
+    // fingerprint no longer matches the live FlatAST state and is_stale()
+    // returns true; callers can then call FlatAST::force_refresh_pcv_span()
+    // to re-pin (production contract — Soft/Off keeps COW frozen view, AC1
+    // AC2 AC3 AC4 / #3167 I2 residual).
+    SafePCVSpan(std::span<const T> sp,
+                std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep,
+                std::uint32_t node_id, std::uint64_t generation, std::uint32_t wrap_epoch,
+                std::uint16_t node_gen) noexcept
+        : span_(sp)
+        , keep_(std::move(keep))
+        , captured_node_id_(node_id)
+        , captured_generation_(generation)
+        , captured_wrap_epoch_(wrap_epoch)
+        , captured_node_gen_(node_gen) {}
 
     [[nodiscard]] std::span<const T> span() const noexcept { return span_; }
     [[nodiscard]] size_type size() const noexcept { return span_.size(); }
@@ -813,9 +852,42 @@ public:
     // leak (held across many calls would accumulate).
     [[nodiscard]] long use_count() const noexcept { return keep_.use_count(); }
 
+    // Issue #3167: stale-across-guard fingerprint accessors.
+    [[nodiscard]] std::uint32_t captured_node_id() const noexcept { return captured_node_id_; }
+    [[nodiscard]] std::uint64_t captured_generation() const noexcept {
+        return captured_generation_;
+    }
+    [[nodiscard]] std::uint32_t captured_wrap_epoch() const noexcept {
+        return captured_wrap_epoch_;
+    }
+    [[nodiscard]] std::uint16_t captured_node_gen() const noexcept { return captured_node_gen_; }
+    [[nodiscard]] bool has_fingerprint() const noexcept {
+        return captured_node_id_ != kPcvSpanNoOwner;
+    }
+
+    // Issue #3167: stale check. Returns true iff this span was captured at
+    // a different (generation, wrap_epoch, node_gen) than current AND has
+    // a captured_node_id_ (legacy 2-arg ctor → always false). Default-
+    // constructed (no owner) also returns false. Callers should compare
+    // against FlatAST::generation() / wrap_epoch() / node_gen_for(id).
+    [[nodiscard]] bool is_stale(std::uint64_t current_generation, std::uint32_t current_wrap_epoch,
+                                std::uint16_t current_node_gen) const noexcept {
+        if (captured_node_id_ == kPcvSpanNoOwner)
+            return false;
+        return captured_generation_ != current_generation ||
+               captured_wrap_epoch_ != current_wrap_epoch || captured_node_gen_ != current_node_gen;
+    }
+
 private:
     std::span<const T> span_;
     std::shared_ptr<const typename PersistentChildVector<T>::Storage> keep_;
+    // Issue #3167: stale-across-guard fingerprint. captured_node_id_ ==
+    // kPcvSpanNoOwner means legacy / default-constructed (no observation
+    // possible; is_stale() short-circuits to false).
+    std::uint32_t captured_node_id_ = kPcvSpanNoOwner;
+    std::uint64_t captured_generation_ = 0;
+    std::uint32_t captured_wrap_epoch_ = 0;
+    std::uint16_t captured_node_gen_ = 0;
 };
 
 // Issue #1520 / #1624: compile-time SoAColumnar / SoAColumnarFull shape
@@ -859,6 +931,26 @@ static_assert(detail::safe_pcv_child_columnar_shape<SafePCVSpan<std::uint32_t>>(
               "Issue #2614: SafePCVSpan must satisfy ChildColumnar shape (begin/end)");
 static_assert(detail::safe_pcv_child_columnar_shape<PersistentChildVector<std::uint32_t>>(),
               "Issue #2614: PersistentChildVector must satisfy ChildColumnar shape");
+// Issue #3167: SafePCVSpan must expose the stale-across-guard fingerprint
+// shape (captured_node_id / captured_generation / captured_wrap_epoch /
+// captured_node_gen + has_fingerprint + is_stale) for FlatAST::force_refresh
+// _pcv_span wiring. AC1 AC2 AC4 / I2 residual.
+namespace detail {
+    template <typename C> constexpr bool safe_pcv_fingerprint_shape() {
+        return requires(const C& c) {
+            { c.captured_node_id() } -> std::convertible_to<std::uint32_t>;
+            { c.captured_generation() } -> std::convertible_to<std::uint64_t>;
+            { c.captured_wrap_epoch() } -> std::convertible_to<std::uint32_t>;
+            { c.captured_node_gen() } -> std::convertible_to<std::uint16_t>;
+            { c.has_fingerprint() } -> std::convertible_to<bool>;
+            {
+                c.is_stale(std::uint64_t{}, std::uint32_t{}, std::uint16_t{})
+            } -> std::convertible_to<bool>;
+        };
+    }
+} // namespace detail
+static_assert(detail::safe_pcv_fingerprint_shape<SafePCVSpan<std::uint32_t>>(),
+              "Issue #3167: SafePCVSpan must expose fingerprint + is_stale");
 
 } // namespace aura::ast
 

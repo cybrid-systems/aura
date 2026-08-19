@@ -2031,6 +2031,70 @@ int main() {
     ac3166_3_outermost_zero_regression();
     ac3166_4_nested_abort_outermost_no_double();
     ac3166_5_source_and_linter();
+    std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard (I2 residual) ===");
+    ac3167_3_2906_non_regression();
+    ac3167_6_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
+}
+
+// ── Issue #3167 ACs ──
+// SafePCVSpan / children_safe_view across MutationBoundaryGuard must not
+// remain live without pin or forced re-query (I2 residual). Production
+// contract: stale → forced re-pin + counter bumped; Soft/Off: unchanged
+// (COW frozen view). #2906 (flatast-locked-move-out exclusive) MUST NOT
+// regress — fingerprint is observation-only metadata, doesn't gate move-out.
+static void ac3167_3_2906_non_regression() {
+    std::println("\n--- #3167 AC3: #2906 non-regression — fingerprint does not regress "
+                 "flatast-locked exclusive move-out ---");
+    // Wire #2906 observability key — if flatast-locked-move-out-exclusive-total
+    // is still exposed, the #2906 contract survived. If it disappears, the
+    // #3167 fingerprint path broke #2906.
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3167 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC3: eval");
+    auto v = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
+                                 "\"flatast-locked-move-out-exclusive-total\")"));
+    CHECK(v && is_int(*v) && as_int(*v) >= 0,
+          "AC3 #2906: flatast-locked-move-out-exclusive-total still surfaces");
+    auto s = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
+                                 "\"schema\")"));
+    CHECK(s && is_int(*s), "AC3 #2906: schema key still present");
+    CHECK(as_int(*s) == 2906, "AC3 #2906: schema is #2906 (unchanged)");
+    // pcv_span_stale_across_guard_total must be additive, NOT replacing #2906.
+    auto pcv_key = cs.eval(std::format("(hash-ref (engine:metrics \"query:pcv-hotpath-stats\") "
+                                       "\"pcv-span-stale-across-guard-total\")"));
+    CHECK(pcv_key && is_int(*pcv_key) && as_int(*pcv_key) >= 0,
+          "AC3/AC4: pcv-span-stale-across-guard-total additive");
+}
+
+static void ac3167_6_source_and_linter() {
+    std::println("\n--- #3167 AC5/AC6: source-cite + linter + no docs/design/* ---");
+    int rc = std::system("python3 scripts/check_pcv_span_stale_coverage_3167.py "
+                         "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3167 AC5: linter --self-test passes");
+    const auto pcv = read_file("src/core/persistent_child_vector.hh");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/check_pcv_span_stale_coverage_3167.py");
+    CHECK(pcv.find("Issue #3167") != std::string::npos,
+          "3167 AC6: persistent_child_vector.hh cites #3167");
+    CHECK(pcv.find("force_refresh_pcv_span") != std::string::npos,
+          "3167 AC6: 6-arg ctor + fingerprint in pcv header");
+    CHECK(ast.find("force_refresh_pcv_span") != std::string::npos,
+          "3167 AC6: force_refresh_pcv_span in ast.ixx");
+    CHECK(ast.find("pcv_span_stale_across_guard_total") != std::string::npos,
+          "3167 AC6: counter accessor in ast.ixx");
+    CHECK(build.find("check_pcv_span_stale_coverage_3167") != std::string::npos,
+          "3167 AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("Issue #3167") != std::string::npos, "3167 AC5: linter");
+    CHECK(read_file("docs/design/3167-pcv-span-stale.md").empty(),
+          "3167 AC6: no docs/design/3167-* per #1655");
+    for (const auto& rel : {std::string("tests/issues/test_issue_3167.cpp"),
+                            std::string("tests/compiler/test_issue_3167.cpp"),
+                            std::string("tests/serve/test_issue_3167.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3167 AC5: forbidden {} per #81967", rel));
+    }
 }
