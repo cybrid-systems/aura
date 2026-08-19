@@ -466,10 +466,158 @@ int run_test_per_scope_bp_admit() {
         reset_3015();
     }
 
+    // ── Issue #3147: agent_send / emit_keepalive BP events route to handle's
+    // effective bp_scope_id (populated from AgentSpec.bp_scope_id, which #3015
+    // auto-fills from AgentScope under production). empty / "-" still routes
+    // to the process bucket (Soft / single-agent MVP / explicit opt-in).
+    // Closes the runtime cross-poison window that #3015 left open at admit.
+    {
+        std::println("\n--- #3147 AC1: scoped agent BP storm isolates to scope gauge ---");
+        reset_all();
+        set_prod(true);
+        unsetenv("AURA_SANDBOX");
+        AgentScope sc_a(sched);
+        AgentScope sc_b(sched);
+        const auto a_scope = std::string{sc_a.bp_scope_id()};
+        const auto b_scope = std::string{sc_b.bp_scope_id()};
+        CHECK(!a_scope.empty() && !b_scope.empty(),
+              "3147 AC1 setup: AgentScope::bp_scope_id() non-empty under production");
+        CHECK(a_scope != b_scope, "3147 AC1 setup: distinct scopes carry distinct bp_scope_ids");
+        const auto proc_before =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto a_gauge_before = load_mailbox_bp_recent(a_scope);
+        const auto b_gauge_before = load_mailbox_bp_recent(b_scope);
+        for (int i = 0; i < 5; ++i)
+            note_mailbox_bp_recent_event(a_scope);
+        const auto a_gauge_after = load_mailbox_bp_recent(a_scope);
+        const auto b_gauge_after = load_mailbox_bp_recent(b_scope);
+        const auto proc_after =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        CHECK(a_gauge_after == a_gauge_before + 5,
+              "3147 AC1: scope A gauge bumps +5 on scope A BP storm");
+        CHECK(b_gauge_after == b_gauge_before,
+              "3147 AC1: scope B gauge unchanged (sibling isolation)");
+        CHECK(proc_after == proc_before, "3147 AC1: process bucket unchanged (no cross-poison)");
+    }
+
+    {
+        std::println("\n--- #3147 AC2: explicit '-' / empty → process bucket ---");
+        reset_all();
+        set_prod(true);
+        unsetenv("AURA_SANDBOX");
+        auto spec = make_spec("explicit-empty");
+        spec.bp_scope_id.clear();
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "3147 AC2 setup: direct spawn with empty bp_scope_id admits");
+        CHECK(h.bp_scope_id.empty(),
+              "3147 AC2: h.bp_scope_id is empty (Soft / MVP / explicit opt-in)");
+        const auto proc_before =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        note_mailbox_bp_recent_event(h.bp_scope_id);
+        const auto proc_after =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        CHECK(proc_after == proc_before + 1,
+              "3147 AC2: empty bp_scope_id routes to process bucket");
+        auto spec2 = make_spec("explicit-dash");
+        spec2.bp_scope_id = std::string{aura::orch::kBpScopeProcessBucket};
+        auto h2 = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec2));
+        CHECK(h2.bp_scope_id == aura::orch::kBpScopeProcessBucket,
+              "3147 AC2: explicit '-' stored verbatim on handle");
+        const auto proc_before2 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        note_mailbox_bp_recent_event(h2.bp_scope_id);
+        const auto proc_after2 =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        CHECK(proc_after2 == proc_before2 + 1, "3147 AC2: explicit '-' routes to process bucket");
+    }
+
+    {
+        std::println("\n--- #3147 AC3: emit_keepalive BP routes to same scope gauge ---");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto emit_idx = spawn_src.find("void emit_keepalive(");
+        CHECK(emit_idx != std::string::npos, "3147 AC3 setup: emit_keepalive present");
+        if (emit_idx != std::string::npos) {
+            const auto snip = spawn_src.substr(emit_idx, 4000);
+            CHECK(snip.find("note_mailbox_bp_recent_event(h.bp_scope_id)") != std::string::npos,
+                  "3147 AC3: emit_keepalive BP arm passes h.bp_scope_id (same as agent_send)");
+        }
+    }
+
+    {
+        std::println("\n--- #3147 AC4: spawn admit still uses SSOT load_mailbox_bp_recent ---");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto scope_src = read_file("src/orch/agent_scope.h");
+        CHECK(spawn_src.find("load_mailbox_bp_recent(") != std::string::npos,
+              "3147 AC4: load_mailbox_bp_recent helper still wired (SSOT)");
+        CHECK(scope_src.find("load_mailbox_bp_recent(") != std::string::npos,
+              "3147 AC4: AgentScope admit preflight still uses load_mailbox_bp_recent");
+    }
+
+    {
+        std::println(
+            "\n--- #3147 AC5: Soft / empty scope — zero extra atomic, no behavioural change ---");
+        reset_all();
+        set_prod(false);
+        auto spec = make_spec("soft-empty");
+        spec.bp_scope_id.clear();
+        auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+        CHECK(h.ok, "3147 AC5 setup: Soft + empty bp_scope_id spawns");
+        CHECK(h.bp_scope_id.empty(),
+              "3147 AC5: Soft path leaves h.bp_scope_id empty (no auto-fill)");
+        const auto proc_before =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        note_mailbox_bp_recent_event(h.bp_scope_id);
+        const auto proc_after =
+            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        CHECK(proc_after == proc_before + 1,
+              "3147 AC5: Soft + empty scope → process bucket (unchanged behaviour)");
+    }
+
+    {
+        std::println("\n--- #3147 AC6/AC7/AC8: source-cite + linter + no invent ---");
+        const auto spawn3147 = read_file("src/orch/agent_spawn.h");
+        const auto test3147_self = read_file("tests/orch/test_per_scope_bp_admit.cpp");
+        const auto build3147 = read_file("build.py");
+        CHECK(spawn3147.find("Issue #3147") != std::string::npos,
+              "3147 AC8: agent_spawn.h cites Issue #3147");
+        CHECK(spawn3147.find("std::string bp_scope_id{};") != std::string::npos,
+              "3147 AC8: AgentHandle::bp_scope_id field present (layout-stable end of struct)");
+        CHECK(spawn3147.find("h.bp_scope_id = std::move(spec.bp_scope_id);") != std::string::npos,
+              "3147 AC8: spawn propagates spec.bp_scope_id → handle");
+        CHECK(spawn3147.find("note_mailbox_bp_recent_event(h.bp_scope_id)") != std::string::npos,
+              "3147 AC8: agent_send / emit_keepalive BP arms pass h.bp_scope_id");
+        CHECK(test3147_self.find("#3147") != std::string::npos,
+              "3147 AC8: test file cites Issue #3147");
+        std::ifstream invent("tests/orch/test_issue_3147.cpp");
+        if (!invent.good())
+            invent.open("../tests/orch/test_issue_3147.cpp");
+        CHECK(!invent.good(), "3147 AC8: no tests/orch/test_issue_3147.cpp (forbidden per #81967)");
+        const std::filesystem::path docs_design_3147 = "docs/design";
+        std::error_code ec_3147;
+        if (std::filesystem::is_directory(docs_design_3147, ec_3147)) {
+            for (const auto& entry :
+                 std::filesystem::directory_iterator(docs_design_3147, ec_3147)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3147-") == std::string::npos,
+                      std::string("3147 AC8: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+        const auto lint3147 =
+            read_file("scripts/coverage/checks/check_mailbox_bp_scope_handle_3147.py");
+        CHECK(!lint3147.empty() && lint3147.find("Issue #3147") != std::string::npos,
+              "3147 AC8: #3147 linter exists");
+        CHECK(build3147.find("check_mailbox_bp_scope_handle_3147") != std::string::npos,
+              "3147 AC8: build.py wires #3147 linter");
+        CHECK(spawn3147.find("global_agent_registry") == std::string::npos &&
+                  spawn3147.find("process_agent_registry") == std::string::npos,
+              "3147 AC8: no process-global AgentRegistry");
+    }
+
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_override_total.store(0, std::memory_order_relaxed);
-    std::println("\n=== #2591/#2948/#3015: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    std::println("\n=== #2591/#2948/#3015/#3147: {}/{} checks passed ===", g_passed,
+                 g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

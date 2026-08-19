@@ -1193,6 +1193,15 @@ struct AgentHandle {
         return body_acquire_rejected_slot &&
                body_acquire_rejected_slot->load(std::memory_order_acquire);
     }
+    // Issue #3147: effective bp_scope_id at spawn admit (populated from
+    // AgentSpec.bp_scope_id, which #3015 already auto-fills from the
+    // AgentScope when production inherit is on). Empty / "-" continues
+    // to route mailbox BP events to the process bucket (Soft / single-
+    // agent MVP / explicit opt-in). non-empty routes to the per-scope
+    // gauge via note_mailbox_bp_recent_event(h.bp_scope_id) on
+    // agent_send / emit_keepalive BP arms. Appended at END (#2906) so
+    // any stale module BMI reading at offset zero is unaffected.
+    std::string bp_scope_id{};
 
     AgentHandle() = default;
     AgentHandle(const AgentHandle&) = delete;
@@ -1651,7 +1660,12 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
         // where the weak hook is a no-op. Double-count under full orch
         // link is acceptable for admit (threshold is rate-ish) and
         // send_backpressure remains monotonic (AC2).
-        note_mailbox_bp_recent_event();
+        // Issue #3147: route to handle's bp_scope_id (effective at
+        // spawn admit, #3015 inherit). empty / "-" → process bucket
+        // (Soft / single-agent MVP / explicit opt-in, zero behavioural
+        // change). non-empty → per-scope gauge so a storm in scope A
+        // does not poison the process bucket for sibling scopes.
+        note_mailbox_bp_recent_event(h.bp_scope_id);
     } else {
         g_orch_module_stats.send_closed_total.fetch_add(1, std::memory_order_relaxed);
     }
@@ -1682,6 +1696,14 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
 [[nodiscard]] inline AgentHandle spawn_agent_with_mailbox(serve::Scheduler& sched, AgentSpec spec) {
     AgentHandle h;
     h.name = std::move(spec.name);
+    // Issue #3147: persist effective bp_scope_id on the handle so
+    // agent_send / emit_keepalive BP arms route to the correct scope
+    // gauge (process bucket when empty / "-", scope gauge otherwise).
+    // #3015 already auto-fills spec.bp_scope_id from AgentScope at
+    // spawn admit for production multi-Scope hosts; this just keeps
+    // the resolved value alive past the admit preflight so runtime
+    // BP events do not poison the process bucket.
+    h.bp_scope_id = std::move(spec.bp_scope_id);
     if (!spec.body) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         return h;
@@ -2797,8 +2819,14 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
         }
     } else if (st == serve::mf_mailbox::PushStatus::Backpressure) {
         g_orch_module_stats.send_backpressure_total.fetch_add(1, std::memory_order_relaxed);
-        // Issue #2228 / #2398: recent gauge + last-event (see emit_keepalive).
-        note_mailbox_bp_recent_event();
+        // Issue #2228 / #2398: recent gauge + last-event (see agent_send).
+        // Issue #3147: route to handle's bp_scope_id (effective at spawn
+        // admit, #3015 inherit) so the helper fiber's keepalive BP bumps
+        // the same per-scope gauge as body sends. empty / "-" →
+        // process bucket (Soft / single-agent MVP, zero behavioural
+        // change). Mirrors the agent_send BP arm fix so a storm in
+        // scope A does not poison the process bucket for siblings.
+        note_mailbox_bp_recent_event(h.bp_scope_id);
         if (h.producer_bp_budget > 0) {
             ++h.consecutive_bp_count;
             h.last_producer_bp_us = orch_now_us();
