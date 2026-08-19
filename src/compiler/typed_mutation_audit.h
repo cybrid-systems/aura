@@ -1392,6 +1392,32 @@ inline void note_occurrence_provisional_discard(std::uint64_t goals_dropped) noe
         g_occurrence_provisional_discard_goals_total.fetch_add(goals_dropped,
                                                                std::memory_order_relaxed);
 }
+
+// Issue #3158: Occurrence abort restore-or-clear counters. Distinct from
+// #3004 provisional discard (which fires on solve-failure mid-delta) —
+// this fires on MutationBoundary abort (high-freq mutate fail) and
+// truncates live occurrence_goals_ back to the boundary-entry baseline.
+// Production path bumps restore_total + restore_goals_total (structural
+// write); Soft path bumps observe_total only (no structural write).
+inline std::atomic<std::uint64_t> g_3158_occurrence_abort_restore_total{0};
+inline std::atomic<std::uint64_t> g_3158_occurrence_abort_restore_goals_total{0};
+inline std::atomic<std::uint64_t> g_3158_occurrence_abort_observe_total{0};
+inline std::atomic<std::uint32_t> g_3158_occurrence_abort_restore_wired{1};
+[[nodiscard]] inline std::uint64_t occurrence_3158_abort_restore_total_v_read() noexcept {
+    return g_3158_occurrence_abort_restore_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_3158_abort_observe_total_v_read() noexcept {
+    return g_3158_occurrence_abort_observe_total.load(std::memory_order_relaxed);
+}
+inline void note_3158_occurrence_abort_restore(std::uint64_t goals_dropped) noexcept {
+    g_3158_occurrence_abort_restore_total.fetch_add(1, std::memory_order_relaxed);
+    if (goals_dropped > 0)
+        g_3158_occurrence_abort_restore_goals_total.fetch_add(goals_dropped,
+                                                              std::memory_order_relaxed);
+}
+inline void note_3158_occurrence_abort_observe() noexcept {
+    g_3158_occurrence_abort_observe_total.fetch_add(1, std::memory_order_relaxed);
+}
 inline void reset_occurrence_provisional_discard_for_test() noexcept {
     g_occurrence_provisional_discard_total.store(0, std::memory_order_relaxed);
     g_occurrence_provisional_discard_goals_total.store(0, std::memory_order_relaxed);

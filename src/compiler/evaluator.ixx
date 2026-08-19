@@ -13454,6 +13454,14 @@ public:
         // path can truncate the post-apply cone and re-add coerced nodes
         // (force-dirty) under production/Full. Quiet (no abort) → unused.
         std::size_t coercion_cone_size_at_entry = 0;
+        // Issue #3158: AC1 — Occurrence abort restore baseline. Captures
+        // ConstraintSystem::occurrence_goals_size() at boundary enter so
+        // the abort path can truncate the post-boundary goals back to the
+        // entry authority under production/Full (avoids residual narrowing
+        // goals poisoning the next delta's priority + fingerprint + stamp
+        // face after a failed high-freq mutate). Soft / Quiet / no
+        // TypeChecker: 0 baseline; abort path bumps observe counter only.
+        std::size_t occurrence_entry_size = 0;
     };
     // Issue #264: snapshot taken at fiber yield while a mutation
     // boundary may be active (per-fiber stack on Fiber).

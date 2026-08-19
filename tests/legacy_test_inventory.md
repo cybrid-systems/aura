@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 852 | Preferred destination suites |
-| **Total scanned** | **852** | |
+| `tests/core/test_*.cpp` | 853 | Preferred destination suites |
+| **Total scanned** | **853** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 87 | 87 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 251 | 251 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 252 | 252 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 103 | 103 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 57 | 57 | P1 — domain hygiene suite exists |
@@ -696,6 +696,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_obs_schema_matrix.cpp`
 - `tests/compiler/test_observability_tier_table.cpp`
 - `tests/compiler/test_occ_cache_stats_wired.cpp`
+- `tests/compiler/test_occurrence_abort_restore.cpp`
 - `tests/compiler/test_occurrence_cache_key.cpp`
 - `tests/compiler/test_occurrence_coercion_batch.cpp`
 - `tests/compiler/test_occurrence_dirty_blame_post_mutate.cpp`
@@ -1165,13 +1166,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (251)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (252)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (251)
+#### domain/ (252)
 
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
@@ -1332,6 +1333,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_systemic_guard.cpp` (—) [domain_suite, theme_compiler] — Issue #1818/#1897 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_mutation_typed_audit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_typed_audit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutator_dispatch_stats_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1849 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_occurrence_abort_restore.cpp` (—) [domain_suite, theme_compiler] — write (zero-cost contract preserved).
 - `tests/compiler/test_occurrence_coercion_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_occurrence_coercion_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_occurrence_dirty_blame_post_mutate.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_dirty_blame_post_mutate.cpp — restored standalone (AC drift under batch co-link)
 - `tests/compiler/test_occurrence_dirty_key_authority.cpp` (—) [domain_suite, theme_compiler] — AC1: cond shape path + cache key miss wiring present
