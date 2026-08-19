@@ -31,6 +31,8 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <memory>
 #include <mutex>
 #include <print>
@@ -55,6 +57,7 @@ using aura::compiler::Evaluator;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_pair;
@@ -155,7 +158,7 @@ static void run_1621_mutate_path() {
     const auto t0 = href(cs, "auto-compact-triggers");
     const auto e0 = href(cs, "smart-policy-evaluations");
     (void)cs.eval("(arena:request-defrag)");
-    (void)cs.eval("(arena:adaptive-compact)");
+    (void)cs.eval("(arena:compact)");
     for (int i = 0; i < 30; ++i)
         (void)cs.eval("(fact 3)");
     (void)cs.eval("(mutate:rebind \"b\" \"20\")");
@@ -240,12 +243,12 @@ static void run_405_matrix() {
     std::println("  compaction stats: {} -> {}", stats4a, stats4b);
     CHECK(stats4b > stats4a, "mutate bumps mutation/dirty signals");
 
-    std::println("\n--- AC5 (#405): arena:adaptive-compact integration ---");
+    std::println("\n--- AC5 (#405): arena:compact-with-policy auto integration ---");
     const auto stats5a = compaction_stats_405(cs);
-    (void)cs.eval("(arena:adaptive-compact)");
+    (void)cs.eval("(arena:compact-with-policy \"main\" \"auto\")");
     const auto stats5b = compaction_stats_405(cs);
     std::println("  compaction stats: {} -> {}", stats5a, stats5b);
-    CHECK(stats5b >= stats5a, "adaptive-compact monotonic");
+    CHECK(stats5b >= stats5a, "compact-with-policy auto monotonic");
 
     std::println("\n--- AC6 (#405): multi-round mutate matrix ---");
     const auto stats6a = compaction_stats_405(cs);
@@ -945,6 +948,59 @@ static void run_219_gap_buffer_child_data() {
     }
 }
 
+static std::string read_file(const char* path) {
+    std::ifstream in(path);
+    if (!in)
+        in.open(std::string("../") + path);
+    if (!in)
+        return {};
+    return {std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>()};
+}
+
+// Issue #3173: public arena: ≤ 4 (compact / compact-with-policy /
+// request-defrag / set-auto-compact-threshold). Algorithm variants sunk.
+static void run_3173_surface() {
+    std::println("\n--- #3173: public arena: surface reduction ---");
+    const auto src = read_file("src/compiler/evaluator_primitives_memory.cpp");
+    CHECK(src.find("sink_arena_prim") != std::string::npos, "3173: sink helper");
+    CHECK(src.find("add(\"arena:compact\"") != std::string::npos, "3173: compact public");
+    CHECK(src.find("add(\"arena:compact-with-policy\"") != std::string::npos,
+          "3173: compact-with-policy public");
+    CHECK(src.find("add(\"arena:request-defrag\"") != std::string::npos,
+          "3173: request-defrag public");
+    CHECK(src.find("add(\"arena:set-auto-compact-threshold\"") != std::string::npos,
+          "3173: set-auto-compact-threshold public");
+    CHECK(src.find("add(\"arena:defrag\"") == std::string::npos, "3173: defrag not public add()");
+    CHECK(src.find("add(\"arena:live-compact\"") == std::string::npos,
+          "3173: live-compact not public add()");
+    CHECK(src.find("add(\"arena:adaptive-compact\"") == std::string::npos,
+          "3173: adaptive-compact not public add()");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3173: warm");
+    auto compact = cs.eval("(arena:compact)");
+    CHECK(compact.has_value(), "3173: compact callable");
+    auto req = cs.eval("(arena:request-defrag)");
+    CHECK(req.has_value(), "3173: request-defrag callable");
+    auto thr = cs.eval("(arena:set-auto-compact-threshold 50)");
+    CHECK(thr.has_value(), "3173: set-auto-compact-threshold callable");
+    auto pol = cs.eval("(arena:compact-with-policy \"main\" \"auto\")");
+    CHECK(pol.has_value(), "3173: compact-with-policy callable");
+    for (const char* expr : {
+             "(arena:defrag)",
+             "(arena:defrag-now)",
+             "(arena:adaptive-compact)",
+             "(arena:live-compact)",
+         }) {
+        auto r = cs.eval(expr);
+        CHECK(r.has_value(), std::string("eval returned: ") + expr);
+        if (r)
+            CHECK(is_error(*r), std::string("sunk #3173 unbound/error: ") + expr);
+    }
+    CHECK(read_file("docs/design/3173-arena-surface.md").empty(), "3173: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3173.cpp").empty(),
+          "3173: no invent test_issue_3173");
+}
+
 } // namespace aura_arena_batch
 
 int main() {
@@ -992,6 +1048,7 @@ int main() {
     run_173_null_sentinels();
     run_173_types_distinct();
     run_219_gap_buffer_child_data();
+    run_3173_surface();
     std::println("\n=== Arena batch: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -215,7 +215,7 @@ static void ac1_pcv_heap_uaf_regression() {
     std::println("\n--- #300 AC1: PCV heap UAF regression ---");
     CompilerService cs;
     cs.eval("(set-code \"(define a 1)\")");
-    cs.eval("(arena:defrag)");
+    cs.eval("(arena:compact)");
     auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
     (void)r;
     // CS destructs at end of function. Under ASan, this used to UAF

@@ -1281,14 +1281,10 @@ static void ac_1316_1320() {
         CHECK(inserts >= 1, "gap buffer inserts counted");
     }
 
-    // #1320: arena:defrag-now + stats
+    // #1320 / #3173: public arena:compact (defrag-now sunk)
     {
-        auto d = cs.eval("(arena:defrag-now)");
-        CHECK(d && is_int(*d) && as_int(*d) >= 0, "arena:defrag-now");
-        auto calls = href(cs, Q, "arena-defrag-now-calls");
-        CHECK(calls >= 1, "defrag-now calls counted");
-        auto attempted = href(cs, Q, "arena-defrag-attempted-total");
-        CHECK(attempted >= 1, "defrag attempted counted");
+        auto d = cs.eval("(arena:compact)");
+        CHECK(d && is_int(*d) && as_int(*d) >= 0, "arena:compact");
     }
 
     {

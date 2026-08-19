@@ -244,7 +244,7 @@ static void ac7_mutate_stress() {
             std::format("(mutate:rebind \"f\" \"(lambda (x) (+ x {}))\" \"i2059\")", i % 7));
         (void)cs.eval("(eval-current)");
         if (i % 8 == 0)
-            (void)cs.eval("(arena:adaptive-compact)");
+            (void)cs.eval("(arena:compact)");
     }
 
     CHECK(href(cs, "query:arena-auto-policy-stats", "mutation-pressure-signals") > mut0,

@@ -86,6 +86,10 @@ using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
+static std::int64_t auto_compact_threshold_pct(CompilerService& cs) {
+    return static_cast<std::int64_t>(cs.evaluator().arena_group().compact_threshold() * 100.0);
+}
+
 static std::string read_file(const char* path) {
     std::ifstream in(path);
     if (!in)
@@ -727,8 +731,8 @@ static void run_187_arena_compaction_double_arena() {
         }
         auto sv = cs.eval("(stats:get \"string-pool:stats\")");
         CHECK(sv.has_value(), "(stats:get \"string-pool:stats\") returns a value (or void)");
-        auto tv = cs.eval("(arena:set-compact-threshold 25)");
-        CHECK(tv.has_value(), "(arena:set-compact-threshold 25) callable");
+        auto tv = cs.eval("(arena:set-auto-compact-threshold 25)");
+        CHECK(tv.has_value(), "(arena:set-auto-compact-threshold 25) callable");
         if (auto r = cs.eval("(begin "
                              "(define x1 1) (define x2 2) (define x3 3) (define x4 4) "
                              "(define x5 5) (string-pool:compact) "
@@ -871,7 +875,7 @@ static void run_300_arena_defrag_stats_observability() {
             return;
         }
         auto defrag_before = e2, compact_est_before = e5;
-        cs.eval("(arena:defrag)");
+        (void)cs.evaluator().test_arena().defrag();
         auto r = cs.eval("(stats:get \"arena:defrag-stats\")");
         if (!r) {
             ++g_failed;
@@ -900,7 +904,7 @@ static void run_300_arena_defrag_stats_observability() {
         CHECK(r3 && aura::compiler::types::is_bool(*r3) && !aura::compiler::types::as_bool(*r3),
               "request-defrag duplicate: #f");
         cs.eval("(set-code \"(define x 1)\")");
-        cs.eval("(arena:defrag)");
+        (void)cs.evaluator().test_arena().defrag();
         auto r5 = cs.eval("(arena:request-defrag)");
         CHECK(r5 && aura::compiler::types::is_bool(*r5) && aura::compiler::types::as_bool(*r5),
               "request after defrag: #t (cycle reset)");
@@ -978,23 +982,19 @@ static void run_335_arena_adaptive_compact_heuristics() {
     {
         std::println("\n--- #335 AC1: should_auto_compact probe ---");
         CompilerService cs;
-        auto r1 = cs.eval("(arena:should-auto-compact? \"main\")");
-        CHECK(r1.has_value() && aura::compiler::types::is_bool(*r1) &&
-                  !aura::compiler::types::as_bool(*r1),
-              "no workspace: should-auto-compact? returns #f");
+        CHECK(!cs.evaluator().arena_group().should_auto_compact("main"),
+              "no workspace: should_auto_compact returns false");
         build_workspace(cs, 5);
-        auto r2 = cs.eval("(arena:should-auto-compact? \"main\")");
-        CHECK(r2.has_value() && aura::compiler::types::is_bool(*r2),
-              "with workspace: should-auto-compact? returns a bool");
+        (void)cs.evaluator().arena_group().should_auto_compact("main");
+        CHECK(true, "with workspace: should_auto_compact returns a bool");
     }
     // AC2: adaptive_compact reclaims + updates EMA
     {
         std::println("\n--- #335 AC2: adaptive_compact reclaims + EMA ---");
         CompilerService cs;
         build_workspace(cs, 3);
-        auto r1 = cs.eval("(arena:adaptive-compact)");
-        CHECK(r1.has_value() && is_int(*r1), "(arena:adaptive-compact) returns int");
-        const auto r1_val = as_int(*r1);
+        const auto r1_val =
+            static_cast<std::int64_t>(cs.evaluator().arena_group().adaptive_compact_all());
         CHECK(r1_val >= 0, "bytes reclaimed is non-negative");
         auto r2 = cs.eval("(stats:get \"arena:adaptive-stats\")");
         CHECK(r2.has_value(), "(stats:get \"arena:adaptive-stats\") returns a value");
@@ -1020,7 +1020,7 @@ static void run_335_arena_adaptive_compact_heuristics() {
         auto before = cs.eval("(stats:get \"arena:adaptive-stats\")");
         CHECK(before.has_value(), "(stats:get \"arena:adaptive-stats\") pre-call returns a value");
         for (int i = 0; i < 5; ++i)
-            cs.eval("(arena:adaptive-compact)");
+            (void)cs.evaluator().arena_group().adaptive_compact_all();
         auto after = cs.eval("(stats:get \"arena:adaptive-stats\")");
         CHECK(after.has_value(), "(stats:get \"arena:adaptive-stats\") post-call returns a value");
     }
@@ -1031,7 +1031,7 @@ static void run_335_arena_adaptive_compact_heuristics() {
         build_workspace(cs, 50);
         auto t0 = std::chrono::steady_clock::now();
         for (int i = 0; i < 100; ++i)
-            cs.eval("(arena:adaptive-compact)");
+            (void)cs.evaluator().arena_group().adaptive_compact_all();
         auto t1 = std::chrono::steady_clock::now();
         auto us = std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count();
         CHECK(us < 10000000, "100 adaptive_compact calls < 10s (eval-bound; primitive is fast)");
@@ -1047,20 +1047,18 @@ static void run_335_arena_adaptive_compact_heuristics() {
 
 static void run_623_arena_auto_compact_threshold_setter() {
     std::println("\n=== #623: arena auto-compact threshold setter/getter + back-compat ===");
-    // AC1: (arena:auto-compact-threshold) read
+    // AC1: auto-compact-threshold read (C++ after #3173 sink of Lisp getter)
     {
         std::println("\n--- #623 AC1: read auto-compact-threshold ---");
         CompilerService cs;
-        auto r = cs.eval("(arena:auto-compact-threshold)");
-        CHECK(r.has_value() && is_int(*r), "auto-compact-threshold returns int");
-        const auto val = as_int(*r);
+        const auto val = auto_compact_threshold_pct(cs);
         CHECK(val == 50 || val == -1, std::format("in {{50, -1}} (got {})", val));
     }
     // AC2: set + clamping
     {
         std::println("\n--- #623 AC2: set + clamping ---");
         CompilerService cs;
-        const auto baseline = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+        const auto baseline = auto_compact_threshold_pct(cs);
         auto r_set = cs.eval("(arena:set-auto-compact-threshold 75)");
         CHECK(r_set.has_value() && is_int(*r_set), "setter returns int (previous value)");
         const auto prev = as_int(*r_set);
@@ -1070,17 +1068,17 @@ static void run_623_arena_auto_compact_threshold_setter() {
             CHECK(prev == baseline, std::format("prev == baseline ({} == {})", prev, baseline));
         }
         if (baseline != -1) {
-            const auto now = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+            const auto now = auto_compact_threshold_pct(cs);
             CHECK(now == 75, std::format("readback after set == 75 (got {})", now));
         }
         cs.eval("(arena:set-auto-compact-threshold -5)");
         if (baseline != -1) {
-            const auto after_low = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+            const auto after_low = auto_compact_threshold_pct(cs);
             CHECK(after_low == 0, std::format("negative arg clamped to 0 (got {})", after_low));
         }
         cs.eval("(arena:set-auto-compact-threshold 200)");
         if (baseline != -1) {
-            const auto after_high = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+            const auto after_high = auto_compact_threshold_pct(cs);
             CHECK(after_high == 95, std::format("arg > 95 clamped to 95 (got {})", after_high));
         }
         cs.eval("(arena:set-auto-compact-threshold 50)"); // restore
@@ -1090,10 +1088,10 @@ static void run_623_arena_auto_compact_threshold_setter() {
         std::println("\n--- #623 AC3: bad-arg no-op ---");
         CompilerService cs;
         cs.eval("(arena:set-auto-compact-threshold 25)");
-        const auto before = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+        const auto before = auto_compact_threshold_pct(cs);
         auto r = cs.eval("(arena:set-auto-compact-threshold \"not-a-number\")");
         CHECK(r.has_value() && is_int(*r), "non-int arg returns int (current value)");
-        const auto after = as_int(*cs.eval("(arena:auto-compact-threshold)"));
+        const auto after = auto_compact_threshold_pct(cs);
         CHECK(after == before,
               std::format("non-int arg left threshold unchanged ({} -> {})", before, after));
         cs.eval("(arena:set-auto-compact-threshold 50)"); // restore
@@ -1105,12 +1103,12 @@ static void run_623_arena_auto_compact_threshold_setter() {
         CompilerService cs;
         auto s_json = cs.eval("(stats:get \"arena:stats-json\")");
         CHECK(s_json.has_value(), "(stats:get \"arena:stats-json\") reachable (#187 back-compat)");
-        auto s_def = cs.eval("(arena:defrag)");
-        CHECK(s_def.has_value(), "(arena:defrag) reachable (#300 back-compat)");
+        (void)cs.evaluator().test_arena().defrag();
+        CHECK(true, "C++ defrag reachable (#300 / #3173)");
         auto s_pol = cs.eval("(arena:compact-with-policy)");
         CHECK(s_pol.has_value(), "(arena:compact-with-policy) reachable (#430 back-compat)");
-        auto s_probe = cs.eval("(arena:should-auto-compact?)");
-        CHECK(s_probe.has_value(), "(arena:should-auto-compact?) reachable (#335 back-compat)");
+        (void)cs.evaluator().arena_group().should_auto_compact("main");
+        CHECK(true, "should_auto_compact C++ reachable (#335 / #3173)");
         auto s_auto = cs.eval("(engine:metrics \"query:arena-auto-stats\")");
         CHECK(s_auto.has_value(),
               "(engine:metrics \"query:arena-auto-stats\") reachable (#464 back-compat)");
@@ -1130,8 +1128,7 @@ static void run_623_arena_auto_compact_threshold_setter() {
         int ok_count = 0;
         constexpr int k_iters = 8;
         for (int i = 0; i < k_iters; ++i) {
-            auto r = cs.eval("(arena:auto-compact-threshold)");
-            if (r && is_int(*r))
+            if (auto_compact_threshold_pct(cs) >= 0)
                 ++ok_count;
         }
         CHECK(ok_count == k_iters,
@@ -1547,7 +1544,7 @@ static void run_685_arena_auto_compact_defrag_shape_synergy() {
         std::println("\n--- #685 AC4: adaptive compact + fiber stress ---");
         for (int i = 0; i < 6; ++i)
             (void)cs.eval("(eval-current)");
-        (void)cs.eval("(arena:adaptive-compact)");
+        (void)cs.evaluator().arena_group().adaptive_compact_all();
         CHECK(stat_int(cs, "shape-inval-on-compact") >= 0,
               "shape-inval-on-compact readable after compact");
         std::mutex eval_mtx;
@@ -1961,7 +1958,7 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         cs.eval("(set-code \"(define x 1)\")");
         int newly_true = 0, dup_false = 0;
         for (int i = 0; i < 50; ++i) {
-            cs.eval("(arena:defrag)");
+            (void)cs.evaluator().test_arena().defrag();
             auto r1 = cs.eval("(arena:request-defrag)");
             if (r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1))
                 ++newly_true;
@@ -1972,21 +1969,21 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         CHECK(newly_true == 50,
               std::format("50 cycles first call returned #t (got {})", newly_true));
         CHECK(dup_false == 50, std::format("50 cycles duplicate returned #f (got {})", dup_false));
-        cs.eval("(arena:defrag)"); // cleanup
+        (void)cs.evaluator().test_arena().defrag(); // cleanup
     }
     // AC2: defrag clears flag, cycle resets
     {
         std::println("\n--- #1397 AC2: defrag clears flag (cycle reset) ---");
         CompilerService cs;
         cs.eval("(set-code \"(define x 1)\")");
-        cs.eval("(arena:defrag)");
+        (void)cs.evaluator().test_arena().defrag();
         auto r1 = cs.eval("(arena:request-defrag)");
         CHECK(r1 && aura::compiler::types::is_bool(*r1) && aura::compiler::types::as_bool(*r1),
               "first request after defrag: #t (newly_set)");
         auto r2 = cs.eval("(arena:request-defrag)");
         CHECK(r2 && aura::compiler::types::is_bool(*r2) && !aura::compiler::types::as_bool(*r2),
               "duplicate: #f (CAS already-set)");
-        cs.eval("(arena:defrag)");
+        (void)cs.evaluator().test_arena().defrag();
         auto r3 = cs.eval("(arena:request-defrag)");
         CHECK(r3 && aura::compiler::types::is_bool(*r3) && aura::compiler::types::as_bool(*r3),
               "after second defrag: #t (defrag clears -> cycle resets)");
@@ -2013,7 +2010,7 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         auto a4 = cs2.eval("(arena:request-defrag)");
         CHECK(a4 && aura::compiler::types::is_bool(*a4) && !aura::compiler::types::as_bool(*a4),
               "cs2 duplicate: #f (cs1 dup did not affect cs2)");
-        cs1.eval("(arena:defrag)");
+        (void)cs1.evaluator().test_arena().defrag();
         auto a5 = cs1.eval("(arena:request-defrag)");
         CHECK(a5 && aura::compiler::types::is_bool(*a5) && aura::compiler::types::as_bool(*a5),
               "cs1 after own defrag: #t");
@@ -2030,16 +2027,14 @@ static void run_1397_arena_request_defrag_atomic_cas() {
         // soft lifecycle + AC1–AC3 CAS cycles above.
         CompilerService cs;
         cs.eval("(set-code \"(define x 1)\")");
-        auto d0 = cs.eval("(arena:defrag)");
-        CHECK(d0.has_value() || true, "arena:defrag soft");
+        (void)cs.evaluator().test_arena().defrag();
         auto r0 = cs.eval("(arena:request-defrag)");
         CHECK(r0 && aura::compiler::types::is_bool(*r0) && aura::compiler::types::as_bool(*r0),
               "request after defrag: newly_set #t");
         auto r1 = cs.eval("(arena:request-defrag)");
         CHECK(r1 && aura::compiler::types::is_bool(*r1) && !aura::compiler::types::as_bool(*r1),
               "duplicate request: #f");
-        auto d1 = cs.eval("(arena:defrag)");
-        CHECK(d1.has_value() || true, "arena:defrag clears flag soft");
+        (void)cs.evaluator().test_arena().defrag();
         auto r2 = cs.eval("(arena:request-defrag)");
         CHECK(r2 && aura::compiler::types::is_bool(*r2) && aura::compiler::types::as_bool(*r2),
               "request after second defrag: newly_set #t (cycle reset)");
