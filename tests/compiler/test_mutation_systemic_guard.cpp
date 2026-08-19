@@ -219,14 +219,14 @@ int main() {
             Evaluator::MutationBoundaryGuard outer(ev, &ok);
             CHECK(outer.is_outermost(), "outermost");
             auto r = cs.eval("(compile:clear-macro-dirty!)");
-            CHECK(r.has_value() && is_bool(*r), "clear under outer");
+            CHECK(r.has_value() && is_error(*r), "clear-macro-dirty sunk #3172");
             CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held");
         }
         CHECK(ok, "outer ok");
         CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0");
         (void)cs.eval("(compile:mark-narrowing-dirty! 0)");
         const auto after = load_u64(m->compile_primitive_guard_captures_total);
-        CHECK(after >= before + 1, "captures increased");
+        CHECK(after == before, "sunk Lisp dirty! does not capture Guard");
         CHECK(href(cs, "schema") == 1897, "schema holds");
         CHECK(load_u64(m->mutation_guard_uncaught_auto_rollback_total) >= 0, "auto-rb field live");
     }

@@ -155,16 +155,9 @@ static void ac5_rebind_dirty_observability() {
     // still require APIs return ints. Primary denseness metric is
     // lifetime hotswap-invalidate / epoch (below).
     auto dirty = cs.eval("(engine:metrics \"compile:dirty-count\")");
-    auto named = cs.eval("(compile:block-dirty-count \"sum-kernel\")");
-    auto total = cs.eval("(compile:block-dirty-count)");
     CHECK(dirty && is_int(*dirty), "#2684: compile:dirty-count returns int");
-    CHECK(named && is_int(*named), "#2684: block-dirty-count name returns int");
-    CHECK(total && is_int(*total), "#2684: zero-arg block-dirty-count returns int");
-    if (dirty && is_int(*dirty) && as_int(*dirty) > 0) {
-        CHECK((named && is_int(*named) && as_int(*named) > 0) ||
-                  (total && is_int(*total) && as_int(*total) > 0),
-              "#2684: when entry dirty, block-dirty-count (name or total) > 0");
-    }
+    // Issue #3172: compile:block-dirty-count sunk; stats facade is the Agent
+    // surface (compile:dirty-count).
 
     auto epoch1 = cs.eval("(engine:metrics \"compile:epoch\")");
     CHECK(epoch1 && is_int(*epoch1) && as_int(*epoch1) > e0, "#2684: compile:epoch bumps");

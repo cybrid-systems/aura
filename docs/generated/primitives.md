@@ -2,7 +2,7 @@
 
 # Primitives (generated)
 
-**497** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
+**476** registrations scanned from `src/**/*.cpp` (0 marked **deprecated** — Issue #1438).
 Runtime canonical list: `(api-reference)` (includes `*deprecated*` section).
 Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:metrics)`.
 
@@ -10,8 +10,8 @@ Prefer op-dispatch: `(query :op)` `(mutate :op)` `(workspace :op)` + `(engine:me
 
 **Classification (Issue #559)**:
 
-- **mutation-safety**: 87 primitives (18%)
-- **core**: 365 primitives (73%)
+- **mutation-safety**: 66 primitives (14%)
+- **core**: 365 primitives (77%)
 - **internal-observable**: 44 primitives (9%)
 - **convenience**: 1 primitives (0%)
 
@@ -132,31 +132,10 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `synthesize:optimize` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 - `synthesize:register-template` *[core]* — `src/compiler/evaluator_primitives_agent.cpp`
 
-## Compile: (23)
+## Compile: (2)
 
-- `compile:block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-macro-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:func-block-dirty-count` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-compatible?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-register` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-signed?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-width` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:is-instruction-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-block-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-dirty-upward-fast` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-instruction-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-narrowing-dirty!` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-add` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-callers` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:relower-strategy` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-bump` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:verify-dirty?` *[mutation-safety]* — `src/compiler/evaluator_primitives_compile.cpp`
 
 ## C FFI (10)
 
@@ -645,7 +624,7 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 
 ## By category (Issue #559)
 
-### Mutation safety (must remain primitive) (87)
+### Mutation safety (must remain primitive) (66)
 
 - `api-reference` — `src/compiler/evaluator_primitives_eval.cpp`
 - `ast:compact-nodes` — `src/compiler/evaluator_primitives_ast.cpp`
@@ -674,29 +653,8 @@ Categories follow the CATEGORY_PREFIX_MAP heuristic in `scripts/tools/gen_docs.p
 - `c-struct-ref` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-set!` — `src/compiler/ffi_primitives_impl.cpp`
 - `c-struct-size` — `src/compiler/ffi_primitives_impl.cpp`
-- `compile:block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:block-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:clear-macro-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:func-block-dirty-count` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-compatible?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-register` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-signed?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:hw-bitvec-width` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:is-instruction-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:macro-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-block-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-dirty-upward-fast` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-instruction-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:mark-narrowing-dirty!` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:narrowing-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-add` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:per-defuse-index-callers` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:relower-strategy` — `src/compiler/evaluator_primitives_compile.cpp`
 - `compile:snapshot` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:subtree-bump` — `src/compiler/evaluator_primitives_compile.cpp`
-- `compile:verify-dirty?` — `src/compiler/evaluator_primitives_compile.cpp`
 - `file-copy` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-delete` — `src/compiler/evaluator_primitives_file.cpp`
 - `file-exists?` — `src/compiler/evaluator_primitives_file.cpp`

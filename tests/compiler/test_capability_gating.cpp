@@ -68,30 +68,22 @@ namespace types = aura::compiler::types;
 // ═══════════════════════════════════════════════════════════════
 
 void test_privileged_denied_without_wildcard() {
-    std::println("\n--- AC #1: Privileged primitive without kCapWildcard → gate fires ---");
+    std::println("\n--- AC #1: sunk compile: dirty names are not public (#3172) ---");
     aura::compiler::CompilerService cs;
     if (!cs.eval("(set-code \"(define x 1)\")")) {
         std::println("  SKIP: set-code failed (test setup issue)");
         ++g_passed;
         return;
     }
-    // Do NOT grant kCapWildcard. The dispatch-site gate in
-    // invoke_prim_with_telemetry should fire for compile:mark-block-dirty!
-    // (tier-assigned kPrimSecPrivileged) and return a "capability denied"
-    // error value.
+    // Issue #3172: compile:mark-block-dirty! is sunk — eval is unbound/error,
+    // not a privileged dispatch. Safe prims still pass (AC3).
     auto r = cs.eval("(compile:mark-block-dirty! \"x\" 0 0)");
     CHECK(r.has_value(), "eval returned a value");
     if (!r.has_value()) {
         return;
     }
     const auto& v = *r;
-    CHECK(types::is_error(v), "compile:mark-block-dirty! without kCapWildcard returns error value");
-    // Verify the error is a real merr index (not void).
-    if (types::is_error(v)) {
-        auto eidx = types::as_error_idx(v);
-        CHECK(eidx < cs.evaluator().get_primitive_error_values_size(),
-              "error value is a valid merr index (not void)");
-    }
+    CHECK(types::is_error(v), "sunk compile:mark-block-dirty! returns error (not public)");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -109,17 +101,15 @@ void test_privileged_allowed_with_wildcard() {
     // Grant kCapWildcard so the dispatch-site gate passes.
     cs.evaluator().grant_capability(aura::compiler::security::kCapWildcard);
 
-    auto r = cs.eval("(compile:mark-block-dirty! \"x\" 0 0)");
+    auto r = cs.eval("(compile:snapshot)");
     CHECK(r.has_value(), "eval returned a value");
     if (!r.has_value()) {
         return;
     }
     const auto& v = *r;
-    // The gate should NOT fire — the result is whatever the primitive
-    // body returns (likely #f since mark_block_dirty_fn_ isn't installed
-    // in this test, but NOT a capability-denied error from the gate).
-    CHECK(!types::is_error(v), "compile:mark-block-dirty! with kCapWildcard passes the gate "
-                               "(not the gate's capability-denied error)");
+    CHECK(!types::is_error(v), "compile:snapshot (public, not privileged) callable with wildcard");
+    auto sunk = cs.eval("(compile:mark-block-dirty! \"x\" 0 0)");
+    CHECK(sunk && types::is_error(*sunk), "sunk dirty! still not public with wildcard");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -163,13 +153,12 @@ void test_denial_counter_increments() {
     }
     const auto before = cs.evaluator().capability_denial_count();
 
-    // Trigger 2 denials (one per Privileged call without kCapWildcard).
+    // Issue #3172: sunk names never reach the dispatch-site privileged gate.
     cs.eval("(compile:mark-block-dirty! \"x\" 0 0)");
     cs.eval("(compile:clear-block-dirty! \"x\" 0 0)");
 
     const auto after = cs.evaluator().capability_denial_count();
-    CHECK(after >= before + 2,
-          "capability_denial_count incremented by ≥2 (2 Privileged calls denied)");
+    CHECK(after == before, "sunk compile: dirty names do not increment capability denials");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -191,24 +180,16 @@ void test_escape_hatches_tier_assigned() {
     };
 
     auto& prims = cs.evaluator().primitives();
-    int tier_assigned = 0;
+    int missing = 0;
     for (const auto* name : kEscapeHatches) {
         const auto slot = prims.slot_for_name(name);
         if (slot >= prims.slot_count()) {
-            std::println("  SKIP: {} not found in primitive table", name);
+            ++missing;
             continue;
         }
-        const auto& meta = prims.meta_for_slot(slot);
-        if (meta.security_level == aura::compiler::kPrimSecPrivileged) {
-            ++tier_assigned;
-        } else {
-            std::println("  FAIL: {} tier = {} (expected {})", name,
-                         static_cast<int>(meta.security_level),
-                         static_cast<int>(aura::compiler::kPrimSecPrivileged));
-        }
+        std::println("  FAIL: {} still in primitive table (expected sunk #3172)", name);
     }
-    CHECK(tier_assigned == 7,
-          "all 7 Part 4 #1396 ESDL escape hatches are tier-assigned kPrimSecPrivileged");
+    CHECK(missing == 7, "all 7 Part 4 #1396 compile: dirty escape hatches are sunk (#3172)");
 }
 
 // ═══════════════════════════════════════════════════════════════

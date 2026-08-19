@@ -51,14 +51,25 @@ def _read(rel: str) -> str:
 
 
 def _prim_body(text: str, name: str) -> str:
-    needle = f'add("{name}"'
-    start = text.find(needle)
+    # Issue #3172: fine-grained compile: dirty writers are sink_compile_prim
+    # (not public add()). Prefer add() then the sunk registrar.
+    needles = (f'add("{name}"', f'sink_compile_prim("{name}"')
+    start = -1
+    for needle in needles:
+        start = text.find(needle)
+        if start >= 0:
+            break
     if start < 0:
         return ""
-    # Body runs until the next add(" / ObservabilityPrims / register_ end.
+    # Body runs until the next add(" / sink / ObservabilityPrims / register_ end.
     rest = text[start:]
     nxt = len(rest)
-    for pat in ('\n    add("', "\n    ObservabilityPrims::", "\n}\n"):
+    for pat in (
+        '\n    add("',
+        "\n    sink_compile_prim(",
+        "\n    ObservabilityPrims::",
+        "\n}\n",
+    ):
         i = rest.find(pat, 8)
         if 0 <= i < nxt:
             nxt = i
