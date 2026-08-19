@@ -1600,10 +1600,24 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                                 "residual-zero",
                                 static_cast<std::int64_t>(
                                     aura::serve::steal_safety_production_residual_zero_v_read()));
+                            // Issue #3162: sticky readiness-fail — set on
+                            // residual-fail path under production multi-
+                            // worker, cleared by residual_zero_v_read when
+                            // residual returns to 0. Schema-3073 Agents see
+                            // sticky fail until residual clears (continuous
+                            // readiness, not per-query consult only).
+                            insert_kv(
+                                "production-readiness-steal-"
+                                "residual-sticky-fail",
+                                static_cast<std::int64_t>(
+                                    aura::serve::
+                                        steal_safety_production_residual_sticky_fail_v_read()));
                             insert_kv("schema-3073", 3073);
                             insert_kv("issue-3073", 3073);
                             insert_kv("schema-3134", 3134);
                             insert_kv("issue-3134", 3134);
+                            insert_kv("schema-3162", 3162);
+                            insert_kv("issue-3162", 3162);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail
