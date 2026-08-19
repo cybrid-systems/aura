@@ -2261,6 +2261,22 @@ add_dependencies(all_test_issue_targets test_macro_clone_target_atomicity)
 aura_add_issue_test(test_occurrence_abort_restore)
 aura_issue_test_link_light(test_occurrence_abort_restore)
 add_dependencies(all_test_issue_targets test_occurrence_abort_restore)
+# Issue #3159: close residual half-green window where concurrent
+# lookup_define_v2 during dual-topology restore could observe pre-abort
+# IR if abort-force fence is published after topology restore starts
+# (post-#3117 / #3069 residual). All 3 abort entry points in
+# evaluator_mutation_boundary.cpp (MutationBoundary abort + typed_mutate
+# fail path + dual-topology restore hook) publish
+# begin_abort_ir_cache_force_fence() BEFORE topology mutation and run
+# force_ir_cache_dirty_after_abort() AFTER. Soft / Off zero-cost
+# preserved (fence only in abort path). Uses existing
+# abort_ir_cache_force_dirty_total counter (no new middle-of-metrics
+# per issue AC4). abort_force_hold_ test-only mechanism present for
+# concurrent lookup injection. Lives in tests/compiler/ per
+# #81934/#81967.
+aura_add_issue_test(test_abort_ir_cache_fence_first)
+aura_issue_test_link_light(test_abort_ir_cache_fence_first)
+add_dependencies(all_test_issue_targets test_abort_ir_cache_fence_first)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
