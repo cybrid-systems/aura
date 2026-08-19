@@ -113,8 +113,10 @@ std::optional<std::uint32_t> try_lower_linear_type(LoweringState& state,
             // Issue #3006: depth!=0 / densify_pending remain hard blockers
             // for Move elision even after IR emission. Escape-blocked names
             // stay on the keyed path below (#2263 clean bindings may elide).
-            // Issue #3085: rehydrate-miss / steal-densify invalidate_gen
-            // also blocks elision until a fresh green bind (same helper).
+            // Issue #3085 / #3171: rehydrate-miss / steal-densify
+            // invalidate_gen also blocks elision until a fresh green bind
+            // (same helper). #3171 closes remaining densify-success /
+            // restamp sites that feed that gen.
             if (aura_linear_fast_path_depth_or_densify_block() != 0) {
                 // Fall through: emit MoveOp (no elision under mid-boundary /
                 // densify-pending).

@@ -3496,6 +3496,21 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             pin_contract_held = compact_r.pin_contract_held;
             had_moving_densify = compact_r.moved_live_objects;
+            // Issue #3171: Moving densify success did not go through
+            // unified_restamp(Densify), so invalidate_gen stayed matched
+            // to the pre-densify green bind while layout already moved.
+            // Advance gen immediately after relocate (before Phase-5
+            // bookkeeping / TypeLinearCommitProof restamp) so
+            // linear_fast_path_ok is false until a fresh stamp. Soft:
+            // helper no-op (zero extra). Escape-gate path counter stays
+            // on the Phase-5 note_escape_gate_clear_on_densify site.
+            if (had_moving_densify) {
+                if (typed_audit::invalidate_fast_path_before_steal_densify_restamp()) {
+                    const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+                    (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+                    aura_aot_record_deopt_on_steal();
+                }
+            }
             // Issue #2619: capture window aggregates for Agent densify-health.
             densify_objects_moved = compact_r.objects_moved_total;
             densify_untracked_kept = compact_r.untracked_kept_total;
@@ -3975,6 +3990,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (had_moving_densify) {
                 if (void* m = ev_->compiler_metrics())
                     aura::compiler::note_escape_gate_clear_on_densify(m);
+                // Issue #3171: invalidate_gen already advanced at compact
+                // relocate (same TU, had_moving_densify). This site remains
+                // the #2507 escape-clear + #2552 type-fence pair.
                 ev_->note_type_freshness_after_steal_or_densify();
             }
             // Issue #2842 / #2910: freeze CS truth after rehydrate (prefer

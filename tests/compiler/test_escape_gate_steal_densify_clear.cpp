@@ -245,6 +245,48 @@ static void ac5_source_and_query() {
     CHECK(href(cs, "linear-escape-gate-densify-clear-total") >= 0, "AC5: densify-clear total");
 }
 
+// ── Issue #3171: every steal/densify restamp also clears the keyed gate ──
+static void ac3171_restamp_sites_clear() {
+    std::println("\n--- #3171 AC: restamp sites clear keyed escape gate ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(fiber.find("clear_escape_move_elision_gate_for_eval") != std::string::npos,
+          "3171: unified_restamp clears keyed gate");
+    CHECK(fiber.find("Issue #3063 / #3171") != std::string::npos ||
+              fiber.find("Issue #3171") != std::string::npos,
+          "3171: unified_restamp cites #3171");
+    const auto densify_pos = mb.find("had_moving_densify = compact_r.moved_live_objects");
+    CHECK(densify_pos != std::string::npos, "3171: densify relocate site");
+    if (densify_pos != std::string::npos) {
+        const auto window = mb.substr(densify_pos, 1800);
+        CHECK(window.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+              "3171: densify relocate advances invalidate_gen");
+        CHECK(window.find("#3171") != std::string::npos, "3171: densify relocate cites #3171");
+    }
+    CHECK(tma.find("kLinearFastPathStealDensifyClearCompleteIssue") != std::string::npos,
+          "3171: issue stamp");
+    CHECK(tma.find("linear_fast_path_ok") != std::string::npos, "3171: SSOT predicate");
+    CHECK(mb.find("note_escape_gate_clear_on_densify") != std::string::npos,
+          "3171: Phase-5 #2507 clear preserved");
+    CHECK(fiber.find("note_escape_gate_clear_on_steal") != std::string::npos,
+          "3171: steal-complete #2507 clear preserved");
+}
+
+// ── Issue #3171 AC: schema + no invent ──
+static void ac3171_schema() {
+    std::println("\n--- #3171 AC: schema-3171 ---");
+    CompilerService cs;
+    CHECK(cs.eval("(+ 1 1)").has_value(), "3171: warm");
+    CHECK(href(cs, "schema-3171") == 3171, "3171: schema-3171");
+    CHECK(href(cs, "issue-3171") == 3171, "3171: issue-3171");
+    CHECK(href(cs, "linear-fast-path-steal-densify-clear-complete-wired") == 1, "3171: wired");
+    CHECK(href(cs, "schema-2507") == 2507, "3171: schema-2507 preserved");
+    CHECK(read_file("docs/design/3171-linear-fast-path-clear.md").empty(), "3171: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3171.cpp").empty(),
+          "3171: no invent test_issue_3171");
+}
+
 } // namespace
 
 int run_test_escape_gate_steal_densify_clear() {
@@ -254,9 +296,11 @@ int run_test_escape_gate_steal_densify_clear() {
     ac3_soft_empty();
     ac4_cross_eval_isolation();
     ac5_source_and_query();
+    ac3171_restamp_sites_clear();
+    ac3171_schema();
     if (g_failed)
         return 1;
-    std::println("escape gate steal/densify clear #2507: OK ({} passed)", g_passed);
+    std::println("escape gate steal/densify clear #2507/#3171: OK ({} passed)", g_passed);
     return 0;
 }
 

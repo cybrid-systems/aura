@@ -10292,7 +10292,7 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                   : 0;
             const std::int64_t active = 1;
             // Capacity: #863 + #2263 + #2286 + #2309 + #2344 + #2507 +
-            // #2899 + #2964 + #3006 + #3032 + #3063 + #3085 (~71 keys).
+            // #2899 + #2964 + #3006 + #3032 + #3063 + #3085 + #3171 (~74 keys).
             // 64 silently dropped schema-2507 / steal-densify-clear
             // (insert_kv full-scan return). Same class as #2432 64→128.
             auto* ht = FlatHashTable::create(128) /* #1141 / #2344 / #3085 */;
@@ -10490,6 +10490,16 @@ void ObservabilityPrims::register_jit_p91(PrimRegistrar add, Evaluator& ev) {
                                       std::memory_order_relaxed)));
                     insert_kv("schema-3085", kLinearFastPathRehydrateGenElisionIssue);
                     insert_kv("issue-3085", kLinearFastPathRehydrateGenElisionIssue);
+                    using aura::compiler::typed_audit::
+                        g_linear_fast_path_steal_densify_clear_complete_wired;
+                    using aura::compiler::typed_audit::
+                        kLinearFastPathStealDensifyClearCompleteIssue;
+                    insert_kv("linear-fast-path-steal-densify-clear-complete-wired",
+                              static_cast<std::int64_t>(
+                                  g_linear_fast_path_steal_densify_clear_complete_wired.load(
+                                      std::memory_order_relaxed)));
+                    insert_kv("schema-3171", kLinearFastPathStealDensifyClearCompleteIssue);
+                    insert_kv("issue-3171", kLinearFastPathStealDensifyClearCompleteIssue);
                 }
             }
             // Issue #2286: per-(eval, cow_gen) gate scoping.

@@ -1196,6 +1196,16 @@ static void ac3063_health_schema() {
     CHECK(href(cs, "overflow") == -1, "3063: health query not overflowed");
 }
 
+static void ac3171_health_schema() {
+    std::println("\n--- #3171 AC: type-linear-commit-health restamp-clear keys ---");
+    CompilerService cs;
+    CHECK(href(cs, "schema-3171") == 3171, "3171: schema-3171 on health");
+    CHECK(href(cs, "issue-3171") == 3171, "3171: issue-3171");
+    CHECK(href(cs, "linear-fast-path-steal-densify-clear-complete-wired") == 1, "3171: wired");
+    CHECK(href(cs, "schema-3063") == 3063, "3171: schema-3063 preserved");
+    CHECK(href(cs, "overflow") == -1, "3171: health query not overflowed");
+}
+
 static void ac2995_3_recover_fail_keeps_reject() {
     std::println("\n--- #2995 AC3: recover fail → existing force_reason, no silent green ---");
     apply_production_audit_defaults();
@@ -1317,6 +1327,7 @@ int run_test_type_linear_commit_health() {
     std::println("\n=== Issue #3032: rehydrate-miss invalidate on type-linear-commit-health ===");
     ac3032_health_schema();
     ac3063_health_schema();
+    ac3171_health_schema();
     // Issue #3091: TypeLinearCommitProof audit_mid for proof ↔ SE ↔ trail mid-join.
     //   AC1: struct field audit_mid appended at END (per #2906 rule).
     //   AC2: both build helpers (live + with_outcome) stamp audit_mid from

@@ -1214,6 +1214,15 @@ inline std::atomic<std::uint32_t> g_rehydrate_miss_invalidate_wired{1};
 inline constexpr int kStealDensifySuccessInvalidateIssue = 3063;
 inline std::atomic<std::uint64_t> g_steal_densify_success_invalidate_total{0};
 inline std::atomic<std::uint32_t> g_steal_densify_success_invalidate_wired{1};
+// Issue #3171: residual of #2964 / #2507 / #3032 / #3063 / #3085.
+// Production steal-complete / densify-success / cross-eval restamp must
+// BOTH (a) clear keyed escape summaries for the eval identity and
+// (b) advance invalidate_gen (reuse this helper — no second predicate)
+// so linear_fast_path_ok is false until a fresh outermost green bind.
+// Soft / Off: helper already early-outs (zero extra). Additive wired
+// only — reuse #2507 steal/densify clear totals + #3063 invalidate total.
+inline constexpr int kLinearFastPathStealDensifyClearCompleteIssue = 3171;
+inline std::atomic<std::uint32_t> g_linear_fast_path_steal_densify_clear_complete_wired{1};
 
 // Issue #3085: lowering Move elision must honor the rehydrate-miss /
 // steal-densify invalidate gen *before* the next IR lower. #3032 /
@@ -1714,9 +1723,10 @@ inline void reset_linear_fast_path_dirty_revalidate_for_test() noexcept {
     if (g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
             std::memory_order_relaxed) > 0)
         return false;
-    // Issue #3032 / #3063: invalidate gen (steal/densify miss *or* success
-    // restamp) must match last green bind. Acquire pairs with release
-    // fetch_add so an in-flight IR Move cannot elide after gen advances.
+    // Issue #3032 / #3063 / #3171: invalidate gen (steal/densify miss *or*
+    // success restamp) must match last green bind. Acquire pairs with
+    // release fetch_add so an in-flight IR Move cannot elide after gen
+    // advances. #3171 closes remaining densify-success / restamp sites.
     if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
         g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed))
         return false;
