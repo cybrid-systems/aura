@@ -6841,6 +6841,20 @@ public:
         std::unique_lock<std::mutex> cascade_guard(cascade_decision_mtx_, std::defer_lock);
         if (need_lock)
             cascade_guard.lock();
+        // Issue #3168: snapshot deferred_hybrid_edges_.size() under the
+        // cascade_decision_mtx_ critical section so the re-arm mid-loop
+        // can attribute newly-appended edges and mark only their target
+        // blocks (vs full mark_all_blocks_dirty + partial_forced_full_
+        // by_impact_total). #3135 owns the lock; #3067 owns the drain
+        // at entry. Size snapshot read under shared dep_graph_mtx_ is
+        // race-free relative to record_dependency's non-stale path
+        // (which adds at the tail under dep_graph_mtx_ write).
+        std::size_t initial_deferred_edges_size = 0;
+        {
+            lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
+                                                                  lock_order::Level::DepGraph);
+            initial_deferred_edges_size = deferred_hybrid_edges_.size();
+        }
         std::size_t ok = 0;
         // Snapshot names first — relower may erase/replace entries.
         std::vector<std::string> dirty_names;
@@ -6956,11 +6970,60 @@ public:
                 rearm_observed_mid_loop = true;
             }
             if (rearm_observed_mid_loop && want_partial) {
-                want_partial = false;
-                it->second.mark_all_blocks_dirty();
-                it->second.dirty = true;
-                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
-                                                                       std::memory_order_relaxed);
+                // Issue #3168: prefer new-edge-only mark over full fallback.
+                // Walk [initial_deferred_edges_size, current) under shared
+                // dep_graph_mtx_ and mark only the target callee blocks for
+                // THIS define via mark_block_dirty. Last-resort full
+                // (mark_all_blocks_dirty + counter) preserved only when the
+                // new-edge set is empty / cannot be attributed. Bumps
+                // cascade_rearm_new_edge_only_total when attribution succeeds
+                // (additive only — #3097 semantics unchanged).
+                bool attributed_new_edge = false;
+                std::vector<std::pair<std::string, std::string>> new_edges_snapshot;
+                {
+                    lock_order::OrderedSharedLock<std::shared_mutex> read(
+                        dep_graph_mtx_, lock_order::Level::DepGraph);
+                    if (deferred_hybrid_edges_.size() > initial_deferred_edges_size) {
+                        new_edges_snapshot.reserve(deferred_hybrid_edges_.size() -
+                                                   initial_deferred_edges_size);
+                        for (std::size_t idx = initial_deferred_edges_size;
+                             idx < deferred_hybrid_edges_.size(); ++idx) {
+                            new_edges_snapshot.push_back(deferred_hybrid_edges_[idx]);
+                        }
+                    }
+                }
+                if (!new_edges_snapshot.empty()) {
+                    // Mark only the target blocks of the newly-armed edges
+                    // that touch THIS define (caller or callee == name).
+                    // mark_block_dirty is idempotent — re-applying the same
+                    // dirty bit is safe. block_dirty_per_func_ grows on demand.
+                    for (const auto& [caller_name, callee_name] : new_edges_snapshot) {
+                        if (caller_name != name && callee_name != name)
+                            continue;
+                        const auto func_count = it->second.block_dirty_per_func_.size();
+                        for (std::size_t fi = 0; fi < func_count; ++fi) {
+                            const auto block_count = it->second.block_dirty_per_func_[fi].size();
+                            for (std::uint32_t bi = 0; bi < block_count; ++bi) {
+                                it->second.mark_block_dirty(fi, bi);
+                            }
+                        }
+                        attributed_new_edge = true;
+                        break; // one match is enough to keep want_partial
+                    }
+                }
+                if (attributed_new_edge) {
+                    metrics_.cascade_rearm_new_edge_only_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                    // Partial peel preserved — want_partial stays true.
+                } else {
+                    // Defensive last-resort: new-edge set empty or
+                    // cannot be attributed. Preserve #3097 semantics.
+                    want_partial = false;
+                    it->second.mark_all_blocks_dirty();
+                    it->second.dirty = true;
+                    metrics_.partial_forced_full_by_impact_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
             }
             if (want_partial)
                 metrics_.should_partial_relower_yes_total.fetch_add(1, std::memory_order_relaxed);

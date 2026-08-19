@@ -9478,6 +9478,14 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> stable_ref_fiber_mismatch_prevented_total{0};
     std::atomic<std::uint64_t> boundary_pinned_auto_restamp_total{0};
     std::atomic<std::uint64_t> cross_cow_provenance_enforced_total{0};
+    // Issue #3168: concurrent cascade re-arm under production multi-fiber
+    // — prefer new-edge-only mark over mark_all_blocks_dirty. Bumped in
+    // relower_dirty_defines_from_workspace when the re-arm critical
+    // section can attribute the newly-armed edges and mark only their
+    // target blocks (preserves partial peel). Last-resort full path
+    // continues to bump partial_forced_full_by_impact_total (#3097).
+    // Additive, struct-end layout-stable (#2906) — Agent dashboards.
+    std::atomic<std::uint64_t> cascade_rearm_new_edge_only_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header

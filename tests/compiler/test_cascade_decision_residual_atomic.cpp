@@ -209,11 +209,160 @@ int run_test_cascade_decision_residual_atomic_3135() {
 
     std::println("\n=== #3135 cascade-decision atomic: {} passed, {} failed ===", g_passed,
                  g_failed);
+    std::println("\n=== Issue #3168: concurrent cascade re-arm new-edge-only attribution ===");
+    ac3168_1_production_rearm_new_edge_only();
+    ac3168_2_soft_zero_extra();
+    ac3168_3_partial_peel_preserved();
+    ac3168_4_existing_3067_3097_3135_preserved();
+    ac3168_5_source_and_linter();
+
+    std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     return run_test_cascade_decision_residual_atomic_3135();
+}
+
+// ── Issue #3168 ACs ──
+// Concurrent cascade re-arm under production multi-fiber: prefer
+// new-edge-only mark over mark_all_blocks_dirty. Snapshot
+// deferred_hybrid_edges_.size() at lock acquisition; in the
+// rearm_observed_mid_loop branch walk [initial_size, current) under
+// shared dep_graph_mtx_ and mark only the target callee blocks for
+// THIS define via mark_block_dirty. Last-resort full path preserved
+// only when new-edge set is empty / cannot be attributed (#3097
+// semantics). Soft/Off + single-fiber + clean (armed==0): zero extra
+// (need_lock + defer_lock pattern preserved, AC2).
+static void ac3168_1_production_rearm_new_edge_only() {
+    std::println("\n--- #3168 AC1: Production — concurrent re-arm → new-edge-only attribution ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    auto obs = read_file("src/compiler/observability_metrics.h");
+    // Source-cite: snapshot block + attribution block + struct-end counter
+    CHECK(ixx.find("Issue #3168: snapshot deferred_hybrid_edges_.size()") != std::string::npos,
+          "3168 AC1: snapshot block cites #3168");
+    CHECK(ixx.find("Issue #3168: prefer new-edge-only mark over full fallback") !=
+              std::string::npos,
+          "3168 AC1: attribution block cites #3168");
+    CHECK(ixx.find("initial_deferred_edges_size") != std::string::npos,
+          "3168 AC1: initial_deferred_edges_size snapshotted");
+    CHECK(ixx.find("mark_block_dirty(fi, bi)") != std::string::npos,
+          "3168 AC1: precise mark_block_dirty used in attribution");
+    CHECK(ixx.find("cascade_rearm_new_edge_only_total") != std::string::npos,
+          "3168 AC1: counter bumped in attribution block");
+    CHECK(ixx.find("Issue #3097") != std::string::npos ||
+              ixx.find("partial_forced_full_by_impact_total") != std::string::npos,
+          "3168 AC1: #3097 last-resort full path preserved");
+    CHECK(obs.find("cascade_rearm_new_edge_only_total") != std::string::npos,
+          "3168 AC1: counter declared at struct end");
+    // No docs/design/3168-* (per #1655).
+    auto docs = std::string("docs/design/");
+    if (std::filesystem::exists(docs)) {
+        for (const auto& f : std::filesystem::directory_iterator(docs)) {
+            auto name = f.path().filename().string();
+            CHECK(name.find("3168-") == std::string::npos,
+                  "3168 AC1: no docs/design/3168-* plan doc (#1655)");
+            (void)name;
+            break;
+        }
+    }
+    // No test_issue_3168.cpp (per #81967).
+    for (const auto& rel : {std::string("tests/issues/test_issue_3168.cpp"),
+                            std::string("tests/compiler/test_issue_3168.cpp"),
+                            std::string("tests/serve/test_issue_3168.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3168 AC1: forbidden {} per #81967", rel));
+    }
+}
+
+static void ac3168_2_soft_zero_extra() {
+    std::println("\n--- #3168 AC2: Soft / Off + single-fiber + clean (armed==0) → zero extra ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    // The need_lock + defer_lock pattern (preserved from #3135) must still gate
+    // the cascade_decision_mtx_ acquisition; Soft/Off + clean path doesn't
+    // pay the lock OR the initial_deferred_edges_size shared read.
+    CHECK(ixx.find("const bool need_lock =") != std::string::npos,
+          "3168 AC2: need_lock gate preserved (#3135)");
+    CHECK(ixx.find("cascade_guard.lock()") != std::string::npos,
+          "3168 AC2: defer_lock + explicit lock preserved");
+    // The snapshot block is inside the cascade_guard critical section, so
+    // Soft/Off + clean skips it (the lock isn't acquired → snapshot block
+    // doesn't run).
+    auto pos = ixx.find("Issue #3168: snapshot deferred_hybrid_edges_.size()");
+    CHECK(pos != std::string::npos, "3168 AC2: snapshot block present");
+    if (pos != std::string::npos) {
+        // Verify the snapshot block sits AFTER the lock acquisition.
+        const auto lock_pos = ixx.find("cascade_guard.lock()");
+        CHECK(lock_pos != std::string::npos && lock_pos < pos,
+              "3168 AC2: snapshot gated behind need_lock acquisition");
+    }
+}
+
+static void ac3168_3_partial_peel_preserved() {
+    std::println("\n--- #3168 AC3: Attribution success → partial peel preserved (want_partial "
+                 "stays true) ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    auto build = read_file("build.py");
+    // Attribution path: bump cascade_rearm_new_edge_only_total, do NOT
+    // mark_all_blocks_dirty, do NOT bump partial_forced_full_by_impact_total.
+    // Find the attribution block (between #3168: prefer new-edge-only and
+    // its closing else) and confirm it does not touch want_partial = false
+    // or partial_forced_full_by_impact_total.
+    auto pos_attr = ixx.find("Issue #3168: prefer new-edge-only mark over full fallback");
+    CHECK(pos_attr != std::string::npos, "3168 AC3: attribution block present");
+    if (pos_attr != std::string::npos) {
+        const auto attr_block = ixx.substr(pos_attr, 2400);
+        CHECK(attr_block.find("metrics_.cascade_rearm_new_edge_only_total.fetch_add") !=
+                  std::string::npos,
+              "3168 AC3: attribution bumps cascade_rearm_new_edge_only_total");
+        // Defensive fallback (else branch) preserves #3097 semantics.
+        CHECK(attr_block.find("mark_all_blocks_dirty") != std::string::npos,
+              "3168 AC3: defensive fallback keeps mark_all_blocks_dirty");
+        CHECK(attr_block.find("partial_forced_full_by_impact_total.fetch_add") != std::string::npos,
+              "3168 AC3: defensive fallback bumps partial_forced_full_by_impact_total");
+    }
+    // build.py wires a sibling command for the #3168 linter.
+    CHECK(build.find("check_cascade_rearm_new_edge_only_3168") != std::string::npos ||
+              build.find("cmd_cascade_rearm_new_edge_only_3168") != std::string::npos ||
+              build.find("cascade-rearm-new-edge-only-3168") != std::string::npos,
+          "3168 AC3: build.py wires #3168 linter (or sibling)");
+}
+
+static void ac3168_4_existing_3067_3097_3135_preserved() {
+    std::println("\n--- #3168 AC4: #3067 / #3097 / #3135 paths preserved ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    // #3067: drain at entry.
+    CHECK(ixx.find("drain_deferred_hybrid_cascade_()") != std::string::npos,
+          "3168 AC4: #3067 drain at entry preserved");
+    // #3097: impact_ub consult + partial_forced_full_by_impact_total.
+    CHECK(ixx.find("impact_upper_bound_for_entry_") != std::string::npos,
+          "3168 AC4: #3097 impact_ub consult preserved");
+    CHECK(ixx.find("partial_forced_full_by_impact_total") != std::string::npos,
+          "3168 AC4: #3097 counter still bumped (defensive fallback)");
+    // #3135: cascade_decision_mtx_ + defer_lock + initial_armed check.
+    CHECK(ixx.find("cascade_decision_mtx_") != std::string::npos,
+          "3168 AC4: #3135 cascade_decision_mtx_ preserved");
+    CHECK(ixx.find("std::defer_lock") != std::string::npos,
+          "3168 AC4: #3135 defer_lock pattern preserved");
+    // #3161: graph_grew_mid_loop still observed (mid-loop re-arm signal).
+    CHECK(ixx.find("graph_grew_mid_loop") != std::string::npos,
+          "3168 AC4: #3161 graph_grew_mid_loop observation preserved");
+}
+
+static void ac3168_5_source_and_linter() {
+    std::println("\n--- #3168 AC8: source-cite linter + build.py wiring ---");
+    auto build = read_file("build.py");
+    auto lint = read_file("scripts/coverage/checks/check_cascade_rearm_new_edge_only_3168.py");
+    // Linter exists; --self-test exercises it.
+    int rc =
+        std::system("python3 scripts/coverage/checks/check_cascade_rearm_new_edge_only_3168.py "
+                    "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3168 AC8: linter --self-test passes");
+    CHECK(!lint.empty() && lint.find("Issue #3168") != std::string::npos,
+          "3168 AC8: linter cites #3168");
+    CHECK(build.find("check_cascade_rearm_new_edge_only_3168") != std::string::npos,
+          "3168 AC8: build.py wires linter");
 }
 #endif

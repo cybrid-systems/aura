@@ -8752,6 +8752,39 @@ def cmd_pcv_span_stale_coverage_3167():
     return 0
 
 
+def cmd_cascade_rearm_new_edge_only_3168():
+    """Issue #3168: concurrent cascade re-arm under production multi-fiber
+    prefers new-edge-only mark over mark_all_blocks_dirty.
+
+    Wire-up: relower_dirty_defines_from_workspace critical section (per
+    #3135 cascade_decision_mtx_) snapshots initial_deferred_edges_size;
+    in the rearm_observed_mid_loop branch walks the [initial, current)
+    range under shared dep_graph_mtx_ and marks only target callee
+    blocks via mark_block_dirty. Defensive last-resort fallback (new-edge
+    set empty / non-attributable) preserves the existing
+    mark_all_blocks_dirty + partial_forced_full_by_impact_total path
+    (#3097). Soft/Off + clean (armed==0) single-fiber skips the lock
+    (need_lock + defer_lock pattern preserved, zero extra).
+
+    No second cascade model, no new global lock, no Soft behavioural
+    change. Reuses partial_forced_full_by_impact_total for the defensive
+    fallback; cascade_rearm_new_edge_only_total is additive only
+    (struct-end layout-stable per #2906). Extends
+    test_cascade_decision_residual_atomic_3135; no test_issue_3168.cpp.
+    """
+    print(f"{B}=== cascade rearm new-edge-only (#3168) ==={N}")
+    script = COVERAGE_CHECKS / "check_cascade_rearm_new_edge_only_3168.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cascade rearm new-edge-only (#3168) coverage contract rows failed")
+        return 1
+    ok("cascade rearm new-edge-only (#3168) coverage clean")
+    return 0
+
+
 def cmd_batch_dirty_cascade_coverage():
     """Issue #2522: batch dirty cascade (mark_blocks_dirty + single bump).
 
@@ -17288,6 +17321,8 @@ def main():
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "pcv-span-stale-coverage-3167": cmd_pcv_span_stale_coverage_3167,
         "pcv-span-stale-3167": cmd_pcv_span_stale_coverage_3167,
+        "cascade-rearm-new-edge-only-3168": cmd_cascade_rearm_new_edge_only_3168,
+        "cascade-rearm-new-edge-only-3168-coverage": cmd_cascade_rearm_new_edge_only_3168,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,
