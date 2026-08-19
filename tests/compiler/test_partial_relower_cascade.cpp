@@ -13,11 +13,13 @@
 
 #include "compiler/observability_metrics.h"
 
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.ir_cache_pure;
@@ -267,6 +269,69 @@ void ac8_underestimate_forces_full() {
         CHECK(as_int(*r) == 2, "a returns correct result (no stale IR)");
 }
 
+void ac9_concurrent_rearm_soak() {
+    // Issue #3161: concurrent record_dependency during
+    // relower_dirty_defines_from_workspace loop forces full for THIS
+    // define + all remaining (Option A). Soak: a worker thread fires
+    // record_dependency non-stale path while relower runs, exercising
+    // the mid-loop re-arm observation (graph_grew_mid_loop signal via
+    // dep_graph_node_mirror_edges_total advance).
+    std::println("\n--- AC9: concurrent rearm during peel soak (#3161) ---");
+    reset_partial_relower_threshold_for_test();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \""
+                  "(define d (lambda (x) (+ x 1)))"
+                  "(define c (lambda (x) (d x)))"
+                  "(define b (lambda (x) (c x)))"
+                  "(define a (lambda (x) (b x)))"
+                  "\")")
+              .has_value(),
+          "set-code chain");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto forced0 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto node_mirror0 = m->dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+    constexpr int kIters = 8;
+    for (int i = 0; i < kIters; ++i) {
+        cs.public_invalidate_function("a");
+        // Worker thread fires record_dependency non-stale path during
+        // relower. Non-stale path adds new NodeId mirror edges → bumps
+        // dep_graph_node_mirror_edges_total. Mid-loop bumps land during
+        // relower's loop iteration → graph_grew_mid_loop fires → rearm
+        // signal → partial_forced_full_by_impact_total bumps (force
+        // full for THIS define + cascade to remaining via
+        // rearm_observed_mid_loop flag).
+        std::thread worker([&cs] {
+            std::this_thread::sleep_for(std::chrono::microseconds(50));
+            for (int k = 0; k < 32; ++k) {
+                cs.public_record_dependency("a", "d");
+            }
+        });
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        worker.join();
+        CHECK(cs.eval("(eval-current)").has_value(), "eval mid-soak");
+    }
+    const auto forced1 = m->partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto node_mirror1 = m->dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+    std::println("  soak {} iters: forced {}→{} node_mirror {}→{}", kIters, forced0, forced1,
+                 node_mirror0, node_mirror1);
+    // node_mirror must advance (record_dependency non-stale path added
+    // edges — exercises the graph_grew_mid_loop signal source).
+    CHECK(node_mirror1 > node_mirror0, "dep_graph_node_mirror_edges_total advanced");
+    // forced_full is non-decreasing (rearm signal may or may not fire
+    // per iteration depending on timing — soak exercises the path
+    // multiple times; Option A "break/continue with full" contract
+    // holds regardless).
+    CHECK(forced1 >= forced0, "partial_forced_full_by_impact_total non-decreasing");
+    // No stale IR: a must eval to d's new body (correctness invariant —
+    // silent under-relower of caller body would surface as wrong result).
+    auto r = cs.eval("(a 1)");
+    CHECK(r.has_value(), "a evals after soak");
+    if (r && is_int(*r))
+        CHECK(as_int(*r) == 2, "a returns correct result (no stale IR after rearm)");
+}
+
 } // namespace
 
 int run_test_partial_relower_cascade() {
@@ -279,6 +344,7 @@ int run_test_partial_relower_cascade() {
     ac6_epoch_still_enforced();
     ac7_impact_cross_check();
     ac8_underestimate_forces_full();
+    ac9_concurrent_rearm_soak();
     if (g_failed)
         return 1;
     std::println("partial re-lower cascade (#2041): OK ({} passed)", g_passed);

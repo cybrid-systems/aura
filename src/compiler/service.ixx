@@ -6849,6 +6849,16 @@ public:
             if (e.dirty || e.dirty_block_count() > 0)
                 dirty_names.push_back(n);
         }
+        // Issue #3161: snapshot the NodeId mirror-edge counter under the
+        // cascade_decision_mtx_ critical section so the mid-loop
+        // re-arm observation (re_armed_now OR graph_grew_mid_loop) is
+        // race-free against record_dependency's non-stale path. The
+        // non-stale path doesn't take cascade_decision_mtx_ (only
+        // dep_graph_mtx_), so without a snapshot it could add edges
+        // mid-peel that under-count impact_ub for the next iteration.
+        const auto initial_node_mirror_edges =
+            metrics_.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+        bool rearm_observed_mid_loop = false;
         for (const auto& name : dirty_names) {
             auto it = ir_cache_v2_.find(name);
             if (it == ir_cache_v2_.end())
@@ -6926,15 +6936,26 @@ public:
                     }
                 }
             }
-            // Issue #3135: re-check deferred_hybrid_armed_ immediately
-            // before peel; if a concurrent record_dependency re-armed
-            // during this critical section (lock-ordered), force full.
-            // Bounded once per define — drain already cleared initial
-            // queue, so re-arm means a fresh reject arrived; upgrade
-            // to full + mark_all_blocks_dirty ensures callee-dependent
-            // IR is not served stale.
+            // Issue #3161: re-arm observation mid-loop (Option A).
+            // re_armed_now = deferred_hybrid_armed_ went 0→1 (stale-reject
+            // path queued; blocked on cascade_decision_mtx_ so only fires
+            // for rejects in flight before lock acquisition — rare).
+            // graph_grew_mid_loop = record_dependency's non-stale path
+            // added new NodeId mirror edges during a previous iteration's
+            // peel. Non-stale path only takes dep_graph_mtx_ (not the
+            // cascade_decision_mtx_ we hold), so impact_ub snapshotted
+            // for the next iteration may under-count these new callee
+            // edges. Either signal: force full for THIS define + set
+            // rearm_observed_mid_loop so remaining iterations also force
+            // full (break/continue with full per Option A).
             const bool re_armed_now = deferred_hybrid_armed_.load(std::memory_order_acquire) != 0;
-            if (re_armed_now && !initial_armed && want_partial) {
+            const bool graph_grew_mid_loop =
+                metrics_.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed) >
+                initial_node_mirror_edges;
+            if (re_armed_now || graph_grew_mid_loop) {
+                rearm_observed_mid_loop = true;
+            }
+            if (rearm_observed_mid_loop && want_partial) {
                 want_partial = false;
                 it->second.mark_all_blocks_dirty();
                 it->second.dirty = true;
