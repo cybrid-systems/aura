@@ -87,8 +87,10 @@ extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
 // Fallback bump when no JIT SO is loaded. Full JIT's strong
 // aura_aot_bump_func_table_epoch (slot invalidate / notify) interposes
 // via ELF prepend. Light tests use this fetch_add on the same atomic
-// the getter reads.
-extern "C" void aura_aot_bump_func_table_epoch(void) {
+// the getter reads. Weak: test_ir / asan-build compile runtime_ssot.cpp
+// AND aura_jit_bridge.cpp as objects in one executable — two strong
+// defs were `duplicate symbol: aura_aot_bump_func_table_epoch`.
+extern "C" __attribute__((weak)) void aura_aot_bump_func_table_epoch(void) {
     g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
