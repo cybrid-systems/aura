@@ -2188,6 +2188,12 @@ add_dependencies(all_test_issue_targets test_macro_restamp_after_flat)
 aura_add_issue_test(test_macro_intro_restamp)
 aura_issue_test_link_light(test_macro_intro_restamp)
 add_dependencies(all_test_issue_targets test_macro_intro_restamp)
+# Issue #3151: expand_inner_macros must pass SyntaxMarker::MacroIntroduced
+# to clone_macro_body (call-site gap; top-level eval_flat + macro_expand_all_body
+# already pass MacroIntroduced; inner expand was dropping to default User).
+aura_add_issue_test(test_macro_inner_expand_marker)
+aura_issue_test_link_light(test_macro_inner_expand_marker)
+add_dependencies(all_test_issue_targets test_macro_inner_expand_marker)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker

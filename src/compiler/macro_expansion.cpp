@@ -2312,8 +2312,18 @@ aura::ast::NodeId expand_inner_macros(
                                        std::equal_to<>>
                         rename_map;
                     auto* src_pool = md.pool ? md.pool : pool;
-                    auto cloned = clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id,
-                                                   &subst, &rename_map);
+                    // Issue #3151: stamp MacroIntroduced on nested-expand clones.
+                    // Top-level eval_flat (#3854) and macro_expand_all_body (#6105)
+                    // already pass MacroIntroduced; inner expand was dropping to
+                    // default User, so mutate:replace-subtree / mutate:remove-node
+                    // would default-allow nested-expanded nodes without
+                    // :allow-macro?, and query:pattern skip_macro_introduced would
+                    // not hide nested expansion residue. Closure-materialization
+                    // path (evaluator_eval_flat.cpp #1543) intentionally keeps
+                    // User — that path is not touched.
+                    auto cloned =
+                        clone_macro_body(*flat, *pool, *md.flat, *src_pool, md.body_id, &subst,
+                                         &rename_map, aura::ast::SyntaxMarker::MacroIntroduced);
                     if (cloned == NULL_NODE)
                         return root;
                     // Recursively expand inner macros in the cloned body
