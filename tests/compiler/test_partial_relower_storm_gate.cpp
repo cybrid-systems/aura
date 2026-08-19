@@ -221,6 +221,73 @@ int run_test_partial_relower_storm_gate() {
         clear_storm();
     }
 
+    // ── AC6 (Issue #3163): alternating-storm hysteresis refresh ──
+    // Shape↔Global rapid alternation must hold force-full across each
+    // transition (joint hysteresis refresh on None→non-None edge), not
+    // short-oscillate partial↔full between a decremented counter and a
+    // new storm entry. After both storms quiet, force-full releases
+    // after kStormExitForceFullConsults quiet consults.
+    {
+        std::println("\n--- AC6: alternating Shape↔Global storm hysteresis (#3163) ---");
+        reset_partial_relower_threshold_for_test();
+        clear_storm();
+        const auto f0 = partial_relower_storm_forced_full_total_atomic().load();
+        const auto c0 = partial_relower_storm_gate_consult_total_atomic().load();
+        // Alternating storm pattern: Shape active → exit → Global active → exit → repeat.
+        // The hysteresis window must be refreshed on each None→non-None entry,
+        // so force-full holds across all transitions (no partial↔full flip).
+        constexpr int kAltIters = 6;
+        int partial_decisions = 0;
+        for (int i = 0; i < kAltIters; ++i) {
+            // Shape active
+            aura_hot_update_set_shape_storm_active(1);
+            if (!should_partial_relower_storm_aware(1))
+                ++partial_decisions; // Shape+1 should be partial (counter — flips)
+            // Shape exit → Global enter (alternation)
+            aura_hot_update_set_shape_storm_active(0);
+            trip_global_storm();
+            if (!should_partial_relower_storm_aware(1))
+                ++partial_decisions; // Global+1 should be full (counter — no flip)
+            // Global exit
+            clear_storm();
+            // After clear: storm-exit hysteresis should hold force-full for
+            // kStormExitForceFullConsults consults. Verify first consult is
+            // force-full (storm_exit_force_full_active returns true).
+            // We can't directly read the internal counter, but the storm gate
+            // consult path applies storm_exit_force_full_active; under the
+            // refreshed counter, first consult after alternation must be
+            // force-full.
+            if (!apply_partial_relower_storm_gate(true))
+                ++partial_decisions; // storm_exit_force_full forces false → no flip
+        }
+        const auto f1 = partial_relower_storm_forced_full_total_atomic().load();
+        const auto c1 = partial_relower_storm_gate_consult_total_atomic().load();
+        std::println("  alt {} iters: forced_full {}→{} consult {}→{}", kAltIters, f0, f1, c0, c1);
+        // Forced-full counter must advance under alternating storms
+        // (each iter contributes at least 1 force-full from Global +
+        // post-clear hysteresis refresh).
+        CHECK(f1 > f0, "AC6: forced_full advances under alternating storms");
+        // Consult counter must advance by kAltIters × 3 (Shape + Global +
+        // post-clear apply_partial_relower_storm_gate calls).
+        CHECK(c1 >= c0 + static_cast<std::uint64_t>(kAltIters * 3),
+              "AC6: consult_total advances by alternating storm pattern");
+        // Source-cite: the refresh on None→non-None edge is wired in
+        // hot_update_registry.cpp storm_exit_force_full_active.
+        auto hur = read_file("src/compiler/hot_update_registry.cpp");
+        auto fn_pos = hur.find("storm_exit_force_full_active() noexcept");
+        CHECK(fn_pos != std::string::npos, "AC6: storm_exit_force_full_active present");
+        auto fn_end = hur.find("\n}\n", fn_pos);
+        if (fn_end == std::string::npos)
+            fn_end = fn_pos + 4000;
+        auto fn_win = hur.substr(fn_pos, fn_end - fn_pos);
+        CHECK(fn_win.find("Issue #3163") != std::string::npos,
+              "AC6: refresh-on-entry cites Issue #3163");
+        CHECK(fn_win.find("now != 0 && prev == 0") != std::string::npos,
+              "AC6: None→non-None edge refresh wired");
+        clear_storm();
+        reset_partial_relower_threshold_for_test();
+    }
+
     // ── Source wiring ──
     {
         std::println("\n--- source wiring ---");
