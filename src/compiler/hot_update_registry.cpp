@@ -35,6 +35,13 @@ extern "C" int aura_production_defaults_active_probe() noexcept;
 // Issue #2902 / #3101: defined in ir_cache_pure.ixx so this non-module
 // TU (also compiled into test_concurrent) does not import that module.
 extern "C" void aura_clear_partial_relower_threshold_force(void);
+// HotUpdateRegistry bridge hooks (defined in aura_jit_bridge.cpp).
+// Forward-declared here so hard_invalidate_via_facade (L150–151) can
+// bump bridge_epoch + defuse_version without an include cycle. Per
+// #3166 ci-build-fix: same pattern as #3162 sticky_fail move — declarations
+// must be visible at the call site.
+extern "C" void aura_hot_update_bump_bridge_epoch(void) noexcept;
+extern "C" void aura_hot_update_bump_defuse_version(void) noexcept;
 
 namespace aura::compiler {
 
