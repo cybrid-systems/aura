@@ -2168,10 +2168,13 @@ namespace detail {
 // hygiene gates (MutationBoundaryGuard etc.) don't see the new
 // rest-list. Iterative walk via std::vector stack (same shape as the
 // existing clone_macro_body stamp loop at #2098).
-static inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target,
-                                            const aura::ast::FlatAST& source,
-                                            aura::ast::NodeId src_body_id,
-                                            aura::ast::NodeId list_root) {
+// Issue #3153: helper dropped from static inline (kept inline) so
+// evaluator_eval_flat.cpp dotted-rest + reexpand_call paths can call
+// it from a different TU via the aura.compiler.macro_expansion module
+// export (declared in macro_expansion.ixx). Definition stays here
+// (single source of truth); inline keeps ODR-safe across TUs.
+inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target, const aura::ast::FlatAST& source,
+                                     aura::ast::NodeId src_body_id, aura::ast::NodeId list_root) {
     using namespace aura::ast;
     if (list_root == NULL_NODE || list_root >= target.size())
         return;

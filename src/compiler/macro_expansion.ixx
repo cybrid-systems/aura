@@ -194,4 +194,15 @@ export aura::ast::NodeId expand_inner_macros(
 export aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPool& pool,
                                           aura::ast::NodeId root, int max_passes = 32);
 
+// Issue #3153: stamp_rest_param_hygiene was static inline in
+// macro_expansion.cpp — only the macro_expand_all / expand_inner_macros
+// paths inside that TU could call it. eval_flat dotted-rest + reexpand_call
+// call sites need the same helper (without stamp, rest-list spine nodes
+// are missing kMacroExpansion + MacroIntroduced marker, so mutate:replace-
+// subtree / rebind gates don't see them and self-evo can rewrite rest
+// structure without :allow-macro?). Re-exposed here as export; definition
+// stays in macro_expansion.cpp as inline (ODR-safe across TUs).
+export void stamp_rest_param_hygiene(aura::ast::FlatAST& target, const aura::ast::FlatAST& source,
+                                     aura::ast::NodeId src_body_id, aura::ast::NodeId list_root);
+
 } // namespace aura::compiler::macro_exp

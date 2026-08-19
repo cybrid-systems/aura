@@ -2201,6 +2201,14 @@ add_dependencies(all_test_issue_targets test_macro_inner_expand_marker)
 aura_add_issue_test(test_evolution_audit_decision_forensic)
 aura_issue_test_link_light(test_evolution_audit_decision_forensic)
 add_dependencies(all_test_issue_targets test_evolution_audit_decision_forensic)
+# Issue #3153: eval_flat dotted-rest + reexpand_call pair-spine call
+# sites skipped stamp_rest_param_hygiene (helper dropped MacroIntroduced
+# marker on rest-list spine). Helper already existed; this is a
+# call-site residual only. Rest spine is now stamped parity with
+# macro_expand_all / expand_inner_macros (single shared helper).
+aura_add_issue_test(test_rest_param_hygiene_eval_flat)
+aura_issue_test_link_light(test_rest_param_hygiene_eval_flat)
+add_dependencies(all_test_issue_targets test_rest_param_hygiene_eval_flat)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker

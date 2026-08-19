@@ -3837,6 +3837,19 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                     // runtime shape as non-hygienic rest list).
                                     auto list_var = f->add_variable(p->intern("list"));
                                     auto list_call = f->add_call(list_var, remaining);
+                                    // Issue #3153: stamp the freshly allocated
+                                    // (list a1 a2 ...) spine with
+                                    // kMacroExpansion dirty + MacroIntroduced
+                                    // marker + provenance + schema_cache.
+                                    // macro_expand_all / expand_inner_macros
+                                    // already stamp; eval_flat hot path was
+                                    // dropping the marker, so is_macro_introduced
+                                    // stayed false on rest nodes and
+                                    // mutate:replace-subtree / rebind gates
+                                    // could not reject them. Single shared
+                                    // helper now (exported from
+                                    // aura.compiler.macro_expansion).
+                                    stamp_rest_param_hygiene(*f, *md.flat, md.body_id, list_call);
                                     subst[md.params.back()] = list_call;
                                 }
                                 // Clone the macro body with substitution +
@@ -6095,6 +6108,20 @@ std::size_t Evaluator::post_mutation_macro_reexpand(aura::ast::FlatAST& flat,
             for (std::size_t k = call_args.size(); k > first_rest_idx; --k) {
                 std::size_t i = k - 1;
                 list_end = flat.add_pair(call_args[i], list_end);
+            }
+            // Issue #3153: stamp the freshly allocated pair-spine root
+            // (list_end) with kMacroExpansion dirty + MacroIntroduced
+            // marker + provenance + schema_cache. Same helper as the
+            // eval_flat dotted-rest path (which uses (list a b ...) shape)
+            // and as macro_expand_all / expand_inner_macros. Without the
+            // stamp, pair-spine rest nodes are missing MacroIntroduced
+            // marker and mutate:replace-subtree / rebind gates can't
+            // reject them — self-evo can rewrite rest structure without
+            // :allow-macro?. md.flat may be null (programmatic macro def);
+            // fall back to current flat in that case (same defensive
+            // pattern as src_flat below).
+            if (list_end != aura::ast::NULL_NODE) {
+                stamp_rest_param_hygiene(flat, md.flat ? *md.flat : flat, md.body_id, list_end);
             }
             subst_map[md.params.back()] = list_end;
         }
