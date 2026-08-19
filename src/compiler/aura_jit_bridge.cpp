@@ -2046,6 +2046,26 @@ extern "C" void aura_aot_bump_func_table_epoch(void) {
     aura_event_driven_epoch_invariant_walk_if_due();
 }
 
+// Issue #3150: production facade joint-bump bridge_epoch + defuse_version.
+// Companion to aura_aot_bump_func_table_epoch (the AOT table epoch bumper).
+// Used by hot_update_registry.cpp::hard_invalidate_via_facade so the
+// production path owns the full invalidate / soft-dirty contract under
+// production_defaults_active() — not just the AOT table epoch.
+// Atomic read-modify-write under release ordering; the caller is
+// expected to hold the same mutate_mtx_ discipline as
+// CompilerService::atomic_bump_epochs_and_stamp_bridge (production
+// facade is invoked from invalidate_function / mark_define_dirty
+// which already owns the lock; soft / off path returns false from
+// hard_invalidate_via_facade so these hooks are never reached).
+extern "C" void aura_hot_update_bump_bridge_epoch(void) noexcept {
+    const auto cur = g_current_bridge_epoch.load(std::memory_order_acquire);
+    g_current_bridge_epoch.store(cur + 1, std::memory_order_release);
+}
+
+extern "C" void aura_hot_update_bump_defuse_version(void) noexcept {
+    g_aot_defuse_version++;
+}
+
 // Issue #2271 / #2299: physically invalidate generation-behind AOT slots
 // (close #2232 / #2271 follow-up). After this call, matching prior
 // non-null slots probe as 0 via aura_aot_probe_fn_ptr — defense in
