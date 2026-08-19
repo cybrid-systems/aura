@@ -2,7 +2,7 @@
 
 # Standard library index (generated)
 
-**74** modules in `lib/std/`. Load: `(require "std/name" all:)`.
+**75** modules in `lib/std/`. Load: `(require "std/name" all:)`.
 
 | Module | Exports | Description |
 |--------|---------|-------------|
@@ -29,6 +29,7 @@
 | `std/engine-metrics` | `engine-metrics:get` `engine-metrics:list` `engine-metrics:group` `engine-metrics:prefix` `engine-metrics:all` `engine-metrics:count` | lib/std/engine-metrics.aura — Issue #1433 thin wrappers around (engine:metrics) |
 | `std/evolve` | `evolve-strategy` | evolve.aura -- Strategy evolution from intend analytics |
 | `std/extract` | `extract-code` `trim-str` `find-in-str` | lib/std/extract.aura — Code extraction from LLM responses |
+| `std/ffi` | `c-load` `c-func` `c-alloc` `c-free` `c-opaque` `c-opaque?` `c-opaque->int` `c-struct-size` … (+2) | ffi.aura — C FFI host prims (Issue #3176) |
 | `std/fs` | `path-join` `path-dirname` `path-basename` `path-extname` `file-read` `file-write` `file-exists?` `file-size` … (+3) | lib/std/fs.aura — File system utilities |
 | `std/fss` | `fss:init` `fss:init-hash` `fss:step!` `fss:best` `fss:population` `fss:report` `fss:export` `fss:help` … (+8) | lib/std/fss.aura — Issue #2880 Fish School Search surface |
 | `std/git` | `git-status` `git-diff` `git-log` `git-commit` `git-branch-current` `git-stage` `git-rev-parse` | git.aura — Git integration host prims (Issue #3174) |

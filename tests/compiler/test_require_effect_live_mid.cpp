@@ -31,6 +31,8 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::security::kEffectFfi;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::types::is_bool;
+using aura::compiler::types::is_error;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
@@ -311,6 +313,26 @@ static void ac2707_5_6_query_and_source() {
     }
 }
 
+// Issue #3176: C FFI c-* demoted off core boot; std/ffi installs them.
+static void ac3176_std_ffi_surface() {
+    std::println("\n--- #3176: c-* not on core boot; std/ffi installs ---");
+    CompilerService cs;
+    auto unbound = cs.eval("(c-opaque? 1)");
+    CHECK(unbound && is_error(*unbound), "3176: c-opaque? unbound before std/ffi");
+    auto inst = cs.evaluator().ensure_std_host_prims("std/ffi");
+    CHECK(!is_error(inst), "3176: ensure_std_host_prims ffi ok (sandbox off)");
+    auto r = cs.eval("(c-opaque? 1)");
+    CHECK(r && is_bool(*r), "3176: c-opaque? after install");
+
+    CompilerService sandboxed;
+    sandboxed.evaluator().set_sandbox_mode(true);
+    auto denied = sandboxed.evaluator().ensure_std_host_prims("std/ffi");
+    CHECK(is_error(denied), "3176: sandbox without ffi grant refuses std/ffi");
+    CHECK(read_file("docs/design/3176-std-ffi.md").empty(), "3176: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3176.cpp").empty(),
+          "3176: no invent test_issue_3176");
+}
+
 } // namespace
 
 int run_test_require_effect_live_mid() {
@@ -326,6 +348,7 @@ int run_test_require_effect_live_mid() {
     ac2707_3_match_allows_single_use();
     ac2707_4_soft_zero_skips();
     ac2707_5_6_query_and_source();
+    ac3176_std_ffi_surface();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

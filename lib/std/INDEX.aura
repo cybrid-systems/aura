@@ -155,6 +155,9 @@
     (list "process"
       (list "shell/command/sys-* host prims — sandbox requires exec (#3174)"
             "(require \"std/process\" all:)"))
+    (list "ffi"
+      (list "C FFI host prims (c-load/c-func/c-alloc/opaque/struct) — sandbox requires effect:ffi (#3176)"
+            "(require \"std/ffi\" all:)"))
     (list "fs"
       (list "Filesystem helpers"
             "(fs:read \"/tmp/foo.txt\")"))

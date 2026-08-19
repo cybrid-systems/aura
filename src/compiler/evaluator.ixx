@@ -4742,10 +4742,10 @@ public:
     types::EvalValue load_module_file(const std::string& path);
     // Resolve a module path (supports AURA_PATH, .aura extension).
     std::string resolve_module_path(const std::string& path) const;
-    // Issue #3174: host prims for std/{io,fs,net,socket,git,process} are
-    // deferred off the boot registrar (SlimSurface / primitives.md). Require
+    // Issue #3174 / #3176: host prims for std/{io,fs,net,socket,git,process,ffi}
+    // are deferred off the boot registrar (SlimSurface / primitives.md). Require
     // of those modules installs them. Sandbox without the matching effect
-    // refuses the module (security:grant-effect!).
+    // refuses the module (security:grant-effect!). kEffectFfi for std/ffi.
     void defer_std_host_prim(std::string name, PrimFn fn);
     [[nodiscard]] types::EvalValue ensure_std_host_prims(std::string_view module_path);
 

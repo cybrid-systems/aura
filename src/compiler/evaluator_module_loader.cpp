@@ -143,6 +143,7 @@ void Evaluator::defer_std_host_prim(std::string name, PrimFn fn) {
 
 types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) {
     using aura::compiler::security::kEffectExec;
+    using aura::compiler::security::kEffectFfi;
     using aura::compiler::security::kEffectNetwork;
     using aura::compiler::security::kEffectRead;
     using aura::compiler::security::kEffectWrite;
@@ -175,6 +176,10 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
         want = 1u << 0;
         bits = static_cast<std::uint16_t>(kEffectRead | kEffectWrite);
         op = "std/io";
+    } else if (is_mod("ffi")) {
+        want = 1u << 4;
+        bits = kEffectFfi;
+        op = "std/ffi";
     } else {
         return types::make_void();
     }
@@ -201,6 +206,8 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
             match = name == "shell" || name.starts_with("command-") || name.starts_with("sys-");
         else if (want == (1u << 0))
             match = name.starts_with("file-") || name == "directory-list";
+        else if (want == (1u << 4))
+            match = name.starts_with("c-");
         if (match)
             add(name, fn);
     }
@@ -281,8 +288,9 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
                      truncate_path_for_log(path));
         return types::make_void();
     }
-    // Issue #3174: install deferred host prims (git/tcp/http/shell/sys/file-*)
-    // before evaluating the std module. Sandbox without grant → error.
+    // Issue #3174 / #3176: install deferred host prims
+    // (git/tcp/http/shell/sys/file-*/c-*) before evaluating the std module.
+    // Sandbox without grant → error.
     {
         const auto gate = ensure_std_host_prims(resolved);
         if (types::is_error(gate))

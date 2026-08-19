@@ -104,8 +104,20 @@ Evaluator::Evaluator() {
     arena_group_ = std::make_unique<aura::ast::ArenaGroup>();
     init_pair_primitives();
 
-    ffi_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,
-                                     &coverage_counters_);
+    // Issue #3176: C FFI c-* names are deferred until (require "std/ffi").
+    // ffi:pin-buffer / ffi:unpin-buffer / ffi:opaque-stats stay on boot.
+    {
+        auto boot_add = prim_registrar();
+        ffi_runtime_.register_primitives(
+            [this, boot_add](std::string name, PrimFn fn) {
+                if (name.starts_with("c-")) {
+                    defer_std_host_prim(std::move(name), std::move(fn));
+                    return;
+                }
+                boot_add(std::move(name), std::move(fn));
+            },
+            &string_heap_, &opaque_heap_, &coverage_counters_);
+    }
 
     adt_runtime_.register_primitives(prim_registrar(), &string_heap_, &opaque_heap_,
                                      &coverage_counters_);

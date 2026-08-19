@@ -1,0 +1,10 @@
+c-load: Any -> Int
+c-func: Any Any Any -> Any
+c-alloc: Any -> Any
+c-free: Any -> Void
+c-opaque: Any -> Any
+c-opaque?: Any -> Bool
+c-opaque->int: Any -> Int
+c-struct-size: Any -> Int
+c-struct-set!: Any Any Any -> Void
+c-struct-ref: Any Any Any -> Any

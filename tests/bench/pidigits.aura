@@ -19,6 +19,7 @@
 ; c-load/c-func FFI; libgmp must be present (Homebrew: /opt/homebrew/lib).
 
 (begin
+  (require "std/ffi" all:)
   (define libgmp (c-load "/opt/homebrew/lib/libgmp.dylib"))
   (define SZ 256)
   (define mpz-init (c-func libgmp "__gmpz_init" 1 1))
