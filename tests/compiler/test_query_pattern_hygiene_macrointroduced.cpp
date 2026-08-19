@@ -79,9 +79,9 @@ static bool setup_macro_workspace(CompilerService& cs) {
 bool test_macro_expand_stamps_macrointroduced(CompilerService& cs) {
     std::println("\n--- AC1: macro expand stamps MacroIntroduced ---");
     CHECK(setup_macro_workspace(cs), "hygienic macro workspace setup");
-    auto macro_n = cs.eval("(length (query:macro-introduced))");
+    auto macro_n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(macro_n.has_value() && aura::compiler::types::is_int(*macro_n),
-          "(query:macro-introduced) returns int");
+          "(query:by-marker \"MacroIntroduced\") returns int");
     CHECK(aura::compiler::types::as_int(*macro_n) >= 3, "macro-introduced >= 3 nodes");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "workspace_flat reachable");
@@ -120,7 +120,7 @@ bool test_respect_hygiene_keyword(CompilerService& cs) {
 // ── AC4: mutate safe on user nodes under Guard ─────────────
 bool test_mutate_safe_on_user_nodes(CompilerService& cs) {
     std::println("\n--- AC4: mutate safe on user nodes under Guard ---");
-    const auto markers_before = cs.eval("(length (query:macro-introduced))");
+    const auto markers_before = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(cs.eval("(mutate:rebind \"base\" \"99\")").has_value(), "mutate:rebind under Guard");
     (void)cs.eval("(query:pattern \"base\")");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
@@ -130,7 +130,7 @@ bool test_mutate_safe_on_user_nodes(CompilerService& cs) {
     CHECK(cs.evaluator().get_macro_hygiene_contract_violations() == 0,
           "zero macro hygiene contract violations after user mutate");
     if (markers_before && aura::compiler::types::is_int(*markers_before)) {
-        auto markers_after = cs.eval("(length (query:macro-introduced))");
+        auto markers_after = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         CHECK(markers_after.has_value() && aura::compiler::types::is_int(*markers_after),
               "macro-introduced count still observable");
         CHECK(aura::compiler::types::as_int(*markers_after) >=

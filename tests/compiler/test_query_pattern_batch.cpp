@@ -92,7 +92,7 @@ static void ac1609_1_default_skip() {
     const auto all = list_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
     CHECK(def >= 0 && all >= 0, "pattern counts ok");
     CHECK(all >= def, "allow >= default");
-    auto macro_n = cs.eval("(length (query:macro-introduced))");
+    auto macro_n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(macro_n && is_int(*macro_n) && as_int(*macro_n) >= 1, "macro-introduced nodes exist");
     CHECK(cs.evaluator().get_macro_introduced_skipped_in_query() >= 0, "skip counter readable");
 }

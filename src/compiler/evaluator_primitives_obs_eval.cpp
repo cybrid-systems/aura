@@ -124,6 +124,12 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
+// Issue #3175: diagnostic / low-frequency query: names stay compiled
+// but are not registered. SlimSurface scans add() only.
+template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
+    (void)name;
+}
+
 using types::as_bool;
 using types::as_cell_id;
 using types::as_closure_id;
@@ -557,7 +563,7 @@ void ObservabilityPrims::register_eval_p3(PrimRegistrar add, Evaluator& ev) {
     // Bumps primitives_by_category_query_total on every call (success
     // or miss) so the catalog primitive can surface per-discovery-
     // entry hit rates.
-    ev.primitives_.add(
+    sink_query_prim(
         "query:primitives-by-category",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -601,7 +607,7 @@ void ObservabilityPrims::register_eval_p3(PrimRegistrar add, Evaluator& ev) {
     // documented (so the Agent can branch on (schema-of-primitive
     // 'unknown-name') and not be confused with an empty-string
     // schema for a documented primitive).
-    ev.primitives_.add(
+    sink_query_prim(
         "query:schema-of-primitive",
         [&ev](std::span<const EvalValue> a) -> EvalValue {
             if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -822,7 +828,7 @@ void ObservabilityPrims::register_eval_p6(PrimRegistrar add, Evaluator& ev) {
 
     // Issue #498: query:generate-primitive-skeleton — query-namespace alias
     // for primitive:generate-skeleton (Agent EDSL ergonomics).
-    add("query:generate-primitive-skeleton", [&ev](const auto& a) -> EvalValue {
+    sink_query_prim("query:generate-primitive-skeleton", [&ev](const auto& a) -> EvalValue {
         if (auto fn = ev.primitives_.lookup("primitive:generate-skeleton"))
             return (*fn)(a);
         return make_void();
@@ -2099,7 +2105,7 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
     // primitives_detail header + needs the AI-Agent generate-
     // primitive demo + ./build.py check + CI gate coverage
     // from the issue body — separate follow-ups.
-    add("query:primitives-meta", [&ev](const auto& a) -> EvalValue {
+    sink_query_prim("query:primitives-meta", [&ev](const auto& a) -> EvalValue {
         // Bump the new per-primitive-lookup counter (distinct
         // from primitives_meta_catalog_query_total #617).
         if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())) {

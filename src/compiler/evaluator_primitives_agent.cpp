@@ -6,7 +6,8 @@
 // register_auto_evolve_primitives; query:strategy-evolution-stats stays on.
 // See docs/strategy.md.
 // Issue #1974: synthesize:* (4 names) gated by AURA_ENABLE_SYNTHESIZE in
-// register_synthesize_primitives; query:templates stays always on.
+// register_synthesize_primitives. Issue #3175: query:templates is sunk
+// (std/synthesize list-templates is empty without the host prim).
 // See docs/synthesize.md.
 
 module;
@@ -59,6 +60,12 @@ namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
+
+// Issue #3175: diagnostic / low-frequency query: names stay compiled
+// but are not registered. SlimSurface scans add() only.
+template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
+    (void)name;
+}
 
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
@@ -702,7 +709,7 @@ void register_synthesize_primitives(PrimRegistrar add_raw, Evaluator& ev,
     // Exposed so std/stats.aura / std/synthesize.aura can
     // enumerate without touching the static g_template_patterns
     // map directly. Always registered (#1974 only gates synthesize:*).
-    add("query:templates", [&ev](const auto&) -> EvalValue {
+    sink_query_prim("query:templates", [&ev](const auto&) -> EvalValue {
         EvalValue list = make_void();
         for (auto it = g_template_patterns.rbegin(); it != g_template_patterns.rend(); ++it) {
             auto idx = ev.string_heap_.size();

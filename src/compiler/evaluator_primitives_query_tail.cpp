@@ -1492,7 +1492,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     // post-mutation predicate or var type no longer
     // matches the previously-recorded refined type.
     // Returns #f otherwise (fresh + #f on bad args / OOR).
-    add("query:occurrence-stale?", [&ev](const auto& a) -> EvalValue {
+    sink_query_prim("query:occurrence-stale?", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();
@@ -1675,7 +1675,7 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     // Used by callers that decide staleness outside
     // the type-checker (e.g. an external validator or
     // a test). Returns #t on success, #f on bad args.
-    add("query:mark-occurrence-stale", [&ev](const auto& a) -> EvalValue {
+    sink_query_prim("query:mark-occurrence-stale", [&ev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return make_bool(false);
         auto* ws = ev.workspace_flat();

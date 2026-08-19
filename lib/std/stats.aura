@@ -187,7 +187,6 @@
     "query:envframe-bump-stats"
     "query:dirty-subtree"
     "query:epoch-stats"
-    "query:macro-introduced"
     "query:by-marker"
     "compile:compiler-cache-stats"
     "compile:compiler-incremental-stats"

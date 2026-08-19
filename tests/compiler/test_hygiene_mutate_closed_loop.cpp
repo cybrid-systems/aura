@@ -171,17 +171,17 @@ static void ac4_closed_loop() {
         CHECK(true, "macro workspace leftover (hygiene-pass-limit)");
         return;
     }
-    auto n0 = cs.eval("(length (query:macro-introduced))");
+    auto n0 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 before");
     // Soft mutate on user (non-macro) node — hygiene must hold for macros.
     auto mut = cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     CHECK(mut.has_value(), "user-node replace-pattern");
-    auto n1 = cs.eval("(length (query:macro-introduced))");
+    auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "macro-introduced still ≥1 after user mutate");
     // With allow + include, mutate a macro form and re-query.
     (void)cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(* ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
-    auto n2 = cs.eval("(length (query:macro-introduced))");
+    auto n2 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n2 && is_int(*n2), "macro-introduced query after allowed mutate");
     CHECK(as_int(*n2) >= 0, "count readable");
     // Schema still live
@@ -259,13 +259,13 @@ static void ac2762_2_closed_loop_expand_mutate_reexpand() {
         return;
     }
     // MacroIntroduced present after initial eval-current expand.
-    auto n0 = cs.eval("(length (query:macro-introduced))");
+    auto n0 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n0 && is_int(*n0) && as_int(*n0) >= 1, "macro-introduced ≥1 after expand");
     // Structural mutate on a user node still under Guard cascade.
     auto mut = cs.eval("(mutate:replace-pattern \"(+ base 1)\" \"(+ base 2)\")");
     CHECK(mut.has_value(), "user-node mutate under Guard");
     // Re-query: MacroIntroduced still present; cascade must not wipe hygiene.
-    auto n1 = cs.eval("(length (query:macro-introduced))");
+    auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "macro-introduced still ≥1 after mutate");
     // Next eval-current must succeed (fully expanded hygienic AST).
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current after mutate");
@@ -394,7 +394,7 @@ static void ac2858_2_cascade_descendants() {
 
     // Verify cascade: query:macro-introduced still finds macro nodes
     // (the cascade preserved hygiene marker on the replacement subtree).
-    auto n = cs.eval("(length (query:macro-introduced))");
+    auto n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n && is_int(*n) && as_int(*n) >= 1, "AC2: macro-introduced still visible after restamp");
 }
 
@@ -483,12 +483,12 @@ static void ac2858_6_multi_round() {
     // Round 1: allowed mutate.
     (void)cs.eval("(mutate:replace-pattern \"(* ... ...)\" \"(+ ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
-    auto n1 = cs.eval("(length (query:macro-introduced))");
+    auto n1 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n1 && is_int(*n1) && as_int(*n1) >= 1, "AC6: macro-introduced ≥1 after round 1");
     // Round 2: another allowed mutate. Marker must still propagate (cascade).
     (void)cs.eval("(mutate:replace-pattern \"(+ ... ...)\" \"(- ... ...)\" "
                   ":include-macro-introduced #t :allow-macro? #t)");
-    auto n2 = cs.eval("(length (query:macro-introduced))");
+    auto n2 = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
     CHECK(n2 && is_int(*n2) && as_int(*n2) >= 1, "AC6: macro-introduced ≥1 after round 2");
     if (cm) {
         const auto restamp1 = cm->macro_mutate_auto_restamp_total.load();

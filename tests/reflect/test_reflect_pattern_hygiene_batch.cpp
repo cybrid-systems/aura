@@ -1352,7 +1352,7 @@ namespace aura_421_detail {
         CHECK(s0 > 0, "pattern macro filter stats positive after macro eval");
 
         std::println("\n--- AC2: marker baseline ---");
-        auto macro_n = cs.eval("(length (query:macro-introduced))");
+        auto macro_n = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         CHECK(macro_n && is_int(*macro_n), "macro-introduced count available");
         CHECK(as_int(*macro_n) >= 3, "macro-introduced >= 3 nodes");
 

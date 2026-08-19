@@ -61,9 +61,7 @@ bool test_query_templates_accessor() {
     (void)cs.eval("(set-code \"(define a 1)\")");
     (void)cs.eval("(eval-current)");
     auto r = cs.eval("(query:templates)");
-    CHECK(r.has_value(), "(query:templates) returns");
-    CHECK(aura::compiler::types::is_pair(*r) || aura::compiler::types::is_void(*r),
-          "(query:templates) returns a list (pair) or void (empty)");
+    CHECK(r.has_value() && aura::compiler::types::is_error(*r), "3175: query:templates sunk");
     return true;
 }
 
@@ -104,7 +102,7 @@ bool test_stdlib_synthesize_file_present() {
     const bool has_export = content.find("(export") != std::string::npos;
     const bool has_list_templates = content.find("(synthesize:list-templates") != std::string::npos;
     const bool has_list_help = content.find("(synthesize:list-help") != std::string::npos;
-    const bool has_query_templates_ref = content.find("(query:templates)") != std::string::npos;
+    const bool has_query_templates_ref = content.find("query:templates") != std::string::npos;
     std::println("  lib/synthesize.aura: present + exports + wrapper");
     CHECK(has_export, "stdlib/synthesize.aura has (export ...) line");
     CHECK(has_list_templates, "stdlib/synthesize.aura exports (synthesize:list-templates)");
@@ -200,7 +198,7 @@ bool test_regression_existing_primitives() {
     std::println("\n--- AC9: regression — existing primitives still work ---");
     CompilerService cs;
     auto r1 = cs.eval("(query:templates)");
-    CHECK(r1.has_value(), "(query:templates) (new for #561)");
+    CHECK(r1.has_value() && aura::compiler::types::is_error(*r1), "3175: query:templates sunk");
     auto r2 = cs.eval("(synthesize:register-template)");
     CHECK(r2.has_value(), "(synthesize:register-template) (regression)");
     auto r3 = cs.eval("(synthesize:fill)");

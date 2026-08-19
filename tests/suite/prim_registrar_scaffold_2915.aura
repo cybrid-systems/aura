@@ -26,10 +26,10 @@
     #t
     (begin (display "FAIL-2915 primitive:describe current-time-ms\n") (set! ok #f)))
 
-; Catalog / meta list still resolvable (must not break #1552 surfaces)
-(if (procedure? query:primitives-meta)
+; Catalog / meta list still resolvable via engine:metrics (#3175 sunk query:primitives-meta)
+(if (hash? (engine:metrics "query:primitives-meta-catalog"))
     #t
-    (begin (display "FAIL-2915 query:primitives-meta missing\n") (set! ok #f)))
+    (begin (display "FAIL-2915 query:primitives-meta-catalog missing\n") (set! ok #f)))
 
 (if ok
     (begin (display "OK-2915 prim-registrar-scaffold") (newline))

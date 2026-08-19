@@ -201,7 +201,11 @@ bool test_regression_core_query_primitives() {
     auto r4 = cs.eval("(engine:metrics \"query:tag-arity-count\")");
     CHECK(r4.has_value(), "(engine:metrics \"query:tag-arity-count\") SlimSurface stats_impl");
     auto r5 = cs.eval("(query:templates)");
-    CHECK(r5.has_value(), "(query:templates) (regression for #561)");
+    CHECK(r5.has_value() && aura::compiler::types::is_error(*r5), "3175: query:templates sunk");
+    auto r_calls = cs.eval("(query:calls)");
+    CHECK(r_calls.has_value(), "(query:calls) core path");
+    auto r_defs = cs.eval("(query:defines)");
+    CHECK(r_defs.has_value(), "(query:defines) core path");
     auto r6 = cs.eval("(engine:metrics \"query:envframe-dualpath-stats\")");
     CHECK(r6.has_value(),
           "(engine:metrics \"query:envframe-dualpath-stats\") (regression for #543)");

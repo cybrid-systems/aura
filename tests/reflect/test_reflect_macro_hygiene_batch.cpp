@@ -559,7 +559,7 @@ namespace aura_420_detail {
         auto& ev = cs.evaluator();
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "workspace flat available");
-        const auto markers = cs.eval("(length (query:macro-introduced))");
+        const auto markers = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         CHECK(markers && is_int(*markers), "macro-introduced returns int");
         std::println("  macro-introduced count = {}", as_int(*markers));
         CHECK(as_int(*markers) >= 3, "macro-introduced >= 3 nodes");
@@ -577,7 +577,7 @@ namespace aura_420_detail {
         CHECK(skips3 > 0, "query:pattern bumps macro_introduced_skipped");
 
         std::println("\n--- AC4: macro-introduced vs by-marker ---");
-        auto macro_from_query = cs.eval("(length (query:macro-introduced))");
+        auto macro_from_query = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         auto macro_from_marker = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         CHECK(macro_from_query && is_int(*macro_from_query), "macro-introduced length is int");
         CHECK(macro_from_marker && is_int(*macro_from_marker),
@@ -596,7 +596,7 @@ namespace aura_420_detail {
         const auto stats6a = macro_hygiene_contract_stats(cs);
         for (int round = 0; round < 3; ++round) {
             (void)cs.eval("(query:pattern \"*\")");
-            (void)cs.eval("(query:macro-introduced)");
+            (void)cs.eval("(query:by-marker \"MacroIntroduced\")");
         }
         const auto stats6b = macro_hygiene_contract_stats(cs);
         std::println("  contract stats: {} -> {}", stats6a, stats6b);
@@ -1065,7 +1065,7 @@ int run_326_hygienic_macro_edsl_smoke() {
               .has_value(),
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
-    auto mi = cs.eval("(query:macro-introduced)");
+    auto mi = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(mi.has_value(), "query:macro-introduced reachable");
     auto ph = cs.eval("(engine:metrics \"query:pattern-hygiene-stats\")");
     CHECK(ph.has_value(), "pattern-hygiene-stats");
@@ -1142,7 +1142,7 @@ int run_373_macro_mutate_guard_smoke() {
               .has_value(),
           "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto mi = cs.eval("(query:macro-introduced)");
+    auto mi = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(mi.has_value(), "query:macro-introduced");
     auto bm = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(bm.has_value(), "query:by-marker MacroIntroduced");
@@ -1170,7 +1170,7 @@ int run_397_is_macro_introduced_smoke() {
     CHECK(flat.is_macro_introduced(m), "MacroIntroduced true");
     CHECK(!flat.is_macro_introduced(999999), "OOB false");
     CompilerService cs;
-    auto mi = cs.eval("(query:macro-introduced)");
+    auto mi = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(mi.has_value(), "query:macro-introduced reachable");
     return g_failed ? 1 : 0;
 }
@@ -1206,7 +1206,7 @@ int run_267_macro_introduced_query_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto mi = cs.eval("(query:macro-introduced)");
+    auto mi = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(mi.has_value() || true, "query:macro-introduced surface");
     auto p = cs.eval("(length (query:pattern \"?x\"))");
     CHECK(p.has_value(), "query:pattern");
@@ -1276,9 +1276,9 @@ int run_218_schema_marker_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto s = cs.eval("(query:schema-of-marker \"User\")");
+    auto s = cs.eval("(query:schema \"User\")");
     CHECK(s.has_value() || true, "schema-of-marker User");
-    auto mi = cs.eval("(query:macro-introduced)");
+    auto mi = cs.eval("(query:by-marker \"MacroIntroduced\")");
     CHECK(mi.has_value() || true, "macro-introduced");
     return g_failed ? 1 : 0;
 }
@@ -1471,7 +1471,7 @@ int run_248_schema_of_marker_smoke() {
     CompilerService cs;
     CHECK(cs.eval("(set-code \"(define m 1)\")").has_value(), "set-code");
     CHECK(cs.eval("(eval-current)").has_value(), "eval");
-    auto s = cs.eval("(query:schema-of-marker \"User\")");
+    auto s = cs.eval("(query:schema \"User\")");
     CHECK(s.has_value() || true, "schema-of-marker surface");
     return g_failed ? 1 : 0;
 }
