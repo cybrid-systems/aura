@@ -5557,6 +5557,15 @@ public:
         std::pmr::vector<std::uint8_t> new_verification_dirty(alloc);
         // Issue #290: COW scratch for macro_dirty_
         std::pmr::vector<std::uint8_t> new_macro_dirty(alloc);
+        // Issue #3155: COW scratch for provenance_ + schema_cache_.
+        // Pre-fix, compact_nodes remapped marker / macro_dirty / type_id
+        // / topology but left provenance_ and schema_cache_ indexed by
+        // OLD NodeIds → homology break: post-compact marker stays true
+        // but provenance(id) may read a different node's origin, and
+        // schema_cache hits can short-circuit typecheck with a neighbour
+        // node's schema. Same allocator pattern as sibling SoA columns.
+        std::pmr::vector<std::uint32_t> new_provenance(alloc);
+        std::pmr::vector<std::uint32_t> new_schema_cache(alloc);
         std::pmr::vector<std::uint32_t> new_type_id(alloc);
         // Issue #412: COW scratch for type_cache_gen_.
         std::pmr::vector<std::uint32_t> new_type_cache_gen(alloc);
@@ -5582,6 +5591,12 @@ public:
         new_marker.reserve(live_count);
         new_dirty.reserve(live_count);
         new_ppa_dirty.reserve(live_count);
+        // Issue #3155: reserve provenance + schema_cache columns
+        // alongside sibling SoA columns. Same live_count target as
+        // marker / macro_dirty / type_id — single reserve pass avoids
+        // reallocations in the live rebuild loop.
+        new_provenance.reserve(live_count);
+        new_schema_cache.reserve(live_count);
         new_type_id.reserve(live_count);
         new_type_cache_gen.reserve(live_count);
         new_type_cache_binding_gen.reserve(live_count);
@@ -5631,6 +5646,22 @@ public:
                 new_macro_dirty.push_back(macro_dirty_[id]);
             else
                 new_macro_dirty.push_back(0);
+            // Issue #3155: rebuild provenance + schema_cache in the
+            // same live-order pass as marker / macro_dirty / type_id.
+            // Pre-fix, these two columns were left at pre-compact
+            // indexing → post-compact provenance(id) may read a
+            // different node's origin, and schema_cache hits can
+            // short-circuit typecheck with a neighbour node's schema.
+            // Same bounded-size pattern as macro_dirty / ppa_dirty:
+            // fall back to 0 if column was not sized up to this id.
+            if (id < provenance_.size())
+                new_provenance.push_back(provenance_[id]);
+            else
+                new_provenance.push_back(0);
+            if (id < schema_cache_.size())
+                new_schema_cache.push_back(schema_cache_[id]);
+            else
+                new_schema_cache.push_back(0);
             new_type_id.push_back(type_id_[id]);
             // Issue #412: parallel cache gen. After COW we
             // reset to 0 so the next type-checker pass will
@@ -5671,6 +5702,16 @@ public:
         verification_dirty_ = std::move(new_verification_dirty);
         // Issue #290: COW the macro_dirty_ column
         macro_dirty_ = std::move(new_macro_dirty);
+        // Issue #3155: column parity for compact_nodes remap.
+        // provenance_ + schema_cache_ now rebuilt in the same
+        // live-order pass as marker / macro_dirty / type_id, so
+        // post-compact provenance(id) and schema_cache(id) refer
+        // to the SAME logical node as pre-compact (homology
+        // preserved). Without this assignment, the two columns
+        // stayed indexed by old NodeIds → marker still true but
+        // blame / type-cache hits point at the wrong node.
+        provenance_ = std::move(new_provenance);
+        schema_cache_ = std::move(new_schema_cache);
         type_id_ = std::move(new_type_id);
         type_cache_gen_ = std::move(new_type_cache_gen);
         // Issue #412 follow-up #1: COW the per-binding cache

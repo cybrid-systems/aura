@@ -2216,6 +2216,16 @@ add_dependencies(all_test_issue_targets test_rest_param_hygiene_eval_flat)
 aura_add_issue_test(test_pre_scan_quote_boundary)
 aura_issue_test_link_light(test_pre_scan_quote_boundary)
 add_dependencies(all_test_issue_targets test_pre_scan_quote_boundary)
+# Issue #3155: FlatAST::compact_nodes() rebuilt live columns and remapped
+# marker / macro_dirty / type_id / topology, but did NOT rebuild/remap
+# provenance_ or schema_cache_. After ID remap, MacroIntroduced markers
+# may still look present, but provenance / schema columns were indexed
+# by OLD NodeIds → homology break for blame, type-cache hits, Agent
+# closed-loop tracking. Residual of #3095 (abort×densify marker restore)
+# and densify remap work. compact_nodes column set incompleteness only.
+aura_add_issue_test(test_compact_nodes_provenance_schema_remap)
+aura_issue_test_link_light(test_compact_nodes_provenance_schema_remap)
+add_dependencies(all_test_issue_targets test_compact_nodes_provenance_schema_remap)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
