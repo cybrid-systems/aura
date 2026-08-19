@@ -2721,7 +2721,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
     //
     // Fields: marker, provenance-id, macro-def-id, expansion-id, mutation-id,
     // fiber-id, violation-flags, depth-at-clone, restamp-count, + optional chain.
-    add("query:hygiene-diagnostic", [&ev, &string_heap](const auto& a) -> EvalValue {
+    sink_query_prim("query:hygiene-diagnostic", [&ev, &string_heap](const auto& a) -> EvalValue {
         using aura::compiler::macro_exp::g_hygiene_tracer_depth_max;
         using aura::compiler::macro_exp::g_hygiene_violation_in_macro_expand_total;
         using aura::compiler::macro_exp::g_macro_origin_provenance_errors;

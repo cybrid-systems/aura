@@ -55,10 +55,8 @@
           "(primitive:describe \"+\")  ; PrimMeta: arity/pure/doc")
     (list "query:primitive-list-with-meta"
           "(query:primitive-list-with-meta)  ; list names+meta")
-    (list "query:primitives-meta"
-          "(query:primitives-meta)  ; catalog / per-name meta")
     (list "query:primitives-meta-catalog"
-          "(query:primitives-meta-catalog)")
+          "(engine:metrics \"query:primitives-meta-catalog\")")
     (list "query:primitives-meta-stats"
           "(engine:metrics \"query:primitives-meta-stats\")")
     (list "engine:metrics"

@@ -63,6 +63,12 @@ struct DefUseQueryCallbacks {
     std::function<EvalValue(void* idx)> index_stats;
 };
 
+// Issue #3175: diagnostic / low-frequency query: names stay compiled
+// but are not registered. SlimSurface scans add() only.
+template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
+    (void)name;
+}
+
 void register_defuse_query_primitives(
     PrimRegistrar add, std::shared_mutex& workspace_mtx, aura::ast::FlatAST*& workspace_flat,
     aura::ast::StringPool*& workspace_pool, std::pmr::vector<std::string>& string_heap,
@@ -133,14 +139,15 @@ void register_defuse_query_primitives(
             return cb.effects_for_sym(idx, target_sym);
         });
 
-    add("query:build-index", [&workspace_mtx, cb, make_merr](const auto& a) -> EvalValue {
-        (void)a;
-        std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
-        auto idx = cb.ensure_defuse();
-        if (!idx)
-            return make_merr("internal", "failed to build def-use index");
-        return cb.build_index(idx);
-    });
+    sink_query_prim("query:build-index",
+                    [&workspace_mtx, cb, make_merr](const auto& a) -> EvalValue {
+                        (void)a;
+                        std::shared_lock<std::shared_mutex> rlock(workspace_mtx);
+                        auto idx = cb.ensure_defuse();
+                        if (!idx)
+                            return make_merr("internal", "failed to build def-use index");
+                        return cb.build_index(idx);
+                    });
 
     ObservabilityPrims::register_stats_impl(
         "query:index-stats", [&workspace_mtx, cb, make_merr](const auto& a) -> EvalValue {

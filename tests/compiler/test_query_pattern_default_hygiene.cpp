@@ -126,7 +126,7 @@ static void ac2_default_filters_macro() {
     CHECK(m != nullptr, "metrics");
 
     const auto filt0 = m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed);
-    const auto macro_n = result_len(cs, "(query:macro-introduced)");
+    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 3, "have MacroIntroduced nodes");
 
     const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
@@ -293,7 +293,7 @@ static void ac2763_2_macro_hard_filter() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "AC2: metrics");
     const auto filt0 = m->pattern_hygiene_filtered_total.load(std::memory_order_relaxed);
-    const auto macro_n = result_len(cs, "(query:macro-introduced)");
+    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 1, "AC2: MacroIntroduced nodes present");
     const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
     const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
@@ -407,7 +407,7 @@ static void ac2989_2_default_hygiene() {
     std::println("\n--- #2989 AC2: MacroIntroduced not in default matches ---");
     CompilerService cs;
     CHECK(setup_macro_ws(cs), "AC2: macro workspace");
-    const auto macro_n = result_len(cs, "(query:macro-introduced)");
+    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 1, "AC2: MacroIntroduced nodes present");
     const auto default_cnt = result_len(cs, "(query:pattern \"*\")");
     const auto allow_cnt = result_len(cs, "(query:pattern \"*\" :allow-macro-introduced #t)");
@@ -430,12 +430,12 @@ static void ac2989_3_metrics() {
     CHECK(cs.eval("(query:pattern \"*\")").has_value(), "AC3: query:pattern");
     const auto pin1 = cs.evaluator().get_query_safe_span_pin_count();
     CHECK(pin1 > pin0, "AC3: safe-span pin count increased");
-    auto skip_r = cs.eval("(query:hygiene-skip-count)");
+    auto skip_r = cs.eval("(engine:metrics \"query:hygiene-skip-count\")");
     CHECK(skip_r.has_value() && is_int(*skip_r) && as_int(*skip_r) >= 0,
-          "AC3: query:hygiene-skip-count returns int");
-    auto pin_r = cs.eval("(query:safe-span-pin-count)");
+          "AC3: engine:metrics hygiene-skip-count returns int");
+    auto pin_r = cs.eval("(engine:metrics \"query:safe-span-pin-count\")");
     CHECK(pin_r.has_value() && is_int(*pin_r) && as_int(*pin_r) >= 1,
-          "AC3: query:safe-span-pin-count >= 1 after children/pattern");
+          "AC3: engine:metrics safe-span-pin-count >= 1 after children/pattern");
     auto em_skip = cs.eval("(engine:metrics \"query:hygiene-skip-count\")");
     CHECK(em_skip.has_value() && is_int(*em_skip), "AC3: engine:metrics hygiene-skip-count");
     auto em_pin = cs.eval("(engine:metrics \"query:safe-span-pin-count\")");

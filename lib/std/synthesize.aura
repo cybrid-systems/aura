@@ -4,9 +4,9 @@
 ; Or:        (require "std/synthesize" all:)
 ;
 ; Issue #561: Demote synthesize:list-templates to stdlib.
-; Underlying primitive (synthesize:list-templates) was
-; removed from C++ in favor of (query:templates) engine-level
-; accessor. This module provides the stdlib wrapper.
+; Issue #3175: query:templates is sunk off the public query:
+; surface; list-templates returns empty until a host accessor
+; is re-homed. This module keeps the stdlib name.
 ;
 ; The 3 remaining C++ synthesize:* primitives
 ; (synthesize:register-template, synthesize:fill,
@@ -19,9 +19,10 @@
 (export synthesize:list-templates synthesize:list-help)
 
 ; ── (synthesize:list-templates) — list all registered templates
-;     Wraps (query:templates) which is the engine-level accessor.
+;     #3175: query:templates host prim is sunk; empty list is the
+;     stable stdlib surface (fill/optimize still use C++ maps).
 (define (synthesize:list-templates)
-  (query:templates))
+  ())
 
 ; ── (synthesize:list-help) — docs/discovery for the namespace
 ;     Returns an alist describing the 4 remaining engine primitives
@@ -37,4 +38,4 @@
     (list "synthesize:optimize"
           "Optimize via genetic strategy. Low-level engine hook.")
     (list "synthesize:list-templates"
-          "List registered templates. Stdlib wrapper around (query:templates).")))
+          "List registered templates. Empty after #3175 query: prune.")))

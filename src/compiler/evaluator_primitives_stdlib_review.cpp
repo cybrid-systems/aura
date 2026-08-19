@@ -33,6 +33,12 @@ namespace aura::compiler::primitives_detail {
 using EvalValue = types::EvalValue;
 using PrimRegistrar = std::function<void(std::string, PrimFn)>;
 
+// Issue #3175: diagnostic / low-frequency query: names stay compiled
+// but are not registered. SlimSurface scans add() only.
+template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
+    (void)name;
+}
+
 using types::is_int;
 using types::make_bool;
 using types::make_hash;
@@ -2001,7 +2007,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
     // in evaluator_primitives_compile_04.cpp).
 
     // Issue #1344: query:sv-interface / query:sv-property pattern presets.
-    ev.primitives().add(
+    sink_query_prim(
         "query:sv-interface",
         [&ev](std::span<const EvalValue>) -> EvalValue {
             auto* ws = ev.workspace_flat();
@@ -2024,7 +2030,7 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                  .category = "query",
                  .schema = "() -> int"});
 
-    ev.primitives().add(
+    sink_query_prim(
         "query:sv-property",
         [&ev](std::span<const EvalValue>) -> EvalValue {
             auto* ws = ev.workspace_flat();

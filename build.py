@@ -2084,6 +2084,17 @@ def cmd_lint():
             "Issue #3174 IO/Net/Git surface linter failed — run python3 scripts/coverage/checks/check_io_net_git_surface_3174.py"
         )
         return r
+    # Issue #3175: prune diagnostic / low-frequency query: primitives.
+    qs3175_script = COVERAGE_CHECKS / "check_query_surface_3175.py"
+    if not qs3175_script.exists():
+        fail(f"missing {qs3175_script}")
+        return 1
+    r = run([sys.executable, str(qs3175_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3175 query: surface reduction linter failed — run python3 scripts/coverage/checks/check_query_surface_3175.py"
+        )
+        return r
     # Issue #3085: densify/steal rehydrate-miss blocks lowering elision
     # via invalidate_gen. Extends persist-rehydrate + escape-elision
     # (#81967); no docs/design/.
@@ -4504,6 +4515,17 @@ def cmd_lint():
     if r != 0:
         fail(
             "Issue #3174 IO/Net/Git surface linter failed — run python3 scripts/coverage/checks/check_io_net_git_surface_3174.py"
+        )
+        return r
+    # Issue #3175: prune diagnostic / low-frequency query: primitives.
+    qs3175b = COVERAGE_CHECKS / "check_query_surface_3175.py"
+    if not qs3175b.exists():
+        fail(f"missing {qs3175b}")
+        return 1
+    r = run([sys.executable, str(qs3175b)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3175 query: surface reduction linter failed — run python3 scripts/coverage/checks/check_query_surface_3175.py"
         )
         return r
     # Issue #3085: densify/steal miss blocks lowering elision.
@@ -12921,6 +12943,30 @@ def cmd_io_net_git_surface_3174():
     return cmd_io_net_git_surface_3174_coverage()
 
 
+def cmd_query_surface_3175_coverage():
+    """Issue #3175: prune diagnostic / low-frequency query: prims (static)."""
+    print(f"{B}=== query: surface reduction coverage (#3175) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_surface_3175.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query: surface reduction (#3175) coverage contract rows failed")
+        return 1
+    ok("query: surface reduction (#3175) coverage clean")
+    return 0
+
+
+def cmd_query_surface_3175():
+    """Issue #3175: public query: < 30 (keep calls/defines/dirty/provenance).
+
+    Hygiene/pin-count/skeleton/templates/stale/schema-of-marker sunk to C++.
+    """
+    print(f"{B}=== query: surface reduction (#3175) ==={N}")
+    return cmd_query_surface_3175_coverage()
+
+
 def cmd_inline_macro_body_marker_3064_coverage():
     """Issue #3064: InlinePass refuses MacroIntroduced body (static)."""
     print(f"{B}=== InlinePass MacroIntroduced body coverage (#3064) ==={N}")
@@ -17654,6 +17700,8 @@ def main():
         "arena-surface-3173-coverage": cmd_arena_surface_3173_coverage,
         "io-net-git-surface-3174": cmd_io_net_git_surface_3174,
         "io-net-git-surface-3174-coverage": cmd_io_net_git_surface_3174_coverage,
+        "query-surface-3175": cmd_query_surface_3175,
+        "query-surface-3175-coverage": cmd_query_surface_3175_coverage,
         "rehydrate-miss-lowering-elision-3085": cmd_rehydrate_miss_lowering_elision_3085,
         "rehydrate-miss-lowering-elision-3085-coverage": cmd_rehydrate_miss_lowering_elision_3085_coverage,
         "inline-macro-body-marker-3064": cmd_inline_macro_body_marker_3064,

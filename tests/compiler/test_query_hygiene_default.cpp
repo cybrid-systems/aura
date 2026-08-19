@@ -87,7 +87,7 @@ static void ac1_default_skip() {
     auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
     CHECK(m != nullptr, "AC1: metrics");
 
-    const auto macro_n = result_len(cs, "(query:macro-introduced)");
+    const auto macro_n = result_len(cs, "(query:by-marker \"MacroIntroduced\")");
     CHECK(macro_n >= 3, "AC1: have MacroIntroduced nodes");
 
     const auto default_pat = result_len(cs, "(query:pattern \"*\")");

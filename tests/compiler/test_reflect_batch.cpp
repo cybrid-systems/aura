@@ -126,8 +126,8 @@ static void run_454_matrix() {
 
     std::println("\n--- AC3 (#454): SyntaxMarker schema introspection ---");
     (void)cs.eval("(typecheck-current)");
-    auto schema = cs.eval("(query:schema-of-marker \"User\")");
-    CHECK(schema.has_value(), "schema-of-marker User reachable");
+    auto schema = cs.eval("(query:schema \"User\")");
+    CHECK(schema.has_value(), "query:schema User reachable");
     auto macro_marker = cs.eval("(query:node-marker 0)");
     CHECK(macro_marker && is_string(*macro_marker), "node-marker on define");
 
@@ -246,11 +246,11 @@ static void run_1611_allow_flag() {
     CHECK(setup_macro_ws_1611(cs), "macro workspace");
     auto allow0 = cs.eval("(hygiene:allow-macro-mutate?)");
     CHECK(allow0 && is_bool(*allow0), "hygiene:allow-macro-mutate? reachable");
-    auto macro_list = cs.eval("(query:macro-introduced)");
+    auto macro_list = cs.eval("(query:by-marker \"MacroIntroduced\")");
     if (macro_list && !is_int(*macro_list)) {
-        auto len = cs.eval("(length (query:macro-introduced))");
+        auto len = cs.eval("(length (query:by-marker \"MacroIntroduced\"))");
         if (len && is_int(*len) && as_int(*len) > 0) {
-            auto first = cs.eval("(car (query:macro-introduced))");
+            auto first = cs.eval("(car (query:by-marker \"MacroIntroduced\"))");
             if (first && is_int(*first)) {
                 auto v = cs.eval(std::format("(reflect:validate-macro-body {})", as_int(*first)));
                 CHECK(v.has_value(), "reflect:validate-macro-body returns");

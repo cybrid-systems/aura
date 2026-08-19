@@ -85,6 +85,12 @@ struct WorkspaceQueryState {
     std::function<void()> build_tag_arity_index;
 };
 
+// Issue #3175: diagnostic / low-frequency query: names stay compiled
+// but are not registered. SlimSurface scans add() only.
+template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
+    (void)name;
+}
+
 // Issue #3103: hoisted out of the query:pattern lambda (nested function
 // definitions are not C++ — GCC 16 -Wtemplate-body / -Werror rejects them).
 static void
@@ -664,10 +670,10 @@ void register_workspace_query_primitives(
     // Issue #2989: Agent-facing hygiene skip + SafePCVSpan pin counters.
     // Combined skip = root pattern skips + hygiene_skip_total (filter/recursive).
     // Pin count = explicit query-prim pins + FlatAST children_safe_view_count.
-    add("query:hygiene-skip-count", [&ev](const auto&) -> EvalValue {
+    sink_query_prim("query:hygiene-skip-count", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.get_query_hygiene_skip_count()));
     });
-    add("query:safe-span-pin-count", [&ev](const auto&) -> EvalValue {
+    sink_query_prim("query:safe-span-pin-count", [&ev](const auto&) -> EvalValue {
         return make_int(static_cast<std::int64_t>(ev.get_query_safe_span_pin_count()));
     });
 
@@ -2140,7 +2146,7 @@ void register_workspace_query_primitives(
     // (no arg) returns all matches. Useful for the common
     // "do any macro-introduced nodes exist?" check
     // (pass limit=1).
-    add("query:macro-introduced", [ws, mev](const auto& a) -> EvalValue {
+    sink_query_prim("query:macro-introduced", [ws, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.size() > 1)
             return mev("bad-arg",
@@ -2252,7 +2258,7 @@ void register_workspace_query_primitives(
     // enforcement side (using the schema to reject mutations
     // that would break macro type invariants) is deferred.
     // Multi-arg (marker-name [limit]) — public; cannot pass args via stats:get.
-    add("query:schema-of-marker", [ws, mev](const auto& a) -> EvalValue {
+    sink_query_prim("query:schema-of-marker", [ws, mev](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || a.size() > 2 || !is_string(a[0]))
             return mev("bad-arg", "usage: (query:schema-of-marker marker-name) or "
@@ -3352,7 +3358,7 @@ void register_workspace_query_primitives(
     // query_result_fresh_hits_total / query_result_stale_total.
     // Soft: returns #f on stale. Strict QueryEpoch mode: returns
     // structured query-epoch-stale error (AC3).
-    add("query:result-fresh?", [ws, mev](const auto& a) -> EvalValue {
+    sink_query_prim("query:result-fresh?", [ws, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_hash(a[0]))
             return mev("bad-arg", "usage: (query:result-fresh? query-result-hash)");
         if (!ws.workspace_flat)
@@ -3404,7 +3410,7 @@ void register_workspace_query_primitives(
     // Issue #2933: (query:result-matches qr) — extract matches list if
     // fresh; under strict stale → query-epoch-stale; Soft returns matches
     // even when epoch advanced (Agent may still inspect, metric bumps).
-    add("query:result-matches", [ws, mev](const auto& a) -> EvalValue {
+    sink_query_prim("query:result-matches", [ws, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_hash(a[0]))
             return mev("bad-arg", "usage: (query:result-matches query-result-hash)");
         if (!ws.workspace_flat)

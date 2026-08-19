@@ -28,6 +28,11 @@ namespace aura::compiler {
 using EvalValue = types::EvalValue;
 using namespace aura::compiler::types;
 
+// Issue #3175: pin-count stays as a C++ body; SlimSurface scans add() only.
+template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
+    (void)name;
+}
+
 // No-op stand-in after TUI/render hotpath removal (#2626).
 struct FfiRenderHotpathGuard {
     FfiRenderHotpathGuard() = default;
@@ -355,7 +360,7 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             return make_int(1);
         });
         // Issue #2005 / #2048: (query:ffi-pin-count) → live FFI LifetimePin count.
-        add("query:ffi-pin-count", [](std::span<const EvalValue>) -> EvalValue {
+        sink_query_prim("query:ffi-pin-count", [](std::span<const EvalValue>) -> EvalValue {
             std::lock_guard<std::mutex> lock(g_ffi_pin_registry_mtx);
             std::int64_t n = 0;
             for (const auto& p : g_ffi_pin_registry)

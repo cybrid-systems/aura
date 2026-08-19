@@ -169,121 +169,123 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
     (void)type_registry;
     (void)resolve_module_path;
     (void)ev;
-    add("query:macro-provenance-chain", [&ev, &string_heap](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]))
-            return make_void();
-        auto* ws = ev.workspace_flat();
-        if (!ws)
-            return make_void();
-        const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (nid == aura::ast::NULL_NODE || nid >= ws->size() || !ws->is_live_node(nid))
-            return make_void();
+    sink_query_prim(
+        "query:macro-provenance-chain", [&ev, &string_heap](const auto& a) -> EvalValue {
+            if (a.empty() || !is_int(a[0]))
+                return make_void();
+            auto* ws = ev.workspace_flat();
+            if (!ws)
+                return make_void();
+            const auto nid = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            if (nid == aura::ast::NULL_NODE || nid >= ws->size() || !ws->is_live_node(nid))
+                return make_void();
 
-        std::int64_t depth_budget = 16;
-        const auto& kt = ev.keyword_table();
-        for (std::size_t i = 1; i < a.size(); ++i) {
-            if (!is_keyword(a[i]))
-                continue;
-            const auto kidx = as_keyword_idx(a[i]);
-            if (kidx >= kt.size())
-                continue;
-            if ((kt[kidx] == ":depth" || kt[kidx] == "depth") && i + 1 < a.size() &&
-                is_int(a[i + 1])) {
-                depth_budget = as_int(a[i + 1]);
-                ++i;
+            std::int64_t depth_budget = 16;
+            const auto& kt = ev.keyword_table();
+            for (std::size_t i = 1; i < a.size(); ++i) {
+                if (!is_keyword(a[i]))
+                    continue;
+                const auto kidx = as_keyword_idx(a[i]);
+                if (kidx >= kt.size())
+                    continue;
+                if ((kt[kidx] == ":depth" || kt[kidx] == "depth") && i + 1 < a.size() &&
+                    is_int(a[i + 1])) {
+                    depth_budget = as_int(a[i + 1]);
+                    ++i;
+                }
             }
-        }
-        if (depth_budget < 1)
-            depth_budget = 1;
-        if (depth_budget > 64)
-            depth_budget = 64;
+            if (depth_budget < 1)
+                depth_budget = 1;
+            if (depth_budget > 64)
+                depth_budget = 64;
 
-        std::vector<std::int64_t> chain;
-        chain.reserve(static_cast<std::size_t>(depth_budget) + 1);
-        chain.push_back(static_cast<std::int64_t>(nid));
-        std::uint32_t cur_prov = ws->provenance(nid);
-        std::int64_t hops = 0;
-        bool cycle = false;
-        bool dead = false;
-        while (hops < depth_budget && cur_prov != 0) {
-            const auto origin = static_cast<aura::ast::NodeId>(cur_prov);
-            if (origin >= ws->size()) {
-                dead = true;
-                break;
-            }
-            for (auto x : chain) {
-                if (x == static_cast<std::int64_t>(origin)) {
-                    cycle = true;
+            std::vector<std::int64_t> chain;
+            chain.reserve(static_cast<std::size_t>(depth_budget) + 1);
+            chain.push_back(static_cast<std::int64_t>(nid));
+            std::uint32_t cur_prov = ws->provenance(nid);
+            std::int64_t hops = 0;
+            bool cycle = false;
+            bool dead = false;
+            while (hops < depth_budget && cur_prov != 0) {
+                const auto origin = static_cast<aura::ast::NodeId>(cur_prov);
+                if (origin >= ws->size()) {
+                    dead = true;
                     break;
                 }
-            }
-            if (cycle)
-                break;
-            chain.push_back(static_cast<std::int64_t>(origin));
-            ++hops;
-            if (!ws->is_live_node(origin)) {
-                dead = true;
-                break;
-            }
-            const auto next = ws->provenance(origin);
-            if (next == 0 || next == cur_prov)
-                break;
-            cur_prov = next;
-        }
-
-        auto* ht = FlatHashTable::create(48);
-        if (!ht)
-            return make_void();
-        auto meta = ht->metadata();
-        auto keys = ht->keys();
-        auto vals = ht->values();
-        auto hcap = ht->capacity;
-        auto insert_kv = [&](const char* k_str, std::int64_t v) {
-            std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-            for (const char* p = k_str; *p; ++p)
-                h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-            auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-            if (fp == 0xFF)
-                fp = 0xFE;
-            for (std::size_t at = 0; at < hcap; ++at) {
-                auto idx = ((h >> 1) + at) & (hcap - 1);
-                if (meta[idx] == 0xFF) {
-                    meta[idx] = fp;
-                    auto kidx = string_heap.size();
-                    string_heap.push_back(k_str);
-                    keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                    vals[idx] = make_int(v).val;
-                    ht->size++;
-                    return;
+                for (auto x : chain) {
+                    if (x == static_cast<std::int64_t>(origin)) {
+                        cycle = true;
+                        break;
+                    }
                 }
+                if (cycle)
+                    break;
+                chain.push_back(static_cast<std::int64_t>(origin));
+                ++hops;
+                if (!ws->is_live_node(origin)) {
+                    dead = true;
+                    break;
+                }
+                const auto next = ws->provenance(origin);
+                if (next == 0 || next == cur_prov)
+                    break;
+                cur_prov = next;
             }
-        };
 
-        insert_kv("node-id", static_cast<std::int64_t>(nid));
-        insert_kv("macro-introduced", ws->is_macro_introduced(nid) ? 1 : 0);
-        insert_kv("provenance-id", static_cast<std::int64_t>(ws->provenance(nid)));
-        insert_kv("chain-length", static_cast<std::int64_t>(chain.size()));
-        insert_kv("hops", hops);
-        insert_kv("depth-budget", depth_budget);
-        insert_kv("cycle", cycle ? 1 : 0);
-        insert_kv("dead-end", dead ? 1 : 0);
-        insert_kv("terminal", chain.empty() ? -1 : chain.back());
-        // Emit up to 8 hops as chain-i keys (fixed schema for Agents).
-        static constexpr const char* kChainKeys[] = {
-            "chain-0", "chain-1", "chain-2", "chain-3", "chain-4", "chain-5", "chain-6", "chain-7",
-        };
-        for (std::size_t i = 0; i < chain.size() && i < 8; ++i)
-            insert_kv(kChainKeys[i], chain[i]);
-        insert_kv("schema", 2167);
-        insert_kv("issue", 2167);
-        insert_kv("schema-2167", 2167);
-        insert_kv("active", 1);
-        insert_kv("lazy", 1);
+            auto* ht = FlatHashTable::create(48);
+            if (!ht)
+                return make_void();
+            auto meta = ht->metadata();
+            auto keys = ht->keys();
+            auto vals = ht->values();
+            auto hcap = ht->capacity;
+            auto insert_kv = [&](const char* k_str, std::int64_t v) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (meta[idx] == 0xFF) {
+                        meta[idx] = fp;
+                        auto kidx = string_heap.size();
+                        string_heap.push_back(k_str);
+                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        vals[idx] = make_int(v).val;
+                        ht->size++;
+                        return;
+                    }
+                }
+            };
 
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
-    });
+            insert_kv("node-id", static_cast<std::int64_t>(nid));
+            insert_kv("macro-introduced", ws->is_macro_introduced(nid) ? 1 : 0);
+            insert_kv("provenance-id", static_cast<std::int64_t>(ws->provenance(nid)));
+            insert_kv("chain-length", static_cast<std::int64_t>(chain.size()));
+            insert_kv("hops", hops);
+            insert_kv("depth-budget", depth_budget);
+            insert_kv("cycle", cycle ? 1 : 0);
+            insert_kv("dead-end", dead ? 1 : 0);
+            insert_kv("terminal", chain.empty() ? -1 : chain.back());
+            // Emit up to 8 hops as chain-i keys (fixed schema for Agents).
+            static constexpr const char* kChainKeys[] = {
+                "chain-0", "chain-1", "chain-2", "chain-3",
+                "chain-4", "chain-5", "chain-6", "chain-7",
+            };
+            for (std::size_t i = 0; i < chain.size() && i < 8; ++i)
+                insert_kv(kChainKeys[i], chain[i]);
+            insert_kv("schema", 2167);
+            insert_kv("issue", 2167);
+            insert_kv("schema-2167", 2167);
+            insert_kv("active", 1);
+            insert_kv("lazy", 1);
+
+            auto hidx = g_hash_tables.size();
+            g_hash_tables.push_back(ht);
+            return make_hash(hidx);
+        });
 
     // Issue #501 / #514 / #1610 / #1616 / #1891 / #2022: query:ir-hygiene-stats —
     // IR-level MacroIntroduced + ClosureBridge provenance (refine #1047).
