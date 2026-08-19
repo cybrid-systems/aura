@@ -5380,8 +5380,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::core::security_event::g_security_event_ring;
             using aura::core::security_event::kSecurityEventRingSize;
 
-            // 26 live keys; planned 32 → query_hash_capacity_for ≥64.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 32;
+            // 26 live keys + 1 additive key (last-se-reason, #3149);
+            // planned 33 → query_hash_capacity_for ≥64.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 33;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -5390,6 +5391,39 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
                 if (!insert_kv_checked(ht, ev.string_heap_, k_str, v))
                     overflowed = true;
+            };
+            // Issue #3149: additive key for the SE reason[64] string
+            // (truncated NUL-safe from the matched SE row). Mirrors the
+            // hash insert pattern used elsewhere (e.g. force-reason in
+            // query:wal-append-fail-slo). Soft / no event → "" (omit-safe;
+            // empty string = last-se-reason-code == 0 semantics, AC3).
+            // Local accessors (ht->metadata / keys / values / capacity)
+            // mirror the existing pattern at line 222-241.
+            const auto ht_meta = ht->metadata();
+            const auto ht_keys = ht->keys();
+            const auto ht_vals = ht->values();
+            const auto hcap = ht->capacity;
+            auto insert_kv_str = [&](const char* k_str, std::string_view v_str) {
+                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
+                for (const char* p = k_str; *p; ++p)
+                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
+                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
+                if (fp == 0xFF)
+                    fp = 0xFE;
+                for (std::size_t at = 0; at < hcap; ++at) {
+                    auto idx = ((h >> 1) + at) & (hcap - 1);
+                    if (ht_meta[idx] == 0xFF) {
+                        ht_meta[idx] = fp;
+                        auto kidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(k_str);
+                        ht_keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
+                        auto vidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(std::string(v_str));
+                        ht_vals[idx] = make_string(static_cast<std::uint64_t>(vidx)).val;
+                        ht->size++;
+                        return;
+                    }
+                }
             };
 
             const std::uint64_t last_stamped =
@@ -5403,6 +5437,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
+            std::string last_se_reason_str;       // Issue #3149: SE reason[64] string snapshot
             {
                 const auto& ring = g_security_event_ring();
                 const auto head = ring.seq.load(std::memory_order_relaxed);
@@ -5414,6 +5449,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         continue;
                     last_se_denied = e.denied ? 1 : 0;
                     last_se_reason_code = static_cast<std::int64_t>(e.kind) + 1;
+                    // Issue #3149: NUL-safe truncation from e.reason[64].
+                    // Empty reason (no event / kind=0) → empty string
+                    // (matches AC3: empty string == last-se-reason-code == 0).
+                    // Pure load — no should_audit, no WAL I/O, no mutate.
+                    if (e.reason[0] != '\0') {
+                        const auto n = strnlen(e.reason, sizeof(e.reason) - 1);
+                        last_se_reason_str.assign(e.reason, n);
+                    }
                     break;
                 }
             }
@@ -5472,6 +5515,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("proof-audit-mid",
                       static_cast<std::int64_t>(filt_mid && proof_mid != join_mid ? 0 : proof_mid));
             insert_kv("last-se-reason-code", last_se_reason_code);
+            insert_kv_str("last-se-reason", last_se_reason_str);
             insert_kv("last-se-denied", last_se_denied);
             insert_kv("typed-outcome", typed_outcome);
             insert_kv("typed-trail-miss", typed_miss);
@@ -5495,6 +5539,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("typed-outcome-error", 3);
             insert_kv("schema-3113", kTypedTrailWrapMissIssue);
             insert_kv("issue-3113", kTypedTrailWrapMissIssue);
+            // Issue #3149: additive schema/issue sentinels for the
+            // residual key (last-se-reason). Existing schema-3113 /
+            // issue-3113 preserved (typed-trail-miss lineage).
+            insert_kv("schema-3149", 3149);
+            insert_kv("issue-3149", 3149);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }

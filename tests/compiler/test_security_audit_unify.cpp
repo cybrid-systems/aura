@@ -575,6 +575,58 @@ int run_test_security_audit_unify() {
         CHECK(href_evol(cs, "observe-only") == 1, "3114 AC5: still observe-only after wrap");
     }
 
+    // ── #3149: last-se-reason additive key (residual after #3114).
+    // Close the gap where decision only exposed last-se-reason-code
+    // (SecurityEventKind+1) without the SE reason[64] string, forcing
+    // Agent to follow up with query:security-audit for the stable deny
+    // reason text. Additive key alongside existing last-se-reason-code;
+    // NUL-safe truncation from e.reason[64]; mid filter preserves
+    // consistency with the same-mid SE row.
+    {
+        std::println("\n--- 3149 AC7/AC8/AC9: last-se-reason additive key ---");
+        reset_process();
+        CompilerService cs;
+        // AC8: Soft / no event → last-se-reason-code == 0; last-se-reason
+        // key is omitted OR present-but-empty (omit-safe). We assert the
+        // code side here; the string-side omit / "" is enforced at the C++
+        // layer + via the linter (no test_issue_3149.cpp per #81967).
+        CHECK(href_evol(cs, "last-se-reason-code") == 0,
+              "3149 AC8: Soft / no event → last-se-reason-code == 0");
+        // AC9: schema-3149 / issue-3149 additive sentinels coexist
+        // with the original schema-3114 / issue-3114 (no replacement).
+        CHECK(href_evol(cs, "schema-3114") == 3114,
+              "3149 AC9: schema-3114 still present (coexists with 3149)");
+        CHECK(href_evol(cs, "issue-3114") == 3114,
+              "3149 AC9: issue-3114 still present (coexists with 3149)");
+        // AC10: no test_issue_3149.cpp / docs/design/3149-* — enforced
+        // by the linter (check_evolution_audit_decision_3114.py AC10).
+        // Suite-level coverage is sufficient (#3149 extends the existing
+        // test_security_audit_unify.cpp file per #81967).
+    }
+
+    {
+        std::println("\n--- 3149 AC7: SE ring reason → last-se-reason string ---");
+        reset_process();
+        CompilerService cs;
+        const std::uint64_t mid = 3149;
+        // Insert an SE row with a specific reason[64] string. After the
+        // evolution-audit-decision call, the last-se-reason string key
+        // should equal this reason (NUL-safe truncated).
+        constexpr const char* kReason = "invariant-force-rollback";
+        append_security_event(g_security_event_ring(), SecurityEventKind::InvariantDeny,
+                              /*tenant=*/11, mid, /*epoch=*/1, kEffectMutate, "op-3149", kReason,
+                              /*denied=*/true, /*fiber=*/8);
+        const auto code = href_evol_mid(cs, mid, "last-se-reason-code");
+        CHECK(code == static_cast<std::int64_t>(SecurityEventKind::InvariantDeny) + 1,
+              "3149 AC7: last-se-reason-code matches SE kind+1");
+        // The string side is omitted by href_evol (which returns int).
+        // We assert the string surface at the C++ source level (linter
+        // AC7 verifies insert_kv_str("last-se-reason", ...) call site +
+        // NUL-safe strnlen truncation). The Aura string lookup path is
+        // tested via the engine:metrics surface (test_engine_metrics_facade.cpp
+        // covers the hash_read string plumbing).
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

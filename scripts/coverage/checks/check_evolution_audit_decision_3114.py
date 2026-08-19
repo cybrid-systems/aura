@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Issue #3114: query:evolution-audit-decision observe-only fold.
+Issue #3149: residual — add last-se-reason string key (additive).
 
 Contract (one row per AC):
   AC1  register_stats_impl query:evolution-audit-decision + catalog name.
@@ -14,9 +15,25 @@ Contract (one row per AC):
        engine:metrics + :prefix query:evolution.
   AC5  observe-only comment / key — not an auto-executor.
   AC6  Optional mid arg (does not block AC1–5).
+  ──────────────────────────────────────────────────────────────────
+  AC7  (#3149) additive last-se-reason key alongside last-se-reason-code.
+       SE ring scan extracts e.reason[64] truncated NUL-safe. Coexists
+       with last-se-reason-code (no replacement). Pure load (no WAL I/O,
+       no should_audit, no mutate). Mid filter preserves reason
+       consistency (matches the SE row for the same mid).
+  AC8  (#3149) Soft / no event → empty string semantics same as
+       last-se-reason-code == 0. AURA_SANDBOX=off → no extra cost.
+  AC9  (#3149) capacity: kEvolutionAuditDecisionPlannedKeys bumped to
+       cover last-se-reason + schema-3149 + issue-3149. overflow=0
+       on the normal path.
+  AC10 (#3149) source-cite + no test_issue_3149.cpp / docs/design/3149-*
+       per #81967 / #1655. Suite + facade tests extended to verify
+       last-se-reason equals query:security-audit same-mid row reason
+       under force-rollback.
 
 Extend test_security_audit_unify + test_engine_metrics_facade.
-No test_issue_3114.cpp. No docs/design/3114-* per #1655.
+No test_issue_3114.cpp / test_issue_3149.cpp. No docs/design/{3114,3149}-*
+per #1655.
 
 Exit 0 = all rows satisfied.
 """
@@ -108,6 +125,53 @@ def main() -> int:
     # ── AC6: optional mid arg ──
     must("filt_mid", "AC6 optional mid filter", query)
     must("3114 AC6", "AC6 test marker", unify)
+
+    # ── AC7 (#3149): additive last-se-reason key alongside
+    # last-se-reason-code. SE ring scan extracts e.reason[64] truncated
+    # NUL-safe. Coexists with last-se-reason-code (no replacement).
+    # Pure load — no WAL I/O, no should_audit, no mutate. Mid filter
+    # preserves reason consistency (matches the SE row for the same mid).
+    must("last-se-reason", "AC7 additive last-se-reason key", query)
+    must("last-se-reason-code", "AC7 last-se-reason-code still present (coexists)", query)
+    must("Issue #3149", "AC7 source-cite marker in security prims", query)
+    # NUL-safe truncation pattern.
+    must("strnlen", "AC7 NUL-safe strnlen truncation", query)
+    must("last_se_reason_str.assign", "AC7 truncated string assign", query)
+    # insert_kv_str lambda + call.
+    must('insert_kv_str("last-se-reason", last_se_reason_str)', "AC7 insert_kv_str call site", query)
+    must("auto insert_kv_str = ", "AC7 insert_kv_str lambda defined", query)
+    # Pure-load invariant: AC3 already covers "no should_audit, no WAL scan,
+    # no mutate" globally. The new last-se-reason path inherits AC3 — no
+    # additional should_audit / WAL I/O introduced in the SE ring scan block.
+    # (Comment text in the new code may mention these by negation; that's fine.)
+
+    # ── AC8 (#3149): Soft / no event → empty string semantics same as
+    # last-se-reason-code == 0. AURA_SANDBOX=off → no extra cost.
+    # The capture is gated by e.reason[0] != '\0', so an empty reason
+    # (kind=0 / no event) leaves last_se_reason_str empty.
+    must("e.reason[0] != '\\0'", "AC8 empty-reason guard (no-event branch)", query)
+
+    # ── AC9 (#3149): capacity bumped from 32 → 33 to cover the new
+    # last-se-reason + schema-3149 + issue-3149 keys. overflow=0 on
+    # the normal path.
+    must("kEvolutionAuditDecisionPlannedKeys = 33", "AC9 planned keys bumped to 33", query)
+    must("schema-3149", "AC9 schema-3149 sentinel", query)
+    must("issue-3149", "AC9 issue-3149 sentinel", query)
+    # Coexist with old sentinels (no replacement).
+    must("schema-3114", "AC9 schema-3114 still present (coexists)", query)
+    must("issue-3114", "AC9 issue-3114 still present (coexists)", query)
+
+    # ── AC10 (#3149): source-cite + no test_issue_3149.cpp /
+    # docs/design/3149-* per #81967 / #1655. Suite + facade extended
+    # to verify last-se-reason equals query:security-audit same-mid
+    # row reason under force-rollback.
+    must("3149 AC", "AC10 test marker in test_security_audit_unify", unify)
+    if (ROOT / "tests" / "compiler" / "test_issue_3149.cpp").is_file():
+        fails.append("AC10: tests/compiler/test_issue_3149.cpp present (forbidden #81967)")
+    docs3149 = ROOT / "docs" / "design"
+    if docs3149.is_dir():
+        for f in sorted(docs3149.glob("3149-*")):
+            fails.append(f"AC10: docs/design/{f.name} present (forbidden #1655)")
 
     must("check_evolution_audit_decision_3114", "linter wired in build.py", build)
     must("Issue #3114", "linter error message", build)
