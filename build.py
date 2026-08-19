@@ -12426,6 +12426,37 @@ def cmd_solve_delta_timeout_fail_closed_3003_coverage():
     return 0
 
 
+def cmd_occurrence_persist_fingerprint_3170():
+    """Issue #3170: production solve_delta fail-closed + clear partial
+    goals / unresolved + clear occurrence persist buffer / I4 residual.
+
+    Wire-up: ConstraintSystem::clear_occurrence_persist_snapshot() (new)
+    clears occurrence_persist_log_ without touching live occurrence_goals_.
+    occurrence_goal_fingerprint() computes a bounded FNV-1a hash of live
+    occurrence goals. aura_clear_occurrence_persist_buffer(void* ev_ptr) C ABI
+    is called from abort / nested / force-rollback paths (uniform
+    enforcement, AC2). The outermost success C ABI hook is gated on
+    fingerprint match; mismatch -> clear + bump counter + return early
+    (AC1). Soft / Off / unit-test default: counter never bumps
+    (production_defaults_active gate, AC3 invariant). Quiet (no occurrence
+    activity): zero extra atomics on the happy path (AC4). Additive
+    observability only (AC5, layout-stable per #2906). Extends
+    test_occurrence_goal_persist_rehydrate (extends #2608 / #2641 lineage;
+    no test_issue_3170.cpp per #81967; no docs/design/3170-* per #1655).
+    """
+    print(f"{B}=== occurrence persist fingerprint (#3170) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_persist_fingerprint_3170.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence persist fingerprint (#3170) coverage contract rows failed")
+        return r
+    ok("occurrence persist fingerprint (#3170) coverage clean")
+    return 0
+
+
 def cmd_solve_delta_partial_cleared_3169():
     """Issue #3169: production solve_delta fail-closed + clear partial
     goals / unresolved after TIMEOUT / instance-repair failure.
@@ -17358,6 +17389,8 @@ def main():
         "pcv-span-stale-3167": cmd_pcv_span_stale_coverage_3167,
         "cascade-rearm-new-edge-only-3168": cmd_cascade_rearm_new_edge_only_3168,
         "cascade-rearm-new-edge-only-3168-coverage": cmd_cascade_rearm_new_edge_only_3168,
+        "occurrence-persist-fingerprint-3170": cmd_occurrence_persist_fingerprint_3170,
+        "occurrence-persist-fingerprint-3170-coverage": cmd_occurrence_persist_fingerprint_3170,
         "solve-delta-partial-cleared-3169": cmd_solve_delta_partial_cleared_3169,
         "solve-delta-partial-cleared-3169-coverage": cmd_solve_delta_partial_cleared_3169,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,

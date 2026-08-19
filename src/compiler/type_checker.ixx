@@ -1130,6 +1130,14 @@ public:
     [[nodiscard]] static std::size_t occurrence_persist_cap() noexcept;
     // Returns number of entries written (0 when disabled / empty goals).
     std::size_t append_occurrence_snapshot(std::uint64_t mutation_id = 0) noexcept;
+    // Issue #3170: clear the long-lived occurrence persist buffer
+    // (occurrence_persist_log_) without touching live occurrence_goals_.
+    // Called on abort / nested / force-rollback paths and when the
+    // outermost-success fingerprint guard rejects the snapshot (mismatch
+    // → treat as abort). Returns number of entries cleared. Quiet path
+    // (no buffer entries) → 0. Used by aura_clear_occurrence_persist_
+    // buffer C ABI + clear_occurrence_persist_buffer() wrapper.
+    std::size_t clear_occurrence_persist_snapshot() noexcept;
     // Returns number of goals rehydrated (0 when disabled / live non-empty /
     // buffer empty). preferred_mid=0 → latest mid present in buffer.
     std::size_t rehydrate_occurrence_from_persist(std::uint64_t preferred_mid = 0) noexcept;
@@ -2636,6 +2644,17 @@ export struct TypeChecker {
         if (metrics_)
             solve_delta_cs_.set_metrics(metrics_);
         return solve_delta_cs_.append_occurrence_snapshot(mutation_id);
+    }
+    // Issue #3170: outermost-success fingerprint guard — clear the long-lived
+    // occurrence persist buffer without touching live occurrence_goals_.
+    // Called on abort / nested / force-rollback paths and when the
+    // outermost-success fingerprint guard rejects the staged snapshot
+    // (mismatch → treat as abort, I4 from 2026-08 type-system review —
+    // 半解不得出厂). Quiet path (no buffer entries) → 0.
+    std::size_t clear_occurrence_persist_snapshot() noexcept {
+        if (metrics_)
+            solve_delta_cs_.set_metrics(metrics_);
+        return solve_delta_cs_.clear_occurrence_persist_snapshot();
     }
     // Issue #3004: discard live provisional goals on Full audit failure.
     std::size_t discard_provisional_occurrence_snapshot() noexcept {

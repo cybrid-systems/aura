@@ -189,6 +189,25 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     auto* tc = static_cast<aura::compiler::TypeChecker*>(ev->commit_type_checker_handle());
     if (!tc)
         return;
+    // Issue #3170: outermost-success fingerprint guard (I4 from 2026-08
+    // type-system review -- 半解不得出厂). Compute the fingerprint of the
+    // live occurrence goals NOW; if it differs from the snapshot that was
+    // staged for write (tracked via expected_occurrence_fp_), the goals
+    // drifted mid-mutate and we must NOT freeze the half-correct snapshot.
+    // Instead: clear the persist buffer + bump the mismatch counter +
+    // return early (skip persist + linear proof + health + grant).
+    // Production-only; Soft / Off: zero extra work (guard never fires
+    // because production_defaults_active() == false -> fingerprint stays
+    // 0 -> fp matches expected 0).
+    const auto live_fp = aura::compiler::typed_audit::occurrence_goal_fingerprint(tc);
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        ev->expected_occurrence_snapshot_fp() != 0 &&
+        live_fp != ev->expected_occurrence_snapshot_fp()) {
+        // Mismatch -> treat as abort: clear persist + bump mismatch counter.
+        (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+        ev->bump_occurrence_persist_fingerprint_mismatch();
+        return; // skip persist + proof + health + grant
+    }
     // (1) Persist live goals into the long-lived side buffer when enabled.
     const auto written = tc->maybe_persist_occurrence_snapshot(mutation_id);
     // (2) Issue #2938: note commit-snapshot write (production/Full + non-empty).
@@ -217,6 +236,23 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Issue #3082: nested/mid Guards never call this helper — they
     // stamp inflight and leave grant to this outermost success path.
     ev->grant_type_export_authority();
+}
+
+// Issue #3170: clear the occurrence persist buffer C ABI. Called from
+// abort / nested / force-rollback paths and when the outermost-success
+// fingerprint guard rejects the staged snapshot (mismatch -> treat as
+// abort, I4 from 2026-08 type-system review -- 半解不得出厂). Quiet
+// path (no type-checker / no buffer entries / Soft) -> 0. Production-only
+// counter bump is folded into clear_occurrence_persist_buffer() wrapper
+// under production_defaults_active().
+extern "C" void aura_clear_occurrence_persist_buffer(void* ev_ptr) noexcept {
+    if (!ev_ptr)
+        return;
+    auto* ev = static_cast<aura::compiler::Evaluator*>(ev_ptr);
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(ev->commit_type_checker_handle());
+    if (!tc)
+        return;
+    (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
 }
 
 namespace aura::compiler {
@@ -4287,6 +4323,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (dropped > 0)
                 aura::compiler::typed_audit::note_occurrence_provisional_discard(dropped);
         }
+        // Issue #3170: clear occurrence persist buffer on outermost abort
+        // (uniform enforcement — no half-written state survives).
+        aura_clear_occurrence_persist_buffer(ev_);
         ev_->clear_type_export_authority();
     } else if (!outermost) {
         // Issue #3082: nested/mid success or fail never persist and never
@@ -4294,6 +4333,10 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // until the outermost Guard freezes the snapshot (#2938 helper).
         // Do not discard live goals here — that would wipe outermost-still-
         // open work; outermost && !success remains the sole discard (#3004).
+        // Issue #3170: clear any half-written persist buffer (AC2 uniform
+        // enforcement — abort/nested must not leave half-written state).
+        // Quiet path (no buffer entries / Soft) -> 0.
+        aura_clear_occurrence_persist_buffer(ev_);
         ev_->note_type_export_inflight();
     }
     // Issue #1255: on Guard exit, if hygiene drift was seen,

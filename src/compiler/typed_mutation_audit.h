@@ -1371,6 +1371,53 @@ inline void note_occurrence_commit_snapshot_written(std::uint64_t mid,
     if (mid != 0)
         g_occurrence_commit_snapshot_mid.store(mid, std::memory_order_relaxed);
 }
+
+// Issue #3170: occurrence goal fingerprint for outermost-success guard.
+// FNV-1a hash of live occurrence goals (bounded by kProofGoalFingerprintMaxGoals,
+// same cap as #2842 fingerprint). Returns 0 for empty / no goals. Quiet path
+// (no type-checker / empty goals) returns 0. Used by aura_outermost_success_persist
+// _occurrence C ABI to detect goals-drifted-between-snapshot-stage-and-freeze
+// (mismatch -> treat as abort, clear buffer + bump counter).
+[[nodiscard]] inline std::uint64_t occurrence_goal_fingerprint(void* tc_handle) noexcept {
+    using aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals;
+    using aura::compiler::typed_audit::mix_occurrence_goal_into_fingerprint;
+    if (!tc_handle)
+        return 0;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    const auto& goals = tc->constraint_system().occurrence_goals_for_test();
+    if (goals.empty())
+        return 0;
+    std::uint64_t h = 0xcbf29ce484222325ULL; // FNV offset basis
+    const std::size_t n =
+        goals.size() < kProofGoalFingerprintMaxGoals ? goals.size() : kProofGoalFingerprintMaxGoals;
+    for (std::size_t i = 0; i < n; ++i) {
+        const auto& g = goals[i];
+        h = mix_occurrence_goal_into_fingerprint(
+            h, g.var.index, g.refined.index, g.predicate_cond_node, g.source_mutation_id, g.epoch);
+    }
+    // Non-empty goals always produce a non-zero fingerprint.
+    return (h != 0) ? h : 1;
+}
+
+// Issue #3170: clear the long-lived occurrence persist buffer wrapper.
+// Called on abort / nested / force-rollback paths and when the
+// outermost-success fingerprint guard rejects the snapshot (mismatch ->
+// treat as abort, I4 from 2026-08 type-system review -- 半解不得出厂).
+// Quiet path (no type-checker / no buffer entries / Soft) -> 0.
+// Production-only: counter only bumps under production_defaults_active().
+[[nodiscard]] inline std::uint64_t clear_occurrence_persist_buffer(void* tc_handle) noexcept {
+    if (!tc_handle)
+        return 0;
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return 0;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    const auto dropped = tc->clear_occurrence_persist_snapshot();
+    if (dropped > 0) {
+        aura::compiler::g_occurrence_persist_audit_atomic_wired.fetch_add(
+            dropped, std::memory_order_relaxed);
+    }
+    return dropped;
+}
 inline void reset_occurrence_commit_snapshot_for_test() noexcept {
     g_occurrence_commit_snapshot_written_total.store(0, std::memory_order_relaxed);
     g_occurrence_commit_snapshot_mid.store(0, std::memory_order_relaxed);

@@ -1318,6 +1318,16 @@ struct CompilerMetrics {
     // visible fidelity signal that priority roots are empty with no
     // rehydrate source — silent in #2608 opt-in mode).
     std::atomic<std::uint64_t> occurrence_persist_rehydrate_miss_total{0}; // #2641
+    // Issue #3170: outermost-success Occurrence persist fingerprint guard
+    // — bumped when the live occurrence-goal fingerprint at freeze time
+    // does not match the staged snapshot's expected fingerprint. Treated
+    // as a half-narrowing abort under Production: persist buffer is
+    // cleared instead of frozen (I4 from 2026-08 type-system review —
+    // 半解不得出厂). Soft / Off / sandbox=off: counter never bumps
+    // (production_defaults_active gate, AC3 invariant). Quiet (no
+    // occurrence activity): zero extra atomics on the happy path (AC4).
+    // Additive, struct-end layout-stable (#2906) — Agent dashboards.
+    std::atomic<std::uint64_t> occurrence_persist_fingerprint_mismatch_total{0}; // #3170
     // Issue #1873: derived completeness rate (0–100) =
     // rich_complete / (rich_complete + incomplete) * 100.
     // Updated on each blame dump so AI self-repair can watch the trend.
