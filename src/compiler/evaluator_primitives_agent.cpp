@@ -5822,6 +5822,100 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         ev.string_heap_.push_back(new_name);
         return types::make_string(idx);
     });
+
+    // Issue #3148: cross-Evaluator lifecycle close — Aura surface.
+    // (orch:join-via-token token-hash [:timeout-ms n]) → hash
+    // Reads the staged token (created by orch:agent-export-via-token),
+    // observes the source-owned fiber via join_via_handoff (read-only;
+    // does NOT modify source handle / release source reservation /
+    // detach source mailbox), and returns a hash with status / wait-us
+    // / still-running / source-reclaimed-deferred /
+    // source-must-wait-reclaimed. The token stays in the stash after
+    // the call so the importer may re-observe. No process-global
+    // AgentRegistry (#3089 / #1966 lineage preserved). Reuses the
+    // handoff_join_via_token_total counter pair bumped by the C++
+    // helper (no new query key, no metrics middle insertion per AC6).
+    add("orch:join-via-token",
+        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+            auto make_invalid_hash = [&]() {
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"status",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("invalid");
+                         return make_string(s);
+                     }()},
+                    {"wait-us", make_int(0)},
+                    {"still-running", make_bool(false)},
+                    {"source-reclaimed-deferred", make_bool(false)},
+                    {"source-must-wait-reclaimed", make_bool(false)},
+                    {"schema", make_int(1588)},
+                    {"issue-3148", make_int(3148)},
+                };
+                return build_orch_hash(kv);
+            };
+            if (a.empty() || !types::is_string(a[0]))
+                return make_invalid_hash();
+            const auto hash_idx = types::as_string_idx(a[0]);
+            if (hash_idx >= ev.string_heap_.size())
+                return make_invalid_hash();
+            const auto& hash = ev.string_heap_[hash_idx];
+            aura::orch::HandoffToken tok_snapshot;
+            {
+                std::lock_guard<std::mutex> lock(g_handoff_token_stash_mtx);
+                auto it = g_handoff_token_stash.find(hash);
+                if (it == g_handoff_token_stash.end())
+                    return make_invalid_hash();
+                // Snapshot (token stays in stash — importer may re-observe).
+                tok_snapshot = it->second;
+            }
+            aura::orch::JoinViaTokenPolicy jp;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1])) {
+                    jp.timeout_ms = static_cast<std::uint64_t>(
+                        std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                }
+            }
+            auto res = aura::orch::join_via_handoff(tok_snapshot, jp);
+            const char* st = "ok";
+            switch (res.status) {
+                case aura::serve::JoinStatus::Ok:
+                    st = "ok";
+                    break;
+                case aura::serve::JoinStatus::Timeout:
+                    st = "timeout";
+                    break;
+                case aura::serve::JoinStatus::Cancelled:
+                    st = "cancelled";
+                    break;
+                case aura::serve::JoinStatus::Invalid:
+                    st = "invalid";
+                    break;
+                case aura::serve::JoinStatus::Reclaimed:
+                    st = "reclaimed";
+                    break;
+            }
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(res.status == aura::serve::JoinStatus::Ok ||
+                                 res.status == aura::serve::JoinStatus::Reclaimed)},
+                {"status",
+                 [&] {
+                     auto s = ev.string_heap_.size();
+                     ev.string_heap_.push_back(st);
+                     return make_string(s);
+                 }()},
+                {"wait-us", make_int(static_cast<std::int64_t>(res.wait_us))},
+                {"still-running", make_bool(res.still_running)},
+                {"source-reclaimed-deferred", make_bool(res.source_reclaimed_deferred)},
+                {"source-must-wait-reclaimed", make_bool(res.source_must_wait_reclaimed)},
+                {"schema", make_int(1588)},
+                {"issue-3148", make_int(3148)},
+                {"handoff-join-via-token-wired", make_int(1)},
+            };
+            return build_orch_hash(kv);
+        });
 }
 
 } // namespace aura::compiler::primitives_detail

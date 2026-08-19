@@ -3534,6 +3534,27 @@ def cmd_lint():
             "Issue #3146 join drain reclaim Timeout-retention linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3146.py"
         )
         return r
+    # Issue #3148: cross-Evaluator lifecycle close via HandoffToken
+    # (join_via_handoff C++ helper + orch:join-via-token Aura prim).
+    # Closes the gap left by #3089 (proxy has no join/wait_reclaimed
+    # path); importer can observe still-running / Reclaimed /
+    # wait-timeout for source-owned body without holding the source
+    # handle and without taking ownership of the reservation. No
+    # process-global AgentRegistry; reuse wait_reclaimed_* / extend
+    # handoff_join_via_token_* counter pair at OrchModuleStats struct
+    # end (#2906 layout-stable); tests extend existing
+    # test_join_drain_reclaim.cpp (#81967); no docs/design/ (#1655);
+    # workflow residual stays advisory.
+    hjt3148_script = COVERAGE_CHECKS / "check_handoff_join_via_token_3148.py"
+    if not hjt3148_script.exists():
+        fail(f"missing {hjt3148_script}")
+        return 1
+    r = run([sys.executable, str(hjt3148_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3148 handoff join-via-token linter failed — run python3 scripts/coverage/checks/check_handoff_join_via_token_3148.py"
+        )
+        return r
     # Issue #3111: production mailbox post-steal re-validate of held_ref
     # messages. Close the Fiber steal × held_ref / handoff_completed
     # consistency residual. Soft / sandbox=off: counter bumps only (may
