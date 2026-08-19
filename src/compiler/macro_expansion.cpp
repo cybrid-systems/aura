@@ -1561,6 +1561,37 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         }
     };
     NameMapCheckpoint nm_ckpt{hygiene_depth == 0 ? name_map : nullptr};
+    // Issue #3157: install lightweight expand checkpoint for target
+    // FlatAST additions under production surface. On steal-abort /
+    // depth-limit fail, try_restore() rolls back target.add_* allocations
+    // so orphan MacroIntroduced nodes never reach subsequent query /
+    // densify. Soft/Off keeps historical half-write (zero-cost contract)
+    // — production_surface gates ensure_installed(). Nested recursion
+    // (hygiene_depth > 0) does NOT install — the top-level owns the
+    // checkpoint for the whole subtree. install_macro_expand_checkpoint()
+    // itself is a no-op when a MutationBoundary is already active, so
+    // existing boundary callers continue to roll back via the boundary
+    // itself (no double-rollback).
+    struct ExpandCheckpointGuard {
+        bool owned = false;
+        bool consumed = false;
+        void ensure_installed() noexcept {
+            if (owned || consumed)
+                return;
+            owned = install_macro_expand_checkpoint() != 0;
+        }
+        void try_restore() noexcept {
+            consumed = true;
+            (void)aura_evaluator_try_restore_macro_expand_checkpoint();
+        }
+        ~ExpandCheckpointGuard() {
+            if (owned && !consumed)
+                aura_evaluator_commit_macro_expand_checkpoint();
+        }
+    } expand_ckpt;
+    const bool production_surface = aura::core::sandbox::is_sandbox_active();
+    if (hygiene_depth == 0 && production_surface)
+        expand_ckpt.ensure_installed();
     const auto steal0 =
         hygiene_depth == 0 ? aura_fiber_static_cross_fiber_mutation_safe_steal_total() : 0;
 
@@ -2108,6 +2139,14 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (steal1 > steal0) {
             g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_clone_last_reject_reason.store(3, std::memory_order_relaxed);
+            // Issue #3157: roll back target FlatAST additions (target.add_*
+            // allocations done by the recursive clone walk between steal0
+            // and steal1). Without this, orphan MacroIntroduced nodes
+            // remain reachable via size growth / free-list gaps even though
+            // nm_ckpt rolls back the rename table. Soft/Off path
+            // unaffected (expand_ckpt.owned == false → try_restore is a
+            // no-op + dtor skips commit, preserving historical half-write).
+            expand_ckpt.try_restore();
             return NULL_NODE; // nm_ckpt rolls back
         }
         nm_ckpt.commit();

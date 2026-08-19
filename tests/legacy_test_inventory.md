@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 851 | Preferred destination suites |
-| **Total scanned** | **851** | |
+| `tests/core/test_*.cpp` | 852 | Preferred destination suites |
+| **Total scanned** | **852** | |
 
 ### Related artifacts
 
@@ -34,7 +34,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 87 | 87 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 251 | 251 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 102 | 102 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 103 | 103 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 57 | 57 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 85 | 85 | P2 — link-profile heavy; migrate AC smoke first |
@@ -612,6 +612,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_longrunning_infra_primitives.cpp`
 - `tests/compiler/test_longrunning_recovery_latency.cpp`
 - `tests/compiler/test_lookup_stats_impl_heterogeneous.cpp`
+- `tests/compiler/test_macro_clone_target_atomicity.cpp`
 - `tests/compiler/test_macro_cross_flat_hygiene.cpp`
 - `tests/core/test_macro_dirty_bits_lock.cpp`
 - `tests/compiler/test_macro_fiber_hygiene.cpp`
@@ -1424,13 +1425,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (102)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (103)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (102)
+#### domain/ (103)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
@@ -1477,6 +1478,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_join_drain_timeout.cpp` (—) [domain_suite, theme_serve] — AC1: Default drain_ms=2000 preserves #2082 (Ok path / yielding body)
 - `tests/compiler/test_lock_order_audit_hard.cpp` (—) [domain_suite, theme_compiler] — AC1: Audit off → zero atomics on acquire (TLS depth still tracked —
 - `tests/compiler/test_lock_order_closures_env.cpp` (—) [domain_suite, theme_compiler] — Issue #1664 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_macro_clone_target_atomicity.cpp` (—) [domain_suite, theme_compiler] — rollback). Soft / Off keeps historical half-write (zero-cost contract).
 - `tests/orch/test_mailbox_bp_admit_default.cpp` (—) [domain_suite, theme_orch] — AC1: no env → resolve_mailbox_bp_admit_threshold() == 32
 - `tests/serve/test_mailbox_fiber_batch.cpp` (—) [batch_driver, domain_suite, theme_serve] — test_mailbox_fiber_batch.cpp — thematic multi-TU batch
 - `tests/serve/test_mailbox_hold_exit_drain.cpp` (—) [domain_suite, theme_serve] — AC1: outermost Guard exit calls drain_deferred_under_budget (source-cite)

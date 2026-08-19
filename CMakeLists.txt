@@ -2237,6 +2237,18 @@ add_dependencies(all_test_issue_targets test_compact_nodes_provenance_schema_rem
 aura_add_issue_test(test_arena_required_cover_no_value_only)
 aura_issue_test_link_light(test_arena_required_cover_no_value_only)
 add_dependencies(all_test_issue_targets test_arena_required_cover_no_value_only)
+# Issue #3157: clone_macro_body depth/steal fail under production surface
+# now rolls back target FlatAST additions (target.add_*) via the existing
+# ExpandCheckpointGuard machinery from #3062 family (same helpers used by
+# macro_expand_all_body pass-limit rollback). Closes the residual where
+# NameMapCheckpoint only rolled back name_map, leaving orphan
+# MacroIntroduced nodes reachable via size growth / free-list gaps.
+# g_macro_clone_steal_abort_total + last_reject_reason=3 still fire (issue
+# invariant). Soft / Off keeps historical half-write (zero-cost contract).
+# Lives in tests/compiler/ per #81934/#81967.
+aura_add_issue_test(test_macro_clone_target_atomicity)
+aura_issue_test_link_light(test_macro_clone_target_atomicity)
+add_dependencies(all_test_issue_targets test_macro_clone_target_atomicity)
 # Issue #2236: optional per-region / per-eval deopt-storm isolation
 # in HotUpdateRegistry (per-AC2 cap 64 regions, overflow → global;
 # Issue #2237: expose mutate:rollback-macro-introduced + query:by-marker
