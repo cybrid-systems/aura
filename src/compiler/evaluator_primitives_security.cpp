@@ -5380,9 +5380,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::core::security_event::g_security_event_ring;
             using aura::core::security_event::kSecurityEventRingSize;
 
-            // 26 live keys + 1 additive key (last-se-reason, #3149);
-            // planned 33 → query_hash_capacity_for ≥64.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 33;
+            // 26 live keys + 1 additive key (last-se-reason, #3149)
+            // + 4 additive keys (forensic-source + 3 enum sentinels, #3152)
+            // = 31 live + 4 enum sentinels = 35 minimum; planned 37 →
+            // query_hash_capacity_for ≥64 (well above the 64 ceiling).
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 37;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -5480,6 +5482,43 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
 
+            // Issue #3152: forensic-source enum — maps typed-trail-miss
+            // to the next forensic step. Pure loads only: one extra
+            // O(kSecurityEventRingSize) scan when typed miss + mid, plus
+            // two WAL is_enabled() bool probes. No file I/O, no mutate,
+            // no shadow writes. Soft / Off zero-cost preserved.
+            //   0 = no mid / no evidence (join_mid == 0)
+            //   1 = typed trail hit (details within window)
+            //   2 = typed miss + SE ring still has same mid (use
+            //       query:security-audit)
+            //   3 = typed miss + mutation/SE WAL enabled (need durable
+            //       forensic — crash / wrap-around cannot recover from
+            //       typed trail alone)
+            std::int64_t forensic_source = 0;
+            bool se_ring_has_mid = false;
+            if (join_mid != 0 && !typed_hit) {
+                const auto& ring2 = g_security_event_ring();
+                const auto head2 = ring2.seq.load(std::memory_order_relaxed);
+                const auto max_i = std::min<std::size_t>(head2, kSecurityEventRingSize);
+                for (std::size_t i = 0; i < max_i; ++i) {
+                    const auto& e2 = ring2.ring[(head2 - 1 - i) % kSecurityEventRingSize];
+                    if (e2.mutation_id == join_mid) {
+                        se_ring_has_mid = true;
+                        break;
+                    }
+                }
+                if (se_ring_has_mid)
+                    forensic_source = 2;
+                using ::aura::core::audit_wal::g_mutation_audit_wal;
+                using ::aura::core::security_event_wal::g_security_event_wal;
+                if (g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled()) {
+                    if (forensic_source < 3)
+                        forensic_source = 3;
+                }
+            } else if (typed_hit) {
+                forensic_source = 1;
+            }
+
             const auto cr = commit_readiness(commit_readiness_live_policy());
 
             ReloadRecoveryPlaybookResult pb{};
@@ -5526,6 +5565,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("densify-ok", densify.would_allow_mutate ? 1 : 0);
             insert_kv("posture-degraded", posture_degraded ? 1 : 0);
             insert_kv("production-defaults-active", production_defaults_active() ? 1 : 0);
+            // Issue #3152: additive forensic-source enum + 3 sentinels
+            // (forensic-source-trail=1 / -se=2 / -wal=3). Pure load
+            // outcome — computed above from typed_hit, SE ring full
+            // scan, and WAL is_enabled() probes. AC4: planned_keys
+            // bumped from 33 to 37; schema-3152/issue-3152 sentinels
+            // added below. No WAL I/O, no mutate, Soft / Off zero-cost
+            // preserved (forensic-source=0 when join_mid==0).
+            insert_kv("forensic-source", forensic_source);
+            insert_kv("forensic-source-trail", 1);
+            insert_kv("forensic-source-se", 2);
+            insert_kv("forensic-source-wal", 3);
             insert_kv("audit-strategy", static_cast<std::int64_t>(get_strategy()));
             insert_kv("schema", kEvolutionAuditDecisionIssue);
             insert_kv("issue", kEvolutionAuditDecisionIssue);
@@ -5544,6 +5594,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // issue-3113 preserved (typed-trail-miss lineage).
             insert_kv("schema-3149", 3149);
             insert_kv("issue-3149", 3149);
+            // Issue #3152: additive schema/issue sentinels for the
+            // forensic-source enum + 3 enum sentinels (parallel
+            // additive to #3149 last-se-reason — both inside the
+            // same evolution-audit-decision handler, single PR).
+            insert_kv("schema-3152", 3152);
+            insert_kv("issue-3152", 3152);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
