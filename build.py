@@ -3269,6 +3269,27 @@ def cmd_lint():
             "Issue #3188 production facade minimal IR/shape linter failed — run python3 scripts/coverage/checks/check_production_facade_minimal_ir_shape_3188.py"
         )
         return r
+    # Issue #3189: unify impact upper-bound on every production
+    # partial-relower decision site (fail-closed). The helper
+    # should_partial_relower_impact_checked was already wired into
+    # try_partial_invalidate_relower (#3034) and
+    # apply_partial_relower_storm_gate (#2246); #3189 unifies the third
+    # site (invalidate_bridge_with_impact inside invalidate_function)
+    # so cross-fn callee under-count gets caught via the impact_ub vs
+    # dirty_count check. Soft/Off zero-cost unchanged (helper returns
+    # false on clean + impact exceeds). Extends
+    # test_partial_cone_cap (#81967); no docs/design/3189-* (#1655),
+    # no tests/issues/test_issue_3189.cpp (#81934).
+    piub_script = COVERAGE_CHECKS / "check_partial_impact_upper_bound_3189.py"
+    if not piub_script.exists():
+        fail(f"missing {piub_script}")
+        return 1
+    r = run([sys.executable, str(piub_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3189 partial impact upper-bound linter failed — run python3 scripts/coverage/checks/check_partial_impact_upper_bound_3189.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
