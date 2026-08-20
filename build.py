@@ -3172,6 +3172,23 @@ def cmd_lint():
             "Issue #3183 gensym ceiling / rest-bypass linter failed — run python3 scripts/coverage/checks/check_gensym_ceiling_rest_bypass_3183.py"
         )
         return r
+    # Issue #3184: abort dual-topology restore must restamp/clear cache+map
+    # (close silent-stale window). Verifies Issue #3033 / #3117 hook
+    # infrastructure: all 3 abort_restore_dual_topology call sites must wire
+    # BOTH abort_ir_cache_begin_force_fn (publish live gen) and
+    # abort_ir_cache_force_dirty_fn (zero-restamp + clear source_to_ir_map).
+    # Extends existing incremental-relower / dirty-cascade test surface;
+    # no docs/design/3184-* (#1655).
+    arfd_script = COVERAGE_CHECKS / "check_abort_restore_force_dirty_3184.py"
+    if not arfd_script.exists():
+        fail(f"missing {arfd_script}")
+        return 1
+    r = run([sys.executable, str(arfd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3184 abort restore force-dirty linter failed — run python3 scripts/coverage/checks/check_abort_restore_force_dirty_3184.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
