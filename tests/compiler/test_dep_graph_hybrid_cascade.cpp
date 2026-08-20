@@ -525,6 +525,139 @@ static void ac3165_strict_fail_closed_all_callers() {
     }
 }
 
+// ── Issue #3187: dual DepGraph fork window — production fail-closed default ──
+// Closes the residual dual-graph fork window under lockless batch / cross-
+// fiber record_dependency. The existing Strict fail-closed path (#3165)
+// only fires when set_dual_dep_graph_strict(1) is called explicitly.
+// #3187 extends the same all-callers force-dirty walk to also fire under
+// production_defaults_active() (or AuditStrategy::Full) by default — no
+// explicit Strict toggle required. Closes the silent under-cascade
+// residual on the hybrid_node_cascade_ entry path (the existing Strict
+// path was gated only by an explicit toggle that production wasn't using).
+// Soft / Off zero-cost: dual_dep_graph_strict_or_production() stays
+// false under Soft (no parity check, no force-dirty, no counter bump).
+//   AC1: dual_dep_graph_strict_or_production() helper defined in
+//        dirty_propagation.ixx (ORs dual_dep_graph_strict_enabled
+//        with production_defaults_active || get_strategy() == Full)
+//   AC2: record_dependency Strict gate uses the new helper (not just
+//        dual_dep_graph_strict_enabled) so production fail-closed is
+//        the default
+//   AC3: drain_deferred_hybrid_cascade_ Strict gate uses the new helper
+//        (same surface as #3165 Strict branch, enabled by production)
+//   AC4: existing #3165 sibling AC preserved (dual_dep_graph_strict_enabled
+//        still works for explicit Strict-mode tests)
+//   AC5: helper cites Issue #3187; both gates cite Issue #3187; no new
+//        metric key (reuses dual_dep_graph_parity_fail_total)
+
+static void ac3187_production_fail_closed_default() {
+    std::println("\n--- #3187: dual DepGraph fork — production fail-closed default ---");
+
+    // AC1: dual_dep_graph_strict_or_production() helper defined in
+    // dirty_propagation.ixx and ORs strict + production.
+    {
+        const auto ixx = read_file("src/compiler/dirty_propagation.ixx");
+        CHECK(ixx.find("dual_dep_graph_strict_or_production") != std::string::npos,
+              "ac3187 AC1: helper defined in dirty_propagation.ixx");
+        CHECK(ixx.find("Issue #3187") != std::string::npos, "ac3187 AC1: helper cites Issue #3187");
+        CHECK(ixx.find("production_defaults_active()") != std::string::npos,
+              "ac3187 AC1: helper consults production_defaults_active");
+        CHECK(ixx.find("AuditStrategy::Full") != std::string::npos,
+              "ac3187 AC1: helper also consults AuditStrategy::Full");
+        // The OR semantics must be explicit (calls dual_dep_graph_strict_enabled).
+        CHECK(ixx.find("dual_dep_graph_strict_enabled()") != std::string::npos,
+              "ac3187 AC1: helper ORs with dual_dep_graph_strict_enabled");
+    }
+
+    // AC2: record_dependency Strict gate uses the new helper (production
+    // fail-closed by default).
+    {
+        const auto svc = read_file("src/compiler/service.ixx");
+        auto rd_pos = svc.find("void record_dependency(const std::string& caller");
+        if (rd_pos == std::string::npos)
+            rd_pos = svc.find("void record_dependency(");
+        REQUIRE(rd_pos != std::string::npos);
+        auto rd_end = svc.find("\n    }\n", rd_pos);
+        if (rd_end == std::string::npos)
+            rd_end = rd_pos + 8000;
+        auto rd_win = svc.substr(rd_pos, rd_end - rd_pos);
+        CHECK(rd_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
+              "ac3187 AC2: record_dependency Strict gate uses dual_dep_graph_strict_or_production");
+        CHECK(rd_win.find("Issue #3187") != std::string::npos,
+              "ac3187 AC2: record_dependency cites Issue #3187");
+        // AC2: must NOT regress the existing #3165 strict-enabled path
+        // (it's now subsumed by strict_or_production, but the helper still
+        // exists for explicit-Strict tests).
+        CHECK(rd_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
+                  std::string::npos,
+              "ac3187 AC2: all-callers walk preserved (sibling #3165 contract)");
+    }
+
+    // AC3: drain_deferred_hybrid_cascade_ Strict gate uses the new helper.
+    {
+        const auto svc = read_file("src/compiler/service.ixx");
+        auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
+        REQUIRE(drain_pos != std::string::npos);
+        auto drain_end = svc.find("\n    }\n", drain_pos);
+        if (drain_end == std::string::npos)
+            drain_end = drain_pos + 5000;
+        auto drain_win = svc.substr(drain_pos, drain_end - drain_pos);
+        CHECK(drain_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
+              "ac3187 AC3: drain_deferred_hybrid_cascade_ Strict gate uses "
+              "dual_dep_graph_strict_or_production");
+        CHECK(drain_win.find("Issue #3187") != std::string::npos,
+              "ac3187 AC3: drain cites Issue #3187");
+        CHECK(drain_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
+                  std::string::npos,
+              "ac3187 AC3: all-callers walk preserved (sibling #3165 contract)");
+    }
+
+    // AC4: existing #3165 sibling AC preserved. The Strict-only helper
+    // still exists for explicit-Strict tests / non-production paths.
+    {
+        const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+        CHECK(t.find("ac3165_strict_fail_closed_all_callers") != std::string::npos,
+              "ac3187 AC4: sibling #3165 AC1 preserved");
+        const auto ixx = read_file("src/compiler/dirty_propagation.ixx");
+        CHECK(ixx.find("inline bool dual_dep_graph_strict_enabled()") != std::string::npos,
+              "ac3187 AC4: dual_dep_graph_strict_enabled() helper still defined (backward compat)");
+        const auto svc = read_file("src/compiler/service.ixx");
+        // dual_dep_graph_strict_enabled may still be referenced elsewhere
+        // (e.g., test setters, hooks) — not required for the Strict gate
+        // itself anymore (replaced by strict_or_production).
+        // We only assert the helper definition is preserved.
+        (void)svc;
+    }
+
+    // AC5: no new metric key (reuses dual_dep_graph_parity_fail_total);
+    // no test_issue_3187.cpp (#81967); no docs/design/3187-* (#1655).
+    {
+        const auto obs = read_file("src/compiler/observability_metrics.h");
+        // Count occurrences of dual_dep_graph_parity_fail_total across the
+        // codebase to confirm no new key was inserted.
+        const auto ixx = read_file("src/compiler/dirty_propagation.ixx");
+        const auto svc = read_file("src/compiler/service.ixx");
+        const auto total = std::count(obs.begin(), obs.end(), "dual_dep_graph_parity_fail_total") +
+                           std::count(ixx.begin(), ixx.end(), "dual_dep_graph_parity_fail_total") +
+                           std::count(svc.begin(), svc.end(), "dual_dep_graph_parity_fail_total");
+        CHECK(total >= 4, "ac3187 AC5: existing dual_dep_graph_parity_fail_total counter reused "
+                          "(no new metric key)");
+        auto root = std::filesystem::current_path();
+        CHECK(!std::filesystem::exists(root / "tests" / "issues" / "test_issue_3187.cpp"),
+              "ac3187 AC5: tests/issues/test_issue_3187.cpp absent (#81967)");
+        CHECK(!std::filesystem::exists(root / "tests" / "compiler" / "test_issue_3187.cpp"),
+              "ac3187 AC5: tests/compiler/test_issue_3187.cpp absent (#81967)");
+        auto design = root / "docs" / "design";
+        if (std::filesystem::exists(design)) {
+            for (const auto& f : std::filesystem::directory_iterator(design)) {
+                auto name = f.path().filename().string();
+                CHECK(name.find("3187-") == std::string::npos,
+                      "ac3187 AC5: no docs/design/3187-* plan doc (#1655)");
+                break;
+            }
+        }
+    }
+}
+
 int run_test_dep_graph_hybrid_cascade() {
     std::println("=== Issue #2110 + #2187: hybrid dep_graph ↔ NodeId DepGraph (block edges) ===");
     ac1_dual_graph_parity();
@@ -543,6 +676,9 @@ int run_test_dep_graph_hybrid_cascade() {
     ac3067_3_clean_path_zero_extra();
     ac3067_4_soak_and_linter();
     ac3165_strict_fail_closed_all_callers();
+    // Issue #3187: production fail-closed default (extends #3165 Strict to
+    // also fire under production_defaults_active).
+    ac3187_production_fail_closed_default();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

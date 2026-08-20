@@ -11194,7 +11194,12 @@ private:
             // edges would still peel partial and miss the rebuilt edge.
             // Walk all callers across dep_graph_ (set dedupes) under the
             // same dep_graph_mtx_ exclusive window as the rebuild.
-            if (aura::compiler::dirty::dual_dep_graph_strict_enabled()) {
+            // Issue #3187: production fail-closed default — the Strict
+            // gate now fires under production_defaults_active() (or
+            // AuditStrategy::Full) too, not just the explicit Strict
+            // toggle. Closes the residual dual-graph fork window under
+            // lockless batch / cross-fiber record_dependency.
+            if (aura::compiler::dirty::dual_dep_graph_strict_or_production()) {
                 std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>
                     affected;
                 for (const auto& [callee_name, callee_entry] : dep_graph_) {
@@ -11305,7 +11310,14 @@ private:
                 // hybrid drain's freshly-restored edges force all affected
                 // callers full on the next relower (no stale partial IR).
                 // Soft / off (non-Strict): rebuild only, zero extra force.
-                if (aura::compiler::dirty::dual_dep_graph_strict_enabled()) {
+                // Issue #3187: production fail-closed default — the Strict
+                // gate now fires under production_defaults_active() (or
+                // AuditStrategy::Full) too, not just the explicit Strict
+                // toggle. Closes the residual dual-graph fork window
+                // (lockless batch / cross-fiber record_dependency → stale
+                // deferred_hybrid_edges_ → hybrid_node_cascade_ on
+                // inconsistent graph → silent under-cascade).
+                if (aura::compiler::dirty::dual_dep_graph_strict_or_production()) {
                     std::unordered_set<std::string, aura::core::TransparentStringHash,
                                        std::equal_to<>>
                         affected;
