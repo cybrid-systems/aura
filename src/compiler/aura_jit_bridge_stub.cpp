@@ -93,6 +93,24 @@ extern "C" __attribute__((weak)) std::uint64_t aura_get_current_bridge_epoch(voi
     return g_current_bridge_epoch_stub.load(std::memory_order_acquire);
 }
 
+// Issue #3181 follow-up: weak stubs for aura_hot_update_bump_*. Production
+// impl is in aura_jit_bridge.cpp (g_current_bridge_epoch / g_aot_defuse_version
+// statics); this ensures light JIT test binaries (test_unquote_splicing_hygiene
+// etc. — anything linking libaura_jit_light_test_objects.so, which contains
+// aura_jit_bridge_stub.cpp instead of aura_jit_bridge.cpp) still link. Without
+// these, --no-allow-shlib-undefined rejects libaura_test_objects.so's call sites
+// in hot_update_registry.cpp (notify_dirty_define → bump_bridge_epoch /
+// bump_defuse_version). Weak so production impl wins when both are linked.
+// Pre-existing infra gap (#3181 ship surfaced it via macro_expansion clone-walk
+// test extension in tests/compiler/test_unquote_splicing_hygiene.cpp).
+extern "C" __attribute__((weak)) void aura_hot_update_bump_bridge_epoch(void) noexcept {
+    g_current_bridge_epoch_stub.fetch_add(1, std::memory_order_acq_rel);
+}
+
+extern "C" __attribute__((weak)) void aura_hot_update_bump_defuse_version(void) noexcept {
+    g_aot_defuse_version_stub++;
+}
+
 // Issue #1485 C2: per-closure provenance stubs. Production impl is in
 // aura_jit_runtime.cpp; test binaries that don't link it (light JIT
 // bundles) get the degenerate return-0 path. Weak so production impl
