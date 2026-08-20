@@ -35,6 +35,7 @@ extern int run_test_orch_scope();
 extern int run_test_parallel_intend_pure();
 extern int run_test_parallel_intend_pure_contract();
 extern int run_test_per_scope_bp_admit();
+extern int run_test_bare_bp_resolve_3179();
 extern int run_test_security_schedule_gate();
 
 int main() {
@@ -42,7 +43,7 @@ int main() {
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_orch_agent_batch (15 members) ===");
+    std::println("=== test_orch_agent_batch (16 members) ===");
 
     const auto run = [&](const char* name, int (*fn)()) {
         std::println("\n──── {} ────", name);
@@ -72,6 +73,7 @@ int main() {
     run("test_parallel_intend_pure", run_test_parallel_intend_pure);
     run("test_parallel_intend_pure_contract", run_test_parallel_intend_pure_contract);
     run("test_per_scope_bp_admit", run_test_per_scope_bp_admit);
+    run("test_bare_bp_resolve", run_test_bare_bp_resolve_3179);
     run("test_security_schedule_gate", run_test_security_schedule_gate);
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
