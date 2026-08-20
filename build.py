@@ -2046,6 +2046,20 @@ def cmd_lint():
             "Issue #3191 macro hygiene default-deny linter failed — run python3 scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py"
         )
         return r
+    # Issue #3192: force all structural mutate:* paths through mutate_dispatch_try_acquire
+    # (I2 residual from 2026-08-19 multi-fiber concurrent mutation safety review).
+    # Closes the gap where mutate:set-body bypassed the SSOT acquire via TransactionGuard.
+    # Extends test_hygiene_mutate_closed_loop; no docs/design / invent.
+    md3192_script = COVERAGE_CHECKS / "check_mutate_dispatch_sole_entry_3192.py"
+    if not md3192_script.exists():
+        fail(f"missing {md3192_script}")
+        return 1
+    r = run([sys.executable, str(md3192_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3192 mutate dispatch sole entry linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_entry_3192.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

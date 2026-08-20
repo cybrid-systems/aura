@@ -58,8 +58,14 @@ def main() -> int:
     must("g_orch_agent_body_tx", "AC2", fiber)
     must("transaction_guard_host", "AC2", fiber)
     must("TransactionGuard", "AC2", fiber)
-    must("transaction_guard_host(ev)", "AC2", mut)
-    must("TransactionGuard tg", "AC2", mut)
+    # Issue #3192: mutate:set-body moved from TransactionGuard to
+    # mutate_dispatch_try_acquire (SSOT acquire per #3074). Accept either.
+    if not (
+        "mutate:set-body" in mut
+        and "mutate_dispatch_try_acquire" in mut.split('add_mutate("mutate:set-body"', 1)[-1][:1200]
+    ):
+        must("transaction_guard_host(ev)", "AC2", mut)
+        must("TransactionGuard tg", "AC2", mut)
     must_not("TransactionGuard surface is also exercised", "AC2", mut)
     must("transaction_guard_try_acquire", "AC2", mbg)
     must("transaction_guard_host_for_region", "AC2", mbg)

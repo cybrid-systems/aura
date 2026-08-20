@@ -3446,17 +3446,20 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // panic recovery (separately). The two mechanisms are
     // complementary, not redundant.
     add_mutate("mutate:set-body", [&ev, mev, safe_str](const auto& a) -> EvalValue {
-        // Issue #2555: unified TransactionGuard (MBG try_acquire + panic).
-        // Replaces dual MutationBoundaryGuard + scaffold TransactionGuard.
-        // Issue #3074: live mutate_dispatch metrics (TG is the approved
-        // Guard entry; dispatch notes SetBody applied/rejected).
-        aura::core::TransactionGuard tg(Evaluator::transaction_guard_host(ev), /*pending=*/1);
-        if (tg.result() != aura::core::TransactionGuardResult::Acquired) {
+        // Issue #3192: route mutate:set-body through mutate_dispatch_try_acquire
+        // (sibling #3074 / #2124 / #1904 contract). Closes the I2 residual
+        // — every structural mutate:* body must go through the SSOT Guard
+        // acquire. Replaces the prior TransactionGuard path which called
+        // host_.try_acquire directly (no dispatch metrics on the acquire).
+        // Soft/Off zero extra cost (single relaxed atomic load + branch).
+        bool ok = true;
+        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
+        if (!guard_r) {
             mutate_dispatch_note(MutateKind::SetBody, MutateDispatchResult::Rejected);
-            return mev("resource-quota-exceeded", "mutation quota exceeded");
+            return mev("resource-quota-exceeded", guard_r.error().message);
         }
+        auto guard = std::move(*guard_r);
         mutate_dispatch_note(MutateKind::SetBody, MutateDispatchResult::Applied);
-        bool& ok = *tg.success_flag();
         if (ev.workspace_read_only_) {
             tg.mark_failed();
             return mev("read-only", "workspace is read-only");

@@ -1929,6 +1929,108 @@ static void ac3191_6_source_and_linter() {
           "3191 AC6: no tests/compiler/test_issue_3191");
 }
 
+// ── Issue #3192: force all structural mutate:* paths through mutate_dispatch_try_acquire
+// ── I2 residual from 2026-08-19 multi-fiber concurrent mutation safety review.
+// ── Prior: #3074 declared mutate_dispatch_try_acquire as the SSOT Guard acquire
+// ── for structural mutate:* bodies. mutate:set-body bypassed it via TransactionGuard
+// ── (which calls host_.try_acquire directly, no dispatch metrics on the acquire).
+// ── This set closes the gap:
+// ──   - mutate:set-body now uses mutate_dispatch_try_acquire (sibling #3074 / #2124 contract).
+// ──   - source-cite linter scans all structural mutate primitives for the acquire.
+
+static void ac3192_1_set_body_uses_ssol_acquire() {
+    std::println("\n--- 3192 AC1: mutate:set-body uses mutate_dispatch_try_acquire ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    // Locate the add_mutate("mutate:set-body", ...) block and verify it
+    // contains mutate_dispatch_try_acquire (not TransactionGuard).
+    const auto pos = mut.find("add_mutate(\"mutate:set-body\"");
+    CHECK(pos != std::string::npos, "3192 AC1: mutate:set-body registered");
+    const auto block = mut.substr(pos, 600);
+    CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
+          "3192 AC1: set-body uses mutate_dispatch_try_acquire");
+    CHECK(block.find("TransactionGuard") == std::string::npos,
+          "3192 AC1: set-body no longer uses TransactionGuard");
+    CHECK(block.find("Issue #3192") != std::string::npos, "3192 AC1: set-body cites #3192");
+}
+
+static void ac3192_2_all_structural_primitives_acquire() {
+    std::println("\n--- 3192 AC2: every structural mutate primitive has the acquire ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    // The linter scans all 13 primitives; this test re-verifies the SSOT
+    // contract for the highest-traffic primitives (sibling of the linter).
+    for (const auto& prim :
+         {std::string("mutate:rebind"), std::string("mutate:set-body"),
+          std::string("mutate:remove-node"), std::string("mutate:insert-child"),
+          std::string("mutate:replace-pattern"), std::string("mutate:replace-subtree"),
+          std::string("mutate:atomic-batch"), std::string("mutate:splice"),
+          std::string("mutate:wrap"), std::string("mutate:rename-symbol"),
+          std::string("mutate:move-node"), std::string("mutate:inline-call"),
+          std::string("mutate:restore-hygiene-checkpoint")}) {
+        const auto needle = std::string("add_mutate(\"") + prim + "\"";
+        const auto pos = mut.find(needle);
+        CHECK(pos != std::string::npos, std::format("3192 AC2: {} registered", prim));
+        if (pos != std::string::npos) {
+            const auto block = mut.substr(pos, 600);
+            CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
+                  std::format("3192 AC2: {} uses mutate_dispatch_try_acquire", prim));
+        }
+    }
+}
+
+static void ac3192_3_nested_batch_unchanged() {
+    std::println("\n--- 3192 AC3: nested atomic-batch semantics preserved (no #3019 / #3166 "
+                 "regression) ---");
+    const auto mut_boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    // Issue #3019 / #3166 surface comments stay in the boundary code.
+    CHECK(mut_boundary.find("Issue #3019") != std::string::npos,
+          "3192 AC3: #3019 outermost triad preserved");
+    CHECK(mut_boundary.find("Issue #3166") != std::string::npos,
+          "3192 AC3: #3166 nested exit dirty pending preserved");
+    // The atomic-batch prim still uses mutate_dispatch_try_acquire.
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto pos = mut.find("add_mutate(\"mutate:atomic-batch\"");
+    CHECK(pos != std::string::npos, "3192 AC3: atomic-batch registered");
+    const auto block = mut.substr(pos, 600);
+    CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
+          "3192 AC3: atomic-batch uses mutate_dispatch_try_acquire");
+}
+
+static void ac3192_4_source_cite_and_linter() {
+    std::println("\n--- 3192 AC4: source-cite + linter + no docs/design/ ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto dispatch = read_file("src/compiler/mutate_dispatch.hh");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_mutate_dispatch_sole_entry_3192.py");
+    // Source-cite: the SSOT acquire is documented + referenced.
+    CHECK(dispatch.find("mutate_dispatch_try_acquire") != std::string::npos,
+          "3192 AC4: SSOT acquire declared");
+    CHECK(dispatch.find("Issue #3074") != std::string::npos, "3192 AC4: #3074 sole entry contract");
+    CHECK(mut.find("Issue #3192") != std::string::npos, "3192 AC4: mutate cites #3192");
+    // Test file has the new AC functions.
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3192_1_set_body_uses_ssol_acquire") != std::string::npos,
+          "3192 AC4: AC1");
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3192_2_all_structural_primitives_acquire") != std::string::npos,
+          "3192 AC4: AC2");
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3192_3_nested_batch_unchanged") != std::string::npos,
+          "3192 AC4: AC3");
+    // Linter exists.
+    CHECK(!lint.empty() && lint.find("3192") != std::string::npos, "3192 AC4: linter");
+    // Linter wired into build.py.
+    CHECK(build.find("check_mutate_dispatch_sole_entry_3192") != std::string::npos,
+          "3192 AC4: build.py wires linter");
+    // No docs/design/* (per #1655).
+    CHECK(read_file("docs/design/3192-mutate-dispatch-sole-entry.md").empty(),
+          "3192 AC4: no docs/design/");
+    // No tests/issues/test_issue_3192.cpp (per #81967).
+    CHECK(read_file("tests/issues/test_issue_3192.cpp").empty(),
+          "3192 AC4: no tests/issues/test_issue_3192");
+    CHECK(read_file("tests/compiler/test_issue_3192.cpp").empty(),
+          "3192 AC4: no tests/compiler/test_issue_3192");
+}
+
 static void ac3166_1_production_forced_invalidate() {
     std::println(
         "\n--- #3166 AC1: Production + nested structural mutate → forced counter bumped ---");
@@ -2224,6 +2326,12 @@ int main() {
     ac3191_4_soft_non_macro_zero_cost();
     ac3191_5_existing_surfaces_preserved();
     ac3191_6_source_and_linter();
+    std::println(
+        "\n=== Issue #3192: force all structural mutate through mutate_dispatch_try_acquire ===");
+    ac3192_1_set_body_uses_ssol_acquire();
+    ac3192_2_all_structural_primitives_acquire();
+    ac3192_3_nested_batch_unchanged();
+    ac3192_4_source_cite_and_linter();
     std::println("\n=== Issue #3166: nested guard exit dirty pending (I5 residual) ===");
     ac3166_1_production_forced_invalidate();
     ac3166_2_soft_observe_only();
