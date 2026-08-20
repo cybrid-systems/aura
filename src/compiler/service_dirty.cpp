@@ -1164,6 +1164,25 @@ void CompilerService::invalidate_function(const std::string& name) {
         const bool instr_ok = !scope.affected_instrs.empty() && scope.affected_instrs.size() < thr;
         const bool block_ok = !scope.affected_blocks.empty() && scope.affected_blocks.size() < thr;
         if (auto cit = ir_cache_v2_.find(affected_name); cit != ir_cache_v2_.end()) {
+            // Issue #3189 AC1: every production partial decision entry
+            // must consult should_partial_relower_impact_checked. Here
+            // the entry is `invalidate_bridge_with_impact` (quote/lambda
+            // path inside invalidate_function). If impact_ub >
+            // dirty_count the partial estimate under-counted (e.g. cross-fn
+            // callee via compute_impact_scope crossed into a caller that
+            // block_dirty alone can't see) — bump the forced-full metric
+            // so Agent / CI observability picks up the under-estimate. The
+            // existing partial path still runs (bridge is selective, not
+            // AoS wipe) but the metric flags the gap. Mirrors the
+            // #3034 contract used by try_partial_invalidate_relower
+            // (L1270) and the #2246 contract used by service.ixx:7021.
+            const std::size_t dirty_count_est =
+                scope.affected_blocks.size() + scope.affected_instrs.size();
+            const std::size_t impact_ub = impact_upper_bound_for_entry_(affected_name, cit->second);
+            if (!should_partial_relower_impact_checked(dirty_count_est, impact_ub)) {
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            }
             if (instr_ok || block_ok) {
                 (void)apply_impact_scope_dirty(cit->second, scope);
                 metrics_.instr_level_impact_prefer_total.fetch_add(1, std::memory_order_relaxed);
