@@ -298,6 +298,21 @@ Evaluator::~Evaluator() {
     unbind_yield_hook_evaluator();
     unbind_query_evaluator();
 
+    // Issue #3177 follow-up (ASAN stack-use-after-scope): clear the
+    // process-wide g_aot_metrics pointer if it points to this dying
+    // Evaluator's CompilerMetrics. CompilerService declares
+    // `evaluator_` before `metrics_` (service.ixx ~11503 / ~13793), so
+    // C++ destroys `metrics_` FIRST (reverse declaration order) —
+    // by the time ~Evaluator() runs, the metrics object is already
+    // dead. aura_cleanup_aot_state → aot_invalidate_all_stale_slots_for_eval_impl
+    // calls aot_metrics() (reads g_aot_metrics) and bumps
+    // aot_reload_fall_back_slot_invalidate_total via fetch_add on
+    // dead stack memory, which ASan catches as
+    // stack-use-after-scope at aura_jit_bridge.cpp:2124. Clear
+    // g_aot_metrics here (BEFORE aura_cleanup_aot_state) so the
+    // metric bumps short-circuit on nullptr.
+    aura_clear_aot_metrics_for_eval(compiler_metrics_);
+
     // Issue #1367: drop per-evaluator AotState (region/module masks)
     aura_cleanup_aot_state(this);
 
