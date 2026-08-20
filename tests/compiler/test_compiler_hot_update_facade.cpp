@@ -350,6 +350,146 @@ static void ac3150_facade_owns_full_joint_epoch_and_dirty() {
     }
 }
 
+}
+
+// ── Issue #3188: production facade minimal IR/shape step (residual of #3150) ──
+// After #3150 closed the joint epoch + AOT dirty + reemit loop, the
+// production facade (hard_invalidate_via_facade) still skipped
+// prepare_unified_invalidation_pre_cascade_ + mark_body_only_dirty +
+// invalidate_shape. notify_dirty_define is listener fan-out only —
+// it does NOT mark ir_cache_v2_ body-dirty or walk dep_graph_.
+//
+// #3188 closes the dual-track by, under production + facade success,
+// still driving a minimal IR body-dirty + shape invalidate for the
+// mutated define under the same mutate_mtx_ the caller already holds.
+// Soft / Off byte-identical to today (facade returns false → Soft path
+// body runs as before, zero extra work). No second JIT model. No new
+// query keys.
+//   AC1: mark_define_dirty production path: after facade success, calls
+//        prepare_unified_invalidation_pre_cascade_ + mark_body_only_dirty
+//        + invalidate_shape for the mutated define
+//   AC2: invalidate_function production path: same minimal IR/shape
+//        step after facade success
+//   AC3: Soft / Off: facade returns false → Soft path body runs unchanged
+//        (zero-cost contract preserved per #3012 / #3043)
+//   AC4: existing #3112 / #3129 / #3150 sibling ACs preserved
+//        (facade still owns joint epoch + AOT dirty + reemit)
+//   AC5: tests/compiler/test_compiler_hot_update_facade.cpp extended
+//        (no new tests/issues/test_issue_3188.cpp per #81934); no
+//        docs/design/3188-* (#1655); linter wired after #3187
+
+static void ac3188_production_facade_minimal_ir_shape() {
+    std::println("\n--- #3188: production facade minimal IR/shape step ---");
+
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+
+    // AC1: mark_define_dirty production path — after facade success,
+    // minimal IR/shape step for the mutated define.
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        REQUIRE(md_pos != std::string::npos);
+        const auto md_end = svc.find("\n    }\n", md_pos);
+        const auto md_end2 = (md_end == std::string::npos) ? md_pos + 8000 : md_end;
+        const auto md_win = svc.substr(md_pos, md_end2 - md_pos);
+        CHECK(md_win.find("Issue #3188 AC1: residual of #3150") != std::string::npos,
+              "ac3188 AC1: mark_define_dirty cites Issue #3188 AC1");
+        CHECK(md_win.find("prepare_unified_invalidation_pre_cascade_(name)") != std::string::npos,
+              "ac3188 AC1: mark_define_dirty calls prepare_unified_invalidation_pre_cascade_ after "
+              "facade success");
+        CHECK(md_win.find("mark_body_only_dirty()") != std::string::npos,
+              "ac3188 AC1: mark_define_dirty calls mark_body_only_dirty after facade success");
+        CHECK(md_win.find("finish_cascade_soa_dirty_sync_(vit->second)") != std::string::npos,
+              "ac3188 AC1: mark_define_dirty calls finish_cascade_soa_dirty_sync_ after "
+              "mark_body_only_dirty");
+        CHECK(md_win.find("invalidate_shape(name)") != std::string::npos,
+              "ac3188 AC1: mark_define_dirty calls invalidate_shape after facade success");
+    }
+
+    // AC2: invalidate_function production path — same minimal IR/shape
+    // step after facade success.
+    {
+        const auto if_pos = svc.find("void CompilerService::invalidate_function");
+        REQUIRE(if_pos != std::string::npos);
+        const auto if_end = svc.find("\n    }\n", if_pos);
+        const auto if_end2 = (if_end == std::string::npos) ? if_pos + 12000 : if_end;
+        const auto if_win = svc.substr(if_pos, if_end2 - if_pos);
+        CHECK(if_win.find("Issue #3188 AC1: residual of #3150") != std::string::npos,
+              "ac3188 AC2: invalidate_function cites Issue #3188 AC1");
+        CHECK(if_win.find("prepare_unified_invalidation_pre_cascade_(name)") != std::string::npos,
+              "ac3188 AC2: invalidate_function calls prepare_unified_invalidation_pre_cascade_ "
+              "after facade success");
+        CHECK(if_win.find("mark_body_only_dirty()") != std::string::npos,
+              "ac3188 AC2: invalidate_function calls mark_body_only_dirty after facade success");
+        CHECK(if_win.find("invalidate_shape(name)") != std::string::npos,
+              "ac3188 AC2: invalidate_function calls invalidate_shape after facade success");
+    }
+
+    // AC3: Soft / Off — facade returns false → Soft path body runs
+    // unchanged. The minimal IR/shape step must be guarded by the
+    // `hard_invalidate_via_facade(...)` return-true check (only fires
+    // when facade took ownership). The early-return on facade success
+    // is preserved.
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        REQUIRE(md_pos != std::string::npos);
+        const auto md_end = svc.find("\n    }\n", md_pos);
+        const auto md_end2 = (md_end == std::string::npos) ? md_pos + 8000 : md_end;
+        const auto md_win = svc.substr(md_pos, md_end2 - md_pos);
+        const auto facade_call = md_win.find("hard_invalidate_via_facade(");
+        const auto ir_shape_step = md_win.find("Issue #3188 AC1: residual of #3150");
+        const auto soft_fallback = md_win.find("gc_coord::Scope gc_coord_scope");
+        CHECK(facade_call != std::string::npos,
+              "ac3188 AC3: hard_invalidate_via_facade call present in mark_define_dirty");
+        CHECK(ir_shape_step != std::string::npos,
+              "ac3188 AC3: IR/shape step present in mark_define_dirty");
+        CHECK(soft_fallback != std::string::npos,
+              "ac3188 AC3: Soft path body still present in mark_define_dirty");
+        CHECK(ir_shape_step > facade_call,
+              "ac3188 AC3: IR/shape step is AFTER the facade call (inside facade-success branch)");
+        CHECK(ir_shape_step < soft_fallback,
+              "ac3188 AC3: IR/shape step is BEFORE the Soft path body (zero-cost on Soft)");
+    }
+
+    // AC4: existing #3112 / #3129 / #3150 sibling ACs preserved.
+    {
+        CHECK(svc.find("hard_invalidate_via_facade(") != std::string::npos,
+              "ac3188 AC4: #3112 facade forwarding preserved in service_dirty.cpp");
+        CHECK(svc.find("aura_aot_note_cross_eval_hard_owner_scoped") != std::string::npos ||
+                  svc.find("aura_aot_note_cross_eval_epoch_force_bump") != std::string::npos,
+              "ac3188 AC4: #2841 / #2951 owner-scoped / force-bump epoch path preserved");
+        const auto facade = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(facade.find("aura_aot_bump_func_table_epoch()") != std::string::npos,
+              "ac3188 AC4: #3129 facade still bumps AOT func table epoch");
+        CHECK(facade.find("aura_hot_update_bump_bridge_epoch()") != std::string::npos,
+              "ac3188 AC4: #3150 facade still bumps bridge epoch");
+        CHECK(facade.find("aura_hot_update_bump_defuse_version()") != std::string::npos,
+              "ac3188 AC4: #3150 facade still bumps defuse version");
+        CHECK(facade.find("notify_dirty_define(name)") != std::string::npos,
+              "ac3188 AC4: #3150 facade still publishes to dirty set via notify_dirty_define");
+        CHECK(facade.find("decide_and_reemit(") != std::string::npos,
+              "ac3188 AC4: #3150 facade still routes through decide_and_reemit");
+    }
+
+    // AC5: no new tests/issues/test_issue_3188.cpp (per #81934); no
+    // docs/design/3188-* (#1655); linter wired after #3187 (covered
+    // separately by check_production_facade_minimal_ir_shape_3188.py
+    // self-test).
+    {
+        const auto issue_test = read_file("tests/issues/test_issue_3188.cpp");
+        CHECK(issue_test.empty(),
+              "ac3188 AC5: no new tests/issues/test_issue_3188.cpp (must NOT — src-aligned only)");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3188-") == std::string::npos,
+                      std::string("ac3188 AC5: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+}
+
 } // namespace
 
 int run_test_issue_3112() {
@@ -371,6 +511,14 @@ int run_test_issue_3112() {
     // mutate → dirty → reemit closed loop. Source-cite + runtime +
     // sibling #3129 + lint chain preservation + no test_issue_3150.cpp.
     ac3150_facade_owns_full_joint_epoch_and_dirty();
+
+    // Issue #3188: residual of #3150 — production facade must also drive
+    // a minimal IR body-dirty + shape invalidate for the mutated define
+    // under the same mutate_mtx_ the caller holds (notify_dirty_define is
+    // listener fan-out only — does NOT mark ir_cache_v2_ body-dirty).
+    // Soft / Off byte-identical (facade returns false → Soft path body
+    // runs as before). Source-cite + sibling #3112/#3129/#3150 preserved.
+    ac3188_production_facade_minimal_ir_shape();
 
     std::print("[test_issue_3112] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
