@@ -2306,7 +2306,8 @@ public:
     // the caller needs ResourceQuotaExceeded as AuraError rather than nullptr.
     // Orphan arenas (no owner): still allocates; no ResourceQuotaExceeded.
     [[nodiscard]] aura::core::AuraResult<void*>
-    allocate_checked(std::size_t size, std::size_t alignment = alignof(std::max_align_t)) noexcept {
+    allocate_checked(std::size_t size, std::size_t alignment = alignof(std::max_align_t),
+                     void** cover_slot = nullptr, const char* cover_reason = nullptr) noexcept {
         if (size == 0) {
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::InternalInvariantViolation,
@@ -2326,7 +2327,10 @@ public:
             }
         }
         // Quota already enforced (or unbound) — do not re-enter allow_fn.
-        void* ptr = allocate_raw_impl(size, alignment);
+        // Issue #3180: forward cover_slot/cover_reason to allocate_raw_impl so
+        // hot-path callers (Evaluator / CompilerService) can declare cover at
+        // the allocate site and skip the implicit uncovered bump.
+        void* ptr = allocate_raw_impl(size, alignment, cover_slot, cover_reason);
         if (!ptr) {
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::ArenaOutOfMemory,
@@ -2475,6 +2479,12 @@ private:
         g_intermediate_create_value_only_total.fetch_add(1, std::memory_order_relaxed);
     }
 
+public:
+    // Issue #3180: cover-aware intermediate create helper is public so
+    // production allocate call sites (Evaluator / CompilerService / etc.)
+    // can declare cover at the allocate site. See comment block above
+    // private note_intermediate_create_auto_wire_ for the slot /
+    // pin / EXEMPT triad semantics.
     // Issue #3093: cover-aware intermediate create. Caller declares the
     // cover path explicitly per the slot / pin / EXEMPT triad:
     //   - slot != null → register_external_root_slot_for_densify(slot)
@@ -2547,7 +2557,11 @@ private:
     // new uncovered metric + intermediate_creates_ inventory
     // (has_unpinned_intermediate_creates_() → block + sticky-off).
     // Soft / Off / render-hotpath unchanged (single required load + branch).
-    void maybe_note_allocate_intermediate_(void* ptr, std::size_t size) noexcept {
+    // Issue #3180: optional slot/reason pass-through so hot-path callers
+    // can declare cover at the allocate site. Default nullptr/nullptr
+    // preserves legacy behavior (uncovered metric bump under required).
+    void maybe_note_allocate_intermediate_(void* ptr, std::size_t size, void** slot = nullptr,
+                                           const char* reason = nullptr) noexcept {
         if (!ptr)
             return;
         if (!aura::core::lifetime::general_object_pin_required_active())
@@ -2556,7 +2570,7 @@ private:
             return;
         if (size > SmallObjectPool::kMaxSmallSize || !small_pool_.owns(ptr))
             return;
-        note_intermediate_create_with_cover_(ptr, /*slot=*/nullptr, /*reason=*/nullptr);
+        note_intermediate_create_with_cover_(ptr, slot, reason);
     }
 
     void erase_intermediate_create_(void* p) noexcept {
@@ -2660,7 +2674,8 @@ private:
     // Issue #1546 / #1554: when arena_owner_ + quota_allow_fn_ reject,
     // returns nullptr without allocating. Typed path:
     // ASTArena::allocate_checked / Evaluator::allocate_checked.
-    void* allocate_raw(std::size_t size, std::size_t alignment) pre(size > 0)
+    void* allocate_raw(std::size_t size, std::size_t alignment, void** cover_slot = nullptr,
+                       const char* cover_reason = nullptr) pre(size > 0)
         pre(alignment > 0 && (alignment & (alignment - 1)) == 0) {
         // ── Resource quota (Issue #1546 / #1481 / #1554 / #1663) ──
         // Owner-threaded Evaluator::check_arena_quota (or equivalent).
@@ -2678,11 +2693,15 @@ private:
                 }
             }
         }
-        return allocate_raw_impl(size, alignment);
+        return allocate_raw_impl(size, alignment, cover_slot, cover_reason);
     }
 
     // Body of allocate_raw after quota gate (Issue #1554 split).
-    void* allocate_raw_impl(std::size_t size, std::size_t alignment) {
+    // Issue #3180: optional cover_slot/cover_reason pass-through so hot-path
+    // callers (Evaluator / CompilerService) can declare cover at the
+    // allocate site and skip the implicit uncovered bump under required.
+    void* allocate_raw_impl(std::size_t size, std::size_t alignment, void** cover_slot = nullptr,
+                            const char* cover_reason = nullptr) {
         // ── GC integration (Issue #113 Phase 4) ──────────
         // Check the safepoint before allocating. This lets a
         // compute-heavy fiber that doesn't yield for long
@@ -2708,7 +2727,7 @@ private:
                 // Issue #3053: required-regime allocate paths join the
                 // same intermediate inventory as create<T> (AC1). Soft /
                 // unset is a single atomic load (AC3).
-                maybe_note_allocate_intermediate_(ptr, size);
+                maybe_note_allocate_intermediate_(ptr, size, cover_slot, cover_reason);
                 maybe_auto_compact_on_alloc();
                 return ptr;
             }

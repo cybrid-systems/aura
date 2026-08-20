@@ -182,12 +182,17 @@ inline constexpr int kBpThresholdSsotIssue = 2948;
 inline constexpr int kBpScopeInheritIssue = 3015;
 inline constexpr std::string_view kBpScopeProcessBucket = "-";
 
-// Forward declaration — production_scope_bp_inherit is defined inline
-// in agent_scope.h. agent_scope.h includes this header (circular
-// include), so we forward-declare here for callers like
-// resolve_bare_bp_scope_id below. Inline ODR allows identical
-// declarations across translation units.
-[[nodiscard]] inline bool production_scope_bp_inherit() noexcept;
+// Inline body — same as agent_scope.h:91-99. Both headers define the
+// function inline (ODR allows identical inline definitions across TUs
+// when they appear in headers). agent_spawn.h callers
+// (resolve_bare_bp_scope_id below) need the body visible without
+// pulling in agent_scope.h's 3884-line surface.
+[[nodiscard]] inline bool production_scope_bp_inherit() noexcept {
+    const char* sb = std::getenv("AURA_SANDBOX");
+    if (sb != nullptr && sb[0] != '\0' && std::string_view(sb) == "off")
+        return false;
+    return aura::compiler::typed_audit::production_defaults_active();
+}
 
 // Issue #3179: production bare spawn must NOT default bp_scope_id to the
 // process bucket — a BP storm in tenant A would otherwise soft-reject

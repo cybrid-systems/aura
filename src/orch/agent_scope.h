@@ -90,12 +90,11 @@ inline std::atomic<std::uint64_t> g_agent_scope_bp_seq{1};
 
 // Soft / AURA_SANDBOX=off: do not inherit (process bucket, zero-cost).
 // Production defaults: inherit so sibling scopes cannot cross-poison.
-[[nodiscard]] inline bool production_scope_bp_inherit() noexcept {
-    const char* sb = std::getenv("AURA_SANDBOX");
-    if (sb != nullptr && sb[0] != '\0' && std::string_view(sb) == "off")
-        return false;
-    return aura::compiler::typed_audit::production_defaults_active();
-}
+// Body moved to agent_spawn.h (canonical home — see comment block above
+// the inline definition there). agent_scope.h includes agent_spawn.h
+// (line 43), so this declaration is still visible at the call site at
+// the bottom of this header.
+[[nodiscard]] inline bool production_scope_bp_inherit() noexcept;
 
 // Issue #2976: per-scope concurrency mode. Default SingleOwner is
 // zero-lock (misuse metric / optional abort — unchanged). MutexGuarded

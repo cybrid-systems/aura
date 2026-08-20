@@ -2765,6 +2765,29 @@ def cmd_lint():
             "Issue #3177 durable session_bind linter failed — run python3 scripts/coverage/checks/check_durable_session_bind_3177.py"
         )
         return r
+    # Issue #3180: drive production small-pool allocate call sites to true
+    # cover (slot / EXEMPT) — uncovered_under_required happy-path residual
+    # of #3156. Threaded optional cover_slot / cover_reason through
+    # allocate_checked + allocate_raw + allocate_raw_impl +
+    # maybe_note_allocate_intermediate_ → note_intermediate_create_with_cover_
+    # (now public). Migrated 4 hot-path files (evaluator_eval_flat /
+    # service / evaluator_module_loader / evaluator_workspace_tree) to
+    # declare cover at every small-pool intermediate create site
+    # (slot for long-lived survivors, EXEMPT reason for transients).
+    # AC2 target: intermediate_create_uncovered_under_required_total_v_read()
+    # == 0 after production soak. Extends
+    # test_arena_required_cover_no_value_only.cpp (#81934 / #3156); no
+    # docs/design/ (#1655).
+    pspc3180_script = COVERAGE_CHECKS / "check_production_small_pool_cover_3180.py"
+    if not pspc3180_script.exists():
+        fail(f"missing {pspc3180_script}")
+        return 1
+    r = run([sys.executable, str(pspc3180_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3180 production small-pool cover linter failed — run python3 scripts/coverage/checks/check_production_small_pool_cover_3180.py"
+        )
+        return r
     # Issue #2944: mutation-session grants (mid-bound + auto-revoke on
     # outermost MutationBoundary exit). Extends
     # test_capability_single_use_consume.cpp (#81967); no docs/design/

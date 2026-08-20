@@ -12987,11 +12987,20 @@ public:
         // Prefer arena typed factory (owner callback → check_arena_quota once).
         if (arena_->has_arena_owner())
             return arena_->allocate_checked(size, alignment);
+        // Issue #3180: caller-supplied cover propagates through the
+        // optional cover_slot/cover_reason params on
+        // ASTArena::allocate_checked. Default (no cover) is the
+        // legacy behavior (uncovered metric bump under required).
         // Orphan / pre-bind path: explicit Evaluator check then try_allocate
         // (try_allocate has no owner so it will not re-check).
         if (auto err = check_arena_quota(static_cast<std::uint64_t>(size)))
             return std::unexpected(std::move(*err));
         void* ptr = arena_->try_allocate(size);
+        // Issue #3180: try_allocate route — bare pool allocate, the implicit
+        // intermediate bump at allocate_raw_impl sees no cover. Hot-path
+        // call sites (Mutate + GC) should follow up with a cover or EXEMPT
+        // at the call site. Legacy behavior preserved (no API break);
+        // migration covered incrementally.
         if (!ptr) {
             return std::unexpected(
                 aura::core::AuraError{aura::core::AuraErrorKind::ArenaOutOfMemory,
