@@ -334,11 +334,20 @@ struct SecurityEventWal {
             // Issue #3109: same fail-closed overflow ring capture as fwrite_miss path.
             if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
                 WalOverflowRecord ovr{};
-                ovr.mid = rec.seq;
-                ovr.tenant_id = 0;
-                ovr.fiber_id = 0;
-                ovr.epoch = 0;
-                ovr.op = std::string("security_event_wal_append");
+                // Issue #3178: stamp the forensic join key (mutation_id)
+                // and full record context (tenant/fiber/epoch) so the
+                // overflow entry is unjoinable with query:security-audit
+                // [mutation-id=…], Typed trail, and
+                // CapabilityGrant.bound_mutation_id. Previously stamped
+                // rec.seq (WAL sequence number, NOT a join key) and
+                // zeroed the context — that path was a residual hole
+                // from #3109 that left Agents correlating the wrong trail
+                // entry under fail-closed.
+                ovr.mid = rec.mutation_id;
+                ovr.tenant_id = static_cast<std::uint32_t>(rec.tenant_id);
+                ovr.fiber_id = static_cast<std::uint64_t>(rec.fiber_id);
+                ovr.epoch = rec.epoch;
+                ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
                 ovr.reason = std::string("inject_fail");
                 wal_overflow_ring_push(ovr);
             }
@@ -353,13 +362,15 @@ struct SecurityEventWal {
             // lost record to the process-local overflow ring so mid can
             // join from ring replay (does NOT replace WAL replay — only
             // captures the trail for in-process recovery).
+            // Issue #3178: stamp forensic join key + full record context
+            // (see inject_fail branch above for the same fix).
             if (::aura::core::wal_slo::wal_append_fail_closed_active()) {
                 WalOverflowRecord ovr{};
-                ovr.mid = rec.seq;
-                ovr.tenant_id = 0;
-                ovr.fiber_id = 0;
-                ovr.epoch = 0;
-                ovr.op = std::string("security_event_wal_append");
+                ovr.mid = rec.mutation_id;
+                ovr.tenant_id = static_cast<std::uint32_t>(rec.tenant_id);
+                ovr.fiber_id = static_cast<std::uint64_t>(rec.fiber_id);
+                ovr.epoch = rec.epoch;
+                ovr.op = rec.op[0] ? std::string(rec.op) : std::string("security_event_wal_append");
                 ovr.reason = std::string("fwrite_miss");
                 wal_overflow_ring_push(ovr);
             }

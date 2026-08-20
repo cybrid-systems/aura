@@ -441,6 +441,98 @@ int run_test_security_event_wal_replay() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3178: WAL overflow ring must stamp forensic join keys
+    // (mutation_id + tenant/fiber/epoch) under fail-closed, not the
+    // WAL sequence number. Previously stamped rec.seq which is the
+    // WAL-local sequence, NOT a join key for
+    // query:security-audit [mutation-id=…] / Typed trail /
+    // CapabilityGrant.bound_mutation_id (#3109 residual). The fix is
+    // in both inject_fail and fwrite_miss branches of
+    // SecurityEventWal::append (security_event_wal.hh).
+    {
+        std::println("\n--- #3178 AC1/AC2/AC6: overflow stamps mutation_id join key ---");
+        using aura::core::wal_slo::g_wal_append_fail_slo_counters;
+        using aura::core::wal_slo::reset_wal_append_fail_slo_for_test;
+        reset_all();
+        reset_wal_append_fail_slo_for_test();
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        apply_production_audit_defaults();
+
+        const auto dir_3178 = fresh_wal_dir("3178-ac1");
+        CHECK(ev.enable_security_event_wal(dir_3178.string()),
+              "AC1: enable SE WAL under production + fail-closed env");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "AC1: wal_append_fail_closed_active() under env + production");
+
+        // AC1 + AC6: non-zero mid M, tenant T, fiber F, epoch E.
+        constexpr std::uint64_t M = 0xDEADBEEFCAFE5EEDULL;
+        constexpr std::uint64_t T = 42;
+        constexpr std::uint64_t F = 0xCAFE;
+        constexpr std::uint64_t E = 99;
+        g_wal_append_fail_slo_counters.inject_fail_remaining.store(1, std::memory_order_relaxed);
+        const bool fail_ret = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, T, M, E, 0, "test:3178-ac1", "inject", true, F, 0);
+        CHECK(!fail_ret, "AC1: inject fail returns false under fail-closed");
+
+        const auto depth = aura::core::security_event_wal::wal_overflow_ring_depth();
+        CHECK(depth >= 1, "AC1: overflow ring has at least 1 entry");
+
+        auto* ring = aura::core::security_event_wal::wal_overflow_ring_storage();
+        const auto head = aura::core::security_event_wal::wal_overflow_ring_head().load(
+            std::memory_order_acquire);
+        const auto last_idx =
+            (head + aura::core::security_event_wal::kWalOverflowRingCapacity - 1) %
+            aura::core::security_event_wal::kWalOverflowRingCapacity;
+        const auto& ovr = ring[last_idx];
+        CHECK(ovr.mid == M, "AC1: overflow mid == record.mutation_id (NOT rec.seq)");
+        CHECK(ovr.tenant_id == T, "AC1: overflow tenant_id == record.tenant_id");
+        CHECK(ovr.fiber_id == F, "AC1: overflow fiber_id == record.fiber_id");
+        CHECK(ovr.epoch == E, "AC1: overflow epoch == record.epoch");
+        CHECK(ovr.op == std::string("test:3178-ac1"), "AC1: overflow op == event op");
+        CHECK(ovr.reason == std::string("inject_fail"), "AC1: overflow reason == inject_fail");
+
+        // AC6: mid=0 must NOT be synthesized (do not invent process-origin mid).
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        g_wal_append_fail_slo_counters.inject_fail_remaining.store(1, std::memory_order_relaxed);
+        (void)aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, T, /*mid=*/0, E, 0, "test:3178-zero-mid", "zero", true,
+            F, 0);
+        const auto depth2 = aura::core::security_event_wal::wal_overflow_ring_depth();
+        CHECK(depth2 >= 1, "AC6: overflow ring has entry on mid=0 push");
+        auto* ring2 = aura::core::security_event_wal::wal_overflow_ring_storage();
+        const auto head2 = aura::core::security_event_wal::wal_overflow_ring_head().load(
+            std::memory_order_acquire);
+        const auto last_idx2 =
+            (head2 + aura::core::security_event_wal::kWalOverflowRingCapacity - 1) %
+            aura::core::security_event_wal::kWalOverflowRingCapacity;
+        CHECK(ring2[last_idx2].mid == 0,
+              "AC6: overflow mid == 0 (no synthetic process-origin mid)");
+
+        // AC2: Soft / no-env → overflow ring never written.
+        reset_all();
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        const auto dir_soft_3178 = fresh_wal_dir("3178-soft");
+        CHECK(ev.enable_security_event_wal(dir_soft_3178.string()),
+              "AC2: enable SE WAL under Soft");
+        CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
+              "AC2: wal_append_fail_closed_active() false without env");
+        // With Soft mode the fail-closed gate is OFF even with WAL enabled,
+        // so the overflow ring stays at depth 0 under inject_fail (path
+        // never entered). Force inject_fail to verify.
+        g_wal_append_fail_slo_counters.inject_fail_remaining.store(1, std::memory_order_relaxed);
+        const bool soft_fail = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, T, M, E, 0, "test:3178-soft", "soft", true, F, 0);
+        CHECK(!soft_fail, "AC2: Soft inject still returns false (no WAL write)");
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == 0,
+              "AC2: overflow ring depth 0 under Soft (fail-closed gate off)");
+
+        ev.disable_security_event_wal();
+        fs::remove_all(dir_3178);
+        fs::remove_all(dir_soft_3178);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
