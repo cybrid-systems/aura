@@ -1767,6 +1767,8 @@ static void ac3169_5_existing_3003_2963_2913_preserved() {
 
 static void ac3190_1_outermost_drain_production() {
     std::println("\n--- #3190 AC1: production drain at outermost success stamp ---");
+    using aura::compiler::typed_audit::commit_readiness;
+    using aura::compiler::typed_audit::CommitReadinessInput;
     using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
     using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
     using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;

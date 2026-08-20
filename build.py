@@ -2060,6 +2060,20 @@ def cmd_lint():
             "Issue #3192 mutate dispatch sole entry linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_entry_3192.py"
         )
         return r
+    # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
+    # Occurrence persist / TypeLinearCommitProof on one authoritative face.
+    # Reuses invalidate_gen (no second proof model). Soft observe-only.
+    # Extends test_occurrence_goal_persist_rehydrate; no docs/design / invent.
+    naaf3193_script = COVERAGE_CHECKS / "check_nested_abort_authority_face_3193.py"
+    if not naaf3193_script.exists():
+        fail(f"missing {naaf3193_script}")
+        return 1
+    r = run([sys.executable, str(naaf3193_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3193 nested abort authority face linter failed — run python3 scripts/coverage/checks/check_nested_abort_authority_face_3193.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

@@ -605,6 +605,22 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                 insert_kv(
                     "issue-3171",
                     aura::compiler::typed_audit::kLinearFastPathStealDensifyClearCompleteIssue);
+                // Issue #3193: nested abort + concurrent densify/steal one face.
+                insert_kv("abort-authority-hold-total",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::abort_authority_hold_total_v_read()));
+                insert_kv(
+                    "abort-authority-hold-observe-total",
+                    static_cast<std::int64_t>(
+                        aura::compiler::typed_audit::abort_authority_hold_observe_total_v_read()));
+                insert_kv("abort-authority-hold-wired",
+                          static_cast<std::int64_t>(
+                              aura::compiler::typed_audit::g_abort_authority_hold_wired.load(
+                                  std::memory_order_relaxed)));
+                insert_kv("schema-3193",
+                          aura::compiler::typed_audit::kNestedAbortAuthorityFaceIssue);
+                insert_kv("issue-3193",
+                          aura::compiler::typed_audit::kNestedAbortAuthorityFaceIssue);
             }
             // Issue #2278: epoch-scoped OccurrenceGoal table
             // metrics.
