@@ -946,6 +946,10 @@ int run_2012_atomic_aot_reload() {
     aura_set_aot_region_mask(0);
     aura_set_aot_defuse_version(0);
     aura_set_module_version(0);
+    // Version-mismatch AC is the fail-closed staging rollback, not the
+    // production Version auto-retry (retry_version=0 trusts the binary).
+    const int retry_saved = aura_aot_reload_auto_retry_enabled();
+    aura_set_aot_reload_auto_retry(0);
 
     constexpr std::int64_t kFid = 88;
     const std::uintptr_t seed = static_cast<std::uintptr_t>(0x2012CAFEull);
@@ -1033,6 +1037,7 @@ int run_2012_atomic_aot_reload() {
         CHECK(torn.load() == 0, "epoch never decreases under concurrent reload stress");
     }
 
+    aura_set_aot_reload_auto_retry(retry_saved);
     aura_set_aot_metrics(nullptr);
     return g_failed ? 1 : 0;
 }

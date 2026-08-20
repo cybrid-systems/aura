@@ -137,7 +137,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_linear_ownership_batch greened: skip Linear AST walk
     # (children span OOB); 1596/1659 + wave smokes stay live.
     # test_mutate_capability_force greened inside fold batch
-    "test_mutation_aot_unit_batch",
+    # test_mutation_aot_unit_batch greened: Version auto-retry off for
+    # #2012 mismatch rollback AC (retry_version=0 was committing the .so).
     "test_mutation_typed_audit_batch",
     # test_partial_relower_cascade greened inside test_aot_jit_stamp_batch
     "test_production_security_defaults",
