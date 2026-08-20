@@ -1738,6 +1738,197 @@ static void ac3115_5_source_and_linter() {
           "3115 AC4: no invent test per #81967");
 }
 
+// ── Issue #3191: post-#3131 default-deny residual on lockless tweak-literal
+//                  + SV mutate:sv-add-coverpoint / sv-weaken-property
+// Production contract: no MacroIntroduced path escapes the default-deny
+// (soft observe-only). Three gates close the residual: tweak-literal
+// (lockless batch table), sv-add-coverpoint, sv-weaken-property.
+// Global (hygiene:set-allow-macro-mutate! #t) still unlocks all three.
+// Soft/Off: zero extra cost on non-macro target (single atomic load).
+// Tests: extend existing hygiene_mutate_closed_loop suite; no new
+// tests/issues/test_issue_3191.cpp per #81967.
+
+static void ac3191_1_default_reject() {
+    std::println("\n--- 3191 AC1: tweak-literal default-deny MacroIntroduced ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3191 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3191 AC1: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3191 AC1: LiteralInt");
+    const auto old_val = ws->get(lit).int_value;
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3191 AC1: stamp MacroIntroduced");
+    CHECK(ws->is_macro_introduced(lit), "3191 AC1: marker set");
+    // tweak-literal via lockless batch table — must reject (no mutation log entry).
+    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 1)) "
+                                 "\"3191-batch-deny\")",
+                                 lit));
+    CHECK(r.has_value(), "3191 AC1: batch returns");
+    CHECK(ws->get(lit).int_value == old_val, "3191 AC1: value unchanged after reject");
+    // hygiene violation attempt counter bumped.
+    auto hv = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
+                                  "\"hygiene-violation-attempt-total\")"));
+    CHECK(hv && is_int(*hv) && as_int(*hv) >= 1, "3191 AC1: hygiene violation counter bumped");
+}
+
+static void ac3191_2_sv_default_reject() {
+    std::println("\n--- 3191 AC2: sv-add-coverpoint / sv-weaken-property default-deny ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3191 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3191 AC2: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3191 AC2: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3191 AC2: stamp MacroIntroduced");
+    // sv-add-coverpoint on MacroIntroduced → reject (single atomic load gate).
+    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp1\")", lit));
+    CHECK(sac.has_value() && is_bool(*sac) && !as_bool(*sac),
+          "3191 AC2: sv-add-coverpoint rejects");
+    // sv-weaken-property on MacroIntroduced → reject.
+    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
+    CHECK(swp.has_value() && is_bool(*swp) && !as_bool(*swp),
+          "3191 AC2: sv-weaken-property rejects");
+    // Hygiene violation counter bumped twice.
+    auto hv = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
+                                  "\"hygiene-violation-attempt-total\")"));
+    CHECK(hv && is_int(*hv) && as_int(*hv) >= 2, "3191 AC2: both sv-* rejects counted");
+}
+
+static void ac3191_3_global_allow_unlocks() {
+    std::println("\n--- 3191 AC3: global allow_macro_mutate still unlocks all three paths ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3191 AC3: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3191 AC3: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3191 AC3: LiteralInt");
+    const auto old_val = ws->get(lit).int_value;
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3191 AC3: stamp MacroIntroduced");
+    // Flip the global allow flag (issue #3076 mechanism).
+    cs.eval("(hygiene:set-allow-macro-mutate! #t)");
+    // tweak-literal now commits.
+    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 1)) "
+                                 "\"3191-batch-allow\")",
+                                 lit));
+    CHECK(r.has_value(), "3191 AC3: batch returns");
+    CHECK(ws->get(lit).int_value == old_val + 1, "3191 AC3: value committed under global allow");
+    // sv-add-coverpoint / sv-weaken-property now succeed.
+    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp2\")", lit));
+    CHECK(sac.has_value() && is_bool(*sac) && as_bool(*sac),
+          "3191 AC3: sv-add-coverpoint permits under global allow");
+    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
+    CHECK(swp.has_value() && is_bool(*swp) && as_bool(*swp),
+          "3191 AC3: sv-weaken-property permits under global allow");
+    // Reset for downstream tests.
+    cs.eval("(hygiene:set-allow-macro-mutate! #f)");
+}
+
+static void ac3191_4_soft_non_macro_zero_cost() {
+    std::println("\n--- 3191 AC4: Soft / non-macro target zero extra cost ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3191 AC4: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3191 AC4: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3191 AC4: LiteralInt");
+    CHECK(!ws->is_macro_introduced(lit), "3191 AC4: not MacroIntroduced");
+    // tweak-literal on non-macro must commit (Soft / Off no extra cost).
+    const auto old_val = ws->get(lit).int_value;
+    auto r = cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:tweak-literal\" {} 5)) "
+                                 "\"3194-soft\")",
+                                 lit));
+    CHECK(r.has_value(), "3191 AC4: batch returns");
+    CHECK(ws->get(lit).int_value == old_val + 5, "3191 AC4: non-macro tweak-literal commits");
+    // sv-add-coverpoint / sv-weaken-property on non-macro → success.
+    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp_soft\")", lit));
+    CHECK(sac.has_value() && is_bool(*sac) && as_bool(*sac),
+          "3191 AC4: non-macro sv-add-coverpoint ok");
+    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b0\")", lit));
+    CHECK(swp.has_value() && is_bool(*swp) && as_bool(*swp),
+          "3191 AC4: non-macro sv-weaken-property ok");
+}
+
+static void ac3191_5_existing_surfaces_preserved() {
+    std::println("\n--- 3191 AC5: existing #3027 / #3076 / #3115 / #3131 surfaces preserved ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3191 AC5: eval");
+    // #3027 / #3131 scalar prims still reject via reject_structural_macro_hygiene.
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3191 AC5: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3191 AC5: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(), "3191 AC5: stamp");
+    auto rt = cs.eval(std::format("(mutate:replace-type {} \"Int\")", lit));
+    CHECK(rt.has_value() && merr_kind_3027(cs, *rt) == "hygiene",
+          "3191 AC5: #3115 replace-type still rejects");
+    auto rv = cs.eval(std::format("(mutate:replace-value {} 99 \"3191-p\")", lit));
+    CHECK(rv.has_value() && merr_kind_3027(cs, *rv) == "hygiene",
+          "3191 AC5: #3115 replace-value still rejects");
+    // #3027 / #3131 surface keys still surface.
+    CHECK(href(cs, "schema-3027") == 3027, "3191 AC5: schema-3027 preserved");
+    CHECK(href(cs, "schema-3115") == 3115, "3191 AC5: schema-3115 preserved");
+    CHECK(href(cs, "schema-3131") == 3131, "3191 AC5: schema-3131 preserved");
+}
+
+static void ac3191_6_source_and_linter() {
+    std::println("\n--- 3191 AC6: source-cite + linter + no docs/design/ ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py");
+    CHECK(flat.find("Issue #3191") != std::string::npos, "3191 AC6: eval_flat cites #3191");
+    CHECK(flat.find("cannot tweak-literal MacroIntroduced") != std::string::npos,
+          "3191 AC6: tweak-literal MacroIntroduced reject message");
+    CHECK(mut.find("Issue #3191") != std::string::npos, "3191 AC6: mutate_primitives cites #3191");
+    CHECK(mut.find("sv-add-coverpoint cannot touch MacroIntroduced") != std::string::npos,
+          "3191 AC6: sv-add-coverpoint gate");
+    CHECK(mut.find("sv-weaken-property cannot touch MacroIntroduced") != std::string::npos,
+          "3191 AC6: sv-weaken-property gate");
+    // global allow parity — same flag as #3115 / #3027.
+    CHECK(mut.find("ev.get_allow_macro_mutate()") != std::string::npos,
+          "3191 AC6: uses get_allow_macro_mutate()");
+    // record_hygiene_violation_attempt bumps on deny.
+    CHECK(mut.find("ev.record_hygiene_violation_attempt()") != std::string::npos,
+          "3191 AC6: record_hygiene_violation_attempt bumped");
+    // Test file has the new AC functions.
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3191_1_default_reject") != std::string::npos,
+          "3191 AC6: AC1");
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3191_2_sv_default_reject") != std::string::npos,
+          "3191 AC6: AC2");
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3191_3_global_allow_unlocks") != std::string::npos,
+          "3191 AC6: AC3");
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3191_4_soft_non_macro_zero_cost") != std::string::npos,
+          "3191 AC6: AC4");
+    CHECK(read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+                  .find("ac3191_5_existing_surfaces_preserved") != std::string::npos,
+          "3191 AC6: AC5");
+    // Linter exists.
+    CHECK(!lint.empty() && lint.find("3191") != std::string::npos, "3191 AC6: linter");
+    // Linter wired into build.py.
+    CHECK(build.find("check_macro_hygiene_default_deny_3191") != std::string::npos,
+          "3191 AC6: build.py wires linter");
+    // No docs/design/* (per #1655).
+    CHECK(read_file("docs/design/3191-macro-hygiene-default-deny.md").empty(),
+          "3191 AC6: no docs/design/");
+    // No tests/issues/test_issue_3191.cpp (per #81967).
+    CHECK(read_file("tests/issues/test_issue_3191.cpp").empty(),
+          "3191 AC6: no tests/issues/test_issue_3191");
+    CHECK(read_file("tests/compiler/test_issue_3191.cpp").empty(),
+          "3191 AC6: no tests/compiler/test_issue_3191");
+}
+
 static void ac3166_1_production_forced_invalidate() {
     std::println(
         "\n--- #3166 AC1: Production + nested structural mutate → forced counter bumped ---");
@@ -2025,6 +2216,14 @@ int main() {
     ac3115_3_atomic_batch_respects();
     ac3115_4_soft_non_macro();
     ac3115_5_source_and_linter();
+    std::println(
+        "\n=== Issue #3191: post-#3131 default-deny residual lockless tweak-literal + sv-* ===");
+    ac3191_1_default_reject();
+    ac3191_2_sv_default_reject();
+    ac3191_3_global_allow_unlocks();
+    ac3191_4_soft_non_macro_zero_cost();
+    ac3191_5_existing_surfaces_preserved();
+    ac3191_6_source_and_linter();
     std::println("\n=== Issue #3166: nested guard exit dirty pending (I5 residual) ===");
     ac3166_1_production_forced_invalidate();
     ac3166_2_soft_observe_only();

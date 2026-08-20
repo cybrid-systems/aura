@@ -6970,6 +6970,17 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return make_bool(false);
         }
+        // Issue #3191: macro hygiene default-deny — sv-add-coverpoint cannot
+        // touch MacroIntroduced nodes without global allow_macro_mutate.
+        // Closes the post-#3131 scalar residual on the SV verification surface.
+        // Sibling reject_structural_macro_hygiene used for scalar prims;
+        // SV mutate returns make_bool(false) on reject, parity with the live-node
+        // gate above. Soft/Off zero extra cost on non-macro (single atomic load).
+        if (ws->is_macro_introduced(cg_id) && !ev.get_allow_macro_mutate()) {
+            ev.record_hygiene_violation_attempt();
+            ok = false;
+            return make_bool(false);
+        }
         // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
         StableNodeRef cref = ws->make_ref_layout(cg_id);
         ev.stamp_stable_ref(cref);
@@ -7037,6 +7048,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         }
         auto pid = static_cast<aura::ast::NodeId>(as_int(a[0]));
         if (pid == aura::ast::NULL_NODE || pid >= ws->size() || !ws->is_live_node(pid)) {
+            ok = false;
+            return make_bool(false);
+        }
+        // Issue #3191: macro hygiene default-deny — sv-weaken-property cannot
+        // touch MacroIntroduced nodes without global allow_macro_mutate.
+        // Sibling of mutatte:sv-add-coverpoint gate above; same flow.
+        if (ws->is_macro_introduced(pid) && !ev.get_allow_macro_mutate()) {
+            ev.record_hygiene_violation_attempt();
             ok = false;
             return make_bool(false);
         }
