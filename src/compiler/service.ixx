@@ -113,6 +113,75 @@ static constexpr const char* kPrimNameTable[] = {
 
 static std::atomic<const aura::compiler::Primitives*> g_jit_prim_ctx{nullptr};
 
+// Nested CompilerService last-writer-wins: inner ctor overwrites process-wide
+// linear / lock / top-cell wires with &evaluator_. A thread_local stack
+// restores the previous Evaluator* on ~inner so ~outer is not left with
+// lock_write / linear_scan on a destroyed workspace_mtx_ (glibc
+// "corrupted double-linked list" / SIGBUS in aura_alloc_closure).
+static thread_local std::vector<aura::compiler::Evaluator*> g_linear_hook_eval_stack;
+static thread_local std::vector<aura::compiler::Evaluator*> g_lock_hook_eval_stack;
+
+static void install_linear_hooks_for_eval(aura::compiler::Evaluator* ev) {
+    aura_set_linear_post_mutate_enforce_fn(
+        [](void* user, std::uint32_t env_id) -> int {
+            if (!user)
+                return 0;
+            auto* e = static_cast<aura::compiler::Evaluator*>(user);
+            return e->linear_post_mutate_enforce(env_id) ? 0 : 1;
+        },
+        ev);
+    aura_set_linear_live_closure_scan_fn(
+        [](void* user) {
+            if (!user)
+                return;
+            static_cast<aura::compiler::Evaluator*>(user)->scan_live_closures_for_linear_captures(
+                true);
+        },
+        ev);
+}
+
+static void pop_linear_hooks_for_eval(aura::compiler::Evaluator* ev) {
+    if (!g_linear_hook_eval_stack.empty() && g_linear_hook_eval_stack.back() == ev)
+        g_linear_hook_eval_stack.pop_back();
+    if (g_linear_hook_eval_stack.empty()) {
+        aura_set_linear_post_mutate_enforce_fn(nullptr, nullptr);
+        aura_set_linear_live_closure_scan_fn(nullptr, nullptr);
+    } else {
+        install_linear_hooks_for_eval(g_linear_hook_eval_stack.back());
+    }
+}
+
+static void install_lock_and_topcell_hooks_for_eval(aura::compiler::Evaluator* ev) {
+    aura_set_lock_hooks(
+        [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_shared(); },
+        [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_shared(); },
+        [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_unique(); },
+        [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_unique(); },
+        [](void* e) -> std::uint64_t {
+            return static_cast<aura::compiler::Evaluator*>(e)->get_defuse_version();
+        },
+        [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->yield_mutation_boundary(); },
+        static_cast<void*>(ev));
+    aura_set_top_cell_getter(
+        [](void* e, int64_t idx) -> int64_t {
+            auto* evp = static_cast<aura::compiler::Evaluator*>(e);
+            if (idx < 0 || static_cast<std::size_t>(idx) >= evp->cells().size())
+                return 0;
+            return evp->cells()[static_cast<std::size_t>(idx)].val;
+        },
+        static_cast<void*>(ev));
+}
+
+static void pop_lock_hooks_for_eval(aura::compiler::Evaluator* ev) {
+    if (!g_lock_hook_eval_stack.empty() && g_lock_hook_eval_stack.back() == ev)
+        g_lock_hook_eval_stack.pop_back();
+    if (g_lock_hook_eval_stack.empty()) {
+        aura_clear_evaluator_runtime_hooks(static_cast<void*>(ev));
+    } else {
+        install_lock_and_topcell_hooks_for_eval(g_lock_hook_eval_stack.back());
+    }
+}
+
 // ── Dual string heaps (Issue #2575 / #181) ───────────────────
 // JIT ConstString → g_string_pool via aura_alloc_string.
 // Evaluator prims → Primitives::string_heap / Evaluator::string_heap_.
@@ -591,6 +660,7 @@ public:
         // query:dirty-subtree read counters from it; without
         // this registration, those primitives see nullptr
         // whenever no MutationBoundaryGuard is active.
+        prev_query_evaluator_ = Evaluator::get_query_evaluator();
         Evaluator::set_query_evaluator(&evaluator_);
         evaluator_.set_arena(&arena_);
         evaluator_.set_temp_arena(&temp_arena_);
@@ -675,29 +745,13 @@ public:
         // Issue #708: wire AOT bridge counters at construction so
         // aura_reload_aot_module / checkpoint probes bump metrics_
         // before the first JIT eval (register_jit_primitives is lazy).
+        prev_aot_metrics_ = aura_get_aot_metrics();
         aura_set_aot_metrics(&metrics_);
         // Issue #1522: register AuraJIT for bridge C-API batch_deopt_for.
         aura_set_jit_batch_deopt_target(&jit_);
-        // Issue #1540: wire Evaluator::linear_post_mutate_enforce into JIT
-        // linear_safety_probe / Apply prologue (returns 1 if UNSAFE).
-        aura_set_linear_post_mutate_enforce_fn(
-            [](void* user, std::uint32_t env_id) -> int {
-                if (!user)
-                    return 0;
-                auto* ev = static_cast<Evaluator*>(user);
-                // linear_post_mutate_enforce returns true if SAFE.
-                return ev->linear_post_mutate_enforce(env_id) ? 0 : 1;
-            },
-            &evaluator_);
-        // Issue #1545: JIT ResourceTracker pre-evict linear live-closure scan.
-        aura_set_linear_live_closure_scan_fn(
-            [](void* user) {
-                if (!user)
-                    return;
-                static_cast<Evaluator*>(user)->scan_live_closures_for_linear_captures(
-                    /*mark_invalid=*/true);
-            },
-            &evaluator_);
+        // Issue #1540 / #1545: linear hooks. Push so ~inner restores outer.
+        g_linear_hook_eval_stack.push_back(&evaluator_);
+        install_linear_hooks_for_eval(&evaluator_);
         evaluator_.set_compiler_service(this);
         // Issue #681: wire mutation_epoch / bridge_epoch for
         // apply_closure + IRClosure lifetime checks.
@@ -1092,6 +1146,7 @@ public:
             return ((coercion & 0xFF) << 56) | ((fail & 0xFFFF) << 40) | ((pass & 0xFFFF) << 24) |
                    (check_call & 0xFFFFFF);
         });
+        prev_compiler_service_ = aura::messaging::g_current_compiler_service;
         aura::messaging::g_current_compiler_service = this;
         // Issue #2100: register deopt→AST MacroIntroduced restore hook so
         // aura_jit_macro_introduced_deopt_inc can re-stamp workspace markers.
@@ -11528,6 +11583,12 @@ private:
     // triggered from the workspace-aware eval shortcut paths).
     std::size_t cs_eval_mutation_log_size_at_entry_ = 0;
 
+    // Nested CompilerService save/restore (process-wide last-writer wires).
+    void* prev_compiler_service_ = nullptr;
+    void* prev_query_evaluator_ = nullptr;
+    void* prev_aot_metrics_ = nullptr;
+    const Primitives* prev_jit_prim_ctx_ = nullptr;
+
 public:
     // Issue #300 follow-up #1: drop per-fiber / main-thread
     // mutation checkpoints before arena teardown so PCV
@@ -11540,9 +11601,12 @@ public:
         // would call on_deopt_storm on the freed controller (UAF).
         if (storm_listener_id_ != 0)
             hot_update_registry().unregister_storm_listener(storm_listener_id_);
-        // Issue #984: clear thread_local lowering hooks on teardown.
-        clear_lowering_compiler_core_hooks();
-        Evaluator::clear_main_thread_mutation_stack();
+        // Nested CompilerService: keep outer lowering / mutation-stack
+        // wiring. Only the outermost service wipes process-wide TLS.
+        if (prev_compiler_service_ == nullptr) {
+            clear_lowering_compiler_core_hooks();
+            Evaluator::clear_main_thread_mutation_stack();
+        }
         if (auto* wf = evaluator_.workspace_flat())
             wf->release_children_for_teardown();
         if (current_ast_ && current_ast_ != evaluator_.workspace_flat())
@@ -11569,10 +11633,14 @@ public:
         // Only clear process-wide hooks when we still own g_current (another
         // live CompilerService may have re-wired them).
         if (aura::messaging::g_current_compiler_service == this) {
-            aura::gc_hooks::clear_arena_compact_notify_hooks();
-            aura::messaging::g_current_compiler_service = nullptr;
-            // Issue #2100: drop deopt restore hook with the owning service.
-            aura_jit_set_macro_deopt_restore_fn(nullptr);
+            if (prev_compiler_service_ == nullptr) {
+                aura::gc_hooks::clear_arena_compact_notify_hooks();
+                aura::messaging::g_current_compiler_service = nullptr;
+                // Issue #2100: drop deopt restore hook with the owning service.
+                aura_jit_set_macro_deopt_restore_fn(nullptr);
+            } else {
+                aura::messaging::g_current_compiler_service = prev_compiler_service_;
+            }
         }
         // Issue #2106: drop cascade_skip metrics sink if it points at our
         // metrics_ (avoid UAF after service teardown, same pattern as
@@ -11593,8 +11661,19 @@ public:
         // that owns the live pointer is preserved (same pattern as
         // aura_clear_jit_batch_deopt_target).
         if (aura_get_aot_metrics() == static_cast<void*>(&metrics_)) {
-            aura_set_aot_metrics(nullptr);
+            aura_set_aot_metrics(static_cast<CompilerMetrics*>(prev_aot_metrics_));
         }
+        if (g_jit_prim_ctx.load(std::memory_order_acquire) == &evaluator_.primitives()) {
+            g_jit_prim_ctx.store(prev_jit_prim_ctx_, std::memory_order_release);
+        }
+        Evaluator::set_query_evaluator(static_cast<Evaluator*>(prev_query_evaluator_));
+        pop_linear_hooks_for_eval(&evaluator_);
+        pop_lock_hooks_for_eval(&evaluator_);
+        // Nested CompilerService overwrites process-wide lock / top-cell
+        // hooks with &evaluator_. Clear only our own wire so ~inner does
+        // not leave lock_write on a destroyed workspace_mtx_ (heap
+        // "corrupted double-linked list" / SIGBUS in aura_alloc_closure).
+        aura_clear_evaluator_runtime_hooks(static_cast<void*>(&evaluator_));
     }
 
     // Issue #411 fu1 follow-up #2: per-DefUseIndex caller
@@ -13646,6 +13725,8 @@ public:
     // Register evaluator primitives with JIT runtime
     void register_jit_primitives() {
         // Set the global primitives pointer for the JIT dispatcher
+        if (prev_jit_prim_ctx_ == nullptr)
+            prev_jit_prim_ctx_ = g_jit_prim_ctx.load(std::memory_order_acquire);
         g_jit_prim_ctx.store(&evaluator_.primitives(), std::memory_order_release);
 
         // Issue #452: wire AOT bridge metrics pointer so
@@ -13657,23 +13738,10 @@ public:
         aura_set_aot_metrics(&metrics_);
         // Issue #1522: re-bind batch_deopt target (lazy JIT prims path).
         aura_set_jit_batch_deopt_target(&jit_);
-        // Issue #1540: re-bind linear_post_mutate_enforce for JIT probe.
-        aura_set_linear_post_mutate_enforce_fn(
-            [](void* user, std::uint32_t env_id) -> int {
-                if (!user)
-                    return 0;
-                auto* ev = static_cast<Evaluator*>(user);
-                return ev->linear_post_mutate_enforce(env_id) ? 0 : 1;
-            },
-            &evaluator_);
-        // Issue #1545: re-bind live-closure linear scan for JIT ResourceTracker.
-        aura_set_linear_live_closure_scan_fn(
-            [](void* user) {
-                if (!user)
-                    return;
-                static_cast<Evaluator*>(user)->scan_live_closures_for_linear_captures(true);
-            },
-            &evaluator_);
+        // Issue #1540 / #1545: re-bind linear hooks (same stack as ctor).
+        if (g_linear_hook_eval_stack.empty() || g_linear_hook_eval_stack.back() != &evaluator_)
+            g_linear_hook_eval_stack.push_back(&evaluator_);
+        install_linear_hooks_for_eval(&evaluator_);
 
         // Issue #157 Phase 1: bind the lock hooks. Pattern matches
         // the g_prim_dispatcher pattern above — the runtime bridges
@@ -13681,31 +13749,9 @@ public:
         // into the evaluator's lock + version methods via this hook
         // table. Without these hooks, the bridges are no-ops
         // (single-threaded default) and the bypass is unsafe.
-        //
-        // The hooks are bound ONCE per CompilerService. Multi-eval
-        // setups would need to rebind (deferred — not currently
-        // supported, but the hook table is per-process global so
-        // switching evaluators mid-flight needs care).
-        aura_set_lock_hooks(
-            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_shared(); },
-            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_shared(); },
-            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->lock_workspace_unique(); },
-            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->unlock_workspace_unique(); },
-            [](void* e) -> std::uint64_t {
-                return static_cast<aura::compiler::Evaluator*>(e)->get_defuse_version();
-            },
-            [](void* e) { static_cast<aura::compiler::Evaluator*>(e)->yield_mutation_boundary(); },
-            static_cast<void*>(&evaluator_));
-
-        // Issue #272 Cycle 5: TopCellLoad reads evaluator_.cells() live.
-        aura_set_top_cell_getter(
-            [](void* e, int64_t idx) -> int64_t {
-                auto* ev = static_cast<aura::compiler::Evaluator*>(e);
-                if (idx < 0 || static_cast<std::size_t>(idx) >= ev->cells().size())
-                    return 0;
-                return ev->cells()[static_cast<std::size_t>(idx)].val;
-            },
-            static_cast<void*>(&evaluator_));
+        if (g_lock_hook_eval_stack.empty() || g_lock_hook_eval_stack.back() != &evaluator_)
+            g_lock_hook_eval_stack.push_back(&evaluator_);
+        install_lock_and_topcell_hooks_for_eval(&evaluator_);
 
 // Register the dispatcher with JIT runtime
 #ifdef AURA_HAVE_LLVM

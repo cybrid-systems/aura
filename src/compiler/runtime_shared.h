@@ -313,8 +313,16 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
                                     void (*lock_write)(void*), void (*unlock_write)(void*),
                                     std::uint64_t (*get_version)(void*),
                                     void (*yield_boundary)(void*), void* user_data);
+// Drop process-wide lock + top-cell hooks when they still point at `user`
+// (dying Evaluator). Nested CompilerService ctor overwrites the table;
+// without this, ~inner leaves lock_write on a destroyed mutex.
+// Strong def lives in runtime_ssot.cpp (libaura_tl_arena.so) and dispatches
+// to a JIT-registered clearer (null = no-op when JIT SOs are not loaded).
+extern "C" void aura_clear_evaluator_runtime_hooks(void* user);
+extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
 // Issue #272 Cycle 5: TopCellLoad bridge to evaluator_.cells().
 extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* user_data);
+extern "C" void aura_clear_top_cell_getter_if_user(void* user);
 
 // Issue #452: AOT bridge metrics pointer (aot_stale_reject_count_,
 // aot_region_mismatch_, aot_hot_update_success_). Defined in

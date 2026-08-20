@@ -19,6 +19,20 @@
 #include <cstdlib>
 #include <vector>
 
+// JIT runtime registers the real lock/top-cell clearer. Null when JIT
+// SOs are not loaded — ~CompilerService still resolves this symbol from
+// libaura_tl_arena.so (never a weak stub in test_objects).
+static std::atomic<void (*)(void*)> g_eval_runtime_hook_clearer{nullptr};
+
+extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*)) {
+    g_eval_runtime_hook_clearer.store(fn, std::memory_order_release);
+}
+
+extern "C" void aura_clear_evaluator_runtime_hooks(void* user) {
+    if (auto fn = g_eval_runtime_hook_clearer.load(std::memory_order_acquire))
+        fn(user);
+}
+
 // ── Pair storage (JIT runtime + evaluator car/cdr fallback) ──
 std::vector<PairSlot*> g_pair_slots;
 

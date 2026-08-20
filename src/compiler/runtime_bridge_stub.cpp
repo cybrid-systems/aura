@@ -71,6 +71,10 @@ aura_set_lock_hooks(void (* /*lock_read*/)(void*), void (* /*unlock_read*/)(void
                     std::uint64_t (* /*get_version*/)(void*), void (* /*yield_boundary*/)(void*),
                     void* /*user_data*/) {}
 
+// aura_clear_evaluator_runtime_hooks lives in runtime_ssot.cpp
+// (libaura_tl_arena.so). A weak stub here would preempt the SSOT
+// callback (same class as aura_set_aot_metrics).
+
 extern "C" __attribute__((weak)) void
 aura_set_top_cell_getter(std::int64_t (* /*fn*/)(void*, std::int64_t), void* /*user_data*/) {}
 

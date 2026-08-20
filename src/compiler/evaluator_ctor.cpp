@@ -26,6 +26,11 @@ import aura.compiler.value;
 
 namespace aura::compiler {
 
+// Nested Evaluator last-writer-wins for g_heap_mutex (captures `this`).
+// Restore the previous function on teardown so ~inner does not leave a
+// dangling lambda over a destroyed heap_mutex_.
+static thread_local std::vector<aura::messaging::HeapMutexFn> g_heap_mutex_stack;
+
 using EvalValue = types::EvalValue;
 // Issue #918 Phase 1: explicit using-declarations (no `using namespace`).
 using types::as_bool;
@@ -89,6 +94,7 @@ Evaluator::Evaluator() {
     // Issue #1352: retain process-wide terminal buffer registry for this Evaluator.
     primitives_detail::retain_terminal_buffer_registry();
 
+    g_heap_mutex_stack.push_back(aura::messaging::g_heap_mutex);
     aura::messaging::g_heap_mutex = [this]() -> std::mutex& { return heap_mutex(); };
 
     top_.set_primitives(&primitives_);
@@ -211,6 +217,20 @@ void* Evaluator::ensure_type_registry() {
 }
 
 Evaluator::~Evaluator() {
+    // Drop live EnvFrameRef slots without drop() scans — those walk
+    // closures_/env_frames_ that are about to be destroyed.
+    {
+        std::lock_guard<std::mutex> lock(live_env_frame_refs_mtx_);
+        live_env_frame_ref_slots_.clear();
+    }
+
+    if (!g_heap_mutex_stack.empty()) {
+        aura::messaging::g_heap_mutex = std::move(g_heap_mutex_stack.back());
+        g_heap_mutex_stack.pop_back();
+    } else {
+        aura::messaging::g_heap_mutex = nullptr;
+    }
+
     // Issue #2144 / #2180 / #2220: tear down long-lived Guard-exit
     // InferenceEngine, commit TypeChecker, and persistent TypeChecker
     // before type_registry_ / arenas are destroyed.

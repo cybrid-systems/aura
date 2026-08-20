@@ -691,6 +691,7 @@ struct LockHooks {
     void* user_data;                     // typically the Evaluator*
 };
 static LockHooks g_lock_hooks = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+static std::mutex s_lock_hooks_mtx;
 } // namespace
 
 extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read)(void*),
@@ -701,7 +702,6 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
     // Dedicated mutex: workspace write lock is implemented *via* these hooks
     // so we cannot call aura_lock_workspace_write here (not yet defined /
     // chicken-and-egg on first install).
-    static std::mutex s_lock_hooks_mtx;
     std::lock_guard<std::mutex> lock(s_lock_hooks_mtx);
     g_lock_hooks.lock_read = lock_read;
     g_lock_hooks.unlock_read = unlock_read;
@@ -711,6 +711,29 @@ extern "C" void aura_set_lock_hooks(void (*lock_read)(void*), void (*unlock_read
     g_lock_hooks.yield_boundary = yield_boundary;
     g_lock_hooks.user_data = user_data;
 }
+
+extern "C" void aura_clear_top_cell_getter_if_user(void* user);
+extern "C" void aura_register_evaluator_runtime_hook_clearer(void (*fn)(void*));
+
+static void clear_evaluator_runtime_hooks_impl(void* user) {
+    if (!user)
+        return;
+    {
+        std::lock_guard<std::mutex> lock(s_lock_hooks_mtx);
+        if (g_lock_hooks.user_data == user)
+            g_lock_hooks = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    }
+    aura_clear_top_cell_getter_if_user(user);
+}
+
+namespace {
+struct RegisterEvalHookClearer {
+    RegisterEvalHookClearer() {
+        aura_register_evaluator_runtime_hook_clearer(&clear_evaluator_runtime_hooks_impl);
+    }
+};
+static RegisterEvalHookClearer g_register_eval_hook_clearer;
+} // namespace
 
 // Bridge wrappers — these are what runtime functions (aura_alloc_pair,
 // aura_pair_car, etc.) call to participate in the locking protocol.
@@ -2949,48 +2972,61 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
 void aura_closure_set_name(int64_t closure_id, const char* name) {
     if (closure_id < 0)
         return;
+    const std::string name_str = name ? name : std::string();
+    const bool named = !name_str.empty();
+    const auto cid = static_cast<size_t>(closure_id);
+    {
+        std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
+        aura_lock_workspace_write();
+        // Issue #1709: require allocated slot (func_ids), not only names column.
+        if (cid < g_closure_func_ids.size() && cid < g_closure_names.size()) {
+            g_closure_names[cid] = name_str;
+        }
+        // Issue #2550: named → get_or_preserve (never leave sid=0). Empty /
+        // null name → anonymous sid=0. Same-name redefine preserves the map
+        // entry (get_or_preserve returns existing id) so stored sid stays
+        // process-stable for that name until clear_stable_func_id_map.
+        // Do NOT call get_or_preserve under workspace+table locks: the sid
+        // map mutex + HotUpdateRegistry notify re-enter process-wide state
+        // and smash the caller frame (SIGBUS pc=0x1 in stamp_batch AC3).
+        if (cid < g_closure_func_ids.size()) {
+            if (cid >= g_closure_stable_func_ids.size())
+                g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
+            if (!named)
+                g_closure_stable_func_ids[cid] = 0; // anonymous by design
+        }
+        // Issue #2238: alloc-time / set_name-time policy. If policy is on
+        // AND the caller passed an empty name (nullptr or ""), the closure
+        // stays anonymous + sid=0 (per #2175 AC3 — empty name never
+        // backfills). Such a closure cannot participate in stable-id remap;
+        // if it later binds to AOT native code, post-reemit safety depends
+        // solely on the MustDeopt / call-time checks. Setting MustDeopt
+        // here forces the next call to interpreter-only (gating at
+        // aura_jit_runtime.cpp:1591 already implemented for #2128), so
+        // no native ptr install happens — the AOT bind path simply
+        // sees MustDeopt and refuses to install (AC1 "force MustDeopt +
+        // never install native ptr" branch). Already-stamped sids (non-
+        // zero) never enter this branch, so the residual backfill path
+        // (#2175 / #2550 safety net) stays untouched for empty names.
+        if (g_require_stable_id_for_aot.load(std::memory_order_relaxed) != 0 && !named &&
+            cid < g_closure_must_deopt.size() && cid < g_closure_func_ids.size() &&
+            (cid >= g_closure_freed.size() || g_closure_freed[cid] == 0)) {
+            g_closure_must_deopt[cid] = 1;
+            g_anonymous_aot_reject_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        aura_unlock_workspace_write();
+    }
+    if (!named)
+        return;
+    int preserved = 0;
+    const auto sid = aura_get_or_preserve_stable_func_id(name, &preserved);
+    (void)preserved;
     std::unique_lock<std::shared_mutex> tlock(g_closure_table_mtx);
     aura_lock_workspace_write();
-    const auto cid = static_cast<size_t>(closure_id);
-    // Issue #1709: require allocated slot (func_ids), not only names column.
-    if (cid < g_closure_func_ids.size() && cid < g_closure_names.size()) {
-        g_closure_names[cid] = name ? std::string(name) : std::string();
-    }
-    // Issue #2550: named → get_or_preserve (never leave sid=0). Empty /
-    // null name → anonymous sid=0. Same-name redefine preserves the map
-    // entry (get_or_preserve returns existing id) so stored sid stays
-    // process-stable for that name until clear_stable_func_id_map.
     if (cid < g_closure_func_ids.size()) {
         if (cid >= g_closure_stable_func_ids.size())
             g_closure_stable_func_ids.resize(g_closure_func_ids.size(), 0);
-        if (name && name[0] != '\0') {
-            int preserved = 0;
-            const auto sid = aura_get_or_preserve_stable_func_id(name, &preserved);
-            g_closure_stable_func_ids[cid] = sid; // never leave 0 for named
-            (void)preserved;
-        } else {
-            g_closure_stable_func_ids[cid] = 0; // anonymous by design
-        }
-    }
-    // Issue #2238: alloc-time / set_name-time policy. If policy is on
-    // AND the caller passed an empty name (nullptr or ""), the closure
-    // stays anonymous + sid=0 (per #2175 AC3 — empty name never
-    // backfills). Such a closure cannot participate in stable-id remap;
-    // if it later binds to AOT native code, post-reemit safety depends
-    // solely on the MustDeopt / call-time checks. Setting MustDeopt
-    // here forces the next call to interpreter-only (gating at
-    // aura_jit_runtime.cpp:1591 already implemented for #2128), so
-    // no native ptr install happens — the AOT bind path simply
-    // sees MustDeopt and refuses to install (AC1 "force MustDeopt +
-    // never install native ptr" branch). Already-stamped sids (non-
-    // zero) never enter this branch, so the residual backfill path
-    // (#2175 / #2550 safety net) stays untouched for empty names.
-    if (g_require_stable_id_for_aot.load(std::memory_order_relaxed) != 0 &&
-        (name == nullptr || name[0] == '\0') && cid < g_closure_must_deopt.size() &&
-        cid < g_closure_func_ids.size() &&
-        (cid >= g_closure_freed.size() || g_closure_freed[cid] == 0)) {
-        g_closure_must_deopt[cid] = 1;
-        g_anonymous_aot_reject_total.fetch_add(1, std::memory_order_relaxed);
+        g_closure_stable_func_ids[cid] = sid; // never leave 0 for named
     }
     aura_unlock_workspace_write();
 }
@@ -3749,6 +3785,17 @@ extern "C" void aura_set_top_cell_getter(int64_t (*fn)(void*, int64_t), void* us
     g_top_cell_user_data = user_data;
     g_top_cell_get = fn;
     aura_unlock_workspace_write();
+}
+
+extern "C" void aura_clear_top_cell_getter_if_user(void* user) {
+    // Must not take workspace lock via hooks: teardown may already have
+    // cleared them, or they still point at `user` being destroyed.
+    if (!user)
+        return;
+    if (g_top_cell_user_data == user) {
+        g_top_cell_get = nullptr;
+        g_top_cell_user_data = nullptr;
+    }
 }
 
 extern "C" int64_t aura_top_cell_get(int64_t cell_index) {
