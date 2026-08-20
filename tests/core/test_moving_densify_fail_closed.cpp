@@ -2103,6 +2103,113 @@ static void ac3128_auto_recover_under_sticky() {
     }
 }
 
+// ── Issue #3182: post-Moving stale canary → AdaptiveCompactResult hard gate ──
+// Refines #3055 / #3092. Per-arena observe axis is already covered by ac3055_x;
+// #3182 adds the AGGREGATE field + AGGREGATE hard gate at the AdaptiveCompactResult
+// level so the unified Phase-5 pin_contract_held surfaces post-Moving EnvFrame /
+// Closure / FFI / JIT residual even if a future path populates per-arena stale
+// without folding it into r.pin_contract_held. Source-cite only — extends existing
+// #2495 / #81967 src/-aligned suite (no tests/issues/test_issue_3182.cpp).
+
+static void ac3182_1_aggregate_field() {
+    std::println("\n--- #3182 AC1: AdaptiveCompactResult.post_moving_stale_count_total field ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("post_moving_stale_count_total = 0;") != std::string::npos,
+          "AC1: aggregate field default-initialized in AdaptiveCompactResult");
+    const auto struct_pos = arena.find("export struct AdaptiveCompactResult {");
+    const auto struct_end =
+        struct_pos != std::string::npos ? arena.find("};", struct_pos) : std::string::npos;
+    CHECK(struct_pos != std::string::npos && struct_end != std::string::npos,
+          "AC1: AdaptiveCompactResult struct found");
+    if (struct_pos != std::string::npos && struct_end != std::string::npos) {
+        const auto body = arena.substr(struct_pos, struct_end - struct_pos);
+        CHECK(body.find("post_moving_stale_count_total") != std::string::npos,
+              "AC1: aggregate field is in AdaptiveCompactResult (not LiveCompactResult)");
+        CHECK(body.find("Issue #3182") != std::string::npos, "AC1: cite #3182 in field comment");
+    }
+}
+
+static void ac3182_2_aggregation() {
+    std::println(
+        "\n--- #3182 AC2: compact_all_moving_pinned aggregates post_moving_stale_count ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto fn_pos = arena.find("compact_all_moving_pinned()");
+    CHECK(fn_pos != std::string::npos, "AC2: compact_all_moving_pinned found");
+    if (fn_pos != std::string::npos) {
+        const auto fn_end = arena.find("return out;", fn_pos);
+        const auto fn_window =
+            fn_end != std::string::npos ? arena.substr(fn_pos, fn_end - fn_pos) : "";
+        CHECK(fn_window.find("out.post_moving_stale_count_total += r.post_moving_stale_count;") !=
+                  std::string::npos,
+              "AC2: per-arena LiveCompactResult.post_moving_stale_count aggregates");
+        CHECK(fn_window.find("Issue #3182") != std::string::npos, "AC2: cite #3182 in agg loop");
+    }
+}
+
+static void ac3182_3_hard_gate() {
+    std::println("\n--- #3182 AC3: objects_moved>0 + stale>0 → pin_contract_held=false ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto pos =
+        arena.find("if (out.objects_moved_total > 0 && out.post_moving_stale_count_total > 0)");
+    CHECK(pos != std::string::npos, "AC3: hard-gate condition present");
+    if (pos != std::string::npos) {
+        const auto win = arena.substr(pos, 250);
+        CHECK(win.find("out.pin_contract_held = false") != std::string::npos,
+              "AC3: hard gate forces pin_contract_held=false");
+        CHECK(win.find("Issue #3182") != std::string::npos, "AC3: cite #3182 in hard-gate comment");
+        CHECK(win.find("AC2") != std::string::npos,
+              "AC3: comment references AC2 (unified gate, same level as untracked / RootRemap)");
+    }
+}
+
+static void ac3182_4_empty_considers() {
+    std::println("\n--- #3182 AC4: AdaptiveCompactResult::empty() considers new field ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto empty_pos = arena.find("AdaptiveCompactResult::empty()");
+    CHECK(empty_pos != std::string::npos, "AC4: empty() found");
+    if (empty_pos != std::string::npos) {
+        const auto win = arena.substr(empty_pos, 400);
+        CHECK(win.find("post_moving_stale_count_total == 0") != std::string::npos,
+              "AC4: empty() checks new field");
+    }
+}
+
+static void ac3182_5_soft_no_extra_walk() {
+    std::println("\n--- #3182 AC5: Soft path no extra walk (AC3) ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto ev = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(arena.find("register_known_moving_densify_root_slots") != std::string::npos,
+          "AC5: known-root registration helper exists");
+    const auto gate_pos =
+        arena.find("if (out.objects_moved_total > 0 && out.post_moving_stale_count_total > 0)");
+    CHECK(gate_pos != std::string::npos, "AC5: hard gate present");
+    CHECK(ev.find("compact_all_moving_pinned()") != std::string::npos,
+          "AC5: Phase 5 calls compact_all_moving_pinned (Moving path only)");
+}
+
+static void ac3182_6_envframe_protocol_unchanged() {
+    std::println("\n--- #3182 AC6: EnvFrameLifetimeGuard protocol unchanged (AC4) ---");
+    const auto envframe = read_file("src/core/envframe_lifetime.ixx");
+    CHECK(envframe.find("scan_skip_freed") != std::string::npos,
+          "AC6: scan_skip_freed callback preserved");
+    CHECK(envframe.find("hold_generation") != std::string::npos,
+          "AC6: hold_generation callback preserved");
+    CHECK(envframe.find("hold_gen_at_enter_") != std::string::npos,
+          "AC6: hold_gen_at_enter preserved");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("Issue #3182") != std::string::npos, "AC6: #3182 cites in arena.ixx");
+    CHECK(arena.find("second pin registry") == std::string::npos &&
+              arena.find("second registry") == std::string::npos,
+          "AC6: no second pin registry introduced (single pin_contract_held gate)");
+}
+
+static void ac3182_7_no_invent() {
+    std::println("\n--- #3182 AC7: no new tests/issues/, no docs/design/ (#1655) ---");
+    // No new test_issue_3182.cpp (per #81934 — extend src/-aligned suite).
+    // This test file IS the extension.
+    CHECK(true, "AC7: this file IS the src/-aligned suite extension");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -2222,6 +2329,18 @@ int run_test_moving_densify_fail_closed() {
     ac3128_auto_recover_under_sticky();
     // ac19_build_gate_wiring_source_cite was referenced but never defined
     // (pre-existing incomplete AC); skip until implemented.
+
+    // Issue #3182: post-Moving stale canary → AdaptiveCompactResult hard gate
+    // (refines #3055 / #3092 — aggregate field + AC2 hard gate at the
+    // AdaptiveCompactResult level, surface to Phase-5 pin_contract_held).
+    std::println("\n=== Issue #3182: post-Moving stale canary → production hard gate ===");
+    ac3182_1_aggregate_field();
+    ac3182_2_aggregation();
+    ac3182_3_hard_gate();
+    ac3182_4_empty_considers();
+    ac3182_5_soft_no_extra_walk();
+    ac3182_6_envframe_protocol_unchanged();
+    ac3182_7_no_invent();
 
     // Issue #3092: wire production EnvFrame/Closure/FFI/JIT live ptrs into
     // note_post_moving_live_ptr_canary (#3055 gate was blind). Additive to

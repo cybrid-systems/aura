@@ -3145,6 +3145,20 @@ def cmd_lint():
             "Issue #3055 post-Moving stale linter failed — run python3 scripts/coverage/checks/check_moving_post_moving_stale_3055.py"
         )
         return r
+    # Issue #3182: post-Moving stale canary → AdaptiveCompactResult hard gate
+    # (refines #3055 / #3092 — aggregate field + AC2 hard gate at the
+    # AdaptiveCompactResult level, surface to Phase-5 pin_contract_held).
+    # Extends test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    pmshg_script = COVERAGE_CHECKS / "check_post_moving_stale_hard_gate_3182.py"
+    if not pmshg_script.exists():
+        fail(f"missing {pmshg_script}")
+        return 1
+    r = run([sys.executable, str(pmshg_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3182 post-Moving stale hard gate linter failed — run python3 scripts/coverage/checks/check_post_moving_stale_hard_gate_3182.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
