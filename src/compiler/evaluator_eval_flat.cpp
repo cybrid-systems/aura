@@ -1532,6 +1532,18 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                 }
                 auto cl_alloc = target_arena->allocator();
                 auto* cl_flat = target_arena->create<aura::ast::FlatAST>(cl_alloc);
+                // Issue #3180: closure body is transient (lives inside temp_arena
+                // or the persistent arena; densify observes the pool+flat as
+                // owned roots via wire_general_object_create_pair_or_required_fail).
+                // Declare EXEMPT cover here so the implicit intermediate bump
+                // at allocate_raw_impl does not bump the uncovered metric.
+                if (cl_flat && aura::core::lifetime::general_object_pin_required_active()) {
+                    // Issue #3180: in_render_hotpath() guard already enforced
+                    // inside maybe_note_allocate_intermediate_ (the single
+                    // funnel); no need to duplicate at the call site.
+                    target_arena->note_intermediate_create_with_cover_(
+                        cl_flat, nullptr, "eval-flat-closure-body-transient");
+                }
                 // Issue #334: keep the closure's body symids in the SAME
                 // pool as the macro's `pool` and the env's bindings. If
                 // we use a fresh cl_pool for the cloned body, the body's
@@ -2475,6 +2487,18 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     auto alloc = pat_arena.allocator();
     auto* pat_pool = pat_arena.create<aura::ast::StringPool>(alloc);
     auto* pat_flat = pat_arena.create<aura::ast::FlatAST>(alloc);
+    // Issue #3180: pat_pool/pat_flat are pattern AST — long-lived across the
+    // batch :replace-pattern call (live until arena teardown). Provide slot
+    // pointers to the stable arena-local fields so densify rewrites them
+    // alongside the pool/flat canary list (slot rewrite path).
+    if (pat_pool) {
+        pat_arena.note_intermediate_create_with_cover_(
+            pat_pool, reinterpret_cast<void**>(&pat_pool), nullptr);
+    }
+    if (pat_flat) {
+        pat_arena.note_intermediate_create_with_cover_(
+            pat_flat, reinterpret_cast<void**>(&pat_flat), nullptr);
+    }
     if (!pat_pool || !pat_flat)
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -4021,6 +4045,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 auto alloc = temp_arena_->allocator();
                                 auto* ipool = temp_arena_->create<aura::ast::StringPool>(alloc);
                                 auto* iflat = temp_arena_->create<aura::ast::FlatAST>(alloc);
+                                // Issue #3180: require-import parse state is transient (lives
+                                // only inside this call; gc-temp reclaims). Declare EXEMPT
+                                // cover so the implicit intermediate bump does not bump
+                                // the uncovered metric under production required.
+                                if (ipool) {
+                                    temp_arena_->note_intermediate_create_with_cover_(
+                                        ipool, nullptr, "require-import-parse-transient");
+                                }
+                                if (iflat) {
+                                    temp_arena_->note_intermediate_create_with_cover_(
+                                        iflat, nullptr, "require-import-parse-transient");
+                                }
                                 // Issue #2363: GeneralObjectPin adopt (site 3/7) — require import.
                                 aura::core::lifetime::GeneralObjectPin ipool_pin;
                                 aura::core::lifetime::GeneralObjectPin iflat_pin;
@@ -4815,6 +4851,13 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // via gc_module(cache_key).
                                 auto& inst_arena = arena_group_->module_arena(cache_key);
                                 auto* cached_env = inst_arena.create<Env>(mod_env);
+                                // Issue #3180: inst cache env is transient (lives in inst_arena
+                                // scoped to the module load; densify observes via pin).
+                                // Declare EXEMPT cover for the transient path.
+                                if (cached_env) {
+                                    inst_arena.note_intermediate_create_with_cover_(
+                                        cached_env, nullptr, "inst-env-cache-transient");
+                                }
                                 auto mod_idx = modules_.size();
                                 modules_.push_back(cached_env);
                                 module_cache_[cache_key] = mod_idx;

@@ -1,0 +1,94 @@
+{
+  "issue": 3180,
+  "title": "Issue #3180: drive production small-pool allocate call sites to true cover (slot / EXEMPT) — uncovered_under_required happy-path residual of #3156",
+  "ok": "OK: Issue #3180 production small-pool cover (slot / EXEMPT) — all AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "note_intermediate_create_with_cover_(void* p, void** slot, const char* reason)",
+        "maybe_note_allocate_intermediate_(void* ptr, std::size_t size, void** slot = nullptr, const char* reason = nullptr)",
+        "Issue #3180"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "allocate_checked(std::size_t size, std::size_t alignment, void** cover_slot = nullptr, const char* cover_reason = nullptr)",
+        "allocate_raw(std::size_t size, std::size_t alignment, void** cover_slot = nullptr, const char* cover_reason = nullptr)",
+        "allocate_raw_impl(std::size_t size, std::size_t alignment, void** cover_slot = nullptr, const char* cover_reason = nullptr)",
+        "void* ptr = allocate_raw_impl(size, alignment, cover_slot, cover_reason)",
+        "maybe_note_allocate_intermediate_(ptr, size, cover_slot, cover_reason)",
+        "note_intermediate_create_with_cover_(ptr, slot, reason)"
+      ]
+    },
+    {
+      "ac": "AC3_hot_path_evaluator_eval_flat",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "note_intermediate_create_with_cover_(\n                pat_pool, reinterpret_cast<void**>(&pat_pool), nullptr)",
+        "note_intermediate_create_with_cover_(\n                pat_flat, reinterpret_cast<void**>(&pat_flat), nullptr)",
+        "\"eval-flat-closure-body-transient\"",
+        "\"require-import-parse-transient\"",
+        "\"inst-env-cache-transient\""
+      ]
+    },
+    {
+      "ac": "AC3_hot_path_service",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "note_intermediate_create_with_cover_(\n                pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)",
+        "note_intermediate_create_with_cover_(\n                flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)",
+        "mod_arena.note_intermediate_create_with_cover_(\n            pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)",
+        "mod_arena.note_intermediate_create_with_cover_(\n            flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)"
+      ]
+    },
+    {
+      "ac": "AC3_hot_path_evaluator_module_loader",
+      "path": "src/compiler/evaluator_module_loader.cpp",
+      "contains": [
+        "mod_arena.note_intermediate_create_with_cover_(\n    pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)",
+        "mod_arena.note_intermediate_create_with_cover_(\n    flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)",
+        "mod_arena.note_intermediate_create_with_cover_(\n    mod_env, reinterpret_cast<void**>(&mod_env), nullptr)"
+      ]
+    },
+    {
+      "ac": "AC3_hot_path_evaluator_workspace_tree",
+      "path": "src/compiler/evaluator_workspace_tree.cpp",
+      "contains": [
+        "ar->note_intermediate_create_with_cover_(\n        env, reinterpret_cast<void**>(&env), nullptr)"
+      ]
+    },
+    {
+      "ac": "AC4_zero_cost_preserved",
+      "path": "src/core/arena.ixx",
+      "contains": [
+        "general_object_pin_required_active()",
+        "in_render_hotpath()",
+        "kMaxSmallSize",
+        "small_pool_.owns(ptr)"
+      ]
+    },
+    {
+      "ac": "AC5_no_invent",
+      "path": "tests/core/test_arena_required_cover_no_value_only.cpp",
+      "contains": [
+        "ac3180_cover_param_threading",
+        "ac3180_hot_path_cover_declarations",
+        "Issue #3180"
+      ]
+    },
+    {
+      "ac": "AC5_no_design_doc",
+      "path": "docs/design",
+      "forbidden_substring": "3180-"
+    },
+    {
+      "ac": "AC5_no_issues_test",
+      "path": "tests/issues/test_issue_3180.cpp",
+      "forbidden_substring": "."
+    }
+  ]
+}

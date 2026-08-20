@@ -1096,7 +1096,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_arena_dtor_clears_hooks.cpp` (—) [domain_suite, theme_core] — AC1: After dtor, hook callables destroyed (shared_ptr capture use_count)
 - `tests/core/test_arena_lifecycle.cpp` (—) [domain_suite, theme_core] — test_arena_lifecycle.cpp — Merged #1947/#1954 + #300 + #1359 (Anqi 2026-07-21).
 - `tests/compiler/test_arena_moving_densify_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query exposes pin_contract / untracked / production-hard after window
-- `tests/core/test_arena_required_cover_no_value_only.cpp` (—) [domain_suite, theme_core] — Off / render-hotpath single-load zero-cost contract preserved (AC3).
+- `tests/core/test_arena_required_cover_no_value_only.cpp` (—) [large, domain_suite, theme_core] — Off / render-hotpath single-load zero-cost contract preserved (AC3).
 - `tests/compiler/test_ast_column_compaction_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #261/#405/#414/#416 (#1978 renamed): issue# moved from filename to header.
 - `tests/orch/test_bare_bp_resolve.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_bare_bp_resolve_3179.cpp
 - `tests/compiler/test_bidirectional_annotation.cpp` (—) [domain_suite, theme_compiler] — tests/test_bidirectional_annotation.cpp — Issue #1413: True

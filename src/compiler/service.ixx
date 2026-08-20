@@ -2278,6 +2278,17 @@ public:
         auto alloc = arena_.allocator();
         auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
         auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        // Issue #3180: arena-pool/flat are long-lived across the parse /
+        // eval cycle (live until arena teardown). Declare slot cover on
+        // the stack-stable pointer fields so densify rewrites them.
+        if (pool_ptr) {
+            arena_.note_intermediate_create_with_cover_(
+                pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);
+        }
+        if (flat_ptr) {
+            arena_.note_intermediate_create_with_cover_(
+                flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr);
+        }
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -4108,6 +4119,17 @@ public:
         auto alloc = mod_arena.allocator();
         auto* pool_ptr = mod_arena.create<aura::ast::StringPool>(alloc);
         auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
+        // Issue #3180: per-module pool/flat are long-lived (live until
+        // arena reset). Declare slot cover on the stack-stable pointer
+        // fields so densify rewrites them.
+        if (pool_ptr) {
+            mod_arena.note_intermediate_create_with_cover_(
+                pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);
+        }
+        if (flat_ptr) {
+            mod_arena.note_intermediate_create_with_cover_(
+                flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr);
+        }
         auto pr = aura::parser::parse_to_flat(source, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));

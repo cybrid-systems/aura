@@ -133,6 +133,135 @@ static std::string::size_type find_function_body_close_(const std::string& src,
     return std::string::npos;
 }
 
+// Issue #3180: production small-pool allocate call sites to true cover
+// (slot / EXEMPT). Under production_defaults_active() + required, every
+// small-pool intermediate create must declare cover at the allocate site
+// — slot (stable field pointer) for survivors, EXEMPT(reason) for
+// transients. Resolves the residual of #3156 that fail-closed inventory
+// + sticky-off under production is migrated to a clean cover-declared
+// happy path (counter == 0 after production soak).
+//
+//   AC1: maybe_note_allocate_intermediate_ accepts optional slot/reason
+//        parameters (issue #3180) — default nullptr preserves legacy
+//        fail-closed behavior under required.
+//   AC2: allocate_raw_impl + allocate_raw + allocate_checked forward
+//        cover_slot/cover_reason to maybe_note_allocate_intermediate_
+//        (single wire point, #3179 pattern).
+//   AC3: Hot-path callers in evaluator_eval_flat / service /
+//        evaluator_module_loader / evaluator_workspace_tree provide
+//        slot (long-lived) or EXEMPT reason (transient) at the
+//        create site.
+//   AC4: Soft / no-env / WAL-off / render-hotpath zero-cost contract
+//        preserved (early-return guard before any cover logic).
+
+static void ac3180_cover_param_threading() {
+    std::println("\n--- #3180 AC1+AC2: cover_slot/cover_reason threading ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(!arena.empty(), "AC1+AC2: arena.ixx readable");
+
+    // AC1: maybe_note_allocate_intermediate_ signature with optional slot/reason.
+    CHECK(arena.find("void maybe_note_allocate_intermediate_(void* ptr, std::size_t size,") !=
+              std::string::npos,
+          "AC1: maybe_note_allocate_intermediate_ has size param (then optional slot/reason)");
+    CHECK(arena.find("void** slot = nullptr,") != std::string::npos,
+          "AC1: maybe_note_allocate_intermediate_ has optional slot=nullptr");
+    CHECK(arena.find("const char* reason = nullptr") != std::string::npos,
+          "AC1: maybe_note_allocate_intermediate_ has optional reason=nullptr");
+
+    // AC2: allocate_raw_impl + allocate_raw + allocate_checked forward cover.
+    CHECK(arena.find("void* allocate_raw_impl(std::size_t size, std::size_t alignment,") !=
+              std::string::npos,
+          "AC2: allocate_raw_impl signature has size/alignment (then cover params)");
+    CHECK(arena.find("void** cover_slot = nullptr,") != std::string::npos,
+          "AC2: allocate_raw_impl has cover_slot param");
+    CHECK(arena.find("const char* cover_reason = nullptr") != std::string::npos,
+          "AC2: allocate_raw_impl has cover_reason param");
+    // maybe_note_allocate_intermediate_ called with cover from allocate_raw_impl.
+    const auto impl_cover_call =
+        arena.find("maybe_note_allocate_intermediate_(ptr, size, cover_slot, cover_reason)");
+    CHECK(impl_cover_call != std::string::npos,
+          "AC2: allocate_raw_impl forwards cover_slot/cover_reason to "
+          "maybe_note_allocate_intermediate_");
+
+    // allocate_checked forwards cover too.
+    CHECK(arena.find("void* ptr = allocate_raw_impl(size, alignment, cover_slot, cover_reason)") !=
+              std::string::npos,
+          "AC2: allocate_checked forwards cover to allocate_raw_impl");
+    CHECK(arena.find("allocate_checked(std::size_t size, std::size_t alignment") !=
+              std::string::npos,
+          "AC2: allocate_checked signature has cover params");
+
+    // AC4: Soft / no-env / WAL-off / render-hotpath early-return guard
+    // preserved (existing single required-active load).
+    CHECK(arena.find("if (!aura::core::lifetime::general_object_pin_required_active())") !=
+              std::string::npos,
+          "AC4: required-active guard preserved (zero-cost Soft/Off path)");
+    CHECK(arena.find("if (aura::core::arena_policy::in_render_hotpath())") != std::string::npos,
+          "AC4: render-hotpath guard preserved");
+}
+
+static void ac3180_hot_path_cover_declarations() {
+    std::println("\n--- #3180 AC3: hot-path callers declare cover ---");
+    // AC3: production hot-path callers follow up with cover declarations
+    // (slot for survivors, EXEMPT for transients). Each file under
+    // tests/core sees the cover pattern at the create<T>() site.
+    const auto eval_flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto service = read_file("src/compiler/service.ixx");
+    const auto mod_load = read_file("src/compiler/evaluator_module_loader.cpp");
+    const auto ws_tree = read_file("src/compiler/evaluator_workspace_tree.cpp");
+
+    // Slot declarations (long-lived survivors).
+    CHECK(eval_flat.find("note_intermediate_create_with_cover_(\n                pat_pool, "
+                         "reinterpret_cast<void**>(&pat_pool), nullptr)") != std::string::npos,
+          "AC3: evaluator_eval_flat declares pat_pool slot cover");
+    CHECK(eval_flat.find("note_intermediate_create_with_cover_(\n                pat_flat, "
+                         "reinterpret_cast<void**>(&pat_flat), nullptr)") != std::string::npos,
+          "AC3: evaluator_eval_flat declares pat_flat slot cover");
+
+    // Transient EXEMPT (reason-string) declarations.
+    CHECK(eval_flat.find("\"eval-flat-closure-body-transient\"") != std::string::npos,
+          "AC3: evaluator_eval_flat declares cl_flat EXEMPT(transient)");
+    CHECK(eval_flat.find("\"require-import-parse-transient\"") != std::string::npos,
+          "AC3: evaluator_eval_flat declares ipool/iflat EXEMPT(transient)");
+    CHECK(eval_flat.find("\"inst-env-cache-transient\"") != std::string::npos,
+          "AC3: evaluator_eval_flat declares cached_env EXEMPT(transient)");
+
+    // service.ixx — parse_to_flat pool/flat slot cover on arena_ + module_arena.
+    CHECK(service.find("note_intermediate_create_with_cover_(\n                pool_ptr, "
+                       "reinterpret_cast<void**>(&pool_ptr), nullptr)") != std::string::npos,
+          "AC3: service arena parse_to_flat declares pool/flat slot cover");
+    CHECK(service.find("note_intermediate_create_with_cover_(\n                flat_ptr, "
+                       "reinterpret_cast<void**>(&flat_ptr), nullptr)") != std::string::npos,
+          "AC3: service arena parse_to_flat declares pool/flat slot cover");
+    CHECK(service.find("mod_arena.note_intermediate_create_with_cover_(\n            "
+                       "pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)") !=
+              std::string::npos,
+          "AC3: service module_arena parse_to_flat declares pool slot cover");
+    CHECK(service.find("mod_arena.note_intermediate_create_with_cover_(\n            "
+                       "flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)") !=
+              std::string::npos,
+          "AC3: service module_arena parse_to_flat declares flat slot cover");
+
+    // evaluator_module_loader.cpp — pool/flat/env slot cover.
+    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_(\n    "
+                        "pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)") !=
+              std::string::npos,
+          "AC3: evaluator_module_loader declares pool slot cover");
+    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_(\n    "
+                        "flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)") !=
+              std::string::npos,
+          "AC3: evaluator_module_loader declares flat slot cover");
+    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_(\n    "
+                        "mod_env, reinterpret_cast<void**>(&mod_env), nullptr)") !=
+              std::string::npos,
+          "AC3: evaluator_module_loader declares mod_env slot cover");
+
+    // evaluator_workspace_tree.cpp — env slot cover.
+    CHECK(ws_tree.find("ar->note_intermediate_create_with_cover_(\n        env, "
+                       "reinterpret_cast<void**>(&env), nullptr)") != std::string::npos,
+          "AC3: evaluator_workspace_tree declares env slot cover");
+}
+
 // AC1 + AC2: maybe_note_allocate_intermediate_ routes through with_cover_
 // (not auto_wire_) under required.
 static void ac1_2_maybe_allocate_routes_to_with_cover() {
@@ -382,6 +511,9 @@ int run_test_arena_required_cover_no_value_only() {
     ac1_2_maybe_allocate_routes_to_with_cover();
     ac3_4_with_cover_required_branch_closes_dual_track();
     ac5_6_7_counter_accessor_reset();
+    // Issue #3180: cover_slot/cover_reason threading + hot-path cover declarations.
+    ac3180_cover_param_threading();
+    ac3180_hot_path_cover_declarations();
     ac8_soft_off_zero_cost();
     ac9_linter_self_test();
     ac10_no_invent_docs();
