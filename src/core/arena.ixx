@@ -881,6 +881,16 @@ export struct AdaptiveCompactResult {
     std::size_t objects_moved_total = 0;
     std::size_t untracked_kept_total = 0;
     bool moving_incomplete_remap_any = false;
+    // Issue #3182: aggregate of LiveCompactResult::post_moving_stale_count
+    // (EnvFrame / Closure / FFI / JIT live ptr residual on known
+    // root paths — #3055 canary axis) across all arenas in this
+    // densify window. Per-call (not process-cumulative). When
+    // objects_moved_total > 0 AND post_moving_stale_count_total > 0,
+    // pin_contract_held is forced false below — unified success gate
+    // surfaces the stale EnvFrame/Closure residual (AC2). Soft / no
+    // Moving never reaches here so this is observe + gate, not extra
+    // walk (AC3).
+    std::size_t post_moving_stale_count_total = 0;
     // Issue #2775: aggregate of LiveCompactResult::external_roots_prep_registered_cleared
     // across all arenas in this densify window. Pure observability for
     // Agent dashboards (caller compliance with "register all external
@@ -896,7 +906,7 @@ export struct AdaptiveCompactResult {
         return bytes_reclaimed_total == 0 && pin_contract_held && !moved_live_objects &&
                root_remap_stable_ref_fail_total == 0 &&
                root_remap_closure_capture_fail_total == 0 && !moving_incomplete_remap_any &&
-               untracked_kept_total == 0;
+               untracked_kept_total == 0 && post_moving_stale_count_total == 0;
     }
 };
 
@@ -3633,8 +3643,19 @@ public:
             // passes it to publish_last_moving_densify_window so Agent
             // dashboards see caller compliance with the prep-API contract.
             out.external_roots_prep_registered_total += r.external_roots_prep_registered_cleared;
+            // Issue #3182: aggregate post_moving_stale_count (#3055 canary
+            // axis — EnvFrame / Closure / FFI / JIT residual on known
+            // root paths). Per-call (not process-cumulative).
+            out.post_moving_stale_count_total += r.post_moving_stale_count;
         }
         if (out.root_remap_stable_ref_fail_total + out.root_remap_closure_capture_fail_total > 0)
+            out.pin_contract_held = false;
+        // Issue #3182 AC2: post_moving_stale residual + objects_moved >
+        // 0 → unified success gate failure. Same level as untracked /
+        // RootRemap fail (pin_contract_held = false, sticky path,
+        // Agent dashboard visible). Empty Soft / no-Moving window
+        // short-circuits via objects_moved_total == 0 (AC3 zero-cost).
+        if (out.objects_moved_total > 0 && out.post_moving_stale_count_total > 0)
             out.pin_contract_held = false;
         return out;
     }
