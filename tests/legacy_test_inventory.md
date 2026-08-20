@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 854 | Preferred destination suites |
-| **Total scanned** | **854** | |
+| `tests/core/test_*.cpp` | 855 | Preferred destination suites |
+| **Total scanned** | **855** | |
 
 ### Related artifacts
 
@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 87 | 87 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 253 | 253 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 103 | 103 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
@@ -258,6 +258,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_aura_jit_unused_fn_lock.cpp`
 - `tests/compiler/test_aura_result_error_policy.cpp`
 - `tests/compiler/test_aura_sandbox_env.cpp`
+- `tests/orch/test_bare_bp_resolve.cpp`
 - `tests/compiler/test_batch_dirty_cascade.cpp`
 - `tests/compiler/test_batch_dirty_discipline.cpp`
 - `tests/compiler/test_bidirectional_annotation.cpp`
@@ -1071,13 +1072,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (87)
+### `arena_compaction` — Arena / compaction / GC (88)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (87)
+#### domain/ (88)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1097,6 +1098,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_arena_moving_densify_health.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Query exposes pin_contract / untracked / production-hard after window
 - `tests/core/test_arena_required_cover_no_value_only.cpp` (—) [domain_suite, theme_core] — Off / render-hotpath single-load zero-cost contract preserved (AC3).
 - `tests/compiler/test_ast_column_compaction_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #261/#405/#414/#416 (#1978 renamed): issue# moved from filename to header.
+- `tests/orch/test_bare_bp_resolve.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_bare_bp_resolve_3179.cpp
 - `tests/compiler/test_bidirectional_annotation.cpp` (—) [domain_suite, theme_compiler] — tests/test_bidirectional_annotation.cpp — Issue #1413: True
 - `tests/compiler/test_closure_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_closure_batch.cpp
 - `tests/core/test_compact_nodes_provenance_schema_remap.cpp` (—) [domain_suite, theme_core] — Agent closed-loop tracking.

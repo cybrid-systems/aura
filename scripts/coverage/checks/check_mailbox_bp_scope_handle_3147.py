@@ -49,6 +49,10 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_any(tokens, label, hay):
+        if not any(t in hay for t in tokens):
+            fails.append(f"{label}: missing any of {tokens!r} (none of the alternate wire patterns found)")
+
     spawn = _read("src/orch/agent_spawn.h")
     scope = _read("src/orch/agent_scope.h")
     test = _read("tests/orch/test_per_scope_bp_admit.cpp")
@@ -60,7 +64,14 @@ def main() -> int:
     # AgentHandle gains a bp_scope_id field (layout-stable end of struct).
     must("std::string bp_scope_id{};", "AC1 AgentHandle::bp_scope_id field present", spawn)
     # Spawn propagates spec.bp_scope_id → handle.bp_scope_id.
-    must("h.bp_scope_id = std::move(spec.bp_scope_id);", "AC1 spawn propagates spec.bp_scope_id → handle", spawn)
+    must_any(
+        [
+            "h.bp_scope_id = std::move(spec.bp_scope_id);",
+            "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);",
+        ],
+        "AC1 spawn propagates spec.bp_scope_id → handle (#3147 std::move or #3179 resolver)",
+        spawn,
+    )
     # agent_send BP arm passes h.bp_scope_id (instead of empty default).
     # The exact text is searched twice (agent_send + emit_keepalive).
     must(
