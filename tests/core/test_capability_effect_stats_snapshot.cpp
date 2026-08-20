@@ -174,6 +174,18 @@ int run_test_capability_effect_stats_snapshot() {
         CHECK(final_s.checks >= final_s.denied, "AC1: final checks >= denied");
     }
 
+    // ── Issue #3177: durable high-risk session_bound snapshot field ──────────
+    // AC4: capability_durable_session_bound_total appended at
+    // CapabilityEffectMetrics END per #2906. CapabilityEffectStatsSnapshot
+    // exposes the new field (load via acquire in snapshot path).
+    {
+        std::println("\n--- #3177 AC4: capability_durable_session_bound snapshot field ---");
+        reset_capability_effects_for_test();
+        const auto before = snapshot_capability_effect_stats().capability_durable_session_bound;
+        CHECK(before == 0,
+              "AC4: snapshot field defaults to 0 after reset (no durable high-risk granted)");
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

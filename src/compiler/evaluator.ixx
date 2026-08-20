@@ -6494,6 +6494,22 @@ public:
     void grant_effect_durable(std::uint64_t tenant_id, std::string_view name,
                               std::uint16_t effect_bits, std::uint64_t provenance_mutation_id = 0,
                               std::string_view reason = {}) noexcept;
+    // Issue #3177: explicit privilege-sticky escape for durable high-risk
+    // grants under production (Restricted/Strict). Stamps single_use=false
+    // AND session_bound=false (true sticky — survives outermost mid exit),
+    // but ONLY when (a) caller holds TenantAdmin (or "tenant-admin" /
+    // "capability") AND (b) the audit reason is non-empty AND (c) the
+    // AURA_ALLOW_DURABLE_STICKY env var is set to a truthy value. Missing
+    // any of the three gates denies with the same SE reasons as
+    // grant_effect_durable (#2967). Off / Soft path: no env gate, plain
+    // sticky (zero-cost contract, AC2). Use only for operator-supervised
+    // long-lived admin paths — the production-default surface
+    // (grant_effect_durable) now force-binds session_bound under production
+    // (#3177), so sticky is opt-in for callers that explicitly need it.
+    void grant_effect_durable_sticky(std::uint64_t tenant_id, std::string_view name,
+                                     std::uint16_t effect_bits,
+                                     std::uint64_t provenance_mutation_id = 0,
+                                     std::string_view reason = {}) noexcept;
     // Issue #2944: mutation-session grant — mid-bound + session_bound=true.
     // Auto-revoked on outermost MutationBoundary exit for that mid
     // (success or fail). Issue #3048: also revoked on steal-complete /

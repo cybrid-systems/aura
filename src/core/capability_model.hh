@@ -297,6 +297,14 @@ struct CapabilityEffectMetrics {
     // provenance_ok check side, #2707): this counter fires at grant write
     // side. Appended at struct END (never insert mid-struct: #2906).
     std::atomic<std::uint64_t> capability_grant_mid_refused_total{0};
+    // Issue #3177: production (Restricted/Strict) durable high-risk grants
+    // (Mutate / MacroSelfEvo / TenantAdmin / Syscall) now stamp
+    // session_bound=true by default so outermost MutationBoundaryGuard exit
+    // / TenantScope dtor / steal-abort revokes them (#2944/#3048/#3142
+    // path). The original single_use=false (privilege-sticky) is closed.
+    // Appended at struct END per #2906 — never insert mid-struct (stale
+    // module BMIs writing at wrong offsets corrupt neighboring heap).
+    std::atomic<std::uint64_t> capability_durable_session_bound_total{0};
 };
 
 // Issue #2149: security provenance vocabulary — Mutation only.
@@ -1615,6 +1623,10 @@ inline void reset_capability_effects_for_test() noexcept {
     // Issue #3090: production grant refused when prov.mutation_id == 0
     // (Restricted/Strict). Reset alongside the rest of the grant counters.
     m.capability_grant_mid_refused_total.store(0, std::memory_order_relaxed);
+    // Issue #3177: durable high-risk session_bound stamping counter
+    // (Restricted/Strict). Reset alongside the rest of the durable / session
+    // lifecycle counters.
+    m.capability_durable_session_bound_total.store(0, std::memory_order_relaxed);
 }
 
 struct CapabilityEffectStatsSnapshot {
@@ -1680,6 +1692,12 @@ struct CapabilityEffectStatsSnapshot {
     // check side): this is the grant-write-side refuse counter. Additive
     // on query:capability-effect-stats (key grant-mid-refused-total).
     std::uint64_t grant_mid_refused = 0;
+    // Issue #3177: durable high-risk session_bound stamping counter
+    // (Restricted/Strict production force). Reuses the existing
+    // session_grant_total surface for live residual, but this separate
+    // counter lets Agent dashboards chart the durable→session-bound force
+    // separately from #2944 explicit session grants.
+    std::uint64_t capability_durable_session_bound = 0;
 };
 
 // Issue #2430: multi-field consistent snapshot (#1840 / #2426 pattern).
@@ -1760,6 +1778,9 @@ struct CapabilityEffectStatsSnapshot {
             m.capability_session_revoke_abort_total.load(std::memory_order_acquire);
         // Issue #3090: production grant refused when prov.mutation_id == 0.
         s.grant_mid_refused = m.capability_grant_mid_refused_total.load(std::memory_order_acquire);
+        // Issue #3177: durable high-risk session_bound stamping counter.
+        s.capability_durable_session_bound =
+            m.capability_durable_session_bound_total.load(std::memory_order_acquire);
 
         // Double-check most-bumped counters for torn multi-field view.
         if (m.capability_effect_enforced_total.load(std::memory_order_acquire) == s.enforced &&

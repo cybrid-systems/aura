@@ -837,9 +837,133 @@ void Evaluator::grant_effect_durable(std::uint64_t tenant_id, std::string_view n
         g_capability_effect_metrics().capability_durable_high_risk_grant_total.fetch_add(
             1, std::memory_order_relaxed);
     }
-    // Issue #3126: act via grant_locked (caller holds mtx); no nested lock.
+    // Issue #3177: production high-risk durable grants now stamp
+    // session_bound=true by default so outermost MutationBoundaryGuard exit
+    // / TenantScope dtor / steal-abort revokes them (#2944/#3048/#3142
+    // path). Closes the last privilege-sticky surface for self-modifying
+    // Agents under long-running multi-tenant loads. Soft/Off zero-cost (no
+    // session force, AC2). Sticky escape (true privilege-sticky) is opt-in
+    // via grant_effect_durable_sticky + AURA_ALLOW_DURABLE_STICKY env gate.
+    const bool force_session = force_bind && is_high_risk;
     reg_durable.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov,
-                             /*single_use=*/false);
+                             /*single_use=*/false, /*session_bound=*/force_session);
+    if (is_high_risk && force_session) {
+        g_capability_effect_metrics().capability_durable_session_bound_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (!name.empty())
+        grant_capability(std::string(name));
+}
+
+// Issue #3177: explicit privilege-sticky escape for durable high-risk
+// grants under production (Restricted/Strict). Stamps single_use=false
+// AND session_bound=false (true sticky — survives outermost mid exit),
+// but ONLY when (a) caller holds TenantAdmin (or "tenant-admin" /
+// "capability") AND (b) the audit reason is non-empty AND (c) the
+// AURA_ALLOW_DURABLE_STICKY env var is set to a truthy value. Missing
+// any of the three gates denies with the same SE reasons as
+// grant_effect_durable (#2967) plus a new
+// 'durable-sticky-needs-env-allow' reason for the env gate. Off / Soft
+// path: no env gate, plain sticky (zero-cost contract, AC2). Use only
+// for operator-supervised long-lived admin paths — the production-default
+// surface (grant_effect_durable) now force-binds session_bound under
+// production (#3177), so sticky is opt-in for callers that explicitly
+// need it.
+void Evaluator::grant_effect_durable_sticky(std::uint64_t tenant_id, std::string_view name,
+                                            std::uint16_t effect_bits,
+                                            std::uint64_t provenance_mutation_id,
+                                            std::string_view reason) noexcept {
+    using namespace ::aura::core::capability;
+    const bool force_bind = sandbox_mode_ != 0 || effect_sandbox_mode() != 0;
+    const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
+    auto prov = make_grant_provenance(provenance_mutation_id, force_bind, /*node_id=*/0, fiber);
+    using aura::compiler::security::kEffectMacroSelfEvo;
+    using aura::compiler::security::kEffectMutate;
+    using aura::compiler::security::kEffectSyscall;
+    using aura::compiler::security::kEffectTenantAdmin;
+    constexpr std::uint16_t kHighRiskMask = static_cast<std::uint16_t>(
+        kEffectMutate | kEffectMacroSelfEvo | kEffectTenantAdmin | kEffectSyscall);
+    const bool is_high_risk = (effect_bits & kHighRiskMask) != 0;
+    const auto self_tenant = static_cast<std::uint64_t>(capability_tenant_id_);
+    const bool foreign_target = tenant_id != 0 && tenant_id != self_tenant;
+    auto& reg_sticky = g_capability_registry();
+    std::lock_guard<std::mutex> lock(reg_sticky.mtx);
+    const auto held_sticky = reg_sticky.effects_for_locked(self_tenant);
+    const bool is_admin = has_effect(held_sticky, Effect::TenantAdmin);
+    // Issue #2969 AC1: foreign-tenant write-fence — same as #2967.
+    if (force_bind && foreign_target && !is_admin) {
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        const auto mid = provenance_mutation_id != 0
+                             ? provenance_mutation_id
+                             : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+        const auto tenant = tenant_id != 0 ? tenant_id : self_tenant;
+        const auto fid = static_cast<std::int64_t>(fiber);
+        aura::core::capability::g_capability_effect_metrics()
+            .capability_grant_foreign_tenant_deny_total.fetch_add(1, std::memory_order_relaxed);
+        emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch, effect_bits,
+                                    name, "grant-foreign-tenant-needs-tenant-admin",
+                                    /*denied=*/true, fid);
+        return; // deny — no registry write, no allow-counter bump (AC4)
+    }
+    // Issue #2967: production gate — TenantAdmin + mandatory reason.
+    // Issue #3177: adds the env gate (AURA_ALLOW_DURABLE_STICKY=1) on
+    // top — explicit opt-in for true privilege-sticky escapes.
+    if (force_bind && is_high_risk) {
+        using ::aura::core::security_event::SecurityEventKind;
+        using ::aura::core::security_event_wal::emit_security_event_durable;
+        const auto epoch = ::aura::core::current_mutation_epoch();
+        const auto mid = provenance_mutation_id != 0
+                             ? provenance_mutation_id
+                             : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+        const auto tenant =
+            tenant_id != 0 ? tenant_id : static_cast<std::uint64_t>(capability_tenant_id_);
+        const auto fid = static_cast<std::int64_t>(fiber);
+        if (!is_admin) {
+            g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name, "durable-grant-needs-tenant-admin",
+                                        /*denied=*/true, fid);
+            return; // deny — no grant, no allow-counter bump (AC4)
+        }
+        if (reason.empty()) {
+            g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name, "durable-grant-reason-required",
+                                        /*denied=*/true, fid);
+            return; // deny — no grant, no allow-counter bump (AC4)
+        }
+        // Issue #3177: sticky requires env gate AURA_ALLOW_DURABLE_STICKY=1
+        // under production (Restricted/Strict). Deny otherwise with the
+        // same deny counter + a dedicated SE reason so dashboards can
+        // distinguish sticky-needs-env from sticky-granted-with-env.
+        const char* env = std::getenv("AURA_ALLOW_DURABLE_STICKY");
+        const bool env_ok = env != nullptr && env[0] == '1';
+        if (!env_ok) {
+            g_capability_effect_metrics().capability_durable_grant_deny_total.fetch_add(
+                1, std::memory_order_relaxed);
+            emit_security_event_durable(SecurityEventKind::EffectDeny, tenant, mid, epoch,
+                                        effect_bits, name, "durable-sticky-needs-env-allow",
+                                        /*denied=*/true, fid);
+            return; // deny — no grant, no allow-counter bump (AC4)
+        }
+    }
+    if (is_high_risk) {
+        g_capability_effect_metrics().capability_durable_high_risk_grant_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    // Issue #3177: NO session_bound force — this is the explicit sticky
+    // escape. Operator-supervised long-lived admin grants survive
+    // outermost MutationBoundary exit (true privilege-sticky).
+    reg_sticky.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov,
+                            /*single_use=*/false, /*session_bound=*/false);
     if ((effect_bits & static_cast<std::uint16_t>(Effect::Render)) != 0 && name.empty()) {
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
             m->render_effect_granted_total.fetch_add(1, std::memory_order_relaxed);

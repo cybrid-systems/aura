@@ -2746,6 +2746,25 @@ def cmd_lint():
             "Issue #2882 production default single-use linter failed — run python3 scripts/coverage/checks/check_production_default_single_use_2882.py"
         )
         return r
+    # Issue #3177: production durable high-risk grants now stamp
+    # session_bound=true under Restricted/Strict so outermost
+    # MutationBoundaryGuard exit / TenantScope dtor / steal-abort revokes
+    # them (#2944/#3048/#3142 path). Closes the last privilege-sticky
+    # surface for self-modifying Agents under long-running multi-tenant
+    # loads. Sticky escape via grant_effect_durable_sticky +
+    # AURA_ALLOW_DURABLE_STICKY=1 env gate stays opt-in. Extends
+    # test_capability_single_use_consume.cpp (#81934 / #81967); no
+    # docs/design/ (#1655).
+    dsb_script = COVERAGE_CHECKS / "check_durable_session_bind_3177.py"
+    if not dsb_script.exists():
+        fail(f"missing {dsb_script}")
+        return 1
+    r = run([sys.executable, str(dsb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3177 durable session_bind linter failed — run python3 scripts/coverage/checks/check_durable_session_bind_3177.py"
+        )
+        return r
     # Issue #2944: mutation-session grants (mid-bound + auto-revoke on
     # outermost MutationBoundary exit). Extends
     # test_capability_single_use_consume.cpp (#81967); no docs/design/
