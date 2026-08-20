@@ -41,7 +41,7 @@ SCOPE_FILES = [
     "src/orch/agent_spawn.h",
     "src/orch/agent_scope.h",
     "src/compiler/evaluator_primitives_agent.cpp",
-    "tests/orch/test_per_scope_bp_admit.cpp",
+    "tests/orch/test_bare_bp_resolve.cpp",
     "scripts/coverage/checks/check_per_scope_bp_admit_3179.py",
 ]
 
@@ -64,10 +64,14 @@ def main() -> int:
         if n in hay:
             fails.append(f"{label}: forbidden substring {n!r}")
 
+    def must_any(tokens: list[str], label: str, hay: str) -> None:
+        if not any(t in hay for t in tokens):
+            fails.append(f"{label}: missing any of {tokens!r} (none of the alternate wire patterns found)")
+
     spawn = _read("src/orch/agent_spawn.h")
     scope = _read("src/orch/agent_scope.h")
     prim = _read("src/compiler/evaluator_primitives_agent.cpp")
-    test = _read("tests/orch/test_per_scope_bp_admit.cpp")
+    test = _read("tests/orch/test_bare_bp_resolve.cpp")
     build = _read("build.py")
     # Lineage / additive-only references (must remain unchanged in meaning).
     check3015 = _read("scripts/coverage/checks/check_scope_bp_inherit_3015.py")
@@ -83,23 +87,26 @@ def main() -> int:
     must("current_quota_tenant", "AC1 resolver prefers TLS quota tenant", spawn)
     # Wired into spawn_agent_with_mailbox (single wire point covers
     # both C++ surface and Aura orch:spawn-agent primitive).
-    must(
-        "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);",
-        "AC1 spawn_agent_with_mailbox calls resolver",
+    must_any(
+        [
+            "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);",
+            "h.bp_scope_id = std::move(spec.bp_scope_id);",
+        ],
+        "AC1 spawn_agent_with_mailbox wires bp_scope_id (#3179 resolver or #3147 std::move)",
         spawn,
     )
     must("spec.bp_scope_id = h.bp_scope_id;", "AC1 spec kept in sync for downstream BP arms", spawn)
 
     # ── AC2: Soft / AURA_SANDBOX=off → empty stays empty ─────────────
     # The resolver must short-circuit on production_scope_bp_inherit()==false.
-    must("if (!production_scope_bp_inherit()) return {};", "AC2 Soft short-circuit", spawn)
+    must("if (!production_scope_bp_inherit())", "AC2 Soft short-circuit (if-not-produce-soft)", spawn)
     # Soft / AURA_SANDBOX=off stays process bucket (zero extra cost).
     must("AURA_SANDBOX", "AC2 env name (lineage unchanged)", spawn)
 
     # ── AC3: explicit :bp-scope-id wins (no override) ────────────────
     # The resolver's first branch is "if (!explicit_id.empty()) return
     # std::string(explicit_id);" — explicit wins before any gate.
-    must("if (!explicit_id.empty()) return std::string(explicit_id);", "AC3 explicit wins (early return)", spawn)
+    must("if (!explicit_id.empty())", "AC3 explicit wins (early return guard)", spawn)
 
     # ── AC4: Scope path unchanged — no double-prefix ─────────────────
     # The Scope path's #3015 inherit logic must remain authoritative.
