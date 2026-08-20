@@ -206,11 +206,17 @@ def main() -> int:
     )
 
     # ── AC5: Recursive children clone passes local_in_quote ──
-    pos_recur = me.find("clone_macro_body_at_depth(target, target_pool, source, source_pool, cid,")
+    # The recursive call is uniquely identified by the `source_pool,
+    # cid,` arg pair (the wrapper call from clone_macro_body uses
+    # `body_id,` instead). clang-format may wrap the call onto
+    # continuation lines, so check a 700-char window after the anchor
+    # for `local_in_quote` (and `local_in_unquote` for the #2807
+    # collateral).
+    pos_recur = me.find("source_pool, cid,")
     recur_window = ""
     if pos_recur != -1:
-        recur_window = me[pos_recur : pos_recur + 500]
-    ac5_threaded = "local_in_quote" in recur_window
+        recur_window = me[max(0, pos_recur - 200) : pos_recur + 500]
+    ac5_threaded = "local_in_quote" in recur_window and "local_in_unquote" in recur_window
     ac5_ok = ac5_threaded
     if not ac5_ok:
         fails.append("AC5: recursive children clone must pass local_in_quote")
