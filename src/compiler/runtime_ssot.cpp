@@ -172,6 +172,28 @@ extern "C" void* aura_get_aot_metrics(void) {
     return g_aot_metrics;
 }
 
+// Issue #3177 follow-up (ASAN stack-use-after-scope): clear the
+// process-wide g_aot_metrics pointer iff it currently points to
+// `metrics`. Called from Evaluator's destructor before
+// aura_cleanup_aot_state — CompilerService declares `evaluator_`
+// before `metrics_` (service.ixx ~11503 / ~13793), so C++ destroys
+// `metrics_` FIRST (reverse declaration order). By the time
+// ~Evaluator() runs, the metrics object is already dead.
+// aura_cleanup_aot_state → aot_invalidate_all_stale_slots_for_eval_impl
+// calls aot_metrics() (reads g_aot_metrics) and bumps
+// aot_reload_fall_back_slot_invalidate_total via fetch_add on dead
+// stack memory — ASan catches this as stack-use-after-scope at
+// aura_jit_bridge.cpp:2124. Clearing g_aot_metrics before
+// aura_cleanup_aot_state makes the metric bumps short-circuit on
+// nullptr. The pointer comparison avoids clobbering a still-live
+// pointer (e.g. when nested CompilerService shares the global).
+extern "C" void aura_clear_aot_metrics_for_eval(void* metrics) {
+    if (!metrics)
+        return;
+    if (g_aot_metrics == static_cast<aura::compiler::CompilerMetrics*>(metrics))
+        g_aot_metrics = nullptr;
+}
+
 extern "C" std::uint64_t aura_aot_metrics_lazy_init_total(void) {
     return g_aot_metrics_lazy_init_total.load(std::memory_order_relaxed);
 }

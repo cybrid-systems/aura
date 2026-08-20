@@ -333,6 +333,11 @@ namespace aura::compiler {
 struct CompilerMetrics;
 }
 extern "C" void aura_set_aot_metrics(aura::compiler::CompilerMetrics* m);
+// Issue #3177 follow-up (ASAN stack-use-after-scope): clear
+// g_aot_metrics iff it currently points to `metrics`. See
+// runtime_ssot.cpp / evaluator_ctor.cpp ~Evaluator for the
+// destruction-order rationale.
+extern "C" void aura_clear_aot_metrics_for_eval(void* metrics);
 extern "C" std::int64_t aura_top_cell_get(std::int64_t cell_index);
 // Issue #1493: hold-time adaptive GC safepoint frequency (fiber.cpp).
 extern "C" std::uint32_t aura_gc_frequency_tune_ratio_load(void);

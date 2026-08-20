@@ -323,6 +323,33 @@ static void ac2603_soft_no_cross_workspace_write() {
 
 } // namespace
 
+// Issue #3177 follow-up: aura_clear_aot_metrics_for_eval resets
+// g_aot_metrics iff it currently equals the dying eval's metrics pointer
+// (CompilerService declares evaluator_ before metrics_, so C++ destroys
+// metrics_ first — the destructor must clear the global before the
+// per-slot invalidator reads it). The pointer comparison avoids
+// clobbering a still-live pointer under nested CompilerService.
+static void ac3177_clear_aot_metrics_for_eval_match() {
+    std::println("\n--- #3177 AC: aura_clear_aot_metrics_for_eval matches ---");
+    CompilerMetrics metrics{};
+    aura_set_aot_metrics(&metrics);
+    CHECK(aura_get_aot_metrics() == &metrics, "AC: g_aot_metrics set to &metrics");
+    aura_clear_aot_metrics_for_eval(&metrics);
+    CHECK(aura_get_aot_metrics() == nullptr,
+          "AC: g_aot_metrics cleared after clear_for_eval with matching pointer");
+}
+
+static void ac3177_clear_aot_metrics_for_eval_no_match() {
+    std::println("\n--- #3177 AC: aura_clear_aot_metrics_for_eval non-match ---");
+    CompilerMetrics a{};
+    CompilerMetrics b{};
+    aura_set_aot_metrics(&a);
+    aura_clear_aot_metrics_for_eval(&b);
+    CHECK(aura_get_aot_metrics() == &a,
+          "AC: g_aot_metrics preserved when clear_for_eval gets a non-matching pointer");
+    aura_set_aot_metrics(nullptr);
+}
+
 int run_test_cross_cow_soft_migrate() {
     std::println("test_cross_cow_soft_migrate");
     ac1_soft_migrate();
@@ -336,6 +363,12 @@ int run_test_cross_cow_soft_migrate() {
     ac2603_soft_disabled_no_soft_bump();
     ac2603_schema_and_source();
     ac2603_soft_no_cross_workspace_write();
+    // Issue #3177 follow-up (ASan stack-use-after-scope): ~Evaluator must
+    // clear g_aot_metrics iff it points to its own CompilerMetrics before
+    // aura_cleanup_aot_state runs, otherwise the per-slot invalidator at
+    // aura_jit_bridge.cpp:2124 fetch_adds on dead stack memory.
+    ac3177_clear_aot_metrics_for_eval_match();
+    ac3177_clear_aot_metrics_for_eval_no_match();
     if (g_failed)
         return 1;
     std::println("cross-COW soft migrate #2371 + #2603: OK ({} passed)", g_passed);
