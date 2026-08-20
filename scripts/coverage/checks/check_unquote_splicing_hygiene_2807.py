@@ -39,9 +39,14 @@ def main() -> int:
     build = _read("build.py")
     cmake = _read("CMakeLists.txt")
 
-    # Prefer the pre_scan handler site (cname == ...), with enough lead-in
-    # for the Issue #2807 comment block.
-    pos = me.find('cname == "unquote-splicing"')
+    # Anchor on the pre_scan handler specifically (multi-line check with
+    # metric bump + early return). The bare `cname == "unquote-splicing"`
+    # substring matches multiple call sites after #3181 added clone-walk
+    # in_unquote tracking — fall back to the `) {` form which is unique to
+    # pre_scan (the in_unquote detection uses a single-line `if (...) ...;`).
+    pos = me.find('cname == "unquote-splicing") {')
+    if pos < 0:
+        pos = me.find('cname == "unquote-splicing"')
     if pos < 0:
         pos = me.find("unquote-splicing")
     win = me[max(0, pos - 600) : pos + 500] if pos >= 0 else ""
