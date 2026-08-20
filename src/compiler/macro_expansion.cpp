@@ -1489,11 +1489,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                                      ? "MacroIntroduced"
                                      : "User";
             std::fprintf(stderr,
-                         "[#365/#1247/#2023/#2101/#2806 warning] clone_macro_body exceeded "
+                         "[#3183 warning] clone_macro_body depth-limit hit: "
                          "depth_limit=%d (hard MAX_HYGIENE_DEPTH=%d runtime_cap=%d); "
                          "marker=%s depth=%d "
-                         "[MacroIntroduced provenance path]; falling back to "
-                         "unhygienic substitution (original name).\n",
+                         "[MacroIntroduced provenance path]; deny / NULL_NODE "
+                         "(fail-closed under force_hygienic — behaviour already "
+                         "fail-closed; stale \"unhygienic substitution\" text "
+                         "replaced — #3183).\n",
                          depth_limit, MAX_HYGIENE_DEPTH, runtime_hygiene_depth_cap(), origin,
                          hygiene_depth);
         }
@@ -1755,6 +1757,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // Serial-safe deny: hyg_ctr untouched → no drift vs name_map.size().
             g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
             bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            // Issue #3183: roll back target FlatAST partial additions via
+            // expand_ckpt.try_restore() (mirror steal / pass-limit L2253 / L2768 / L2789).
+            expand_ckpt.try_restore();
             return aura::ast::NULL_NODE;
         }
         // Only consume a serial after the ceiling check passes.
@@ -1780,6 +1785,25 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         auto name = std::string(source_pool.resolve(sid));
         if (detail::hygiene_builtins().count(name))
             return transplant(sid);
+        // Issue #3183: rest path shares the same gensym_cap ceiling as
+        // rename_binding_pre / rename_binding (#2804 / #2811). Without
+        // this check, rest gensyms (g_macro_rest_gensym_serial + name_map
+        // insert) can inflate name_map past the MacroSelfEvo ceiling that
+        // rename_binding_pre enforces — drift + spurious deny when later
+        // bindings hit the cap. Deny BEFORE advancing the serial, with
+        // same rollback surface as ceiling mid-walk deny in rename_binding_pre.
+        const auto gensym_cap_rest = effective_max_gensym_map_size();
+        if (gensym_cap_rest > 0 && name_map->size() >= gensym_cap_rest) {
+            g_macro_hygiene_last_limit_reason.store(1, std::memory_order_relaxed);
+            g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+            g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+            g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
+            g_gensym_serial_drift_total.fetch_add(1, std::memory_order_relaxed);
+            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            expand_ckpt.try_restore();
+            return aura::ast::NULL_NODE;
+        }
         auto it = name_map->find(name);
         if (it != name_map->end()) {
             // Already mapped — ensure rest-shaped gensym; repair if not.
@@ -1936,7 +1960,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
-            bump_fiber_hygiene_on_violation(aura_fiber_current_id());
+            // Issue #3183: mid-walk ceiling deny in rename_binding — roll
+            // back target FlatAST partial additions via expand_ckpt.try_restore()
+            // (same pattern as rename_binding_pre / steal / pass-limit —
+            // L1749 / L2253 / L2768 / L2789). nm_ckpt RAII on this frame
+            // rolls back name_map on return. hyg_ctr untouched above so
+            // serial stays safe vs name_map.size() (#2811).
+            expand_ckpt.try_restore();
             return aura::ast::NULL_NODE;
         }
         // Gensym! Create fresh name and track in name_map

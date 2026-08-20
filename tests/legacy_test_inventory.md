@@ -1639,7 +1639,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_stamp_rest_param_hygiene_marker.cpp` (—) [domain_suite, theme_compiler] — AC1: stamp_rest_param_hygiene cites #2808; set_marker MacroIntroduced
 - `tests/compiler/test_static_reflect_selfmod_validation_task6.cpp` (—) [domain_suite, theme_compiler] — Issue #454/#551/#587/#594 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
-- `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
+- `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
 ### `jit_incremental` — JIT / AOT / incremental relower (85)
 
