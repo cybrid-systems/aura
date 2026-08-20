@@ -2201,6 +2201,15 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
     if (node >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :tweak-literal: node out of range"});
+    // Issue #3191: macro hygiene default-deny on lockless tweak-literal
+    // (post-#3131 scalar residual). Sibling #2249 remove-node pattern.
+    if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
+        record_hygiene_violation_attempt();
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :tweak-literal: cannot tweak-literal MacroIntroduced without "
+            "global (hygiene:set-allow-macro-mutate! #t)"});
+    }
     auto delta = as_int(a[1]);
     auto v = flat.get(node);
     if (v.tag != aura::ast::NodeTag::LiteralInt)

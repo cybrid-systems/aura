@@ -2030,6 +2030,22 @@ def cmd_lint():
             "Issue #3190 residual drain outermost stamp linter failed — run python3 scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py"
         )
         return r
+    # Issue #3191: post-#3131 default-deny residual on lockless tweak-literal
+    # + mutate:sv-add-coverpoint / mutate:sv-weaken-property. Three gates close
+    # the residual where #3027 / #3115 scalar prims already have the hygiene
+    # reject helper. Global (hygiene:set-allow-macro-mutate! #t) still unlocks
+    # all three. Soft/Off: zero extra cost on non-macro (single atomic load).
+    # Extends test_hygiene_mutate_closed_loop; no docs/design / invent.
+    mhd3191_script = COVERAGE_CHECKS / "check_macro_hygiene_default_deny_3191.py"
+    if not mhd3191_script.exists():
+        fail(f"missing {mhd3191_script}")
+        return 1
+    r = run([sys.executable, str(mhd3191_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3191 macro hygiene default-deny linter failed — run python3 scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.
