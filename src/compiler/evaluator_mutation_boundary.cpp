@@ -242,9 +242,9 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         std::vector<aura::compiler::Constraint> drain_unresolved;
         auto drain = pre_stamp_cs->drain_pending_full_solve_before_commit(&drain_unresolved);
         if (drain != aura::compiler::SolveResult::SOLVED) {
-            const bool hard =
-                aura::compiler::typed_audit::production_defaults_active() ||
-                ev->get_strategy() == aura::compiler::typed_audit::AuditStrategy::Full;
+            const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                              aura::compiler::typed_audit::get_strategy() ==
+                                  aura::compiler::typed_audit::AuditStrategy::Full;
             if (hard) {
                 // Hard-reject: stamp reject proof with force_reason 16 (sibling
                 // #3031 face_name "pending_full_solve_residual"). Clear the
