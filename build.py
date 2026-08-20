@@ -3159,6 +3159,19 @@ def cmd_lint():
             "Issue #3182 post-Moving stale hard gate linter failed — run python3 scripts/coverage/checks/check_post_moving_stale_hard_gate_3182.py"
         )
         return r
+    # Issue #3183: gensym ceiling / depth deny mid-clone rollback + rest
+    # path shares ceiling. Refines #2804 / #2811 / #3157. Extends
+    # test_unquote_splicing_hygiene (#81934); no docs/design/ (#1655).
+    gcrb_script = COVERAGE_CHECKS / "check_gensym_ceiling_rest_bypass_3183.py"
+    if not gcrb_script.exists():
+        fail(f"missing {gcrb_script}")
+        return 1
+    r = run([sys.executable, str(gcrb_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3183 gensym ceiling / rest-bypass linter failed — run python3 scripts/coverage/checks/check_gensym_ceiling_rest_bypass_3183.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
