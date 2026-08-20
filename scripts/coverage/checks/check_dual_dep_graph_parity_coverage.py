@@ -76,7 +76,11 @@ def check() -> list:
         "AC1: parity gate not wired at record_dependency in service.ixx",
         fails,
     )
-    _must(svc.find("dual_dep_graph_strict_enabled") != -1, "AC1: Strict toggle check not in wire-up", fails)
+    _must(
+        svc.find("dual_dep_graph_strict_or_production") != -1 or svc.find("dual_dep_graph_strict_enabled") != -1,
+        "AC1: Strict toggle check not in wire-up",
+        fails,
+    )
     _must(svc.find("rebuild_node_dep_graph_from_string") != -1, "AC1: rebuild call not in wire-up", fails)
     _must(
         svc.find("metrics_.dual_dep_graph_parity_check_total") != -1, "AC1: metrics bump for check_total missing", fails
