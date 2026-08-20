@@ -1157,7 +1157,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_root_remap_pin_contract_unified.cpp` (—) [domain_suite, theme_compiler] — contract. Phase 5 reads compact_r.pin_contract_held but loses the
 - `tests/compiler/test_run_one_epoch_default.cpp` (—) [domain_suite, theme_compiler] — AC1: source auto-wires from current_mutation_epoch; floor; unset metric
 - `tests/compiler/test_run_one_requires_expression_partial.cpp` (—) [domain_suite, theme_compiler] — AC1: source splits set vs hint requires; cites #2827; partial metric
-- `tests/compiler/test_security_event_wal_replay.cpp` (—) [domain_suite, theme_compiler] — AC1: ring ≥ 1024; ring-wrap-total increments when N>1024 denies
+- `tests/compiler/test_security_event_wal_replay.cpp` (—) [large, domain_suite, theme_compiler] — AC1: ring ≥ 1024; ring-wrap-total increments when N>1024 denies
 - `tests/compiler/test_security_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh / vacuous → health_bp high / force-reason ok
 - `tests/core/test_set_arena_atomic_owner.cpp` (—) [domain_suite, theme_core] — test_set_arena_atomic_owner.cpp — Issue #1663
 - `tests/compiler/test_solve_delta_epoch_filter.cpp` (—) [domain_suite, theme_compiler] — Issue #2065 — solve_delta epoch filter test.
