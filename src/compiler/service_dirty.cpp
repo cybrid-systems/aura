@@ -298,6 +298,29 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             // (distinct from "entered forwarding"). Direct path below is the
             // Soft / Off fallback only — skipped here.
             HotUpdateRegistry::g_dual_track_bypass_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3188 AC1: residual of #3150 — facade owns joint epoch
+            // + AOT dirty + reemit, but `notify_dirty_define` is listener
+            // fan-out only (does NOT mark ir_cache_v2_ body-dirty or walk
+            // dep_graph_). Under production, still drive a minimal IR
+            // body-dirty + shape invalidate for the mutated define under
+            // the same mutate_mtx_ the caller already holds so hybrid /
+            // interpreter paths that still consult IR cache see the dirty
+            // bit. Mirrors the Soft path body below but skips the dep_graph
+            // BFS cascade (Soft owns that, production keeps AOT-authoritative
+            // re-promote via decide_and_reemit). Same surface as Soft body
+            // for the single mutated define, so byte-identical semantics
+            // on the IR cache side. Soft / Off zero-cost unchanged (this
+            // block only runs when production_defaults_active() AND the
+            // facade took ownership — both early-return false otherwise).
+            prepare_unified_invalidation_pre_cascade_(name);
+            if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
+                (void)vit->second.mark_body_only_dirty();
+                finish_cascade_soa_dirty_sync_(vit->second);
+                metrics_.dirty_propagation_block_marks.fetch_add(
+                    static_cast<std::uint64_t>(vit->second.dirty_block_count()),
+                    std::memory_order_relaxed);
+            }
+            invalidate_shape(name);
             return;
         }
     }
@@ -787,6 +810,24 @@ void CompilerService::invalidate_function(const std::string& name) {
             // (distinct from "entered forwarding"). Direct path below is the
             // Soft / Off fallback only — skipped here.
             HotUpdateRegistry::g_dual_track_bypass_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3188 AC1: residual of #3150 — same minimal IR/shape
+            // step as mark_define_dirty. Facade owns joint epoch + AOT
+            // dirty + reemit; we still need IR cache body-dirty + shape
+            // invalidate under the mutate_mtx_ we already hold so hybrid /
+            // interpreter paths that consult IR cache see the dirty bit.
+            // Mirrors the Soft path body for the single mutated define
+            // (skipping dep_graph BFS — production keeps AOT-authoritative
+            // re-promote via decide_and_reemit). Soft / Off zero-cost
+            // unchanged.
+            prepare_unified_invalidation_pre_cascade_(name);
+            if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
+                (void)vit->second.mark_body_only_dirty();
+                finish_cascade_soa_dirty_sync_(vit->second);
+                metrics_.dirty_propagation_block_marks.fetch_add(
+                    static_cast<std::uint64_t>(vit->second.dirty_block_count()),
+                    std::memory_order_relaxed);
+            }
+            invalidate_shape(name);
             return;
         }
     }

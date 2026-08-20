@@ -3246,6 +3246,29 @@ def cmd_lint():
             "Issue #3187 dual DepGraph strict-or-production linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_strict_or_production_3187.py"
         )
         return r
+    # Issue #3188: production facade minimal IR/shape step (residual of
+    # #3150). After the joint epoch + AOT dirty + reemit closed loop
+    # landed, the production facade (hard_invalidate_via_facade) still
+    # skipped prepare_unified_invalidation_pre_cascade_ +
+    # mark_body_only_dirty + invalidate_shape. notify_dirty_define is
+    # listener fan-out only — does NOT mark ir_cache_v2_ body-dirty.
+    # #3188 closes the dual-track by, under production + facade success,
+    # still driving a minimal IR body-dirty + shape invalidate for the
+    # mutated define under the same mutate_mtx_ the caller already
+    # holds. Soft / Off zero-cost unchanged (facade returns false →
+    # Soft path body runs as before). Extends
+    # test_compiler_hot_update_facade (#81967); no docs/design/3188-*
+    # (#1655), no tests/issues/test_issue_3188.cpp (#81934).
+    pfmis_script = COVERAGE_CHECKS / "check_production_facade_minimal_ir_shape_3188.py"
+    if not pfmis_script.exists():
+        fail(f"missing {pfmis_script}")
+        return 1
+    r = run([sys.executable, str(pfmis_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3188 production facade minimal IR/shape linter failed — run python3 scripts/coverage/checks/check_production_facade_minimal_ir_shape_3188.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).
