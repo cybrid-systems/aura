@@ -3226,6 +3226,26 @@ def cmd_lint():
             "Issue #3186 JIT linear_move_drop_elision_ok linter failed — run python3 scripts/coverage/checks/check_linear_move_drop_elision_ok_3186.py"
         )
         return r
+    # Issue #3187: dual DepGraph fork window — production fail-closed default.
+    # Extends #3165 Strict fail-closed path to also fire under
+    # production_defaults_active() (or AuditStrategy::Full) by default —
+    # no explicit set_dual_dep_graph_strict(1) required. Closes the
+    # residual lockless batch / cross-fiber record_dependency fork window
+    # that could leave NodeId graph lagging the string graph until the
+    # deferred drain. Soft/Off zero-cost (strict_or_production() returns
+    # false under Soft). Extends test_dep_graph_hybrid_cascade (#81967);
+    # no docs/design/3187-* (#1655), no tests/issues/test_issue_3187.cpp
+    # (#81934).
+    dgsop_script = COVERAGE_CHECKS / "check_dual_dep_graph_strict_or_production_3187.py"
+    if not dgsop_script.exists():
+        fail(f"missing {dgsop_script}")
+        return 1
+    r = run([sys.executable, str(dgsop_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3187 dual DepGraph strict-or-production linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_strict_or_production_3187.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).

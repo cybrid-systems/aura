@@ -971,6 +971,31 @@ inline bool dual_dep_graph_strict_enabled() noexcept {
     return g_dual_dep_graph_strict_atomic().load(std::memory_order_relaxed) != 0;
 }
 
+// Issue #3187: production fail-closed default. When production_defaults_active
+// is on (or get_strategy() == AuditStrategy::Full), the Strict dual-dep-graph
+// fail-closed path fires by default — no need to call set_dual_dep_graph_strict
+// explicitly. Soft / Off stays zero-cost (strict/production both false).
+// Closes the residual dual-graph fork window under lockless batch / cross-
+// fiber record_dependency: production now walks ALL callers in dep_graph_
+// (set-deduped) under the same dep_graph_mtx_ exclusive window as the
+// rebuild, force-dirties them, and bumps parity_fail — same surface as
+// Issue #3165 Strict but enabled by production_defaults_active() too.
+// No new metric key (reuses dual_dep_graph_parity_fail_total).
+// No second proof model: rebuild_node_dep_graph_from_string remains the
+// SSOT rebuild primitive (#2247 AC2).
+inline bool dual_dep_graph_strict_or_production() noexcept {
+    // Issue #3187: production fail-closed default. Short-circuit on the
+    // explicit-Strict toggle first so Soft/Off skips the production
+    // check (zero extra cost on quiet windows — only a single relaxed
+    // atomic load of g_dual_dep_graph_strict_atomic()).
+    if (dual_dep_graph_strict_enabled())
+        return true;
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::production_defaults_active;
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
 } // namespace aura::compiler::dirty
 
 extern "C" std::uint64_t aura_dual_dep_graph_parity_check_v_read() noexcept {
