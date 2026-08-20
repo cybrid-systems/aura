@@ -2014,6 +2014,22 @@ def cmd_lint():
             "Issue #3031 pending_full_solve residual linter failed — run python3 scripts/coverage/checks/check_pending_full_solve_residual_3031.py"
         )
         return r
+    # Issue #3190: outermost-success TypeLinearCommitProof drain before stamp.
+    # Sibling #3031 closes composite_txn_commit drain; #3190 closes the
+    # outermost stamp window (aura_outermost_success_persist_occurrence).
+    # Lockless batch (atomic_batch_active) flows through composite_txn_commit
+    # body, which already has the same drain — #3190 AC4 verifies coverage.
+    # Extends test_solve_delta_unresolved_export; no docs/design / invent.
+    rd3190_script = COVERAGE_CHECKS / "check_residual_drain_outermost_stamp_3190.py"
+    if not rd3190_script.exists():
+        fail(f"missing {rd3190_script}")
+        return 1
+    r = run([sys.executable, str(rd3190_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3190 residual drain outermost stamp linter failed — run python3 scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

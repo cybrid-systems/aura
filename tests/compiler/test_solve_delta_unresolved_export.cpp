@@ -1754,6 +1754,264 @@ static void ac3169_5_existing_3003_2963_2913_preserved() {
           "3169 AC5: #2913 locality gate preserved");
 }
 
+// ── Issue #3190: outermost-success TypeLinearCommitProof drain before stamp ──
+//
+// Sibling #3031 closes the composite_txn_commit drain window. #3190 closes
+// the outermost-success stamp window (aura_outermost_success_persist_occurrence)
+// that the next composite commit / outermost stamp could observe as SOLVED
+// even though pending_full_solve_roots_ / locality residual remained. The
+// drain runs at the outermost success stamp site under production/Full/Strict;
+// Soft observe-only; Quiet (no residual) → two size reads, zero extra atomics.
+// Lockless batch (atomic_batch_active) flows through composite_txn_commit
+// body, which already has the same drain — #3190 AC4 verifies the coverage.
+
+static void ac3190_1_outermost_drain_production() {
+    std::println("\n--- #3190 AC1: production drain at outermost success stamp ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::pending_full_solve_residual_last_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    // (a) Empty residual drains to SOLVED — no reject, no observe.
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    cs.seed_pending_full_solve_root_for_test(1);
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3190 AC1: empty-CS pending drains to SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3190 AC1: pending cleared");
+    CHECK(cs.last_locality_pruned() == 0, "3190 AC1: locality cleared");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() > esc0,
+          "3190 AC1: escalate bumps under production");
+    CHECK(pending_full_solve_residual_reject_total_v_read() == rej0,
+          "3190 AC1: no reject on SOLVED");
+    CHECK(pending_full_solve_residual_observe_total_v_read() == obs0,
+          "3190 AC1: no Soft observe under production");
+    CHECK(!pending_full_solve_residual_face_hit(), "3190 AC1: face clear after recover");
+
+    // (b) Locality residual drains to SOLVED.
+    cs.force_locality_pruned_for_test(2);
+    r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3190 AC1: locality residual drains to SOLVED");
+    CHECK(cs.last_locality_pruned() == 0, "3190 AC1: locality residual cleared");
+
+    // (c) Conflict residual → drain hard-rejects under production.
+    //     This is the #3190 outermost stamp reject path: force_reason 16,
+    //     face latched, last residual surfaced.
+    ConstraintSystem cs2(reg);
+    auto a = cs2.fresh_var();
+    Constraint eq1;
+    eq1.kind = Constraint::EQUAL;
+    eq1.lhs = a;
+    eq1.rhs = reg.int_type();
+    Constraint eq2;
+    eq2.kind = Constraint::EQUAL;
+    eq2.lhs = a;
+    eq2.rhs = reg.bool_type();
+    cs2.add_delta(std::move(eq1));
+    cs2.add_delta(std::move(eq2));
+    cs2.seed_pending_full_solve_root_for_test(1);
+    auto r2 = cs2.drain_pending_full_solve_before_commit();
+    CHECK(r2 != SolveResult::SOLVED, "3190 AC1: conflict residual hard-rejects");
+    CHECK(pending_full_solve_residual_reject_total_v_read() > rej0, "3190 AC1: reject total bumps");
+    CHECK(pending_full_solve_residual_face_hit(), "3190 AC1: face latched on reject");
+    CHECK(pending_full_solve_residual_last_v_read() > 0,
+          "3190 AC1: last residual surfaced for Agent");
+
+    // (d) commit_readiness rejects dirty residual with stable force_reason 16.
+    CommitReadinessInput in;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    in.pending_full_solve_hard = true;
+    in.pending_full_solve_residual = true;
+    auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "3190 AC1: readiness rejects dirty residual");
+    CHECK(cr.force_reason == "pending_full_solve_residual", "3190 AC1: force_reason");
+    CHECK(cr.force_reason_code == 16, "3190 AC1: force_reason_code 16");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3190_2_outermost_drain_soft() {
+    std::println("\n--- #3190 AC2: Soft observe-only at outermost success stamp ---");
+    using aura::compiler::typed_audit::AuditStrategy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::get_strategy;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    using aura::compiler::typed_audit::set_strategy;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    auto save_strat = get_strategy();
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    reset_pending_full_solve_residual_for_test();
+
+    // Soft at the outermost success stamp: drain observes, allows commit,
+    // does NOT clear pending / does NOT latch face. Sibling #3031 AC2.
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    cs.seed_pending_full_solve_root_for_test(1);
+    cs.force_locality_pruned_for_test(1);
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3190 AC2: Soft allows residual SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() > 0, "3190 AC2: Soft does not clear pending");
+    CHECK(pending_full_solve_residual_observe_total_v_read() > obs0, "3190 AC2: observe bumps");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() == esc0, "3190 AC2: no escalate");
+    CHECK(pending_full_solve_residual_reject_total_v_read() == rej0, "3190 AC2: no reject");
+    CHECK(!pending_full_solve_residual_face_hit(), "3190 AC2: Soft does not latch face");
+
+    reset_pending_full_solve_residual_for_test();
+    set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3190_3_quiet_zero_cost() {
+    std::println("\n--- #3190 AC3: quiet no residual → zero extra at outermost stamp ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    // Quiet path: pending_full_solve_roots_ empty + last_locality_pruned_ 0
+    // → SOLVED, two size reads, no observe/escalate/reject bumps.
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r == SolveResult::SOLVED, "3190 AC3: quiet SOLVED");
+    CHECK(pending_full_solve_residual_observe_total_v_read() == obs0, "3190 AC3: no observe");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() == esc0, "3190 AC3: no escalate");
+    CHECK(pending_full_solve_residual_reject_total_v_read() == rej0, "3190 AC3: no reject");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3190_4_lockless_batch_covered() {
+    std::println("\n--- #3190 AC4: lockless multi-mutate batch covered ---");
+    // composite_txn_commit is the sole entry for both nested_boundary AND
+    // atomic_batch_active (lockless multi-mutate batch). The drain sibling
+    // #3031 already lives inside composite_txn_commit body. #3190 adds the
+    // same drain at the outermost success stamp site. The two sites close
+    // the SOLVED-with-dirty window across both batch shapes.
+    const auto ev = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto ev_mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    // composite_txn_commit body calls drain (sibling #3031).
+    CHECK(ev.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3190 AC4: composite_txn_commit calls drain");
+    // outermost success stamp site calls drain (new #3190 site).
+    CHECK(ev_mb.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3190 AC4: outermost success calls drain");
+    // Both sites use force_reason 16 (the stable reject reason).
+    CHECK(ev.find("force_reason=*/16") != std::string::npos ||
+              ev.find("force_reason=*/16u") != std::string::npos ||
+              ev.find("/*force_reason=*/16") != std::string::npos,
+          "3190 AC4: composite_txn_commit uses force_reason 16");
+    CHECK(ev_mb.find("force_reason=*/16") != std::string::npos ||
+              ev_mb.find("force_reason=*/16u") != std::string::npos ||
+              ev_mb.find("/*force_reason=*/16") != std::string::npos,
+          "3190 AC4: outermost success uses force_reason 16");
+    // Helper body: drain escalates via escalate_if_production (sibling).
+    CHECK(impl.find("escalate_if_production(SolveResult::TIMEOUT") != std::string::npos,
+          "3190 AC4: drain synthesizes TIMEOUT escalate");
+    // Helper body: drain also calls escalate_locality_slo_if_production.
+    CHECK(impl.find("escalate_locality_slo_if_production") != std::string::npos,
+          "3190 AC4: drain covers locality residual face");
+}
+
+static void ac3190_5_existing_surfaces_preserved() {
+    std::println("\n--- #3190 AC5: existing #2913/#2994/#3031/#3169 surfaces preserved ---");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3190 AC5: warm");
+    // #3031 surface (the sibling drain).
+    CHECK(href(svc, "schema-3031") == 3031, "3190 AC5: schema-3031 preserved");
+    CHECK(href(svc, "pending-full-solve-residual-wired") == 1, "3190 AC5: wired preserved");
+    CHECK(href(svc, "pending-full-solve-residual-reject-total") >= 0,
+          "3190 AC5: reject counter preserved");
+    // #2913 surface (locality SLO).
+    CHECK(href(svc, "schema-2913") == 2913, "3190 AC5: schema-2913 preserved");
+    // #2994 surface (locality residual budget).
+    CHECK(href(svc, "schema-2994") == 2994, "3190 AC5: schema-2994 preserved");
+    // #3169 surface (clear partial).
+    CHECK(href(svc, "schema-3169") == 3169, "3190 AC5: schema-3169 preserved");
+}
+
+static void ac3190_6_source_and_linter() {
+    std::println("\n--- #3190 AC6: source-cite + linter + build.py ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ev = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py");
+    const auto build = read_file("build.py");
+    // Source-cite: drain helper exists, is reachable from both stamp sites.
+    CHECK(impl.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3190 AC6: drain helper body");
+    CHECK(ixx.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3190 AC6: drain declaration");
+    CHECK(ev.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3190 AC6: outermost success calls drain");
+    CHECK(tc.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3190 AC6: composite_txn_commit calls drain");
+    // Issue #3190 citation at the outermost drain site.
+    CHECK(ev.find("Issue #3190") != std::string::npos,
+          "3190 AC6: citation at outermost success stamp");
+    // force_reason 16 at the outermost success stamp site.
+    CHECK(ev.find("force_reason=*/16") != std::string::npos ||
+              ev.find("force_reason=*/16u") != std::string::npos ||
+              ev.find("/*force_reason=*/16") != std::string::npos,
+          "3190 AC6: force_reason 16 at outermost success stamp");
+    // Test file has the new AC functions.
+    CHECK(t.find("ac3190_1_outermost_drain_production") != std::string::npos, "3190 AC6: AC1");
+    CHECK(t.find("ac3190_2_outermost_drain_soft") != std::string::npos, "3190 AC6: AC2");
+    CHECK(t.find("ac3190_3_quiet_zero_cost") != std::string::npos, "3190 AC6: AC3");
+    CHECK(t.find("ac3190_4_lockless_batch_covered") != std::string::npos, "3190 AC6: AC4");
+    CHECK(t.find("ac3190_5_existing_surfaces_preserved") != std::string::npos, "3190 AC6: AC5");
+    // Linter exists.
+    CHECK(!lint.empty() && lint.find("3190") != std::string::npos, "3190 AC6: linter");
+    // Linter wired into build.py.
+    CHECK(build.find("check_residual_drain_outermost_stamp_3190") != std::string::npos,
+          "3190 AC6: build.py");
+    // No docs/design/* (per #1655).
+    CHECK(read_file("docs/design/3190-pending-full-solve-outermost-stamp.md").empty(),
+          "3190 AC6: no docs/design/");
+    // No tests/issues/test_issue_3190.cpp (per #81934).
+    CHECK(read_file("tests/issues/test_issue_3190.cpp").empty(),
+          "3190 AC6: no tests/issues/test_issue_3190");
+}
+
 static void ac3169_6_source_and_linter() {
     std::println("\n--- #3169 AC6: source-cite linter + build.py wiring ---");
     const auto build = read_file("build.py");
@@ -2297,6 +2555,14 @@ int run_test_solve_delta_unresolved_export() {
     ac3108_3_soft_observe_only();
     ac3108_4_additive_counter_only();
     ac3108_5_source_and_linter();
+    // ── Issue #3190: outermost-success TypeLinearCommitProof drain before stamp ──
+    std::println("\n=== Issue #3190: outermost drain before stamp (anti SOLVED-with-dirty) ===");
+    ac3190_1_outermost_drain_production();
+    ac3190_2_outermost_drain_soft();
+    ac3190_3_quiet_zero_cost();
+    ac3190_4_lockless_batch_covered();
+    ac3190_5_existing_surfaces_preserved();
+    ac3190_6_source_and_linter();
     std::println("\n=== Issue #3169: production solve_delta fail-closed + clear partial ===");
     ac3169_1_production_clear_partial_and_reject();
     ac3169_2_soft_zero_extra();
