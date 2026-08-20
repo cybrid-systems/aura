@@ -68,8 +68,8 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     (
         "src/compiler/service.ixx",
-        r"if\s*\(\s*aura::compiler::dirty::dual_dep_graph_strict_enabled\(\)\s*\)",
-        "dual_dep_graph_strict_enabled gate (both branches)",
+        r"if\s*\(\s*aura::compiler::dirty::dual_dep_graph_strict_(or_production|enabled)\(\)\s*\)",
+        "dual_dep_graph_strict_enabled OR dual_dep_graph_strict_or_production gate (both branches — #3187 replaces the explicit-Strict gate with the production-fail-closed-default OR-helper)",
     ),
     # Layer 3: existing #2247 invariants non-regressing
     (

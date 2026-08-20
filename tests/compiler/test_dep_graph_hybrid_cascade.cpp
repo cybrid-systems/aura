@@ -473,8 +473,15 @@ static void ac3165_strict_fail_closed_all_callers() {
     auto rd_win = svc.substr(rd_pos, rd_end - rd_pos);
     CHECK(rd_win.find("Issue #3165") != std::string::npos,
           "3165: record_dependency cite Issue #3165");
-    CHECK(rd_win.find("dual_dep_graph_strict_enabled") != std::string::npos,
-          "3165: record_dependency Strict gate");
+    // Issue #3187: the Strict gate in service.ixx now uses
+    // dual_dep_graph_strict_or_production() (production fail-closed
+    // default). dual_dep_graph_strict_enabled() is still defined for
+    // backward compat (#3187 AC4) but no longer gates the
+    // record_dependency Strict branch. Accept either helper name.
+    CHECK(rd_win.find("dual_dep_graph_strict_or_production") != std::string::npos ||
+              rd_win.find("dual_dep_graph_strict_enabled") != std::string::npos,
+          "3165: record_dependency Strict gate (dual_dep_graph_strict_or_production or "
+          "dual_dep_graph_strict_enabled)");
     CHECK(rd_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
               std::string::npos,
           "3165: record_dependency walks all callers in dep_graph_");
@@ -488,8 +495,12 @@ static void ac3165_strict_fail_closed_all_callers() {
         drain_end = drain_pos + 5000;
     auto drain_win = svc.substr(drain_pos, drain_end - drain_pos);
     CHECK(drain_win.find("Issue #3165") != std::string::npos, "3165: drain cite Issue #3165");
-    CHECK(drain_win.find("dual_dep_graph_strict_enabled") != std::string::npos,
-          "3165: drain Strict gate");
+    // Issue #3187: same as record_dependency — drain Strict gate now
+    // uses dual_dep_graph_strict_or_production(). Accept either.
+    CHECK(drain_win.find("dual_dep_graph_strict_or_production") != std::string::npos ||
+              drain_win.find("dual_dep_graph_strict_enabled") != std::string::npos,
+          "3165: drain Strict gate (dual_dep_graph_strict_or_production or "
+          "dual_dep_graph_strict_enabled)");
     CHECK(drain_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
               std::string::npos,
           "3165: drain walks all callers in dep_graph_");
