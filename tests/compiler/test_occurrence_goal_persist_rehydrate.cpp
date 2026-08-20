@@ -29,6 +29,11 @@
 //   #2938 AC4: densify/steal fence after snapshotted commit → rehydrate or face
 //   #2938 AC5: #2608 / #2842 / #2758 / #2910 surfaces preserved
 //   #2938 AC6: source-cite + linter + no docs/design/
+//
+//   #3193 AC1: production abort hold blocks rehydrate until persist+proof clear
+//   #3193 AC2: no mixed green proof + residual persist during hold
+//   #3193 AC3: Soft observe-only; quiet (no abort) zero extra
+//   #3193 AC4: source-cite + linter; no docs/design / invent
 
 #include "test_harness.hpp"
 
@@ -391,10 +396,10 @@ static void ac3170_2_abort_nested_uniform_clear() {
     std::println("\n--- #3170 AC2: abort / nested / force-rollback paths uniformly clear ---");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     // Three production exit paths must call aura_clear_occurrence_persist_buffer.
-    const auto first_abort = emb.find("if (outermost && !success) {\n"
-                                      "        ev_->bump_mutation_boundary_rollback();");
+    const auto first_abort =
+        emb.find("if (outermost && !success)\n        ev_->bump_mutation_boundary_rollback();");
     CHECK(first_abort != std::string::npos,
-          "3170 AC2: outermost abort path (line 2757) calls aura_clear_occurrence_persist_buffer");
+          "3170 AC2: outermost abort path bumps rollback (persist clear is on abort body)");
     const auto second_abort = emb.find(
         "} else if (outermost && !success) {\n"
         "        if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {\n"
@@ -440,8 +445,9 @@ static void ac3170_4_quiet_zero_extra_atomics() {
     std::println(
         "\n--- #3170 AC4: Quiet (clean / no dirty / no TIMEOUT) \u2192 zero extra atomics ---");
     const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
     // Outermost success path early-returns on prior != TIMEOUT (existing #2277 contract).
-    CHECK(emb.find("if (prior != SolveResult::TIMEOUT)\n        return prior;") !=
+    CHECK(impl.find("if (prior != SolveResult::TIMEOUT)\n        return prior;") !=
               std::string::npos,
           "3170 AC4: escalate_if_production early-return on non-TIMEOUT (Quiet path)");
     // Fingerprint guard is gated on production_defaults_active.
@@ -486,6 +492,170 @@ static void ac3170_6_source_and_linter() {
           "3170 AC6: linter cites #3170");
     CHECK(build.find("check_occurrence_persist_fingerprint_3170") != std::string::npos,
           "3170 AC6: build.py wires linter");
+}
+
+// ── Issue #3193: nested abort + concurrent densify/steal one authority face ──
+
+static void ac3193_1_prod_hold_blocks_rehydrate() {
+    std::println("\n--- #3193 AC1: production hold blocks rehydrate until persist+proof clear ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    typed_audit::stamp_type_linear_commit_proof(31931);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    CHECK(typed_audit::linear_fast_path_ok(), "3193 AC1: green before abort hold");
+
+    {
+        UnitCs pre;
+        pre.cs.set_current_epoch(5);
+        auto pv = pre.cs.fresh_var();
+        pre.cs.note_occurrence_goal(pv, pre.reg.int_type(), 11, 100, /*epoch=*/5);
+        CHECK(pre.cs.append_occurrence_snapshot(100) == 1, "3193 AC1: pre persist");
+        CHECK(pre.cs.prune_occurrence_goals(6) == 1, "3193 AC1: pre prune");
+        CHECK(pre.cs.rehydrate_occurrence_from_persist(100) == 1,
+              "3193 AC1: rehydrate works pre-hold");
+    }
+
+    UnitCs u;
+    u.cs.set_current_epoch(5);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 11, 100, /*epoch=*/5);
+    CHECK(u.cs.append_occurrence_snapshot(100) == 1, "3193 AC1: persist wrote 1");
+    CHECK(u.cs.prune_occurrence_goals(6) == 1, "3193 AC1: prune live");
+    CHECK(u.cs.occurrence_goals_size() == 0, "3193 AC1: live empty");
+    CHECK(u.cs.occurrence_persist_log_size() == 1, "3193 AC1: persist intact");
+
+    const auto hold0 = typed_audit::abort_authority_hold_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    {
+        typed_audit::AbortAuthorityHold hold;
+        CHECK(typed_audit::abort_authority_blocks_rehydrate(), "3193 AC1: in_flight");
+        CHECK(typed_audit::abort_authority_hold_total_v_read() == hold0 + 1,
+              "3193 AC1: hold total");
+        CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0 + 1,
+              "3193 AC1: reuse invalidate_gen");
+        CHECK(u.cs.rehydrate_occurrence_from_persist(100) == 0,
+              "3193 AC1: rehydrate blocked during hold");
+        CHECK(u.cs.occurrence_persist_log_size() >= 1, "3193 AC1: persist not yet cleared");
+        typed_audit::clear_type_linear_commit_proof_on_abort();
+        CHECK(u.cs.clear_occurrence_persist_snapshot() >= 1,
+              "3193 AC1: persist cleared under hold");
+        CHECK(typed_audit::last_type_linear_proof_outcome_v_read() ==
+                  typed_audit::kTypeLinearProofOutcomeReject,
+              "3193 AC1: proof Reject");
+        CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0, "3193 AC1: would_allow 0");
+    }
+    CHECK(!typed_audit::abort_authority_blocks_rehydrate(), "3193 AC1: hold released");
+    CHECK(u.cs.occurrence_persist_log_size() == 0, "3193 AC1: persist matches authority (empty)");
+    CHECK(u.cs.rehydrate_occurrence_from_persist(100) == 0, "3193 AC1: post-window rehydrate 0");
+
+    apply_dev_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3193_2_no_mixed_green_residual() {
+    std::println("\n--- #3193 AC2: no mixed green proof + residual persist ---");
+    apply_production_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::stamp_type_linear_commit_proof(31932);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    UnitCs u;
+    u.cs.set_current_epoch(1);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 10, 1);
+    CHECK(u.cs.append_occurrence_snapshot(10) == 1, "3193 AC2: persist");
+    CHECK(u.cs.prune_occurrence_goals(2) == 1, "3193 AC2: live empty, persist intact");
+    CHECK(u.cs.occurrence_goals_size() == 0, "3193 AC2: live empty");
+    {
+        typed_audit::AbortAuthorityHold hold;
+        // Green face still published until proof clear, but rehydrate cannot
+        // restore persist into live CS — no mixed query/IR face.
+        CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 1,
+              "3193 AC2: green until clear");
+        CHECK(u.cs.rehydrate_occurrence_from_persist(10) == 0, "3193 AC2: no residual restore");
+        CHECK(u.cs.occurrence_goals_size() == 0, "3193 AC2: live stays empty");
+        typed_audit::clear_type_linear_commit_proof_on_abort();
+        (void)u.cs.clear_occurrence_persist_snapshot();
+        CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0, "3193 AC2: not green");
+        CHECK(u.cs.occurrence_persist_log_size() == 0, "3193 AC2: persist empty");
+    }
+    apply_dev_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3193_3_soft_observe_quiet_zero() {
+    std::println("\n--- #3193 AC3: Soft observe-only; quiet zero extra ---");
+    apply_dev_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    const auto hard0 = typed_audit::abort_authority_hold_total_v_read();
+    const auto obs0 = typed_audit::abort_authority_hold_observe_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    {
+        typed_audit::AbortAuthorityHold hold;
+        CHECK(!typed_audit::abort_authority_blocks_rehydrate(), "3193 AC3: Soft no in_flight");
+        CHECK(typed_audit::abort_authority_hold_total_v_read() == hard0, "3193 AC3: no hard");
+        CHECK(typed_audit::abort_authority_hold_observe_total_v_read() == obs0 + 1,
+              "3193 AC3: observe");
+        CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0, "3193 AC3: no gen bump");
+    }
+    CHECK(!typed_audit::abort_authority_blocks_rehydrate(), "3193 AC3: still clear");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("typed_audit::AbortAuthorityHold abort_authority") != std::string::npos,
+          "3193 AC3: hold only on abort sites (quiet success never constructs)");
+    typed_audit::reset_abort_authority_hold_for_test();
+}
+
+static void ac3193_4_source_and_linter() {
+    std::println("\n--- #3193 AC4: source-cite + linter + no invent ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_nested_abort_authority_face_3193.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("kNestedAbortAuthorityFaceIssue") != std::string::npos, "3193 AC4: issue stamp");
+    CHECK(tma.find("AbortAuthorityHold") != std::string::npos, "3193 AC4: RAII hold");
+    CHECK(mb.find("AbortAuthorityHold abort_authority") != std::string::npos,
+          "3193 AC4: abort sites");
+    CHECK(mb.find("aura_clear_occurrence_persist_buffer(this)") != std::string::npos,
+          "3193 AC4: persist on abort body");
+    CHECK(impl.find("abort_authority_blocks_rehydrate") != std::string::npos,
+          "3193 AC4: rehydrate consult");
+    CHECK(t.find("ac3193_1_prod_hold_blocks_rehydrate") != std::string::npos, "3193 AC4: AC1");
+    CHECK(t.find("ac3193_2_no_mixed_green_residual") != std::string::npos, "3193 AC4: AC2");
+    CHECK(t.find("ac3193_3_soft_observe_quiet_zero") != std::string::npos, "3193 AC4: AC3");
+    CHECK(!lint.empty() && lint.find("3193") != std::string::npos, "3193 AC4: linter");
+    CHECK(build.find("check_nested_abort_authority_face_3193") != std::string::npos,
+          "3193 AC4: build.py");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3193 AC4: warm");
+    CHECK(href(svc, "schema-3193") == 3193, "3193 AC4: schema-3193");
+    CHECK(href(svc, "issue-3193") == 3193, "3193 AC4: issue-3193");
+    CHECK(href(svc, "abort-authority-hold-wired") == 1, "3193 AC4: wired");
+    CHECK(href(svc, "schema-3030") == 3030 || href(svc, "schema-3032") == 3032,
+          "3193 AC4: sibling schema preserved");
+    CHECK(read_file("docs/design/3193-nested-abort-authority-face.md").empty(),
+          "3193 AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3193.cpp").empty(),
+          "3193 AC4: no invent test_issue_3193");
+    CHECK(read_file("tests/issues/test_issue_3193.cpp").empty(),
+          "3193 AC4: no tests/issues/test_issue_3193");
 }
 
 
@@ -2298,6 +2468,11 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3170_4_quiet_zero_extra_atomics();
     ac3170_5_additive_observability_only();
     ac3170_6_source_and_linter();
+    std::println("\n=== #3193 nested abort + densify/steal one authority face ===");
+    ac3193_1_prod_hold_blocks_rehydrate();
+    ac3193_2_no_mixed_green_residual();
+    ac3193_3_soft_observe_quiet_zero();
+    ac3193_4_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

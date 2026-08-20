@@ -232,7 +232,7 @@ static void ac3189_partial_impact_upper_bound_unified() {
     {
         // find the impact_checked call inside invalidate_bridge_with_impact
         const auto lambda_pos = svc.find("invalidate_bridge_with_impact");
-        REQUIRE(lambda_pos != std::string::npos);
+        CHECK(lambda_pos != std::string::npos, "ac3189 AC3: invalidate_bridge_with_impact present");
         const auto lambda_end = svc.find("\n    }", lambda_pos);
         const auto lambda_end2 = (lambda_end == std::string::npos) ? lambda_pos + 8000 : lambda_end;
         const auto lambda_win = svc.substr(lambda_pos, lambda_end2 - lambda_pos);
@@ -251,7 +251,8 @@ static void ac3189_partial_impact_upper_bound_unified() {
         // The helper returns true (partial OK) when dirty_count == 0
         // AND impact_ub == 0. Verify the helper definition handles this.
         const auto helper_def = ixx.find("should_partial_relower_impact_checked");
-        REQUIRE(helper_def != std::string::npos);
+        CHECK(helper_def != std::string::npos,
+              "ac3189 AC4: should_partial_relower_impact_checked present");
         const auto helper_end = ixx.find("\n}\n", helper_def);
         const auto helper_end2 = (helper_end == std::string::npos) ? helper_def + 800 : helper_end;
         const auto helper_body = ixx.substr(helper_def, helper_end2 - helper_def);

@@ -1918,6 +1918,64 @@ inline void clear_type_linear_commit_proof_on_abort() noexcept {
         g_type_linear_proof_cleared_on_abort_observe_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #3193: nested abort + concurrent densify/steal authority face.
+// Reuses g_rehydrate_miss_invalidate_gen (no second proof model). Hold
+// is published BEFORE topology restore / dual_clear / persist clear /
+// proof invalidate so observers cannot rehydrate or stamp a mixed
+// CoercionMap / Occurrence persist / TypeLinearCommitProof face.
+// Soft: observe-only (no in_flight, no gen bump). Quiet (no abort):
+// helper not constructed — zero extra.
+inline constexpr int kNestedAbortAuthorityFaceIssue = 3193;
+inline std::atomic<std::uint32_t> g_abort_authority_in_flight{0};
+inline std::atomic<std::uint64_t> g_abort_authority_hold_total{0};
+inline std::atomic<std::uint64_t> g_abort_authority_hold_observe_total{0};
+inline std::atomic<std::uint32_t> g_abort_authority_hold_wired{1};
+
+[[nodiscard]] inline bool abort_authority_blocks_rehydrate() noexcept {
+    return g_abort_authority_in_flight.load(std::memory_order_acquire) != 0;
+}
+[[nodiscard]] inline std::uint64_t abort_authority_hold_total_v_read() noexcept {
+    return g_abort_authority_hold_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t abort_authority_hold_observe_total_v_read() noexcept {
+    return g_abort_authority_hold_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_abort_authority_hold_for_test() noexcept {
+    g_abort_authority_in_flight.store(0, std::memory_order_relaxed);
+    g_abort_authority_hold_total.store(0, std::memory_order_relaxed);
+    g_abort_authority_hold_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Returns true when production/Full actually armed the hold.
+[[nodiscard]] inline bool begin_abort_authority_hold() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_abort_authority_hold_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_abort_authority_in_flight.store(1, std::memory_order_release);
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_abort_authority_hold_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+inline void end_abort_authority_hold() noexcept {
+    g_abort_authority_in_flight.store(0, std::memory_order_release);
+}
+
+struct AbortAuthorityHold {
+    AbortAuthorityHold() noexcept
+        : held_(begin_abort_authority_hold()) {}
+    ~AbortAuthorityHold() noexcept {
+        if (held_)
+            end_abort_authority_hold();
+    }
+    AbortAuthorityHold(const AbortAuthorityHold&) = delete;
+    AbortAuthorityHold& operator=(const AbortAuthorityHold&) = delete;
+
+private:
+    bool held_;
+};
+
 [[nodiscard]] inline std::uint64_t last_proof_live_goal_count_v_read() noexcept {
     return g_last_proof_live_goal_count.load(std::memory_order_relaxed);
 }

@@ -614,6 +614,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // concurrent lookup cannot serve pre-abort IR as clean.
         if (abort_ir_cache_begin_force_fn_)
             abort_ir_cache_begin_force_fn_();
+        // Issue #3193: publish abort authority before topology restore so
+        // concurrent densify/steal rehydrate waits for dual_clear + persist
+        // clear + proof invalidate (one face). Soft: observe-only.
+        typed_audit::AbortAuthorityHold abort_authority;
         BoundaryRollbackStats stats;
         stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
             cp.mutation_log_size, std::move(cp.children_snapshot));
@@ -718,6 +722,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         }
         // Issue #3116: last_coercions_ + TLS active context (half-green residual).
         dual_clear_coercion_state_on_abort();
+        // Issue #3193: persist clear on the abort body (before hold ends)
+        // so densify/steal cannot rehydrate a pre-abort snapshot against
+        // a cleared proof / empty coercion face. Dtor clear is idempotent.
+        aura_clear_occurrence_persist_buffer(this);
         last_boundary_rollback_stats_ = stats;
         // Invalidate the def-use index — the workspace state
         // is now different from what the index reflects.
@@ -1366,6 +1374,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // Issue #3117: publish abort-force fence before restore.
                             if (abort_ir_cache_begin_force_fn_)
                                 abort_ir_cache_begin_force_fn_();
+                            // Issue #3193: abort authority hold (one face).
+                            typed_audit::AbortAuthorityHold abort_authority;
                             BoundaryRollbackStats stats;
                             stats.field_records_rolled =
                                 workspace_flat_->abort_restore_dual_topology(
@@ -1441,6 +1451,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             }
                             // Issue #3116: last_coercions_ + TLS active context.
                             dual_clear_coercion_state_on_abort();
+                            // Issue #3193: persist clear before hold ends.
+                            aura_clear_occurrence_persist_buffer(this);
                             last_boundary_rollback_stats_ = stats;
                             defuse_index_ = nullptr;
                             // Issue #2105: leave txn_dirty set until outermost clean exit,
@@ -1508,6 +1520,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // Issue #3117: publish abort-force fence before restore.
                     if (abort_ir_cache_begin_force_fn_)
                         abort_ir_cache_begin_force_fn_();
+                    // Issue #3193: abort authority hold (one face).
+                    typed_audit::AbortAuthorityHold abort_authority;
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
                         cp.mutation_log_size, std::move(cp.children_snapshot));
@@ -1569,6 +1583,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     }
                     // Issue #3116: last_coercions_ + TLS active context.
                     dual_clear_coercion_state_on_abort();
+                    // Issue #3193: persist clear before hold ends.
+                    aura_clear_occurrence_persist_buffer(this);
                     last_boundary_rollback_stats_ = stats;
                     defuse_index_ = nullptr;
                     if (!nested_boundary)
