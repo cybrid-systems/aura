@@ -1818,6 +1818,83 @@ static void ac3130_linear_move_drop_elision_gates_commit_readiness() {
     }
 }
 
+// ── Issue #3186: JIT Move/Drop elision also consults live commit_readiness
+// (closes the half-green residual after densify/steal race). Extends #3130
+// (predicate + IR call site) to JIT via aura_jit_linear_move_drop_elision_ok
+// runtime bridge; emits call in linear_safety_probe so JIT deopts on either
+// epoch-stale OR readiness-blocked. Soft/Off zero-cost (the predicate itself
+// short-circuits the bump under Soft/Off). Reuses existing
+// g_linear_fast_path_elide_blocked_production_total counter — no new metric key.
+//   AC1: bridge function declared in aura_jit_bridge.h
+//   AC2: bridge function extern "C" defined in aura_jit_bridge.cpp
+//   AC3: FunctionCreate in aura_jit.cpp's create_runtime_bridge
+//   AC4: reg entry in aura_jit.cpp's runtime reg block
+//   AC5: probe in aura_jit.cpp's linear_safety_probe consults the new bridge
+//        (epoch + readiness OR-combined into any_unsafe)
+
+static void ac3186_jit_linear_move_drop_elision_probe() {
+    std::println("\n--- #3186: JIT Move/Drop elision consults live commit_readiness ---");
+
+    // AC1: bridge function declared in aura_jit_bridge.h.
+    {
+        const auto h = read_file("src/compiler/aura_jit_bridge.h");
+        CHECK(h.find("aura_jit_linear_move_drop_elision_ok") != std::string::npos,
+              "ac3186 AC1: bridge function declared in aura_jit_bridge.h");
+        CHECK(h.find("Issue #3186") != std::string::npos, "ac3186 AC1: bridge.h cites Issue #3186");
+    }
+
+    // AC2: bridge function extern "C" defined in aura_jit_bridge.cpp.
+    {
+        const auto cpp = read_file("src/compiler/aura_jit_bridge.cpp");
+        CHECK(cpp.find("extern \"C\" int aura_jit_linear_move_drop_elision_ok(void)") !=
+                  std::string::npos,
+              "ac3186 AC2: bridge function extern \"C\" defined in aura_jit_bridge.cpp");
+        // Implementation wraps the existing predicate (no second proof model).
+        CHECK(cpp.find("typed_audit::linear_move_drop_elision_ok()") != std::string::npos,
+              "ac3186 AC2: bridge delegates to typed_audit predicate");
+        // Reuses existing production counter (no new metric key).
+        CHECK(cpp.find("g_linear_fast_path_elide_blocked_production_total") != std::string::npos,
+              "ac3186 AC2: reuses existing production counter (no new metric key)");
+    }
+
+    // AC3: FunctionCreate in aura_jit.cpp's create_runtime_bridge.
+    {
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        CHECK(jit.find("fn_linear_move_drop_elision_ok = llvm::Function::Create") !=
+                  std::string::npos,
+              "ac3186 AC3: FunctionCreate in aura_jit.cpp create_runtime_bridge");
+        // Member variable declared in the same module class.
+        CHECK(jit.find("llvm::Function* fn_linear_move_drop_elision_ok = nullptr;") !=
+                  std::string::npos,
+              "ac3186 AC3: fn_linear_move_drop_elision_ok member declared");
+    }
+
+    // AC4: reg entry in aura_jit.cpp's runtime reg block (so ORC can resolve
+    // the symbol emitted by linear_safety_probe).
+    {
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        CHECK(jit.find("reg(\"aura_jit_linear_move_drop_elision_ok\"") != std::string::npos,
+              "ac3186 AC4: bridge registered in aura_jit.cpp runtime reg block");
+    }
+
+    // AC5: probe in aura_jit.cpp's linear_safety_probe emits the call + OR.
+    {
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        // Both probes must coexist (epoch + readiness) in the same critical
+        // section. The OR is the unified unsafe signal.
+        CHECK(jit.find("llvm::FunctionCallee(fn_linear_move_drop_elision_ok)") != std::string::npos,
+              "ac3186 AC5: linear_safety_probe emits call to fn_linear_move_drop_elision_ok");
+        CHECK(jit.find("not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32)") !=
+                  std::string::npos,
+              "ac3186 AC5: elision result compared to zero32");
+        CHECK(jit.find("any_unsafe = irb->CreateOr(is_unsafe, not_elision_ok)") !=
+                  std::string::npos,
+              "ac3186 AC5: epoch + elision OR-combined into any_unsafe");
+        CHECK(jit.find("irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok)") != std::string::npos,
+              "ac3186 AC5: branch on any_unsafe (deopt on either failure)");
+    }
+}
+
 // ── Issue #3085: densify/steal miss blocks lowering elision via gen ──
 // AC1 miss advances gen; lowering block sees it before next lower
 // AC2 linear_fast_path_ok false until green rebind
@@ -2207,6 +2284,11 @@ int run_test_occurrence_goal_persist_rehydrate() {
     // Issue #3130: IR Move/Drop fast-path also consults live
     // commit_readiness face (closes the half-green residual).
     ac3130_linear_move_drop_elision_gates_commit_readiness();
+    // Issue #3186: JIT Move/Drop elision also consults live
+    // commit_readiness face in the same critical section (extends
+    // #3130 predicate to JIT via aura_jit_linear_move_drop_elision_ok
+    // runtime bridge + linear_safety_probe OR).
+    ac3186_jit_linear_move_drop_elision_probe();
     // Issue #3170: outermost-success occurrence persist fingerprint guard
     // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -
     // 半解不得出厂).

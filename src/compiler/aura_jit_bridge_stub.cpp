@@ -316,6 +316,12 @@ aura_jit_linear_epoch_safety_check(const char* /*fn_name*/, std::uint8_t /*linea
                                    std::uint32_t /*opcode*/) {
     return 0;
 }
+// Issue #3186: stub for the JIT commit_readiness bridge (non-JIT builds).
+// Returns 1 (elision OK) so non-JIT builds behave like Soft/Off (no
+// production-only consultation, no counter noise).
+extern "C" __attribute__((weak)) int aura_jit_linear_move_drop_elision_ok(void) {
+    return 1;
+}
 extern "C" __attribute__((weak)) void
 aura_jit_set_linear_env_context(std::uint32_t /*env_id*/, std::uint64_t /*frame_version*/) {}
 extern "C" __attribute__((weak)) void aura_jit_clear_linear_env_context(void) {}

@@ -3207,6 +3207,25 @@ def cmd_lint():
             "Issue #3185 densify-entry LCP consult linter failed — run python3 scripts/coverage/checks/check_densify_entry_lcp_consult_3185.py"
         )
         return r
+    # Issue #3186: JIT Move/Drop elision also consults live commit_readiness
+    # (closes the JIT half of the half-green residual after densify/steal
+    # race). Extends the #3130 predicate to JIT via the
+    # aura_jit_linear_move_drop_elision_ok runtime bridge; emits call in
+    # linear_safety_probe so JIT deopts on either epoch-stale OR
+    # readiness-blocked. Soft/Off zero-cost (the predicate itself
+    # short-circuits the bump under Soft/Off). Extends
+    # test_occurrence_goal_persist_rehydrate (#81967); no docs/design/3186-*
+    # (#1655), no tests/issues/test_issue_3186.cpp (#81934).
+    lmdeo_script = COVERAGE_CHECKS / "check_linear_move_drop_elision_ok_3186.py"
+    if not lmdeo_script.exists():
+        fail(f"missing {lmdeo_script}")
+        return 1
+    r = run([sys.executable, str(lmdeo_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3186 JIT linear_move_drop_elision_ok linter failed — run python3 scripts/coverage/checks/check_linear_move_drop_elision_ok_3186.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).

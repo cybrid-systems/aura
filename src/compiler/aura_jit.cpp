@@ -363,6 +363,10 @@ struct LLVMBuilder {
     llvm::Function* fn_linear_epoch_safety_check = nullptr;
     // Issue #1540: JIT Apply linear_post_mutate_enforce probe.
     llvm::Function* fn_linear_post_mutate_enforce = nullptr;
+    // Issue #3186: JIT Move/Drop elision consults live commit_readiness
+    // in the same critical section as the elision decision. Thin wrapper
+    // around typed_mutation_audit::linear_move_drop_elision_ok.
+    llvm::Function* fn_linear_move_drop_elision_ok = nullptr;
     // Issue #1537: Apply-prologue dual-epoch helpers.
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
@@ -470,6 +474,15 @@ struct LLVMBuilder {
         fn_linear_epoch_safety_check = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, {ptr_i8, i8_ty, i32_ty}, false),
             llvm::Function::ExternalLinkage, "aura_jit_linear_epoch_safety_check", mod);
+
+        // Issue #3186: i32 aura_jit_linear_move_drop_elision_ok(void) — closes
+        // the JIT half of the half-green residual after densify/steal race.
+        // Companion to fn_linear_epoch_safety_check; called in the same
+        // critical section in linear_safety_probe so JIT deopts on either
+        // epoch-stale OR commit_readiness would_allow_commit=false.
+        fn_linear_move_drop_elision_ok = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
+            "aura_jit_linear_move_drop_elision_ok", mod);
 
         // Issue #1540: i32 aura_jit_linear_post_mutate_enforce(i32 env_id)
         fn_linear_post_mutate_enforce = llvm::Function::Create(
@@ -698,11 +711,25 @@ struct LLVMBuilder {
             // Issue #1540: on epoch stale OR linear post-mutate violation,
             // bump deopt counter (interpreter fallback path observability).
             auto* is_unsafe = irb->CreateICmpNE(unsafe_i, zero32);
+            // Issue #3186: also consult linear_move_drop_elision_ok (live
+            // commit_readiness face) in the same critical section as the
+            // elision decision. Soft/Off: zero extra counter noise (the
+            // predicate itself short-circuits the bump under Soft/Off).
+            // Production/Full: never ship Move/Drop under
+            // would_allow_commit=false. Reuses the existing
+            // g_linear_fast_path_elide_blocked_production_total counter
+            // (no new metric key). Closes the JIT half of the half-green
+            // residual after densify/steal race.
+            auto* elision_ok_i =
+                irb->CreateCall(llvm::FunctionCallee(fn_linear_move_drop_elision_ok),
+                                llvm::ArrayRef<llvm::Value*>{});
+            auto* not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32);
+            auto* any_unsafe = irb->CreateOr(is_unsafe, not_elision_ok);
             auto* entry_bb = irb->GetInsertBlock();
             auto* parent = entry_bb->getParent();
             auto* bb_deopt = llvm::BasicBlock::Create(ctx, "lin_probe_deopt", parent);
             auto* bb_ok = llvm::BasicBlock::Create(ctx, "lin_probe_ok", parent);
-            irb->CreateCondBr(is_unsafe, bb_deopt, bb_ok);
+            irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok);
             irb->SetInsertPoint(bb_deopt);
             if (fn_deopt_inc)
                 irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
@@ -2868,6 +2895,11 @@ struct AuraJIT::Impl {
         // Issue #1534 / #1535 / #1537: dual-epoch fences + deopt counter.
         reg("aura_jit_guard_shape_epoch_check", (void*)aura_jit_guard_shape_epoch_check);
         reg("aura_jit_linear_epoch_safety_check", (void*)aura_jit_linear_epoch_safety_check);
+        // Issue #3186: register the JIT commit_readiness bridge so ORC can
+        // resolve aura_jit_linear_move_drop_elision_ok symbols emitted by
+        // linear_safety_probe. Production-only consultation of the
+        // commit_readiness face (predicate short-circuits under Soft/Off).
+        reg("aura_jit_linear_move_drop_elision_ok", (void*)aura_jit_linear_move_drop_elision_ok);
         reg("aura_jit_linear_post_mutate_enforce", (void*)aura_jit_linear_post_mutate_enforce);
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
