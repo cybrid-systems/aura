@@ -2855,6 +2855,20 @@ extern "C" int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint
     return 1;
 }
 
+// Issue #3186: JIT Move/Drop elision also consults live commit_readiness
+// in the same critical section as the elision decision (closes the half-
+// green residual after densify/steal race). Thin wrapper around the
+// linear_move_drop_elision_ok predicate (typed_mutation_audit.h,
+// shipped in #3130). Returns 1 if elision is OK, 0 if blocked (caller
+// must deopt). Soft/Off: zero extra counter noise (the predicate itself
+// short-circuits the bump under Soft/Off). Reuses the existing
+// g_linear_fast_path_elide_blocked_production_total counter — no new
+// metric key. No second proof model: TypeLinearCommitProof +
+// existing invalidate_gen remain the SSOT for the linear face.
+extern "C" int aura_jit_linear_move_drop_elision_ok(void) {
+    return aura::compiler::typed_audit::linear_move_drop_elision_ok() ? 1 : 0;
+}
+
 // Issue #972: prefer stderr with fixed prefix so --serve / agent log
 // scrapers can filter (structured logger not available in this TU).
 static void aot_log(const char* fmt, ...) {

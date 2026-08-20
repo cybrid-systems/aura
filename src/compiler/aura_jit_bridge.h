@@ -886,6 +886,16 @@ void aura_jit_linear_post_invalidate_safety(std::uint8_t linear_state, std::uint
 // When linear_state != 0 also runs aura_jit_linear_post_invalidate_safety.
 int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_state,
                                        std::uint32_t opcode);
+// Issue #3186: JIT Move/Drop elision also consults live commit_readiness
+// in the same critical section as the elision decision (closes the half-
+// green residual after densify/steal race). Thin wrapper around
+// aura::compiler::typed_audit::linear_move_drop_elision_ok from
+// typed_mutation_audit.h (predicate shipped in #3130; reuses the existing
+// `g_linear_fast_path_elide_blocked_production_total` counter — no new
+// metric key). Returns 1 if elision is OK, 0 if blocked (caller must
+// deopt). Soft/Off: zero extra counter noise (the predicate itself
+// short-circuits the bump under Soft/Off).
+int aura_jit_linear_move_drop_elision_ok(void);
 // Host/test: set EnvFrame context for the is_env_frame_stale half of the
 // dual check (env_id + frame_version captured when the linear value was
 // created). Pass env_id == UINT32_MAX to clear / disable env half.
