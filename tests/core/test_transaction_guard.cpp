@@ -3,7 +3,7 @@
 //          MutationBoundaryGuard + PanicCheckpoint lifecycle.
 //
 //   AC1: Scaffold simulation removed; host try_acquire/release required
-//   AC2: Agent body + set-body cite TransactionGuard / host factories
+//   AC2: Agent body cites TransactionGuard / host factories; set-body uses SSOT acquire (#3192)
 //   AC3: Reject path → Rejected, no held handle / no armed panic depth
 //   AC4: recover_panic → PanicRecovered + restore called
 //   AC5: Coverage linter + source-cite schema-2555 / #2555
@@ -119,9 +119,17 @@ static void ac2_call_sites() {
     CHECK(fiber.find("transaction_guard_host") != std::string::npos,
           "AC2: agent body cites transaction_guard_host");
     CHECK(fiber.find("TransactionGuard") != std::string::npos, "AC2: TransactionGuard in fiber");
-    CHECK(mut.find("transaction_guard_host(ev)") != std::string::npos,
-          "AC2: set-body uses transaction_guard_host");
-    CHECK(mut.find("TransactionGuard tg") != std::string::npos, "AC2: set-body TransactionGuard");
+    // Issue #3192: mutate:set-body moved from host try_acquire to
+    // mutate_dispatch_try_acquire (SSOT Guard per #3074).
+    {
+        const auto pos = mut.find("add_mutate(\"mutate:set-body\"");
+        CHECK(pos != std::string::npos, "AC2: mutate:set-body registered");
+        const auto block = (pos != std::string::npos) ? mut.substr(pos, 1200) : std::string{};
+        CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
+              "AC2: set-body uses mutate_dispatch_try_acquire");
+        CHECK(block.find("TransactionGuard tg") == std::string::npos,
+              "AC2: set-body no longer constructs TransactionGuard");
+    }
     // Scaffold-only dual path gone from set-body.
     CHECK(mut.find("TransactionGuard surface is also exercised") == std::string::npos,
           "AC2: scaffold dual-path comment removed from set-body");
