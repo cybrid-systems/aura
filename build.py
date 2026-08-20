@@ -3189,6 +3189,24 @@ def cmd_lint():
             "Issue #3184 abort restore force-dirty linter failed — run python3 scripts/coverage/checks/check_abort_restore_force_dirty_3184.py"
         )
         return r
+    # Issue #3185: densify-entry LCP consult (steal×GC residual).
+    # Closes the entry-side consultation gap from #2888 / #2957: production
+    # densify entry (Phase-5) + optional one-shot Moving densify
+    # (recover_moving_sticky_densify_off) MUST consult last
+    # LifetimeConsistencyProof before relocating; Soft / Off stays zero-cost
+    # (single atomic load + early-return); evaluator_gc.cpp live_compact(Soft)
+    # path is unchanged. Extends test_moving_densify_fail_closed (#81967);
+    # no docs/design/3185-* (#1655), no tests/issues/test_issue_3185.cpp (#81934).
+    delcp_script = COVERAGE_CHECKS / "check_densify_entry_lcp_consult_3185.py"
+    if not delcp_script.exists():
+        fail(f"missing {delcp_script}")
+        return 1
+    r = run([sys.executable, str(delcp_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3185 densify-entry LCP consult linter failed — run python3 scripts/coverage/checks/check_densify_entry_lcp_consult_3185.py"
+        )
+        return r
     # Issue #3018: engine:metrics :all / :prefix fail-soft on hash insert
     # miss (never void for capacity). Extends test_engine_metrics_facade
     # + engine_metrics.aura (#81967); no docs/design/ (#1655).

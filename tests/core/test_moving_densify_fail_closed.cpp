@@ -2394,6 +2394,98 @@ int run_test_moving_densify_fail_closed() {
               "#3092 AC5: cite #3092 in Evaluator wiring");
     }
 
+    // ── Issue #3185: densify-entry LCP consult (steal×GC residual). ──
+    // Extends this fail-closed test file (covers recover_moving_sticky_densify_off
+    // where the optional one-shot Moving densify lives; #81967).
+    // Source-cite ACs only — runtime consult behavior covered by the helper
+    // consult_last_lcp_for_densify_entry unit smoke + integration under
+    // #1908 / #2957 steal arms.
+    {
+        const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto lcp = read_file("src/core/lifetime_consistency_proof.hh");
+        const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+
+        // Helper: count non-overlapping occurrences of needle in haystack.
+        const auto count_occurrences = [](const std::string& haystack,
+                                          const std::string& needle) -> int {
+            if (needle.empty())
+                return 0;
+            int n = 0;
+            std::size_t pos = 0;
+            while (true) {
+                const auto p = haystack.find(needle, pos);
+                if (p == std::string::npos)
+                    break;
+                ++n;
+                pos = p + 1;
+            }
+            return n;
+        };
+
+        // ac3185_1: consult wired at BOTH Phase-5 densify entry AND optional
+        // one-shot Moving densify (recover_moving_sticky_densify_off). Use the
+        // helper (single read surface) at both call sites per AC3 / AC4.
+        const std::string consult = "consult_last_lcp_for_densify_entry";
+        const int consult_sites = count_occurrences(mut, consult);
+        CHECK(consult_sites >= 2, "ac3185_1: consult_last_lcp_for_densify_entry wired at Phase-5 "
+                                  "entry + optional one-shot densify (>= 2 sites)");
+        CHECK(mut.find("Issue #3185 AC1: same surface as Phase-5 densify entry") !=
+                  std::string::npos,
+              "ac3185_1: optional one-shot Moving densify carries the surface comment");
+
+        // ac3185_2: Soft / Off zero-cost — production_defaults_active || Full
+        // guard precedes the consult, so Soft/Off path short-circuits before
+        // touching the atomic set (matches #3185 AC4 zero-cost contract).
+        const std::string guard = "typed_audit::production_defaults_active() ||";
+        const int guard_sites = count_occurrences(mut, guard);
+        // Existing baseline: densify-ownership-scan / Moving / abort / etc. guards
+        // already in evaluator_mutation_boundary.cpp. #3185 must add >= 2 more
+        // (Phase-5 entry + optional one-shot). Use a high watermark so the AC
+        // stays true across prior issues; the 3185 linter source-cites this too.
+        CHECK(guard_sites >= 4, "ac3185_2: production_defaults_active guards present (incl. #3185 "
+                                "Soft/Off zero-cost on both sites)");
+
+        // ac3185_3: production-block path — pin_contract_held forced false on
+        // block (same surface as moving_incomplete_remap). Two AND-bindings:
+        //   pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
+        const std::string and_binding = "compact_r.pin_contract_held && !densify_entry_lcp_blocked";
+        const int and_bindings = count_occurrences(mut, and_binding);
+        CHECK(and_bindings >= 2, "ac3185_3: pin_contract_held forced false on block (Phase-5 entry "
+                                 "+ optional one-shot)");
+
+        // ac3185_4: no second proof registry — single helper + single counter
+        // + single reset hook in lifetime_consistency_proof.hh. No duplicate
+        // helpers under a different name.
+        CHECK(lcp.find("consult_last_lcp_for_densify_entry") != std::string::npos,
+              "ac3185_4: single consult helper defined in lifetime_consistency_proof.hh");
+        CHECK(lcp.find("g_densify_entry_lcp_blocked_total") != std::string::npos,
+              "ac3185_4: single densify_entry_lcp_blocked_total counter defined");
+        CHECK(lcp.find("reset_densify_entry_lcp_blocked_for_test") != std::string::npos,
+              "ac3185_4: single test reset hook defined");
+        // Mut-side call must go through the helper, not duplicate access to the
+        // underlying atomics directly (would silently skip the polling struct).
+        CHECK(mut.find("last_lifetime_consistency_would_allow(") == std::string::npos,
+              "ac3185_4: mut does NOT directly read last_lifetime_consistency_would_allow (must "
+              "use helper)");
+        CHECK(mut.find("last_lifetime_consistency_proof_present(") == std::string::npos,
+              "ac3185_4: mut does NOT directly read last_lifetime_consistency_proof_present (must "
+              "use helper)");
+
+        // ac3185_5: soft live_compact (GC compact_sweep path in evaluator_gc.cpp)
+        // is UNCHANGED — does NOT call consult_last_lcp_for_densify_entry.
+        // #3185 AC2 contract: Soft itself does not relocate, so consultation is
+        // only on the Moving decision point. compact_sweep + live_compact(Soft)
+        // remains zero LCP consult (Quiet path).
+        CHECK(gc.find("consult_last_lcp_for_densify_entry") == std::string::npos,
+              "ac3185_5: evaluator_gc.cpp compact_sweep / live_compact(Soft) does NOT consult LCP "
+              "(zero-cost per #3185 AC2)");
+        CHECK(gc.find("Issue #3185") == std::string::npos,
+              "ac3185_5: evaluator_gc.cpp untouched by #3185 (soft live_compact unchanged)");
+        CHECK(
+            gc.find("LiveCompactMode::Soft") != std::string::npos,
+            "ac3185_5: live_compact(Soft) call site still in evaluator_gc.cpp (regression guard)");
+    }
+
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
     // clang-format on

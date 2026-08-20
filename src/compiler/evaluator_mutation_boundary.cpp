@@ -3498,6 +3498,24 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // pointers stay unregistered → hard fail-closed preserved
             // (AC2). Additive counters only (AC4).
             (void)ev_->register_known_moving_densify_root_slots();
+            // Issue #3185 AC1: consult last LifetimeConsistencyProof before
+            // Moving densify entry. Production/Full only (Soft/Off zero-cost
+            // per AC4 — stamped_total stays 0 in quiet path → present=false →
+            // no consult). If last proof was stamped reject (e.g., concurrent
+            // fiber's steal-complete arm), block relocation via the same
+            // surface as pin_contract / moving_incomplete_remap (silent
+            // fail-closed per AC4 — no new Soft/Off cost).
+            bool densify_entry_lcp_blocked = false;
+            if (typed_audit::production_defaults_active() ||
+                typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+                auto poll =
+                    aura::core::lifetime_consistency_proof::consult_last_lcp_for_densify_entry();
+                if (poll.present && !poll.would_allow_commit) {
+                    densify_entry_lcp_blocked = true;
+                    aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total()
+                        .fetch_add(1, std::memory_order_relaxed);
+                }
+            }
             const auto compact_r = ev_->arena_group_
                                        ? ev_->arena_group_->compact_all_moving_pinned()
                                        : aura::ast::AdaptiveCompactResult{};
@@ -3507,7 +3525,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                         static_cast<std::uint64_t>(compact_r.bytes_reclaimed_total),
                         std::memory_order_relaxed);
             }
-            pin_contract_held = compact_r.pin_contract_held;
+            // Issue #3185 AC1: densify-entry LCP block surface.
+            // Force pin_contract_held=false so the unified success gate
+            // (same surface as pin_contract / moving_incomplete_remap) catches
+            // the block. Soft / Off already short-circuits above (poll.present
+            // false in quiet path → zero extra work).
+            pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
             had_moving_densify = compact_r.moved_live_objects;
             // Issue #3171: Moving densify success did not go through
             // unified_restamp(Densify), so invalidate_gen stayed matched
@@ -5234,9 +5257,29 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
     // as densify entry. Skip when Moving still disabled (pref/env off) or no
     // arena_group — Soft / AURA_ARENA_MOVING_COMPACT=0 stay zero densify work.
     if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled()) {
+        // Issue #3185 AC1: same surface as Phase-5 densify entry. Consult
+        // last LifetimeConsistencyProof before declaring the recovery
+        // densify a success. Production/Full only (Soft/Off zero-cost per
+        // AC4 — stamped_total stays 0 in quiet path → present=false →
+        // no consult). If last proof was stamped reject (e.g., concurrent
+        // fiber's steal-complete arm), force pin_contract_held=false so
+        // the success gate (same surface as moving_incomplete_remap)
+        // catches the block. Mirror Phase-5 entry pattern (no second
+        // proof registry per AC4).
+        bool densify_entry_lcp_blocked = false;
+        if (typed_audit::production_defaults_active() ||
+            typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
+            auto poll =
+                aura::core::lifetime_consistency_proof::consult_last_lcp_for_densify_entry();
+            if (poll.present && !poll.would_allow_commit) {
+                densify_entry_lcp_blocked = true;
+                aura::core::lifetime_consistency_proof::g_densify_entry_lcp_blocked_total()
+                    .fetch_add(1, std::memory_order_relaxed);
+            }
+        }
         const auto compact_r = arena_group_->compact_all_moving_pinned();
         out.densify_retried = true;
-        out.pin_contract_held = compact_r.pin_contract_held;
+        out.pin_contract_held = compact_r.pin_contract_held && !densify_entry_lcp_blocked;
         out.incomplete_remap = compact_r.moving_incomplete_remap_any;
         aura::core::densify_consistency::g_moving_densify_retry_after_recovery_total.fetch_add(
             1, std::memory_order_relaxed);

@@ -234,6 +234,43 @@ inline void reset_lifetime_consistency_proof_for_test() noexcept {
     g_lcp_stamped_total().store(0, std::memory_order_relaxed);
 }
 
+// Issue #3185: densify-entry LCP consult helper. Cheap single-load surface
+// for the Phase-5 / optional one-shot Moving densify entry path (matches the
+// already-wired steal-complete arm in evaluator_fiber_mutation.cpp which
+// publishes the stamp on exit; the entry side consults the same atomic set).
+// Soft / Off path: stamped_total stays 0 (quiet path) → present=false →
+// caller does NOT consult (zero-cost branch per AC4). Soft live_compact
+// itself does NOT relocate per AC2, so the consultation is only on the
+// Moving decision point.
+struct DensifyEntryLCPPoll {
+    bool present = false;
+    bool would_allow_commit = true;
+    std::uint32_t force_reason_code = 0;
+};
+
+[[nodiscard]] inline DensifyEntryLCPPoll consult_last_lcp_for_densify_entry() noexcept {
+    DensifyEntryLCPPoll poll;
+    poll.present = last_lifetime_consistency_proof_present();
+    poll.would_allow_commit = last_lifetime_consistency_would_allow();
+    poll.force_reason_code = last_lifetime_consistency_force_reason();
+    return poll;
+}
+
+// Issue #3185 AC1: Agent-visible counter for densify-entry LCP blocks.
+// Bumped when consult_last_lcp_for_densify_entry returns present=true
+// AND would_allow_commit=false at a Moving densify entry point (Phase-5
+// or optional one-shot Moving). Add-only (no existing counter under this
+// name; pair with the existing densify-soak dashboards).
+inline std::atomic<std::uint64_t>& g_densify_entry_lcp_blocked_total() noexcept {
+    static std::atomic<std::uint64_t> v{0};
+    return v;
+}
+
+// Test hook: reset the densify-entry LCP blocked counter.
+inline void reset_densify_entry_lcp_blocked_for_test() noexcept {
+    g_densify_entry_lcp_blocked_total().store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::lifetime_consistency_proof
 
 #endif // AURA_CORE_LIFETIME_CONSISTENCY_PROOF_HH
