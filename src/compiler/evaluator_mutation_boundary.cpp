@@ -228,6 +228,44 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         aura::compiler::typed_audit::note_occurrence_commit_snapshot_written(
             mutation_id, static_cast<std::uint64_t>(written));
     }
+    // (2.5) Issue #3190: drain pending_full_solve / locality residual before
+    // the outermost-success TypeLinearCommitProof stamp. Production/Full/Strict:
+    // force escalate → if still unsolved, hard-reject with force_reason 16
+    // (do NOT stamp green proof). Soft: observe only. Quiet (no residual):
+    // two size reads, zero extra atomics. Sibling #3031 already covers the
+    // composite_txn_commit / lockless batch paths (drain runs at the start of
+    // composite_txn_commit body); this site closes the residual SOLVED-with-dirty
+    // window that the outermost stamp could otherwise observe after a deferred
+    // delta. Anti SOLVED-with-dirty across batch.
+    {
+        auto* pre_stamp_cs = &tc->constraint_system();
+        std::vector<aura::compiler::Constraint> drain_unresolved;
+        auto drain = pre_stamp_cs->drain_pending_full_solve_before_commit(&drain_unresolved);
+        if (drain != aura::compiler::SolveResult::SOLVED) {
+            const bool hard =
+                aura::compiler::typed_audit::production_defaults_active() ||
+                ev->get_strategy() == aura::compiler::typed_audit::AuditStrategy::Full;
+            if (hard) {
+                // Hard-reject: stamp reject proof with force_reason 16 (sibling
+                // #3031 face_name "pending_full_solve_residual"). Clear the
+                // persist buffer + bump fingerprint mismatch counter (treat as
+                // abort — half-solve not allowed to ship).
+                (void)aura::compiler::typed_audit::
+                    build_type_linear_commit_proof_from_live_with_outcome(
+                        mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                        aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                        /*goal_fingerprint=*/0, /*from_cs=*/false,
+                        /*force_reason=*/16);
+                aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                    aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+                (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+                ev->bump_occurrence_persist_fingerprint_mismatch();
+                return; // skip stamp + health + grant
+            }
+            // Soft: observe only, commit may succeed (drain already bumped
+            // g_pending_full_solve_residual_observe_total in the helper).
+        }
+    }
     // (3) Stamp TypeLinearCommitProof from post-persist CS truth so Agents
     // holding the proof across densify/steal match the durable snapshot.
     // Soft + empty goals: freeze returns 0/0; stamp still records defuse
