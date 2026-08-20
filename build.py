@@ -3585,6 +3585,23 @@ def cmd_lint():
             "Issue #3109 WAL append fail-closed linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_closed_3109.py"
         )
         return r
+    # Issue #3178: SE WAL overflow ring must stamp forensic join keys
+    # (mutation_id + tenant/fiber/epoch) under fail-closed, not the
+    # WAL sequence number. Residual of #3109 — fail-closed option
+    # exists and works for depth/posture counters; only the stamped
+    # fields were wrong (ovr.mid=rec.seq, tenant/fiber/epoch zeroed).
+    # Extends tests/compiler/test_security_event_wal_replay.cpp (#81967);
+    # no docs/design/ (#1655).
+    wom3178_script = COVERAGE_CHECKS / "check_wal_overflow_mid_3178.py"
+    if not wom3178_script.exists():
+        fail(f"missing {wom3178_script}")
+        return 1
+    r = run([sys.executable, str(wom3178_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3178 WAL overflow mid linter failed — run python3 scripts/coverage/checks/check_wal_overflow_mid_3178.py"
+        )
+        return r
     # Issue #3110: Production C++ join auto-wait (close host-forget cleanup
     # window). join_agent / join_agents auto-wait via wait_reclaimed_body
     # (50 ms production default) when production + Reclaimed + unset wait,
