@@ -182,6 +182,61 @@ inline constexpr int kBpThresholdSsotIssue = 2948;
 inline constexpr int kBpScopeInheritIssue = 3015;
 inline constexpr std::string_view kBpScopeProcessBucket = "-";
 
+// Forward declaration — production_scope_bp_inherit is defined inline
+// in agent_scope.h. agent_scope.h includes this header (circular
+// include), so we forward-declare here for callers like
+// resolve_bare_bp_scope_id below. Inline ODR allows identical
+// declarations across translation units.
+[[nodiscard]] inline bool production_scope_bp_inherit() noexcept;
+
+// Issue #3179: production bare spawn must NOT default bp_scope_id to the
+// process bucket — a BP storm in tenant A would otherwise soft-reject
+// unrelated bare agents in tenant B via the same process-wide recent
+// gauge. Scope path already auto-fills (#3015 inherit + #3147 handle
+// persistence). Bare path was missing the parallel:
+//   spawn_agent_with_mailbox only *persisted* the resolved spec.bp_scope_id,
+//   it never invented a stable, session-local key when the caller left
+//   it empty. The Aura orch:spawn-agent primitive defaulted to {} and
+//   only mutated it on explicit :bp-scope-id kwarg.
+//
+// Fix is a thin resolver called from spawn_agent_with_mailbox (the
+// Aura primitive also funnels through this surface, so a single wire
+// point covers both). Soft / AURA_SANDBOX=off stays zero-cost (resolver
+// returns {} → process bucket, AC2). Explicit :bp-scope-id wins (AC3).
+// Scope path unchanged — #3015 inherit still authoritative, no
+// double-prefix (AC4). Production prefers the TLS quota tenant id
+// ("t:<tid>") so two concurrent tenants do not share a gauge (AC1 /
+// AC5). Last-resort fallback uses a process-global monotonic counter
+// ("bare:<seq>") so each new bare spawn gets a unique key when no
+// tenant context is bound. No new global registry; keys are
+// caller-scoped and die with the Spawn site.
+[[nodiscard]] inline std::string resolve_bare_bp_scope_id(std::string_view explicit_id) noexcept {
+    if (!explicit_id.empty())
+        return std::string(explicit_id);
+    if (!production_scope_bp_inherit())
+        return {}; // Soft / sandbox=off (AC2)
+    // Production: prefer TLS quota tenant when bound. Matches
+    // orch admission preflight (`current_quota_tenant()`) so the BP
+    // gauge and the fiber-quota gauge see the same isolation key.
+    const auto tid = aura::core::resource_quota::current_quota_tenant();
+    if (tid != 0) {
+        // #3179 AC1 / AC5: distinct tenants under production get
+        // distinct non-empty non-process keys — a BP storm in tenant A
+        // does not soft-reject tenant B.
+        return "t:" + std::to_string(tid);
+    }
+    // No tenant context bound: fall back to a process-global monotonic
+    // "bare:<seq>" id. Each fresh spawn under this path gets a unique
+    // key so within-Evaluator / cross-Evaluator bare agents without a
+    // tenant still don't share a gauge. Per-Evaluator stickiness could
+    // be revisited if Hosts want shared gauges across bare agents of
+    // the same Evaluator (#3179 AC1: distinct tenants / sessions do
+    // not share).
+    static std::atomic<std::uint64_t> g_bare_bp_seq{0};
+    const auto n = g_bare_bp_seq.fetch_add(1, std::memory_order_relaxed);
+    return "bare:" + std::to_string(n);
+}
+
 struct BpThresholdDecision {
     std::uint64_t threshold = 0; // 0 + !always_reject = gate off for this decision
     bool always_reject = false;  // #2591 spec override=0
@@ -1733,7 +1788,20 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     // spawn admit for production multi-Scope hosts; this just keeps
     // the resolved value alive past the admit preflight so runtime
     // BP events do not poison the process bucket.
-    h.bp_scope_id = std::move(spec.bp_scope_id);
+    // Issue #3179: production + bare spawn (no AgentScope, no explicit
+    // :bp-scope-id kwarg) must NOT default to the process bucket —
+    // a BP storm in tenant A would otherwise soft-reject unrelated
+    // bare agents in tenant B via the same process-wide recent gauge
+    // (AC1 / AC5). Run the resolver once here (covers both the Aura
+    // orch:spawn-agent primitive and direct C++ callers) and keep the
+    // resolved value in sync between h and spec so downstream BP arms
+    // (agent_send / emit_keepalive) route to the same gauge. Soft /
+    // AURA_SANDBOX=off stays zero-cost (resolver returns {} →
+    // process bucket, AC2). Explicit :bp-scope-id wins (AC3). Scope
+    // path unchanged — #3015 inherit still authoritative, no
+    // double-prefix (AC4).
+    h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);
+    spec.bp_scope_id = h.bp_scope_id;
     if (!spec.body) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         return h;

@@ -3245,6 +3245,7 @@ add_executable(test_orch_agent_batch
     tests/orch/test_parallel_intend_pure.cpp
     tests/orch/test_parallel_intend_pure_contract.cpp
     tests/orch/test_per_scope_bp_admit.cpp
+    tests/orch/test_bare_bp_resolve_3179.cpp
     tests/orch/test_security_schedule_gate.cpp
 )
 set_property(TARGET test_orch_agent_batch PROPERTY CXX_MODULE_STD ON)
