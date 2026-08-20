@@ -1,0 +1,94 @@
+{
+  "issue": 3179,
+  "title": "Issue #3179: production bare spawn defaults bp_scope_id to a non-empty non-process key (cross-tenant admit isolation gap)",
+  "ok": "OK: Issue #3179 bare spawn bp_scope_id resolver — all AC contract rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "resolve_bare_bp_scope_id",
+        "Issue #3179",
+        "current_quota_tenant",
+        "\"t:\" + std::to_string(tid)",
+        "\"bare:\" + std::to_string(n)",
+        "h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id);",
+        "production_scope_bp_inherit"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "if (!production_scope_bp_inherit()) return {};",
+        "AURA_SANDBOX"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "if (!explicit_id.empty()) return std::string(explicit_id);"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "if (spec.bp_scope_id.empty() && production_scope_bp_inherit())",
+        "spec.bp_scope_id = bp_scope_id_;",
+        "spawn_bp_scope_inherited_total"
+      ]
+    },
+    {
+      "ac": "AC4_negative",
+      "path": "src/orch/agent_scope.h",
+      "contains": [],
+      "must_not_contain": [
+        "resolve_bare_bp_scope_id"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/orch/agent_spawn.h",
+      "contains": [
+        "spawn_agent_with_mailbox",
+        "h.bp_scope_id",
+        "note_mailbox_bp_recent_event"
+      ]
+    },
+    {
+      "ac": "AC6_test",
+      "path": "tests/orch/test_bare_bp_resolve.cpp",
+      "contains": [
+        "#3179",
+        "resolve_bare_bp_scope_id",
+        "production_scope_bp_inherit",
+        "spawn_agent_with_mailbox",
+        "h_a.bp_scope_id != h_b.bp_scope_id"
+      ]
+    },
+    {
+      "ac": "lineage_#3015",
+      "path": "scripts/coverage/checks/check_scope_bp_inherit_3015.py",
+      "contains": [
+        "production_scope_bp_inherit",
+        "bp_scope_id"
+      ]
+    },
+    {
+      "ac": "lineage_#3147",
+      "path": "scripts/coverage/checks/check_mailbox_bp_scope_handle_3147.py",
+      "contains": [
+        "h.bp_scope_id"
+      ]
+    },
+    {
+      "ac": "build_py_wire",
+      "path": "build.py",
+      "contains": [
+        "check_per_scope_bp_admit_3179"
+      ]
+    }
+  ]
+}

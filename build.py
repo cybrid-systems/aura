@@ -3047,6 +3047,27 @@ def cmd_lint():
             "Issue #3147 mailbox bp scope handle linter failed — run python3 scripts/coverage/checks/check_mailbox_bp_scope_handle_3147.py"
         )
         return r
+    # Issue #3179: production bare spawn must NOT default bp_scope_id to
+    # the process bucket — a BP storm in tenant A would otherwise
+    # soft-reject unrelated bare agents in tenant B via the same
+    # process-wide recent gauge (cross-tenant admit isolation gap).
+    # Scope path already auto-fills (#3015 inherit); bare path was
+    # missing the parallel. Resolver prefers TLS quota tenant ("t:<tid>")
+    # under production, falls back to per-spawn monotonic "bare:<seq>"
+    # when no tenant context is bound. Soft / AURA_SANDBOX=off stays
+    # zero-cost (returns {} → process bucket). Extends
+    # tests/orch/test_per_scope_bp_admit.cpp (#81934 / #81967); no
+    # docs/design/ (#1655).
+    psba3179_script = COVERAGE_CHECKS / "check_per_scope_bp_admit_3179.py"
+    if not psba3179_script.exists():
+        fail(f"missing {psba3179_script}")
+        return 1
+    r = run([sys.executable, str(psba3179_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3179 per-scope bp admit linter failed — run python3 scripts/coverage/checks/check_per_scope_bp_admit_3179.py"
+        )
+        return r
     # Issue #3016: MutationBoundary trail stamps resolve_audit_mutation_id
     # (not total_mutations_). Residual of #2493/#2836. Extends
     # test_audit_mutation_id_unify.cpp (#81967); no docs/design/ (#1655).
