@@ -3449,8 +3449,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // Issue #3192: route mutate:set-body through mutate_dispatch_try_acquire
         // (sibling #3074 / #2124 / #1904 contract). Closes the I2 residual
         // — every structural mutate:* body must go through the SSOT Guard
-        // acquire. Replaces the prior TransactionGuard path which called
-        // host_.try_acquire directly (no dispatch metrics on the acquire).
+        // acquire. Replaces the prior host_.try_acquire-direct path
+        // (no dispatch metrics on the acquire).
         // Soft/Off zero extra cost (single relaxed atomic load + branch).
         bool ok = true;
         auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
@@ -3461,7 +3461,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         auto guard = std::move(*guard_r);
         mutate_dispatch_note(MutateKind::SetBody, MutateDispatchResult::Applied);
         if (ev.workspace_read_only_) {
-            tg.mark_failed();
+            ok = false;
             return mev("read-only", "workspace is read-only");
         }
         if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !ev.workspace_flat_ ||
@@ -3671,65 +3671,57 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                               aura::ast::FlatAST::kConstraintDirty);
 
                 // ── Auto-typecheck (Issue #107 / #526 / #1684 / #1686) ──
-                // #1686 / #2555: throws must mark_failed via TransactionGuard.
-                try {
-                    (void)ev.run_post_mutate_typecheck_no_lock();
-                } catch (const std::exception& e) {
-                    tg.mark_failed();
-                    ok = false;
-                    return mev("typecheck-threw",
-                               std::string("post-mutate typecheck threw: ") + e.what());
-                } catch (...) {
-                    // [SILENCE-PRIM-#1684/#2555] intentional: convert unknown throw into
-                    // TransactionGuard mark_failed + typed error so mutate does not commit.
-                    tg.mark_failed();
-                    ok = false;
-                    return mev("typecheck-threw", "post-mutate typecheck threw: unknown exception");
+                // Issue #1684 / #3192: throws → Guard mark_failed via run_or_rollback.
+                {
+                    std::string threw;
+                    if (!guard->run_or_rollback(
+                            [&] { (void)ev.run_post_mutate_typecheck_no_lock(); }, &threw)) {
+                        ok = false;
+                        return mev("typecheck-threw",
+                                   std::string("post-mutate typecheck threw: ") + threw);
+                    }
                 }
 
                 // ── Ownership validation (Issue #1458 / #1684 / #1686) ──
                 if (ev.workspace_flat_ && ev.workspace_pool_ && ev.last_mutate_error_.empty()) {
-                    try {
-                        std::unordered_set<std::string> linear_bindings;
-                        aura::compiler::discover_linear_bindings_in_subtree(
-                            flat, *ev.workspace_pool_, id, linear_bindings);
-                        for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
-                            if (dep_callers[ui] < flat.size()) {
+                    std::string threw;
+                    if (!guard->run_or_rollback(
+                            [&] {
+                                std::unordered_set<std::string> linear_bindings;
                                 aura::compiler::discover_linear_bindings_in_subtree(
-                                    flat, *ev.workspace_pool_, dep_callers[ui], linear_bindings);
-                            }
-                        }
-                        if (!linear_bindings.empty() && id < flat.size()) {
-                            flat.mark_dirty(
-                                id, static_cast<std::uint8_t>(aura::ast::FlatAST::kOwnershipDirty));
-                        }
-                        if (!linear_bindings.empty()) {
-                            std::vector<aura::compiler::OwnershipNote> onotes;
-                            bool opass = aura::compiler::OwnershipEnv::validate_ownership(
-                                flat, *ev.workspace_pool_, flat.root, linear_bindings, onotes);
-                            aura::compiler::record_linear_ownership_mutation_metrics(
-                                ev.compiler_metrics(), true, onotes, opass);
-                            if (!opass) {
-                                std::string err =
-                                    "ownership validation after mutate:set-body failed:";
-                                for (auto& n : onotes)
-                                    err += " [" + n.kind + " at node " + std::to_string(n.node) +
-                                           "] " + n.message + ";";
-                                ev.last_mutate_error_ = err;
-                            }
-                        }
-                    } catch (const std::exception& e) {
-                        tg.mark_failed();
+                                    flat, *ev.workspace_pool_, id, linear_bindings);
+                                for (std::size_t ui = 0; ui < dep_callers.size(); ++ui) {
+                                    if (dep_callers[ui] < flat.size()) {
+                                        aura::compiler::discover_linear_bindings_in_subtree(
+                                            flat, *ev.workspace_pool_, dep_callers[ui],
+                                            linear_bindings);
+                                    }
+                                }
+                                if (!linear_bindings.empty() && id < flat.size()) {
+                                    flat.mark_dirty(id, static_cast<std::uint8_t>(
+                                                            aura::ast::FlatAST::kOwnershipDirty));
+                                }
+                                if (!linear_bindings.empty()) {
+                                    std::vector<aura::compiler::OwnershipNote> onotes;
+                                    bool opass = aura::compiler::OwnershipEnv::validate_ownership(
+                                        flat, *ev.workspace_pool_, flat.root, linear_bindings,
+                                        onotes);
+                                    aura::compiler::record_linear_ownership_mutation_metrics(
+                                        ev.compiler_metrics(), true, onotes, opass);
+                                    if (!opass) {
+                                        std::string err =
+                                            "ownership validation after mutate:set-body failed:";
+                                        for (auto& n : onotes)
+                                            err += " [" + n.kind + " at node " +
+                                                   std::to_string(n.node) + "] " + n.message + ";";
+                                        ev.last_mutate_error_ = err;
+                                    }
+                                }
+                            },
+                            &threw)) {
                         ok = false;
                         return mev("ownership-threw",
-                                   std::string("ownership validation threw: ") + e.what());
-                    } catch (...) {
-                        // [SILENCE-PRIM-#1684/#2555] intentional: convert unknown throw into
-                        // TransactionGuard mark_failed + typed error so mutate does not commit.
-                        tg.mark_failed();
-                        ok = false;
-                        return mev("ownership-threw",
-                                   "ownership validation threw: unknown exception");
+                                   std::string("ownership validation threw: ") + threw);
                     }
                 }
 
