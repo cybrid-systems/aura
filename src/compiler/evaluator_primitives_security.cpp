@@ -848,6 +848,23 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("capability-durable-grant-deny-total",
                           static_cast<std::int64_t>(snap.capability_durable_grant_deny));
             }
+            // Issue #3177: durable high-risk grant production force —
+            // session_bound=true by default under Restricted/Strict so
+            // outermost MutationBoundaryGuard exit / TenantScope dtor /
+            // steal-abort revokes them (#2944/#3048/#3142 path). Closes
+            // the last privilege-sticky surface for self-modifying Agents
+            // under long-running multi-tenant loads. Sticky escape via
+            // grant_effect_durable_sticky + AURA_ALLOW_DURABLE_STICKY=1
+            // env gate stays opt-in. Additive keys only (AC4); no schema
+            // change to existing query keys.
+            {
+                insert_kv("schema-3177", 3177);
+                insert_kv("issue-3177", 3177);
+                insert_kv("production-durable-session-bound-wired", 1);
+                insert_kv("durable-sticky-escape-wired", 1);
+                insert_kv("capability-durable-session-bound-total",
+                          static_cast<std::int64_t>(snap.capability_durable_session_bound));
+            }
             // Issue #3029: grant_macro_self_evo TenantAdmin fence.
             {
                 insert_kv("schema-3029", 3029);
