@@ -1672,7 +1672,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_closure_call_must_deopt_toctou.cpp` (—) [domain_suite, theme_compiler] — AC1: multi-step free+realloc under concurrent MustDeopt callers —
 - `tests/compiler/test_closure_cow_gen_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: Alloc under gen G → soft-eligible while live gen == G
 - `tests/compiler/test_compiler_core_incremental_selfmod_gaps.cpp` (—) [domain_suite, theme_compiler] — test_compiler_core_incremental_selfmod_gaps.cpp — Issue #657:
-- `tests/compiler/test_compiler_hot_update_facade.cpp` (—) [domain_suite, theme_compiler] — AC1: hard_invalidate_via_facade is callable in any state (production /
+- `tests/compiler/test_compiler_hot_update_facade.cpp` (—) [large, domain_suite, theme_compiler] — AC1: hard_invalidate_via_facade is callable in any state (production /
 - `tests/compiler/test_concept_constraints.cpp` (—) [domain_suite, theme_compiler] — AC1: module exports all Pass-related concepts
 - `tests/compiler/test_dce_pass_variable_args.cpp` (—) [domain_suite, theme_compiler] — AC1: source has mark_used_slots + Call/Apply expanded ranges; cites #2830
 - `tests/compiler/test_dead_coercion_pipeline_wire.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2025; PassKind::DeadCoercion + DeadCoercionPass +
