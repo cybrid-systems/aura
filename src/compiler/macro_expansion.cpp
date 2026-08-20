@@ -1216,7 +1216,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                              std::equal_to<>>* subst,
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit);
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
+    bool in_quote = false, bool in_unquote = false);
 
 aura::ast::NodeId clone_macro_body(
     aura::ast::FlatAST& target, aura::ast::StringPool& target_pool, aura::ast::FlatAST& source,
@@ -1230,7 +1231,9 @@ aura::ast::NodeId clone_macro_body(
     // session_depth_limit=0 → compute at entry from capability+runtime (not TLS).
     return clone_macro_body_at_depth(target, target_pool, source, source_pool, body_id, subst,
                                      name_map, cloned_marker, /*hygiene_depth=*/0,
-                                     /*session_depth_limit=*/0);
+                                     /*session_depth_limit=*/0,
+                                     /*in_quote=*/false,
+                                     /*in_unquote=*/false);
 }
 
 static aura::ast::NodeId clone_macro_body_at_depth(
@@ -1240,7 +1243,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                              std::equal_to<>>* subst,
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                        std::equal_to<>>* name_map,
-    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit) {
+    aura::ast::SyntaxMarker cloned_marker, int hygiene_depth, int session_depth_limit,
+    bool in_quote, bool in_unquote) {
     using namespace aura::ast;
     // Issue #2806: residual TLS mirror for diagnostics only (not authority).
     s_hygiene_depth = hygiene_depth;
@@ -1611,6 +1615,50 @@ static aura::ast::NodeId clone_macro_body_at_depth(
 
     auto v = source.get(body_id);
 
+    // Issue #3181: clone walk in_quote boundary — quote (NodeTag::Quote or
+    // Call-head "quote") is data, not code. pre_scan #3154 stops at
+    // NodeTag::Quote, but the clone walk kept renaming Let/Lambda/Define
+    // bindings inside quote, producing binding/ref split
+    // `(quote (let ((__x_0 1)) x))` because the recursive children clone
+    // runs BEFORE the Let rename_binding. Mirror pre_scan at clone walk
+    // entry: detect quote boundary, propagate local_in_quote to all
+    // recursive children, skip subst / rename_binding / name_map writes
+    // under quote. transplant verbatim (string intern only). Soft/Off
+    // zero-cost preserved — flag is a function parameter, not TLS.
+    bool local_in_quote = in_quote;
+    if (!local_in_quote) {
+        if (v.tag == NodeTag::Quote) {
+            local_in_quote = true;
+        } else if (v.tag == NodeTag::Call && !v.children.empty()) {
+            auto callee_n = source.get(v.children[0]);
+            if (callee_n.tag == NodeTag::Variable) {
+                auto cname = std::string(source_pool.resolve(callee_n.sym_id));
+                if (cname == "quote")
+                    local_in_quote = true;
+            }
+        }
+    }
+    // Issue #2807: unquote / unquote-splicing are caller-scope boundaries.
+    // pre_scan stops at them (no name_map writes under unquote), but the
+    // clone walk was consulting name_map blindly for Variable nodes inside
+    // unquote — picking up OUTER Let bindings' __x_N gensyms and breaking
+    // the verbatim contract for the caller-scope body. Mirror pre_scan at
+    // clone walk entry: detect unquote boundary, propagate to recursive
+    // children, skip name_map lookup for Variable under unquote. Active
+    // only when name_map is non-null (otherwise no gensym path is
+    // possible, and the existing transplant fallback already returns
+    // verbatim). #3181 fix shape is the template — analogous boundary
+    // detection, analogous local flag, analogous recursive threading.
+    bool local_in_unquote = in_unquote;
+    if (!local_in_unquote && name_map && v.tag == NodeTag::Call && !v.children.empty()) {
+        auto callee_n = source.get(v.children[0]);
+        if (callee_n.tag == NodeTag::Variable) {
+            auto cname = std::string(source_pool.resolve(callee_n.sym_id));
+            if (cname == "unquote" || cname == "unquote-splicing")
+                local_in_unquote = true;
+        }
+    }
+
     // Variable substitution: if this variable is a macro param, return the arg clone.
     //
     // Issue #120: the arg's NodeId is in the *calling* FlatAST (= target),
@@ -1625,7 +1673,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     // macro-param subst so nested `(lambda (... . rest) rest)` does not
     // capture the outer rest list wrap. Ordinary template bindings keep
     // pre-#2169 subst-first semantics (free macro-param uses).
-    if (subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
+    // Issue #3181: under quote (local_in_quote), quoted data is not
+    // substituted — even if a quoted Variable matches a macro-param name,
+    // it stays as the verbatim literal symbol.
+    if (!local_in_quote && subst && v.tag == NodeTag::Variable && v.sym_id != INVALID_SYM) {
         auto name = std::string(source_pool.resolve(v.sym_id));
         bool shadowed_by_rest_gensym = false;
         if (name_map) {
@@ -1760,7 +1811,11 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     //
     // Issue #2018: Lambda / MacroDef with dotted rest — last param is a
     // rest binding; gensym via rename_rest_binding_pre (`__rest_` prefix).
-    if (name_map) {
+    // Issue #3181: skip pre_scan when local_in_quote — quoted data has no
+    // binding gensym. pre_scan #3154 already stops at NodeTag::Quote; this
+    // guard also covers Call-head "quote" (not handled by pre_scan, would
+    // otherwise leak name_map entries into siblings outside the quote).
+    if (name_map && !local_in_quote) {
         // Issue #2239 / #2807: qq-aware pre_scan. Tracks `(quasiquote ...)`,
         // `(unquote ...)`, and `(unquote-splicing ...)` boundaries so
         // rest-param bindings nested inside qq templates get gensym'd
@@ -1903,17 +1958,27 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     for (auto cid : source_children) {
         // Issue #365 / #2806: pass depth+1 into the recursive frame
         // (explicit parameter; siblings share the same depth).
-        child_ids.push_back(clone_macro_body_at_depth(target, target_pool, source, source_pool, cid,
-                                                      subst, name_map, cloned_marker,
-                                                      hygiene_depth + 1, depth_limit));
+        // Issue #3181: propagate local_in_quote to recursive children so
+        // the subtree inside quote is cloned verbatim (no rename, no
+        // name_map write).
+        // Issue #2807: propagate local_in_unquote to recursive children
+        // so variables inside unquote / unquote-splicing don't pick up
+        // outer Let bindings' __x_N gensyms via name_map.
+        child_ids.push_back(clone_macro_body_at_depth(
+            target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
+            hygiene_depth + 1, depth_limit, local_in_quote, local_in_unquote));
     }
 
     // Clone params (for Lambda nodes) — with hygienic renaming.
     // Issue #2018: rest (dotted last) already mapped via pre-scan
     // rename_rest_binding_pre; rename_binding prefers name_map.
+    // Issue #3181: under quote, params are cloned verbatim (transplant
+    // only, no rename_binding / no name_map write). Outside quote,
+    // rename_binding (which consults name_map for pre-scan gensyms) is
+    // the default.
     std::vector<aura::ast::SymId> param_syms;
     for (auto pid : v.params)
-        param_syms.push_back(rename_binding(pid));
+        param_syms.push_back(local_in_quote ? transplant(pid) : rename_binding(pid));
 
     aura::ast::NodeId new_id = NULL_NODE;
     switch (v.tag) {
@@ -1924,8 +1989,18 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             new_id = target.add_literalstring(transplant(v.sym_id));
             break;
         case NodeTag::Variable: {
-            // Hygienic: check name_map for renamed bindings
-            if (name_map) {
+            // Hygienic: check name_map for renamed bindings.
+            // Issue #3181: under quote, transplant verbatim (no name_map
+            // lookup — pre_scan stopped at the quote boundary).
+            // Issue #2807: under unquote / unquote-splicing, transplant
+            // verbatim (caller scope — pre_scan stopped at the unquote
+            // boundary, but the outer qq Let binding's __x_N still
+            // resolves via resolve_name, breaking verbatim contract).
+            if (local_in_quote) {
+                new_id = target.add_variable(transplant(v.sym_id));
+            } else if (local_in_unquote && name_map) {
+                new_id = target.add_variable(transplant(v.sym_id));
+            } else if (name_map) {
                 auto name = resolve_name(v.sym_id);
                 new_id = target.add_variable(target_pool.intern(name));
             } else {
@@ -1950,9 +2025,13 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // Issue #2805: never map hygiene_builtins names (let, list, …)
             // into name_map — pre-scan already skips them; overwriting would
             // rename free Variable uses of those builtins in the body.
+            // Issue #3181: skip rest-param fallback repair under quote —
+            // quote data has no __rest_<serial> mapping (pre_scan stopped at
+            // the quote boundary). param_syms.back() is verbatim.
             if (!child_ids.empty()) {
                 const bool dotted = v.int_value != 0;
-                if (dotted && !param_syms.empty() && name_map && s_allow_rest_hygiene) {
+                if (dotted && !param_syms.empty() && name_map && s_allow_rest_hygiene &&
+                    !local_in_quote) {
                     auto rest_name = std::string(target_pool.resolve(param_syms.back()));
                     if (rest_name.rfind("__rest_", 0) != 0) {
                         const std::string src_nm =
@@ -1987,13 +2066,17 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             }
             break;
         case NodeTag::Let:
-        case NodeTag::LetRec:
-            if (child_ids.size() >= 2)
-                new_id =
-                    (v.tag == NodeTag::Let)
-                        ? target.add_let(rename_binding(v.sym_id), child_ids[0], child_ids[1])
-                        : target.add_letrec(rename_binding(v.sym_id), child_ids[0], child_ids[1]);
+        case NodeTag::LetRec: {
+            // Issue #3181: under quote, binding name is transplanted
+            // verbatim (no rename_binding). Outside quote, rename_binding
+            // (which consults name_map for pre-scan gensyms) is the default.
+            if (child_ids.size() >= 2) {
+                SymId s = local_in_quote ? transplant(v.sym_id) : rename_binding(v.sym_id);
+                new_id = (v.tag == NodeTag::Let) ? target.add_let(s, child_ids[0], child_ids[1])
+                                                 : target.add_letrec(s, child_ids[0], child_ids[1]);
+            }
             break;
+        }
         case NodeTag::Begin:
             if (!child_ids.empty())
                 new_id = target.add_begin(child_ids);
@@ -2004,8 +2087,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 // up the arg and use ITS sym_id (resolved from target).
                 // Otherwise the set! would target the macro param
                 // (e.g., "a") which isn't bound in the calling env.
+                // Issue #3181: under quote, skip subst lookup — quoted
+                // data is not substituted, set! target is verbatim.
                 SymId set_name_sid = transplant(v.sym_id);
-                if (subst) {
+                if (!local_in_quote && subst) {
                     auto set_name = std::string(source_pool.resolve(v.sym_id));
                     auto sit = subst->find(set_name);
                     if (sit != subst->end()) {
@@ -2022,10 +2107,15 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (!child_ids.empty())
                 new_id = target.add_quote(child_ids[0]);
             break;
-        case NodeTag::Define:
-            if (!child_ids.empty())
-                new_id = target.add_define(rename_binding(v.sym_id), child_ids[0]);
+        case NodeTag::Define: {
+            // Issue #3181: under quote, binding name is transplanted
+            // verbatim (no rename_binding).
+            if (!child_ids.empty()) {
+                SymId s = local_in_quote ? transplant(v.sym_id) : rename_binding(v.sym_id);
+                new_id = target.add_define(s, child_ids[0]);
+            }
             break;
+        }
         default:
             break;
     }

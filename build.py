@@ -2788,6 +2788,21 @@ def cmd_lint():
             "Issue #3180 production small-pool cover linter failed — run python3 scripts/coverage/checks/check_production_small_pool_cover_3180.py"
         )
         return r
+    # Issue #3181: clone walk in_quote boundary (binding/ref split
+    # residual of #3154). pre_scan #3154 stops at NodeTag::Quote; clone
+    # walk now mirrors it via `in_quote` parameter (NodeTag::Quote OR
+    # Call-head "quote"). Extends test_unquote_splicing_hygiene.cpp
+    # (#81934 — src/-aligned suite); no docs/design/ (#1655).
+    qch3181_script = COVERAGE_CHECKS / "check_quote_clone_hygiene_3181.py"
+    if not qch3181_script.exists():
+        fail(f"missing {qch3181_script}")
+        return 1
+    r = run([sys.executable, str(qch3181_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3181 quote clone hygiene linter failed — run python3 scripts/coverage/checks/check_quote_clone_hygiene_3181.py"
+        )
+        return r
     # Issue #2944: mutation-session grants (mid-bound + auto-revoke on
     # outermost MutationBoundary exit). Extends
     # test_capability_single_use_consume.cpp (#81967); no docs/design/
