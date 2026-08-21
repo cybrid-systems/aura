@@ -36,6 +36,7 @@
 // already enforces the contract.
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 import std;
 using aura::test::g_failed;
@@ -46,6 +47,7 @@ import aura.core.arena;
 import aura.core.type;
 import aura.compiler.type_checker;
 import aura.compiler.service;
+import aura.compiler.coercion_map;
 import aura.diag;
 import aura.parser.parser;
 
@@ -186,8 +188,107 @@ int aura_issue_1413_run() {
               "AC8b: permissive does not elevate to TypeError");
     }
 
+    // ── #3202: Production + Strict hard-reject unify boolean ──
+    {
+        using aura::compiler::ConstraintSystem;
+        using aura::compiler::GradualPermissiveness;
+        using aura::compiler::kProductionStrictGroundUnifyIssue;
+        using aura::compiler::TypeChecker;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::TypeRegistry;
+
+        struct ProdScope {
+            ProdScope() { apply_production_audit_defaults(); }
+            ~ProdScope() { apply_dev_audit_defaults(); }
+        };
+
+        CHECK(kProductionStrictGroundUnifyIssue == 3202, "ac3202_4_source_and_linter");
+
+        // AC1: Production + Strict → Int~String unify false
+        {
+            std::println("\n--- AC9 (#3202): Production+Strict unify hard-reject ---");
+            ProdScope prod;
+            TypeRegistry reg;
+            ConstraintSystem cs(reg);
+            cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+            CHECK(!cs.consistent_unify(reg.int_type(), reg.string_type()),
+                  "ac3202_1_prod_strict_unify_false: Int~String hard-reject");
+            CHECK(!cs.consistent_unify(reg.bool_type(), reg.string_type()),
+                  "ac3202_1b: Bool~String hard-reject");
+        }
+
+        // AC1 check-site: TypeError + no CastOp
+        {
+            std::println("\n--- AC9b (#3202): Production+Strict TypeError, no CastOp ---");
+            ProdScope prod;
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            tc.set_strict(false);
+            tc.set_gradual_permissiveness(GradualPermissiveness::Strict);
+            aura::diag::DiagnosticCollector diag;
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat("(: x Int \"hello\")", flat, pool);
+            CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "ac3202_1 parse");
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                flat.root = pr.root;
+                (void)tc.infer_flat(flat, pool, pr.root, diag);
+            }
+            CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                   "incompatible ground types"),
+                  "ac3202_1_typeerror: Production+Strict TypeError at check site");
+            CHECK(tc.last_coercions().empty(), "ac3202_1_no_castop: no CastOp emitted");
+        }
+
+        // AC2: Soft / balanced / permissive keep unify true
+        {
+            std::println("\n--- AC10 (#3202): Soft Strict unify stays true ---");
+            apply_dev_audit_defaults();
+            TypeRegistry reg;
+            ConstraintSystem cs(reg);
+            cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+            CHECK(cs.consistent_unify(reg.int_type(), reg.string_type()),
+                  "ac3202_2_soft_strict_unify_true");
+            cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+            CHECK(cs.consistent_unify(reg.int_type(), reg.string_type()),
+                  "ac3202_2_soft_balanced_unify_true");
+            cs.set_unify_gradual_mode(GradualPermissiveness::Permissive);
+            CHECK(cs.consistent_unify(reg.int_type(), reg.string_type()),
+                  "ac3202_2_soft_permissive_unify_true");
+        }
+        {
+            std::println("\n--- AC10b (#3202): Production+Balanced unify stays true ---");
+            ProdScope prod;
+            TypeRegistry reg;
+            ConstraintSystem cs(reg);
+            cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+            CHECK(cs.consistent_unify(reg.int_type(), reg.string_type()),
+                  "ac3202_2_prod_balanced_unify_true");
+        }
+
+        // AC3: Dynamic ~ T and Int ↔ Float remain permissive
+        {
+            std::println("\n--- AC11 (#3202): Dynamic~T and Int↔Float stay true ---");
+            ProdScope prod;
+            TypeRegistry reg;
+            ConstraintSystem cs(reg);
+            cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+            auto fl = reg.lookup_type("Float");
+            CHECK(cs.consistent_unify(reg.dynamic_type(), reg.string_type()),
+                  "ac3202_3_dynamic_permissive");
+            CHECK(cs.consistent_unify(reg.int_type(), fl), "ac3202_3_numeric_int_float");
+            CHECK(cs.consistent_unify(fl, reg.int_type()), "ac3202_3_numeric_float_int");
+        }
+
+        apply_dev_audit_defaults();
+    }
+
     if (g_failed == 0) {
-        std::println("\n=== ALL 8 ACs PASS ===");
+        std::println("\n=== ALL ACs PASS ===");
         return 0;
     }
     std::println("\n=== {} ACs FAILED ===", g_failed);

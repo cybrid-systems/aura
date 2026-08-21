@@ -2129,6 +2129,19 @@ def cmd_lint():
             "Issue #3201 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3201.py"
         )
         return r
+    # Issue #3202: Production + Strict ground unify hard-rejects Int~String
+    # (residual of #2992). Soft / balanced / permissive stay diagnostic-only.
+    # Extends test_bidirectional_annotation; no docs/design / invent.
+    psgu3202_script = COVERAGE_CHECKS / "check_production_strict_ground_unify_3202.py"
+    if not psgu3202_script.exists():
+        fail(f"missing {psgu3202_script}")
+        return 1
+    r = run([sys.executable, str(psgu3202_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3202 production Strict ground unify linter failed — run python3 scripts/coverage/checks/check_production_strict_ground_unify_3202.py"
+        )
+        return r
     # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
     # Occurrence persist / TypeLinearCommitProof on one authoritative face.
     # Reuses invalidate_gen (no second proof model). Soft observe-only.
