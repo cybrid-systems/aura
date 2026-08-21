@@ -94,6 +94,20 @@ static inline bool source_to_ir_strict_enabled() noexcept {
     return g_source_to_ir_strict.load(std::memory_order_relaxed) != 0;
 }
 
+// Issue #3226: one-shot inject so the REAL prod sample compare (not the
+// #2245 force-mismatch short-circuit) observes IR divergence.
+static std::atomic<int> g_test_soundness_inject_under_dirty{0};
+
+extern "C" void aura_test_set_soundness_inject_under_dirty(int v) noexcept {
+    g_test_soundness_inject_under_dirty.store(v != 0 ? 1 : 0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] static bool test_soundness_inject_under_dirty_for_next_sample() noexcept {
+    int expected = 1;
+    return g_test_soundness_inject_under_dirty.compare_exchange_strong(
+        expected, 0, std::memory_order_acq_rel, std::memory_order_relaxed);
+}
+
 // ── Issue #2035 / #2046: HotUpdateRegistry cascade notify + region-mask reemit
 // + joint AOT/JIT epoch identity. Soft/hard invalidate already advanced
 // bridge + AOT table epoch under mutate_mtx_ via atomic_bump_epochs; this
@@ -1365,12 +1379,58 @@ void CompilerService::invalidate_function(const std::string& name) {
                         vit->second.mark_all_blocks_dirty();
                         finish_cascade_soa_dirty_sync_(vit->second);
                     } else {
-                        // Real full-lower + compare would happen here
-                        // (future ship: lower_full_same_lambda). For now
-                        // trivially pass (partial vs partial = ok) so the
-                        // prod_ok counter advances on healthy fixtures.
-                        metrics_.incremental_soundness_prod_ok_total.fetch_add(
-                            1, std::memory_order_relaxed);
+                        // Issue #3226: real same-lambda full lower + #2113
+                        // IR equivalence. Replaces the #2245 deferred
+                        // trivial prod_ok bump (partial vs partial).
+                        // sample_bp==0 / Soft never-sampled already skipped
+                        // above (zero extra lower).
+                        auto lower_full_same_lambda =
+                            [&](aura::ast::NodeId lambda_id) -> aura::ir::IRFunction {
+                            auto fn = aura::compiler::lower_function_at(
+                                flat, pool, arena_, lambda_id, &evaluator_.primitives());
+                            if (fn.blocks.empty())
+                                return fn;
+                            aura::ir::IRModule one;
+                            one.functions.push_back(std::move(fn));
+                            // Not the module entry so the suite's DCE runs.
+                            one.entry_function_id = 0xFFFFFFFFu;
+                            (void)run_incremental_dirty_pass_suite_(one, nullptr);
+                            if (one.functions.empty())
+                                return {};
+                            return std::move(one.functions[0]);
+                        };
+                        auto full_ir = lower_full_same_lambda(expanded);
+                        std::size_t idx = 0;
+                        for (std::size_t i = 0; i < vit->second.irs.size(); ++i) {
+                            if (vit->second.irs[i].name != "__top__") {
+                                idx = i;
+                                break;
+                            }
+                        }
+                        bool equiv = false;
+                        if (!full_ir.blocks.empty() && idx < vit->second.irs.size()) {
+                            auto partial = vit->second.irs[idx];
+                            if (test_soundness_inject_under_dirty_for_next_sample())
+                                inject_soundness_under_dirty_for_test(partial);
+                            full_ir.id = partial.id;
+                            // Module-level for the sampled define: one
+                            // function vs the independent full lower.
+                            auto ir_module_equivalent = [](const aura::ir::IRFunction& a,
+                                                           const aura::ir::IRFunction& b) noexcept {
+                                return ir_function_equivalent(a, b);
+                            };
+                            equiv = ir_module_equivalent(partial, full_ir);
+                        }
+                        if (!equiv) {
+                            metrics_.incremental_soundness_mismatch_prod_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            vit->second.mark_all_blocks_dirty();
+                            finish_cascade_soa_dirty_sync_(vit->second);
+                            note_fb(RelowerFallbackReason::Other);
+                        } else {
+                            metrics_.incremental_soundness_prod_ok_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
                     }
                 }
             }

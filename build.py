@@ -3600,6 +3600,20 @@ def cmd_lint():
             "Issue #3225 occurrence persist seqlock linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_seq_3225.py"
         )
         return r
+    # Issue #3226: production soundness sample must run a real
+    # same-lambda full lower + #2113 IR compare (closes #2245
+    # deferred trivial prod_ok). Soft / sample_bp==0 skip lower.
+    # Extends test_incremental_soundness_oracle; no docs/design / invent.
+    psrc3226_script = COVERAGE_CHECKS / "check_prod_soundness_real_compare_3226.py"
+    if not psrc3226_script.exists():
+        fail(f"missing {psrc3226_script}")
+        return 1
+    r = run([sys.executable, str(psrc3226_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3226 production soundness real-compare linter failed — run python3 scripts/coverage/checks/check_prod_soundness_real_compare_3226.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into

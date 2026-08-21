@@ -91,6 +91,9 @@ def check() -> list:
     _must("incremental_soundness_prod_runs_total" in dirty, "AC1: prod_runs_total bump site missing", fails)
     _must("true_partial" in dirty, "AC1: wire-up at true_partial branch missing", fails)
     _must("prod_sample_counter" in dirty, "AC1: prod_sample_counter (Knuth hash roll) missing", fails)
+    # Issue #3226: real same-lambda full lower (closes #2245 deferred trivial pass)
+    _must("lower_full_same_lambda" in dirty, "AC1: lower_full_same_lambda call site missing (#3226)", fails)
+    _must("trivially pass" not in dirty, "AC1: trivial prod_ok pass must be gone (#3226)", fails)
 
     # AC2 — forced mismatch path
     _must(

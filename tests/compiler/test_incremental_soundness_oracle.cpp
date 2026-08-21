@@ -23,6 +23,10 @@
 //
 //   AC6-AC9 land Issue #2245 — production sampling of incremental
 //   soundness (partial ≡ full) under AI mutate.
+//
+//   AC10-AC12 land Issue #3226 — production sample runs a real
+//   same-lambda full lower + #2113 IR equivalence (not trivial
+//   partial-vs-partial prod_ok).
 
 #include "test_harness.hpp"
 
@@ -37,6 +41,8 @@ import aura.compiler.service;
 import aura.compiler.ir_cache_pure;
 import aura.compiler.ir;
 import aura.compiler.value;
+
+extern "C" void aura_test_set_soundness_inject_under_dirty(int v);
 
 namespace {
 
@@ -311,6 +317,114 @@ void ac9_storm_elevation_factor() {
     aura_test_set_soundness_sample_bp(100);
 }
 
+// Issue #3226 AC10: production sample hit runs real full-lower + compare
+// (not trivial partial-vs-partial). Healthy path increments prod_ok
+// only after equivalence; sample_bp=10000 always samples true_partial.
+void ac10_prod_sample_real_compare() {
+    std::println("\n--- #3226 AC10: prod sample real full-lower + compare ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("lower_full_same_lambda") != std::string::npos, "3226 AC1: helper");
+    CHECK(dirty.find("Issue #3226") != std::string::npos, "3226 AC1: cite");
+    CHECK(dirty.find("ir_function_equivalent") != std::string::npos ||
+              dirty.find("ir_module_equivalent") != std::string::npos,
+          "3226 AC1: #2113 equivalence");
+    CHECK(dirty.find("trivially pass") == std::string::npos, "3226 AC1: trivial pass gone");
+    CHECK(dirty.find("RelowerFallbackReason::Other") != std::string::npos,
+          "3226 AC2: fallback reason on mismatch");
+
+    aura_test_set_soundness_sample_bp(10000);
+    aura_test_set_soundness_force_mismatch(0);
+    aura_test_set_soundness_inject_under_dirty(0);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a (lambda () 1))\")").has_value(), "3226 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3226 AC3: eval-current");
+    auto& m = cs.metrics();
+    const auto runs0 = m.incremental_soundness_prod_runs_total.load();
+    const auto ok0 = m.incremental_soundness_prod_ok_total.load();
+    const auto mm0 = m.incremental_soundness_mismatch_prod_total.load();
+    cs.public_invalidate_function("a");
+    const auto runs1 = m.incremental_soundness_prod_runs_total.load();
+    const auto ok1 = m.incremental_soundness_prod_ok_total.load();
+    const auto mm1 = m.incremental_soundness_mismatch_prod_total.load();
+    if (runs1 > runs0) {
+        CHECK(ok1 + mm1 >= ok0 + mm0 + (runs1 - runs0), "3226 AC3: every sample classified");
+        CHECK(ok1 > ok0 || mm1 > mm0, "3226 AC3: compare produced ok or fail-closed mismatch");
+    } else {
+        // true_partial may not fire (full fallback). Wire-up still required.
+        CHECK(dirty.find("lower_full_same_lambda") != std::string::npos,
+              "3226 AC3: sample site present even if this fixture took full");
+    }
+    aura_test_set_soundness_sample_bp(100);
+}
+
+// Issue #3226 AC11: injected IR divergence through the REAL compare
+// (not the force-mismatch short-circuit) → mismatch_prod + force-full.
+void ac11_prod_inject_mismatch_forces_full() {
+    std::println("\n--- #3226 AC11: inject under-dirty through real compare ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("inject_soundness_under_dirty_for_test") != std::string::npos,
+          "3226 AC2: inject on compare snapshot");
+    CHECK(dirty.find("aura_test_set_soundness_inject_under_dirty") != std::string::npos,
+          "3226 AC2: inject setter");
+    CHECK(dirty.find("test_soundness_force_mismatch_for_next_partial") != std::string::npos,
+          "3226 AC2: #2245 short-circuit preserved");
+
+    aura_test_set_soundness_sample_bp(10000);
+    aura_test_set_soundness_force_mismatch(0);
+    aura_test_set_soundness_inject_under_dirty(1);
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a (lambda () 1))\")").has_value(), "3226 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3226 AC2: eval-current");
+    auto& m = cs.metrics();
+    const auto mm0 = m.incremental_soundness_mismatch_prod_total.load();
+    const auto ok0 = m.incremental_soundness_prod_ok_total.load();
+    const auto runs0 = m.incremental_soundness_prod_runs_total.load();
+    cs.public_invalidate_function("a");
+    const auto mm1 = m.incremental_soundness_mismatch_prod_total.load();
+    const auto ok1 = m.incremental_soundness_prod_ok_total.load();
+    const auto runs1 = m.incremental_soundness_prod_runs_total.load();
+    if (runs1 > runs0) {
+        CHECK(mm1 > mm0, "3226 AC2: mismatch_prod increments on injected divergence");
+        CHECK(ok1 == ok0, "3226 AC2: prod_ok not bumped on mismatch");
+        CHECK(dirty.find("mark_all_blocks_dirty") != std::string::npos, "3226 AC2: force-full");
+    }
+    aura_test_set_soundness_inject_under_dirty(0);
+    aura_test_set_soundness_sample_bp(100);
+}
+
+// Issue #3226 AC12: sample_bp==0 never full-lowers (zero extra).
+void ac12_sample_bp_zero_no_full_lower() {
+    std::println("\n--- #3226 AC12: sample_bp=0 zero extra lower ---");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    CHECK(dirty.find("if (sample_eff_bp > 0)") != std::string::npos, "3226 AC4: bp gate");
+    CHECK(dirty.find("lower_full_same_lambda") != std::string::npos,
+          "3226 AC4: helper behind gate");
+    aura_test_set_soundness_sample_bp(0);
+    CHECK(should_sample_soundness_prod() == 0, "3226 AC4: policy 0");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a (lambda () 1))\")").has_value(), "3226 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3226 AC4: eval");
+    auto& m = cs.metrics();
+    const auto runs0 = m.incremental_soundness_prod_runs_total.load();
+    cs.public_invalidate_function("a");
+    CHECK(m.incremental_soundness_prod_runs_total.load() == runs0,
+          "3226 AC4: no prod sample when bp=0");
+    aura_test_set_soundness_sample_bp(100);
+
+    const auto t = read_file("tests/compiler/test_incremental_soundness_oracle.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_prod_soundness_real_compare_3226.py");
+    const auto build = read_file("build.py");
+    CHECK(t.find("ac10_prod_sample_real_compare") != std::string::npos, "3226 AC6: suite");
+    CHECK(!lint.empty() && lint.find("3226") != std::string::npos, "3226 AC6: linter");
+    CHECK(build.find("check_prod_soundness_real_compare_3226") != std::string::npos,
+          "3226 AC6: build.py");
+    CHECK(read_file("docs/design/3226-prod-soundness-real-compare.md").empty(),
+          "3226 AC6: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3226.cpp").empty(), "3226 AC6: no invent");
+    CHECK(read_file("tests/issues/test_issue_3226.cpp").empty(), "3226 AC6: no tests/issues");
+}
+
 } // namespace
 
 int run_test_incremental_soundness_oracle() {
@@ -325,6 +439,9 @@ int run_test_incremental_soundness_oracle() {
     ac7_prod_mismatch_forces_full();
     ac8_sample_zero_cost_when_off();
     ac9_storm_elevation_factor();
+    ac10_prod_sample_real_compare();
+    ac11_prod_inject_mismatch_forces_full();
+    ac12_sample_bp_zero_no_full_lower();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
