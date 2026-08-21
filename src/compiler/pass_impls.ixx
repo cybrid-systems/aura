@@ -1572,6 +1572,40 @@ public:
         elapsed_us_ += static_cast<std::uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count());
         flush_elim_cone();
+        // Issue #3228: leftover residual CastOps after columnar dirty-only
+        // / instr-skip persist into type∪IR so under-mark remutate
+        // re-typechecks. Soft persist_elim_cone_ is false (zero extra).
+        // Quiet leftover==0: note/force no-op after the scan.
+        if (persist_elim_cone_) {
+            std::vector<aura::compiler::dirty::NodeId> leftover_ast;
+            std::vector<aura::compiler::dirty::NodeId> leftover_blocks;
+            leftover_ast.reserve(8);
+            for (auto& func : mod.functions) {
+                (void)func.for_each_block(
+                    [&](std::uint32_t bid, BasicBlockSoA& block) {
+                        bool any_cast = false;
+                        bool has_ast = false;
+                        for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                            if (i >= func.opcodes_.size())
+                                break;
+                            if (func.opcodes_[i] != aura::ir::IROpcode::CastOp)
+                                continue;
+                            any_cast = true;
+                            if (i < func.source_node_ids_.size() && func.source_node_ids_[i] != 0) {
+                                leftover_ast.push_back(func.source_node_ids_[i]);
+                                has_ast = true;
+                            }
+                        }
+                        if (any_cast && !has_ast)
+                            leftover_blocks.push_back(aura::compiler::dirty::encode_block_node(
+                                0, static_cast<std::uint16_t>(bid)));
+                    },
+                    /*dirty_only=*/false);
+            }
+            aura::compiler::dirty::note_residual_castop_sites(leftover_ast, leftover_blocks);
+            (void)aura::compiler::dirty::force_dead_coercion_elim_into_cone(leftover_ast);
+            (void)aura::compiler::dirty::force_residual_castop_blocks_into_cone(leftover_blocks);
+        }
     }
 
     // Issue #2143: SoaDirtyAwarePass entry — always dirty-only fold.

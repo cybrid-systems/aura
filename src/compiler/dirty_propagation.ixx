@@ -791,6 +791,15 @@ inline std::size_t remirror_persisted_residual_castops() noexcept {
     return n_ast + n_blk;
 }
 
+// Issue #3228: residual CastOp persist + empty type∪IR cone (columnar /
+// SoA under-mark after DeadCoercion). Production remirrors persist so
+// the next mutate re-typechecks; Soft / empty persist → 0 extra.
+// Reuses #3065/#3120 force_* (no new query key).
+inline constexpr int kResidualCastopUndermarkConeIssue = 3228;
+inline std::size_t force_residual_castop_undermark_into_cone() noexcept {
+    return remirror_persisted_residual_castops();
+}
+
 // Issue #3102 AC1: truncate the last type cone to a previously-captured
 // entry size. Pops the trailing entries that were appended during the
 // mutation boundary (the #3065 persistence path). Returns the entries

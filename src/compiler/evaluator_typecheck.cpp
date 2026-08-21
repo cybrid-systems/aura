@@ -285,6 +285,10 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             tc.set_on_selective_recheck([this]() { bump_selective_recheck_count(); });
             tc.set_on_touched_roots_snapshot([this](std::size_t n) { set_touched_roots_size(n); });
             tc.set_on_cross_delta_conflict([this]() { bump_cross_delta_conflicts_caught(); });
+            // Issue #3228: remirror residual CastOp persist before the
+            // dirty txn so under-mark cones still re-typecheck leftover
+            // sites. Soft persist empty → 0 extra.
+            (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
             // Issue #2516: dirty txn entry (invalidate → re-infer → mirror).
             const auto reinferred = tc.infer_flat_partial_with_dirty_txn(
                 *workspace_flat_, *workspace_pool_, log.back(), diag);
@@ -911,6 +915,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
     }
     // Issue #2610: type∪IR dirty cone (public helper) — under-marked Agents
     // may leave txn_dirty false while cascade still non-empty.
+    // Issue #3228: remirror residual persist first so an empty cone +
+    // leftover CastOp cannot grant commit_readiness. Soft persist empty
+    // → 0 extra.
+    (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
     const bool cone_dirty = aura::compiler::dirty::type_ir_union_cone_nonempty();
     const bool under_marked = !agent_expected_partial && (cone_dirty || has_work);
     bool auto_partial_from_cone = false;

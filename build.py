@@ -3627,6 +3627,19 @@ def cmd_lint():
             "Issue #3227 linear post-migration proof rebind linter failed — run python3 scripts/coverage/checks/check_linear_post_migration_proof_rebind_3227.py"
         )
         return r
+    # Issue #3228: residual CastOp + columnar under-mark must remirror
+    # into type∪IR cone before next mutate grant. Soft/quiet 0 extra.
+    # Extends test_dead_coercion_dirty_cone; no docs/design / invent.
+    rcu3228_script = COVERAGE_CHECKS / "check_residual_castop_undermark_cone_3228.py"
+    if not rcu3228_script.exists():
+        fail(f"missing {rcu3228_script}")
+        return 1
+    r = run([sys.executable, str(rcu3228_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3228 residual CastOp under-mark cone linter failed — run python3 scripts/coverage/checks/check_residual_castop_undermark_cone_3228.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into
