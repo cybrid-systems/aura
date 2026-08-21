@@ -61,6 +61,10 @@ export module aura.compiler.ir_soa;
 import std;
 import aura.compiler.ir; // for aura::ir::IROpcode (lives in aura::ir)
 
+// Issue #3201: production_defaults default-on for batch-only hard-abort.
+// Weak so ir_soa unit objects without typed-audit still link (Soft false).
+extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
+
 namespace aura::compiler {
 
 // Issue #2254 AC4: process-wide SoA-only + residual AoS bridge counters.
@@ -205,6 +209,9 @@ export inline std::atomic<std::uint64_t> g_ir_soa_residual_multi_via_single_mark
 // + g_ir_soa_residual_multi_via_single_marks_total above.
 export inline std::atomic<std::uint64_t> g_ir_soa_batch_only_hard_abort_total{0};
 export inline constexpr int kIrSoaBatchOnlyHardAbortIssue = 3105;
+// Issue #3201: production / Full pack default-on for the existing
+// ir_dirty_batch_only_hard abort (env unset no longer Soft-pass).
+export inline constexpr int kIrSoaBatchOnlyProductionDefaultIssue = 3201;
 // Issue #2936: production-smoke-wired sentinel (additive observability).
 export inline std::atomic<std::uint64_t>&
 g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {
@@ -214,13 +221,20 @@ g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {
 export [[nodiscard]] inline std::uint64_t ir_dirty_batch_only_production_smoke_wired() noexcept {
     return g_ir_dirty_batch_only_production_smoke_wired_atomic().load(std::memory_order_acquire);
 }
-// Issue #2936: true when AURA_IR_DIRTY_BATCH_ONLY=1 — residual multi-via-single
-// hard-aborts (debug/production pack). Unit tests that intentionally trip
-// residual leave this unset (AC5 Soft/test residual still works).
+// Issue #2936 / #3201: residual multi-via-single hard-abort probe.
+//   env=1 → on; env=0 → off (Soft/unit residual still works).
+//   unset → production_defaults_active (Full pack default-on, #3201).
+// Quiet path never calls this (streak==1 / batch clears).
 export [[nodiscard]] inline bool ir_dirty_batch_only_hard() noexcept {
-    if (const char* e = std::getenv("AURA_IR_DIRTY_BATCH_ONLY"))
-        return e[0] == '1';
-    return false;
+    if (const char* e = std::getenv("AURA_IR_DIRTY_BATCH_ONLY")) {
+        if (e[0] == '0')
+            return false;
+        if (e[0] == '1')
+            return true;
+    }
+    if (aura_production_defaults_active_probe == nullptr)
+        return false;
+    return aura_production_defaults_active_probe() != 0;
 }
 
 // ── Issue #2773: logical invalidation epoch (process-wide) ──────────
@@ -651,9 +665,8 @@ namespace detail {
             if (streak == 2) {
                 g_ir_soa_residual_multi_via_single_cascades_total.fetch_add(
                     1, std::memory_order_relaxed);
-                // Issue #2936: optional hard discipline (AURA_IR_DIRTY_BATCH_ONLY=1).
-                // Soft / unit residual exercise leaves env unset → metric only (AC5).
-                // Production packs / debug can set env=1 to fail-closed on residual.
+                // Issue #2936 / #3201: hard discipline. env=1 or production
+                // defaults (unset env) fail-closed; env=0 / Soft unit metric only.
                 if (ir_dirty_batch_only_hard()) {
                     // Issue #3105: hard-fail observability — bump the dedicated
                     // counter FIRST (right after the if-block opening) so the

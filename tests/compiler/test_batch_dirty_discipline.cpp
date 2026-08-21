@@ -30,6 +30,7 @@
 //   #2936 AC6: coverage linter + no docs/design/
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -38,6 +39,8 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 import std;
@@ -68,6 +71,7 @@ using aura::compiler::kInvSrcIrSoaBatch;
 using aura::compiler::kInvSrcIrSoaSingle;
 using aura::compiler::kIrSoaBatchDirtyDisciplineIssue;
 using aura::compiler::kIrSoaBatchOnlyHardAbortIssue;
+using aura::compiler::kIrSoaBatchOnlyProductionDefaultIssue;
 using aura::compiler::kIrSoaMultiViaSingleBanIssue;
 using aura::compiler::kSchemaResidualMultiViaSingleProductionSmoke;
 using aura::compiler::kUnifiedDirtyFenceIssue;
@@ -580,7 +584,7 @@ static void ac2936_1_production_smoke_residual_zero() {
               svc.find("mark_blocks_dirty_bits_only") != std::string::npos,
           "AC1: service bit-only batch present");
     // Representative multi-block cascade workload: only batch APIs → residual flat.
-    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     CHECK(!ir_dirty_batch_only_hard(), "AC1: hard assert off for smoke (metric-only)");
     auto fn = make_n_block_fn(8);
     const auto r0 =
@@ -690,14 +694,15 @@ static void ac3105_hard_fail_armed() {
     const auto initial_aborts =
         g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed);
     CHECK(initial_aborts >= 0, "AC1: hard-abort counter accessible");
-    // Env var: unset → false (Soft path).
-    unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
-    CHECK(ir_dirty_batch_only_hard() == false, "AC1: unset env → hard=false (Soft)");
+    // Env var: 0 → false (Soft path). Unset + production is #3201 default-on.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(ir_dirty_batch_only_hard() == false, "AC1: env=0 → hard=false (Soft)");
     // Env var: "1" → true (hard-abort path armed for production).
-    setenv("AURA_IR_DIRTY_BATCH_ONLY", "1", 1);
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "1", 1);
     CHECK(ir_dirty_batch_only_hard() == true, "AC1: env=1 → hard=true (hard-abort armed)");
-    // Cleanup: unset so subsequent tests stay Soft unless they opt-in.
-    unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    // Cleanup: env=0 so subsequent Soft residual tests do not abort.
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     // Note: the actual std::abort() path can't be directly tested (would kill
     // the test). The linter check_batch_dirty_production_multi_only_2936.py
     // enforces the hard-abort path is armed at source-cite level.
@@ -707,8 +712,8 @@ static void ac3105_hard_fail_armed() {
 // ── #2936 AC5: Soft / unit residual still works (env unset) ──
 static void ac2936_5_soft_residual_still_works() {
     std::println("\n--- #2936 AC5: intentional residual under test (batch-only hard off) ---");
-    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
-    CHECK(!ir_dirty_batch_only_hard(), "AC5: hard assert unset");
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(!ir_dirty_batch_only_hard(), "AC5: hard assert off (env=0)");
     auto fn = make_n_block_fn(4);
     const std::uint32_t one[] = {0};
     fn.mark_blocks_dirty(one); // clear streak
@@ -748,9 +753,97 @@ static void ac2936_6_linter_and_no_design() {
           "AC6: no invent test file per #81967");
 }
 
+static void ac3201_1_production_default_on() {
+    std::println("\n--- #3201 AC1: production_defaults default-on hard-abort ---");
+    CHECK(kIrSoaBatchOnlyProductionDefaultIssue == 3201, "3201 AC1: issue stamp");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    CHECK(!ir_dirty_batch_only_hard(), "3201 AC1: Soft unset → hard=false");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    CHECK(ir_dirty_batch_only_hard(), "3201 AC1: production unset → hard=true");
+    const auto abort0 = g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed);
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        auto fn = make_n_block_fn(4);
+        const std::uint32_t one[] = {0};
+        fn.mark_blocks_dirty(one);
+        fn.mark_block_dirty(1);
+        fn.mark_block_dirty(2); // residual → abort
+        ::_exit(99);
+    }
+    CHECK(pid > 0, "3201 AC1: fork");
+    int st = 0;
+    if (pid > 0)
+        ::waitpid(pid, &st, 0);
+    const bool aborted = pid > 0 && (WIFSIGNALED(st) || (WIFEXITED(st) && WEXITSTATUS(st) != 99));
+    CHECK(aborted, "3201 AC1: child hard-aborts on residual under production");
+    CHECK(g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed) >= abort0,
+          "3201 AC1: abort counter accessible");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+}
+
+static void ac3201_2_soft_env0() {
+    std::println("\n--- #3201 AC2: env=0 Soft residual unchanged even under production ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(!ir_dirty_batch_only_hard(), "3201 AC2: env=0 forces Soft");
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one);
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    fn.mark_block_dirty(2);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) ==
+              r0 + 1,
+          "3201 AC2: residual metric still trips");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
+static void ac3201_3_batch_clears() {
+    std::println("\n--- #3201 AC3: batch APIs still clear residual under production ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::unsetenv("AURA_IR_DIRTY_BATCH_ONLY");
+    auto fn = make_n_block_fn(5);
+    const std::uint32_t ids[] = {0, 1, 2, 3};
+    fn.mark_blocks_dirty(ids);
+    fn.mark_block_dirty(0); // streak 1 — not residual
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    fn.mark_blocks_dirty(ids);
+    fn.mark_block_dirty(1);
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) == r0,
+          "3201 AC3: batch clears streak; single after batch not residual");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+}
+
+static void ac3201_4_source_and_linter() {
+    std::println("\n--- #3201 AC4/AC5/AC6: source-cite + linter + no invent ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3201.py");
+    const auto build = read_file("build.py");
+    CHECK(soa.find("kIrSoaBatchOnlyProductionDefaultIssue = 3201") != std::string::npos,
+          "3201 AC5: issue stamp");
+    CHECK(soa.find("aura_production_defaults_active_probe") != std::string::npos,
+          "3201 AC5: production probe");
+    CHECK(soa.find("e[0] == '0'") != std::string::npos, "3201 AC2: env=0 force off");
+    CHECK(t.find("ac3201_1_production_default_on") != std::string::npos, "3201 AC4: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3201") != std::string::npos, "3201 AC5: linter");
+    CHECK(build.find("check_ir_dirty_batch_only_production_default_3201") != std::string::npos,
+          "3201 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3201.cpp").empty(), "3201 AC6: no invent");
+    CHECK(read_file("docs/design/3201-ir-dirty-batch-only.md").empty(), "3201 AC6: no docs/design");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
     std::println("=== Issue #2615 + #2681: batch dirty cascade discipline ===");
     ac1_multi_batch();
     ac2_single_unchanged();
@@ -779,7 +872,12 @@ int run_test_batch_dirty_discipline() {
     ac2936_4_obs_schema();
     ac2936_5_soft_residual_still_works();
     ac2936_6_linter_and_no_design();
-    std::println("\n=== #2615/#2681/#2773/#2774/#2936: {} passed, {} failed ===", g_passed,
+    std::println("\n=== Issue #3201: production batch-only hard-abort default-on ===");
+    ac3201_1_production_default_on();
+    ac3201_2_soft_env0();
+    ac3201_3_batch_clears();
+    ac3201_4_source_and_linter();
+    std::println("\n=== #2615/#2681/#2773/#2774/#2936/#3201: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
