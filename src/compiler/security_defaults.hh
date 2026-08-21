@@ -449,6 +449,19 @@ inline void apply_production_security_defaults() noexcept {
         }
     }
 
+    // 7c) Issue #3204: production Agent export hard-reject (unrefreshable
+    //     / tenant_id==0 under isolation) without requiring
+    //     AURA_STABLE_REF_EXPORT_HARD_REJECT=1. Soft / AURA_SANDBOX=off
+    //     leave the pref false (env still opts in). Env always wins in
+    //     stable_ref_export_hard_reject().
+    {
+        using aura::core::provenance::set_stable_ref_export_hard_reject;
+        if (dev_off)
+            set_stable_ref_export_hard_reject(false);
+        else
+            set_stable_ref_export_hard_reject(true);
+    }
+
     // 8) Issue #2207 / #2182: LinearEnforceMode process default is Strict
     //    (align with Full audit). Soft under AURA_SANDBOX=off so unit tests
     //    keep Soft metric-only incomplete trails. AURA_LINEAR_ENFORCE=soft|
