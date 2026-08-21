@@ -3038,8 +3038,10 @@ ConstraintSystem::drain_pending_full_solve_before_commit(std::vector<Constraint>
         return r;
     }
     g_pending_full_solve_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
-    note_pending_full_solve_residual(pending_full_solve_roots_.size() + last_locality_pruned_,
-                                     true);
+    // Latch the pre-escalate residual. #3169 clear_partial may have
+    // emptied pending_full_solve_roots_ on CONFLICT; Agents still need
+    // the reject face + last count (#3031 / #3190).
+    note_pending_full_solve_residual(residual > 0 ? residual : 1, true);
     return r == SolveResult::CONFLICT ? r : SolveResult::TIMEOUT;
 }
 

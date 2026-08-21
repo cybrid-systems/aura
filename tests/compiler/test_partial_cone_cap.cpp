@@ -266,9 +266,14 @@ static void ac3189_partial_impact_upper_bound_unified() {
     // AC5: existing sibling ACs preserved + no new tests/issues/test_issue_3189.cpp
     //      + no docs/design/3189-* + linter wired after #3188.
     {
-        // #2560 AC1 (soft overflow metric + cap path)
+        // #2560 AC1 (soft overflow metric + cap path). Counter lives on
+        // TypeChecker impl / observability_metrics, not service_dirty.
+        const auto impl2560 = read_file("src/compiler/type_checker_impl.cpp");
+        const auto met2560 = read_file("src/compiler/observability_metrics.h");
         CHECK(svc.find("partial_cone_soft_overflow_total") != std::string::npos ||
-                  svc.find("partial_cone") != std::string::npos,
+                  svc.find("partial_cone") != std::string::npos ||
+                  impl2560.find("partial_cone_soft_overflow_total") != std::string::npos ||
+                  met2560.find("partial_cone_soft_overflow_total") != std::string::npos,
               "ac3189 AC5: #2560 partial-cone sibling surface preserved");
         // #3034 sibling AC (try_partial_invalidate_relower already calls helper)
         CHECK(svc.find("try_partial_invalidate_relower") != std::string::npos,

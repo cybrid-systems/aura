@@ -308,7 +308,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     "test_macro_hygiene_batch",
     "test_mailbox_fiber_batch",
     "test_mutation_rollback_coverage",
-    "test_occurrence_coercion_batch",
+    # test_occurrence_coercion_batch greened: drain latches pre-#3169 residual;
+    # #3189/#3108/#3190 source-cites rebaselined.
     # Unregistered stale binaries (no cmake target): leftover heap crash
     # (free(): invalid pointer) + annotation-counter AC drift. Source still
     # exists for coverage linters; do not rediscover as NEW CI failures.
