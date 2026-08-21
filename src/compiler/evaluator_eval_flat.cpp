@@ -48,7 +48,9 @@ using macro_exp::clone_macro_body;
 using macro_exp::expand_inner_macros;
 using macro_exp::g_macro_clone_last_reject_reason;
 using macro_exp::g_macro_self_evo_denied_total;
+using macro_exp::kHygieneLimitReasonMacroIntroduced;
 using macro_exp::MacroExpansionDef;
+using macro_exp::note_hygiene_last_limit_reason;
 
 static std::unordered_map<std::string, MacroExpansionDef, aura::core::TransparentStringHash,
                           std::equal_to<>>
@@ -2566,8 +2568,10 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         // matcher :include-macro-introduced #f). Batch has no :allow-macro?
         // so never mutate macro sites on the lockless path.
         if (flat.is_macro_introduced(id)) {
-            if (match_sub(id, pat_pr.root))
+            if (match_sub(id, pat_pr.root)) {
                 flat.note_replace_pattern_hygiene_reject();
+                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+            }
             continue;
         }
         if (!match_sub(id, pat_pr.root))
@@ -3067,6 +3071,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
         if (flat.is_macro_introduced(id) || flat.tag(id) == aura::ast::NodeTag::MacroDef) {
             flat.note_rename_symbol_hygiene_reject();
             record_hygiene_violation_attempt();
+            note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
             return std::unexpected(aura::diag::Diagnostic{
                 aura::diag::ErrorKind::InternalError,
                 "batch :rename-symbol: MacroIntroduced / MacroDef site requires "
@@ -3129,6 +3134,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
     if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
         flat.note_move_node_hygiene_reject();
         record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :move-node: cannot move macro-introduced node"});

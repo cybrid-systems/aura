@@ -137,7 +137,16 @@ export extern std::atomic<std::uint64_t> g_macro_clone_same_flat_reject_total;
 export extern std::atomic<std::uint64_t> g_macro_clone_steal_abort_total;
 export extern std::atomic<std::uint8_t> g_macro_clone_last_reject_reason;
 // Issue #3029: last ceiling/depth/pass limit reason (Agent-stable).
+// Issue #3215: codes 4/5 = hygiene-macro-introduced / hygiene-rest-unmarked.
 export extern std::atomic<std::uint8_t> g_macro_hygiene_last_limit_reason;
+export inline constexpr std::uint8_t kHygieneLimitReasonNone = 0;
+export inline constexpr std::uint8_t kHygieneLimitReasonGensymCeiling = 1;
+export inline constexpr std::uint8_t kHygieneLimitReasonDepthLimit = 2;
+export inline constexpr std::uint8_t kHygieneLimitReasonPassLimit = 3;
+export inline constexpr std::uint8_t kHygieneLimitReasonMacroIntroduced = 4;
+export inline constexpr std::uint8_t kHygieneLimitReasonRestUnmarked = 5;
+export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
+export [[nodiscard]] const char* hygiene_last_limit_reason_string() noexcept;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).
 export extern std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total;
 // Issue #2808: stamp_rest_param_hygiene MacroIntroduced marker set / skipped.

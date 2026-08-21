@@ -1229,9 +1229,14 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 insert_kv("hygiene-limit-reason-gensym-ceiling", 1);
                 insert_kv("hygiene-limit-reason-depth-limit", 2);
                 insert_kv("hygiene-limit-reason-pass-limit", 3);
+                // Issue #3215: Agent reject reasons (reuse last-hygiene-limit-reason).
+                insert_kv("hygiene-limit-reason-macro-introduced", 4);
+                insert_kv("hygiene-limit-reason-rest-unmarked", 5);
                 insert_kv("hygiene-limit-reason-wired", 1);
                 insert_kv("schema-3029", 3029);
                 insert_kv("issue-3029", 3029);
+                insert_kv("schema-3215", 3215);
+                insert_kv("issue-3215", 3215);
             }
             insert_kv("health-score", health);
             insert_kv("hygiene-health-score", health); // AC alias

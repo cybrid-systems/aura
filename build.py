@@ -1976,6 +1976,21 @@ def cmd_lint():
             "Issue #3029 grant fence / limit-reason linter failed — run python3 scripts/coverage/checks/check_macro_self_evo_grant_fence_3029.py"
         )
         return r
+    # Issue #3215: Agent-stable hygiene-macro-introduced / hygiene-rest-unmarked
+    # reason strings on last_limit_reason (residual of #3029). Reuses the
+    # existing enum + query:macro-hygiene-stats last-hygiene-limit-reason.
+    # Extends test_hygiene_mutate_closed_loop + test_rest_param_hygiene
+    # (#81967); no docs/design (#1655).
+    hars3215_script = COVERAGE_CHECKS / "check_hygiene_agent_reason_strings_3215.py"
+    if not hars3215_script.exists():
+        fail(f"missing {hars3215_script}")
+        return 1
+    r = run([sys.executable, str(hars3215_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3215 Agent hygiene reason-string linter failed — run python3 scripts/coverage/checks/check_hygiene_agent_reason_strings_3215.py"
+        )
+        return r
     # Issue #3062: macro_expand_all pass-limit refuse-partial without boundary.
     # Extends test_macro_hygiene_limits (#81967); no docs/design.
     menb_script = COVERAGE_CHECKS / "check_macro_expand_noboundary_limit_3062.py"
