@@ -897,6 +897,11 @@ int aura_jit_linear_epoch_safety_check(const char* fn_name, std::uint8_t linear_
 // deopt). Soft/Off: zero extra counter noise (the predicate itself
 // short-circuits the bump under Soft/Off).
 int aura_jit_linear_move_drop_elision_ok(void);
+// Issue #3224: production IR/JIT entry under active mutation refuses when
+// commit_readiness.would_allow_commit is false. Thin wrapper around
+// typed_audit::ir_typed_entry_commit_readiness_ok. Returns 1 if OK, 0
+// if refuse (caller deopts). Soft/Off: 1 (predicate short-circuits).
+int aura_jit_ir_typed_entry_commit_readiness_ok(void);
 // Host/test: set EnvFrame context for the is_env_frame_stale half of the
 // dual check (env_id + frame_version captured when the linear value was
 // created). Pass env_id == UINT32_MAX to clear / disable env half.

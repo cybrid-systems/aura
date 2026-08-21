@@ -322,6 +322,10 @@ aura_jit_linear_epoch_safety_check(const char* /*fn_name*/, std::uint8_t /*linea
 extern "C" __attribute__((weak)) int aura_jit_linear_move_drop_elision_ok(void) {
     return 1;
 }
+// Issue #3224: stub returns 1 (allow) so non-JIT builds behave like Soft.
+extern "C" __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
+    return 1;
+}
 extern "C" __attribute__((weak)) void
 aura_jit_set_linear_env_context(std::uint32_t /*env_id*/, std::uint64_t /*frame_version*/) {}
 extern "C" __attribute__((weak)) void aura_jit_clear_linear_env_context(void) {}

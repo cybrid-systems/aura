@@ -288,9 +288,22 @@ static bool eq_str_content(const EvalValue& a, const EvalValue& b,
     return false;
 }
 
+// Issue #3224: production IR entry under active mutation + !would_allow
+// refuses before typed linear / provenance ops. Soft / depth==0: helper
+// short-circuits. Reuses linear_post_mutate_force_rollback_total.
+static std::optional<EvalResult> ir_typed_entry_blocked_result(CompilerMetrics* metrics) {
+    if (aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok())
+        return std::nullopt;
+    if (metrics)
+        metrics->linear_post_mutate_force_rollback_total.fetch_add(1, std::memory_order_relaxed);
+    return std::unexpected(Diagnostic{ErrorKind::TypeError, "commit-readiness-refused"});
+}
+
 EvalResult IRInterpreter::execute() {
     if (module_.functions.empty())
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty module"});
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
 
     const auto& entry = module_.entry();
     auto local_count = entry.local_count + 64;
@@ -454,6 +467,8 @@ static bool ir_closure_needs_safe_fallback(const IRClosure& cl, Evaluator* ev,
 }
 
 EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const EvalValue> args) {
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
     auto it = runtime_closures_.find(closure_id);
     if (it == runtime_closures_.end()) {
         return std::unexpected(
@@ -583,6 +598,8 @@ EvalResult IRInterpreter::call_closure(std::uint64_t closure_id, std::span<const
 
 EvalResult IRInterpreter::execute_function(const IRFunction& func,
                                            std::span<const EvalValue> args) {
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
     auto local_count = func.local_count + std::max(std::size_t(64), args.size());
     std::vector<EvalValue> locals(local_count, make_void());
     auto result = run_function(func, locals, args);
@@ -594,6 +611,8 @@ EvalResult IRInterpreter::execute_function(const IRFunction& func,
 IRInterpreter::RunResult IRInterpreter::run_function(const IRFunction& func,
                                                      std::vector<EvalValue>& locals,
                                                      std::span<const EvalValue> args) {
+    if (auto blocked = ir_typed_entry_blocked_result(context_.metrics))
+        return *blocked;
     if (func.blocks.empty())
         return std::unexpected(Diagnostic{ErrorKind::IRNoReturn, "empty function"}.with_suggestion(
             "the function body is empty"));

@@ -2065,6 +2065,103 @@ static void ac3186_jit_linear_move_drop_elision_probe() {
     }
 }
 
+// ── Issue #3224: production IR/JIT entry (beyond Move/Drop) refuses when
+// commit_readiness.would_allow_commit is false under active mutation.
+//   AC1: production + depth>0 + !would_allow → predicate false; IR entries wired
+//   AC2: Move/Drop still gated by linear_move_drop_elision_ok
+//   AC3: Soft / quiet (depth==0) true
+//   AC4: extend this suite; linter; no invent / docs/design
+
+static void ac3224_ir_typed_entry_commit_readiness() {
+    std::println("\n--- #3224: IR/JIT typed entry refuses under !commit_readiness ---");
+
+    {
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("kIrTypedEntryCommitReadinessIssue") != std::string::npos,
+              "3224 AC1: issue stamp");
+        CHECK(tma.find("ir_typed_entry_commit_readiness_ok") != std::string::npos,
+              "3224 AC1: predicate");
+        CHECK(tma.find("aura_evaluator_mutation_boundary_depth()") != std::string::npos,
+              "3224 AC1: depth C ABI");
+        const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+        CHECK(ir.find("ir_typed_entry_blocked_result") != std::string::npos, "3224 AC1: IR helper");
+        CHECK(ir.find("commit-readiness-refused") != std::string::npos, "3224 AC1: refuse message");
+        CHECK(ir.find("IRInterpreter::execute()") != std::string::npos &&
+                  ir.find("ir_typed_entry_blocked_result(context_.metrics)") != std::string::npos,
+              "3224 AC1: execute() gated");
+        CHECK(ir.find("IRInterpreter::call_closure") != std::string::npos,
+              "3224 AC1: call_closure");
+        CHECK(ir.find("IRInterpreter::execute_function") != std::string::npos,
+              "3224 AC1: execute_function");
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        CHECK(jit.find("fn_ir_typed_entry_commit_readiness_ok") != std::string::npos,
+              "3224 AC1: JIT fn");
+        CHECK(jit.find("aura_jit_ir_typed_entry_commit_readiness_ok") != std::string::npos,
+              "3224 AC1: JIT symbol");
+        CHECK(jit.find("Issue #3224") != std::string::npos, "3224 AC1: Apply prologue cite");
+        const auto brh = read_file("src/compiler/aura_jit_bridge.h");
+        CHECK(brh.find("aura_jit_ir_typed_entry_commit_readiness_ok") != std::string::npos,
+              "3224 AC1: bridge.h");
+    }
+
+    {
+        const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+        CHECK(ir.find("typed_audit::linear_move_drop_elision_ok()") != std::string::npos,
+              "3224 AC2: Move/Drop still uses linear_move_drop_elision_ok");
+    }
+
+    {
+        apply_dev_audit_defaults();
+        clear_occurrence_empty_after_fence_for_test();
+        typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+        CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3224 AC3: Soft allows entry under mutation");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        clear_occurrence_empty_after_fence_for_test();
+        apply_dev_audit_defaults();
+    }
+
+    {
+        apply_production_audit_defaults();
+        clear_occurrence_empty_after_fence_for_test();
+        typed_audit::reset_linear_ir_fastpath_counters_for_test();
+        typed_audit::g_occurrence_full_solve_recover_fn = nullptr;
+        typed_audit::g_occurrence_full_solve_recover_ctx = nullptr;
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+        CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(), "3224 AC3: quiet depth==0 allows");
+        typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+        CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3224 AC1: production + mutation + !would_allow refuses");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+        CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3224 AC3: depth==0 allows even with face");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        clear_occurrence_empty_after_fence_for_test();
+        apply_dev_audit_defaults();
+    }
+
+    {
+        const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_ir_typed_entry_commit_readiness_3224.py");
+        const auto build = read_file("build.py");
+        CHECK(t.find("ac3224_ir_typed_entry_commit_readiness") != std::string::npos,
+              "3224 AC4: this suite");
+        CHECK(!lint.empty() && lint.find("3224") != std::string::npos, "3224 AC4: linter");
+        CHECK(build.find("check_ir_typed_entry_commit_readiness_3224") != std::string::npos,
+              "3224 AC4: build.py");
+        CHECK(read_file("docs/design/3224-ir-typed-entry-commit-readiness.md").empty(),
+              "3224 AC4: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3224.cpp").empty(), "3224 AC4: no invent");
+        CHECK(read_file("tests/issues/test_issue_3224.cpp").empty(),
+              "3224 AC4: no tests/issues invent");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("g_3224_") == std::string::npos, "3224 AC4: no new g_3224_* counter");
+    }
+}
+
 // ── Issue #3085: densify/steal miss blocks lowering elision via gen ──
 // AC1 miss advances gen; lowering block sees it before next lower
 // AC2 linear_fast_path_ok false until green rebind
@@ -2459,6 +2556,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     // #3130 predicate to JIT via aura_jit_linear_move_drop_elision_ok
     // runtime bridge + linear_safety_probe OR).
     ac3186_jit_linear_move_drop_elision_probe();
+    ac3224_ir_typed_entry_commit_readiness();
     // Issue #3170: outermost-success occurrence persist fingerprint guard
     // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -
     // 半解不得出厂).
