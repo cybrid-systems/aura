@@ -1143,6 +1143,115 @@ static void ac2984_6_source_and_linter() {
           "2984 AC6: no invent test per #81967");
 }
 
+// ── Issue #3227: post-compact / remount rebind linear proof before elision ──
+//   AC1: production + last!=0 → reject face + invalidate_gen; no green elision
+//   AC2: Soft observe only; last==0 quiet
+//   AC3: densify/steal revalidate path unchanged
+//   AC4: this suite + linter; no invent / docs/design
+
+static void ac3227_1_prod_rebind_blocks_elision() {
+    std::println("\n--- #3227 AC1: production compact/remount rebind blocks elision ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    typed_audit::set_last_proof_linear_root_count_for_test(3);
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const bool hit = typed_audit::rebind_linear_proof_after_root_migration();
+    CHECK(hit, "3227 AC1: production last!=0 rebinds");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() > gen0,
+          "3227 AC1: densify/steal invalidate_gen advanced");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "3227 AC1: would_allow dropped");
+    CHECK(typed_audit::g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0,
+          "3227 AC1: linear_ok dropped");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3227 AC1: !linear_fast_path_ok");
+    CHECK(!typed_audit::linear_move_drop_elision_ok(), "3227 AC1: !Move/Drop elision");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+}
+
+static void ac3227_2_soft_and_quiet() {
+    std::println("\n--- #3227 AC2: Soft observe; last==0 quiet ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::set_last_proof_linear_root_count_for_test(3);
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const auto obs0 = typed_audit::linear_compact_root_mismatch_observe_total_v_read();
+    CHECK(!typed_audit::rebind_linear_proof_after_root_migration(),
+          "3227 AC2: Soft does not hard-rebind");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0,
+          "3227 AC2: Soft does not bump invalidate_gen");
+    CHECK(typed_audit::linear_compact_root_mismatch_observe_total_v_read() == obs0 + 1,
+          "3227 AC2: #2984 observe on mismatch");
+
+    apply_production_audit_defaults();
+    typed_audit::set_last_proof_linear_root_count_for_test(0);
+    const auto chk0 = typed_audit::linear_compact_root_check_total_v_read();
+    const auto gen1 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(!typed_audit::rebind_linear_proof_after_root_migration(), "3227 AC2: last==0 quiet");
+    CHECK(typed_audit::linear_compact_root_check_total_v_read() == chk0,
+          "3227 AC2: quiet no collect");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen1,
+          "3227 AC2: quiet no gen bump");
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+}
+
+static void ac3227_3_densify_steal_unchanged() {
+    std::println("\n--- #3227 AC3: densify/steal + post-steal revalidate retained ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    CHECK(tma.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+          "3227 AC3: #3063 restamp invalidate");
+    CHECK(tma.find("invalidate_fast_path_on_rehydrate_miss") != std::string::npos,
+          "3227 AC3: #3032 miss invalidate");
+    CHECK(gc.find("revalidate_linear_type_provenance_after_migration") != std::string::npos,
+          "3227 AC3: post-steal revalidate");
+    CHECK(gc.find("unified_restamp_after_boundary") != std::string::npos,
+          "3227 AC3: steal unified restamp");
+    CHECK(tma.find("note_arena_compact_linear_root_consistency") != std::string::npos,
+          "3227 AC3: #2984 helper retained");
+}
+
+static void ac3227_4_source_and_linter() {
+    std::println("\n--- #3227 AC4: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_post_migration_proof_rebind_3227.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("kLinearPostMigrationProofRebindIssue") != std::string::npos, "3227 AC4: stamp");
+    CHECK(tma.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3227 AC4: helper");
+    CHECK(gc.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3227 AC4: compact_sweep");
+    CHECK(svc.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3227 AC4: compact hook");
+    CHECK(rt.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3227 AC4: remount ok");
+    CHECK(t.find("ac3227_1_prod_rebind_blocks_elision") != std::string::npos, "3227 AC4: suite");
+    CHECK(!lint.empty() && lint.find("3227") != std::string::npos, "3227 AC4: linter");
+    CHECK(build.find("check_linear_post_migration_proof_rebind_3227") != std::string::npos,
+          "3227 AC4: build.py");
+    CHECK(tma.find("g_3227_") == std::string::npos, "3227 AC4: no g_3227_*");
+    CHECK(read_file("docs/design/3227-linear-post-migration-rebind.md").empty(),
+          "3227 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3227.cpp").empty(), "3227 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3227.cpp").empty(), "3227 AC4: no tests/issues");
+}
+
 static void ac3030_health_schema() {
     std::println("\n--- #3030 AC: type-linear-commit-health abort-clear keys ---");
     CompilerService cs;
@@ -1317,6 +1426,11 @@ int run_test_type_linear_commit_health() {
     ac2984_4_family_2673();
     ac2984_5_schema();
     ac2984_6_source_and_linter();
+    std::println("\n=== Issue #3227: post-compact/remount linear proof rebind ===");
+    ac3227_1_prod_rebind_blocks_elision();
+    ac3227_2_soft_and_quiet();
+    ac3227_3_densify_steal_unchanged();
+    ac3227_4_source_and_linter();
     std::println("\n=== Issue #2995: OccurrenceCommitHealth on commit-health query ===");
     ac2995_3_recover_fail_keeps_reject();
     ac2995_6_health_query_keys();

@@ -247,6 +247,12 @@ static void ac5_source() {
     CHECK(gc.find("closures → env") != std::string::npos ||
               gc.find("closures_mtx_") != std::string::npos,
           "closures→env lock order retained");
+    // Issue #3227: compact rebind must not drop the steal revalidate path.
+    CHECK(gc.find("revalidate_linear_type_provenance_after_migration") != std::string::npos,
+          "3227: post-steal revalidate retained");
+    CHECK(read_file("src/compiler/typed_mutation_audit.h")
+                  .find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3227: compact/remount rebind is additive");
 }
 
 } // namespace

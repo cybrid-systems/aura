@@ -2355,6 +2355,30 @@ inline bool note_arena_compact_linear_root_consistency() noexcept {
     return true;
 }
 
+// Issue #3227: post-compact / hot-update remount must re-bind linear
+// proof before the next IR/JIT Move/Drop elision. Reuses #2984 compact
+// consistency + the densify/steal invalidate_gen (#3032/#3063) so
+// Agents see one face. last==0: quiet (no extra collect). Soft: #2984
+// observe-only. Production/Full: drop green face + advance gen until
+// the next outermost publish_last_proof_face. Count-matched remaps
+// still reject (root identities may have moved). No new query key.
+inline constexpr int kLinearPostMigrationProofRebindIssue = 3227;
+[[nodiscard]] inline bool rebind_linear_proof_after_root_migration() noexcept {
+    const auto last = last_proof_linear_root_count_v_read();
+    if (last == 0)
+        return false; // quiet: same as #2984
+    const bool mismatch = note_arena_compact_linear_root_consistency();
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard)
+        return mismatch;
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    if (!mismatch)
+        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    return true;
+}
+
 [[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
     if (r == "cone_truncate")
         return 9; // #2621

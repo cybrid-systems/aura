@@ -2577,6 +2577,9 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
     if (fail)
         g_pure_anon_bg_drain_fail_total.fetch_add(fail, std::memory_order_relaxed);
     aura_bump_pure_anon_bg_totals(/*enqueue=*/0, ok, fail, /*overflow=*/0);
+    // Issue #3227: successful remount may relocate linear roots.
+    if (ok > 0)
+        (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
 }
 
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
@@ -2834,6 +2837,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
     if (ok > 0) {
         g_residual_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
         aura_bump_residual_remount_totals(ok, /*budget_skip=*/0);
+        // Issue #3227: remount changed live linear roots — rebind/reject.
+        (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
     }
 }
 
@@ -2959,6 +2964,9 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
         g_reemit_success_sync_covered_cap_hit_total.fetch_add(leftover, std::memory_order_relaxed);
     if (ok || fail || leftover)
         aura_bump_reemit_success_sync_covered_remount_totals(ok, fail, leftover);
+    // Issue #3227: successful covered remount may relocate linear roots.
+    if (ok > 0)
+        (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
 }
 
 // Issue #660 / #2092 / #2550: set the closure's name after allocation.

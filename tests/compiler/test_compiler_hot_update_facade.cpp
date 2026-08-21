@@ -748,6 +748,17 @@ int run_test_issue_3112() {
     // ResidualForceHeal. Age-gated auto-heal keeps ResidualForceHeal.
     ac3221_cascade_reason_not_residual_force_heal();
 
+    // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
+    {
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+              "3227: remount ok rebinds linear proof");
+        CHECK(rt.find("Issue #3227") != std::string::npos, "3227: remount cite");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+              "3227: helper");
+    }
+
     std::print("[test_issue_3112] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
