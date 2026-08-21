@@ -283,6 +283,28 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             // g_pending_full_solve_residual_observe_total in the helper).
         }
     }
+    // Issue #3237: concurrent densify / nested abort recovery can latch
+    // pending_full_solve residual AFTER drain SOLVED. Production/Full
+    // must not stamp a green TypeLinearCommitProof or grant query:type.
+    // Soft: face never latches. Quiet: one relaxed load of 0.
+    if (aura::compiler::typed_audit::pending_full_solve_residual_face_hit()) {
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (hard) {
+            (void)
+                aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    /*goal_fingerprint=*/0, /*from_cs=*/false,
+                    /*force_reason=*/16);
+            aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+            ev->bump_occurrence_persist_fingerprint_mismatch();
+            return; // skip green stamp + health + grant
+        }
+    }
     // (3) Stamp TypeLinearCommitProof from post-persist CS truth so Agents
     // holding the proof across densify/steal match the durable snapshot.
     // Soft + empty goals: freeze returns 0/0; stamp still records defuse
@@ -305,6 +327,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // stamp inflight and leave grant to this outermost success path.
     // Issue #3203: grant_type_export_authority refuses if last infer
     // was TIMEOUT/CONFLICT (persist must not override a half-solved face).
+    // Issue #3237: grant also refuses a latched pending_full_solve residual.
     ev->grant_type_export_authority();
 }
 

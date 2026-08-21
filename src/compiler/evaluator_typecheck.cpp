@@ -317,6 +317,8 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
             // copy_infer (#3003 observe / #3081 TIMEOUT copy).
             // Issue #3203: record SOLVED vs TIMEOUT so persist grant cannot
             // override a half-solved face (Production SOLVED still grants).
+            // Issue #3237: Production stays inflight until persist + Full
+            // residual faces are clear; query:type re-checks at export.
             note_infer_solve_solved(tc.last_delta_solve_status() == SolveResult::SOLVED);
             if (aura::compiler::typed_audit::production_defaults_active())
                 note_type_export_inflight();
