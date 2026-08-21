@@ -97,7 +97,12 @@ def main() -> int:
             stripped = re.sub(r"//[^\n]*", "", compact)
             if re.search(r"\bupdate_deopt_storm_state_\s*\(", stripped):
                 fails.append("AC3: on_arena_compact must not call update_deopt_storm_state_")
-        must("unique_lock_all_shards_", "AC3 multi-shard", compact)
+        stripped = re.sub(r"//[^\n]*", "", compact)
+        # Issue #3199: compact must not hold all shards at once.
+        if re.search(r"\bunique_lock_all_shards_\s*\(", stripped):
+            fails.append("AC3: on_arena_compact must not call unique_lock_all_shards_ (#3199)")
+        if "unique_lock_shard_" not in compact:
+            fails.append("AC3: on_arena_compact must lock per-shard (#3199)")
         must("Explicitly do NOT call update_deopt_storm_state_", "AC3", compact)
     must("#2617", "AC3", hh)
 

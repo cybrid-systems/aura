@@ -135,6 +135,11 @@ static void ac1_gate_compact_no_storm_ring() {
               "AC1: no live update_deopt_storm_state_ call in on_arena_compact");
         CHECK(body.find("deopt_storm_compact_suppressed") != std::string::npos,
               "AC1: compact-suppressed tally present");
+        // Issue #3199: compact must not serialize all shards.
+        CHECK(body.find("unique_lock_all_shards_(") == std::string::npos,
+              "AC1/#3199: no unique_lock_all_shards_ in on_arena_compact");
+        CHECK(body.find("unique_lock_shard_") != std::string::npos,
+              "AC1/#3199: per-shard unique_lock_shard_");
     }
     (void)compact_pos;
     (void)update_def;
@@ -349,6 +354,17 @@ static void ac2908_compact_no_global_bump() {
           "AC5: no new test file per #81967");
 }
 
+static void ac3199_compact_no_all_shards_source() {
+    std::println("\n--- #3199: compact isolation suite source-cite per-shard lock ---");
+    using aura::compiler::shape::kShapeCompactNoAllShardsLockIssue;
+    CHECK(kShapeCompactNoAllShardsLockIssue == 3199, "3199: issue stamp");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(cpp.find("Issue #3199") != std::string::npos, "3199: cpp cites");
+    CHECK(read_file("scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py")
+                  .find("Issue #3199") != std::string::npos,
+          "3199: coverage linter");
+}
+
 int run_test_shape_compact_storm_isolation() {
     std::println("=== Issue #2617: compact ↛ deopt-storm ring isolation ===");
     ac1_gate_compact_no_storm_ring();
@@ -357,6 +373,7 @@ int run_test_shape_compact_storm_isolation() {
     ac4_stable_history_preserved();
     ac5_source_cite();
     ac2908_compact_no_global_bump();
+    ac3199_compact_no_all_shards_source();
     std::println("\n=== #2617/#2908: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
