@@ -831,6 +831,13 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
             (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
             aura_aot_record_deopt_on_steal();
         }
+        // Issue #3238: steal/densify restamp under a live Guard must
+        // dirty-root revalidate immediately (not wait for exit). Soft
+        // observe. Quiet (!live): helper false.
+        if (typed_audit::note_densify_entry_under_live_mutation()) {
+            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                      /*mark_all_linear=*/false);
+        }
         if (void* m = compiler_metrics_)
             (void)aura::compiler::clear_escape_move_elision_gate_for_eval(m);
     }
