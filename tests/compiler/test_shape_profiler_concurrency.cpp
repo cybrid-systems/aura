@@ -1,6 +1,7 @@
 // @category: unit
 // @reason: Issue #2141 — ShapeProfiler shared_mutex for multi-fiber mutate.
 //          Issue #2937 — FnKey-sharded locks (extend per #81967).
+//          Issue #3199 — on_arena_compact per-shard unique (no all-shards).
 //
 //   AC1: docs model A (shared_mutex) in shape_profiler.h
 //   AC2: concurrent record_shape + invalidate does not corrupt profiles_
@@ -25,12 +26,14 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <string_view>
 #include <thread>
 #include <vector>
 
 namespace {
 
 using aura::compiler::shape::FnKey;
+using aura::compiler::shape::kShapeCompactNoAllShardsLockIssue;
 using aura::compiler::shape::kShapeProfilerConcurrencyIssue;
 using aura::compiler::shape::kShapeProfilerShardCount;
 using aura::compiler::shape::kShapeProfilerShardIssue;
@@ -49,6 +52,150 @@ static std::string read_file(const char* path) {
         return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
     }
     return {};
+}
+
+static std::string compact_fn_body(const std::string& cpp) {
+    auto fn = cpp.find("ShapeProfiler::on_arena_compact");
+    if (fn == std::string::npos)
+        return {};
+    auto brace = cpp.find('{', fn);
+    if (brace == std::string::npos)
+        return {};
+    int depth = 0;
+    std::size_t end = brace;
+    for (; end < cpp.size(); ++end) {
+        if (cpp[end] == '{')
+            ++depth;
+        else if (cpp[end] == '}') {
+            --depth;
+            if (depth == 0) {
+                ++end;
+                break;
+            }
+        }
+    }
+    return cpp.substr(brace, end - brace);
+}
+
+static std::string strip_line_comments(std::string_view src) {
+    std::string out;
+    out.reserve(src.size());
+    for (std::size_t i = 0; i < src.size(); ++i) {
+        if (i + 1 < src.size() && src[i] == '/' && src[i + 1] == '/') {
+            while (i < src.size() && src[i] != '\n')
+                ++i;
+            continue;
+        }
+        out.push_back(src[i]);
+    }
+    return out;
+}
+
+static void ac3199_1_compact_no_all_shards() {
+    std::println("\n--- #3199 AC1: compact + disjoint record_shape; no all-shards unique ---");
+    CHECK(kShapeCompactNoAllShardsLockIssue == 3199, "3199 AC1: issue stamp");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    const auto body = strip_line_comments(compact_fn_body(cpp));
+    CHECK(!body.empty(), "3199 AC1: compact body");
+    CHECK(body.find("unique_lock_all_shards_(") == std::string::npos,
+          "3199 AC1: compact does not call unique_lock_all_shards_");
+    CHECK(body.find("unique_lock_shard_") != std::string::npos,
+          "3199 AC1: compact uses unique_lock_shard_");
+
+    ShapeProfiler sp;
+    FnKey a = 1;
+    FnKey b = 2;
+    while (ShapeProfiler::shard_index(a) == ShapeProfiler::shard_index(b))
+        ++b;
+    CHECK(ShapeProfiler::shard_index(a) != ShapeProfiler::shard_index(b),
+          "3199 AC1: distinct shards");
+    for (int i = 0; i < 120; ++i) {
+        (void)sp.record_shape(a, SHAPE_INT);
+        (void)sp.record_shape(b, SHAPE_INT);
+    }
+    std::atomic<bool> start{false};
+    std::atomic<std::uint64_t> records{0};
+    std::atomic<std::uint32_t> compact_touched{0};
+    auto recorder = [&](FnKey fn) {
+        while (!start.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < 800; ++i) {
+            (void)sp.record_shape(fn, SHAPE_INT);
+            records.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    auto compactor = [&]() {
+        while (!start.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < 80; ++i)
+            compact_touched.fetch_add(sp.on_arena_compact(), std::memory_order_relaxed);
+    };
+    std::thread t0(recorder, a);
+    std::thread t1(recorder, b);
+    std::thread tc(compactor);
+    start.store(true, std::memory_order_release);
+    t0.join();
+    t1.join();
+    tc.join();
+    CHECK(records.load() == 1600, "3199 AC1: disjoint records completed");
+    CHECK(compact_touched.load() > 0, "3199 AC1: compact touched");
+    CHECK(sp.arena_compact_calls() >= 80, "3199 AC1: compact calls");
+    std::println("  contended={}", sp.lock_contended_total());
+}
+
+static void ac3199_2_version_advances() {
+    std::println("\n--- #3199 AC2: compact bumps every tracked profile version ---");
+    ShapeProfiler sp;
+    std::vector<FnKey> fns;
+    for (FnKey f = 1; f <= 16; ++f) {
+        for (int i = 0; i < 80; ++i)
+            (void)sp.record_shape(f, SHAPE_INT);
+        fns.push_back(f);
+    }
+    std::vector<std::uint64_t> ver0;
+    ver0.reserve(fns.size());
+    for (auto f : fns)
+        ver0.push_back(sp.current_snapshot(f).version);
+    const auto touched = sp.on_arena_compact();
+    CHECK(touched >= static_cast<std::uint32_t>(fns.size()), "3199 AC2: touched all");
+    for (std::size_t i = 0; i < fns.size(); ++i)
+        CHECK(sp.current_snapshot(fns[i]).version > ver0[i], "3199 AC2: version advanced");
+}
+
+static void ac3199_3_compact_not_storm() {
+    std::println("\n--- #3199 AC3: compact still #2617 isolated ---");
+    ShapeProfiler sp;
+    sp.apply_preset(ShapeProfiler::kLowMutationPreset);
+    for (int f = 1; f <= 8; ++f)
+        for (int i = 0; i < 80; ++i)
+            (void)sp.record_shape(static_cast<FnKey>(f), SHAPE_INT);
+    const auto mut0 = sp.mutation_induced_invalidations();
+    const auto storm0 = sp.deopt_storm_total();
+    (void)sp.on_arena_compact();
+    CHECK(sp.mutation_induced_invalidations() == mut0, "3199 AC3: no mutation_induced");
+    CHECK(sp.deopt_storm_total() == storm0, "3199 AC3: no storm total");
+}
+
+static void ac3199_4_source_and_linter() {
+    std::println("\n--- #3199 AC4/AC5/AC6: source-cite + linter + no invent ---");
+    const auto hh = read_file("src/compiler/shape_profiler.h");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    const auto t = read_file("tests/compiler/test_shape_profiler_concurrency.cpp");
+    const auto iso = read_file("tests/compiler/test_shape_compact_storm_isolation.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("kShapeCompactNoAllShardsLockIssue = 3199") != std::string::npos,
+          "3199 AC5: issue stamp");
+    CHECK(cpp.find("Issue #3199") != std::string::npos, "3199 AC5: cpp cites");
+    CHECK(t.find("ac3199_1_compact_no_all_shards") != std::string::npos, "3199 AC5: AC1");
+    CHECK(iso.find("3199") != std::string::npos, "3199 AC4: compact isolation extended");
+    CHECK(!lint.empty() && lint.find("Issue #3199") != std::string::npos, "3199 AC5: linter");
+    CHECK(build.find("check_shape_compact_no_all_shards_lock_3199") != std::string::npos,
+          "3199 AC5: build.py");
+    CHECK(read_file("docs/design/3199-shape-compact-no-all-shards.md").empty(),
+          "3199 AC6: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3199.cpp").empty(), "3199 AC6: no invent");
 }
 
 } // namespace
@@ -410,11 +557,19 @@ int run_test_shape_profiler_concurrency() {
         CHECK(hh.find("#2617") != std::string::npos, "AC5: #2617 preserved");
     }
 
+    std::println("\n=== Issue #3199: on_arena_compact per-shard lock ===");
+    ac3199_1_compact_no_all_shards();
+    ac3199_2_version_advances();
+    ac3199_3_compact_not_storm();
+    ac3199_4_source_and_linter();
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
+// Standalone binary links shape_profiler.cpp without runtime_ssot.
+extern "C" void aura_hot_update_set_shape_storm_active(int) {}
 int main() {
     return run_test_shape_profiler_concurrency();
 }

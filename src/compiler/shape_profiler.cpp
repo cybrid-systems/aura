@@ -738,6 +738,10 @@ void ShapeProfiler::invalidate_all() noexcept {
 //
 // *** COMPACT ↛ PROCESS-GLOBAL shape_version UNDER PerEval (#2908) ***
 // Gate: scripts/coverage/checks/check_shape_compact_no_global_bump_2908.py
+//
+// *** COMPACT ↛ unique_lock_all_shards_ (#3199) ***
+// Gate: scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
+// Per-shard unique_lock_shard_ only so disjoint record_shape proceeds.
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
@@ -747,87 +751,73 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     // hard contract under Moving mode.
     const auto t0 = std::chrono::steady_clock::now();
 
-    // Issue #2141 / #2937: mutate under ordered multi-shard unique locks;
-    // fire hooks after unlock. Compact still never takes meta_mtx_ storm path.
+    // Issue #3199: per-shard unique only. unique_lock_all_shards_ would
+    // re-serialize disjoint FnKey record_shape for the compact window.
+    // Snapshot meta without holding any shard lock (lock-order: never
+    // pair shard unique with meta here — invalidate holds shard then meta).
+    // Fire hooks after all shard locks drop so callbacks may re-enter.
     struct HookWork {
         FnKey fn;
         std::uint64_t version;
     };
     std::vector<HookWork> hooks_to_fire;
     std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
+    std::uint32_t ring_before = 0;
+    {
+        std::lock_guard<std::mutex> meta(meta_mtx_);
+        ring_before = deopt_ring_count_;
+        dirty_hook_copy = dirty_hook_;
+    }
+    const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
+    // Issue #2908: capture process-global version for PerEval contract.
+    const auto global_ver_before = shape_version_bump_count.load(std::memory_order_relaxed);
+    // Production default PerEval (2): do not advance process-global
+    // shape_version from compact-only events. Global (0) env override
+    // restores legacy process-wide fence (experiments / soak).
+    const int iso_mode = aura_get_storm_isolation_mode();
+    const bool allow_global_version_bump = (iso_mode != 2);
+    const std::uint64_t epoch = aura::core::current_mutation_epoch();
     std::uint32_t touched = 0;
 
-    {
-        auto locks = unique_lock_all_shards_();
-        // #2617 runtime contract: compact must not grow storm ring or
-        // mutation-induced invalidation counters.
-        std::uint32_t ring_before = 0;
-        {
-            std::lock_guard<std::mutex> meta(meta_mtx_);
-            ring_before = deopt_ring_count_;
-            dirty_hook_copy = dirty_hook_;
-        }
-        const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
-        // Issue #2908: capture process-global version for PerEval contract.
-        const auto global_ver_before = shape_version_bump_count.load(std::memory_order_relaxed);
-        // Production default PerEval (2): do not advance process-global
-        // shape_version from compact-only events. Global (0) env override
-        // restores legacy process-wide fence (experiments / soak).
-        const int iso_mode = aura_get_storm_isolation_mode();
-        const bool allow_global_version_bump = (iso_mode != 2);
-
-        std::size_t total_profiles = 0;
-        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
-            total_profiles += shards_[i].profiles.size();
-        if (total_profiles == 0) {
-            deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
-            {
-                std::lock_guard<std::mutex> meta(meta_mtx_);
-                contract_assert(deopt_ring_count_ == ring_before);
-            }
-            contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
-                            mut_before);
-            contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
-            return 0;
-        }
-
-        const std::uint64_t epoch = aura::core::current_mutation_epoch();
-        hooks_to_fire.reserve(total_profiles);
-
+    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+        auto lock = unique_lock_shard_(i);
+        auto& profiles = shards_[i].profiles;
+        if (hooks_to_fire.capacity() < hooks_to_fire.size() + profiles.size())
+            hooks_to_fire.reserve(hooks_to_fire.size() + profiles.size());
         // flat_map iterator yields pair-by-value proxy; use auto&&.
-        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
-            for (auto&& [fn, profile] : shards_[i].profiles) {
-                const bool was_stable = profile.is_stable;
-                profile.version++;
-                if (epoch > profile.version)
-                    profile.version = epoch;
-                // Issue #2908: per-profile version always advances (local dirty
-                // hooks / resume soft path). Process-global shape_version only
-                // under Global isolation (not production PerEval default).
-                if (allow_global_version_bump) {
-                    shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
-                    g_shape_compact_global_version_bump_total_atomic().fetch_add(
-                        1, std::memory_order_relaxed);
-                } else {
-                    g_shape_compact_global_version_skipped_total_atomic().fetch_add(
-                        1, std::memory_order_relaxed);
-                }
-                ++touched;
-
-                if (was_stable) {
-                    shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
-                    arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
-                }
-
-                hooks_to_fire.push_back(HookWork{fn, profile.version});
-                deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
-                arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
-                // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
-                deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+        for (auto&& [fn, profile] : profiles) {
+            const bool was_stable = profile.is_stable;
+            profile.version++;
+            if (epoch > profile.version)
+                profile.version = epoch;
+            // Issue #2908: per-profile version always advances (local dirty
+            // hooks / resume soft path). Process-global shape_version only
+            // under Global isolation (not production PerEval default).
+            if (allow_global_version_bump) {
+                shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+                g_shape_compact_global_version_bump_total_atomic().fetch_add(
+                    1, std::memory_order_relaxed);
+            } else {
+                g_shape_compact_global_version_skipped_total_atomic().fetch_add(
+                    1, std::memory_order_relaxed);
             }
-        }
+            ++touched;
 
-        // #2617: fail-closed if a future edit feeds the storm ring from compact.
+            if (was_stable) {
+                shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
+                arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
+            }
+
+            hooks_to_fire.push_back(HookWork{fn, profile.version});
+            deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+            arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
+            // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
+            deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    if (touched == 0) {
+        deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
         {
             std::lock_guard<std::mutex> meta(meta_mtx_);
             contract_assert(deopt_ring_count_ == ring_before);
@@ -835,15 +825,24 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) ==
                         mut_before);
         contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
-        // #2908: under PerEval, process-global shape_version must not advance.
-        if (!allow_global_version_bump) {
-            contract_assert(shape_version_bump_count.load(std::memory_order_relaxed) ==
-                            global_ver_before);
-        }
-        (void)ring_before;
-        (void)mut_before;
-        (void)global_ver_before;
+        return 0;
     }
+
+    // #2617: fail-closed if a future edit feeds the storm ring from compact.
+    {
+        std::lock_guard<std::mutex> meta(meta_mtx_);
+        contract_assert(deopt_ring_count_ == ring_before);
+    }
+    contract_assert(mutation_induced_invalidations_.load(std::memory_order_relaxed) == mut_before);
+    contract_assert(!last_storm_from_compact_.load(std::memory_order_relaxed));
+    // #2908: under PerEval, process-global shape_version must not advance.
+    if (!allow_global_version_bump) {
+        contract_assert(shape_version_bump_count.load(std::memory_order_relaxed) ==
+                        global_ver_before);
+    }
+    (void)ring_before;
+    (void)mut_before;
+    (void)global_ver_before;
 
     for (const auto& h : hooks_to_fire) {
         fire_shape_deopt_hook(h.fn, h.version, kShapeDirtyScopeArenaCompact);

@@ -40,9 +40,11 @@ namespace aura::compiler::shape {
 //   - Shared lock on shard(fn): is_stable / dominant_shape / current_snapshot /
 //     metrics (read-only walk of that function's profile).
 //   - Unique lock on shard(fn): record_shape / invalidate for that FnKey.
-//   - Ordered multi-shard unique locks (0..N-1): invalidate_all /
-//     on_arena_compact / reset / tracked_fns / shape_stable_ratio /
-//     deopt_rate_per_fn / profile_count (cross-function walks).
+//   - on_arena_compact: unique_lock_shard_ one shard at a time (#3199);
+//     never unique_lock_all_shards_ (that re-serializes disjoint record_shape).
+//   - Ordered multi-shard unique locks (0..N-1): invalidate_all / reset /
+//     tracked_fns / shape_stable_ratio / deopt_rate_per_fn / profile_count
+//     (cross-function walks that must observe a consistent set).
 //   - Config knobs under config_mtx_ (rare writers; not on hot record path).
 //   - Deopt-storm ring under meta_mtx_ (mutation-only; never from compact).
 //   - External deopt/dirty hooks fire *after* releasing locks so
@@ -53,6 +55,8 @@ namespace aura::compiler::shape {
 // Compact≠storm (#2617) and PerEval storm default (#2683) unchanged.
 inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
 inline constexpr int kShapeProfilerShardIssue = 2937;
+// Issue #3199: on_arena_compact must not unique_lock_all_shards_.
+inline constexpr int kShapeCompactNoAllShardsLockIssue = 3199;
 // Fixed shard count — power-of-two friendly; FnKey hash selects shard.
 inline constexpr std::size_t kShapeProfilerShardCount = 16;
 
@@ -248,7 +252,9 @@ public:
     //     independent; full invalidate_all would thrash deopt storms)
     //   - Does NOT feed the deopt-storm ring (compact is expected pressure)
     //   - Does NOT bump mutation_induced_invalidations_ (#2617 hard contract)
+    //   - Does NOT unique_lock_all_shards_ (#3199: per-shard unique only)
     // Gate: scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py
+    //       scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
     // Returns number of profiles touched.
     std::uint32_t on_arena_compact() noexcept;
 
@@ -408,8 +414,10 @@ private:
     // Issue #2141 / #2937: per-shard lock helpers (try → contended++ → block).
     [[nodiscard]] std::unique_lock<std::shared_mutex> unique_lock_shard_(std::size_t i) const;
     [[nodiscard]] std::shared_lock<std::shared_mutex> shared_lock_shard_(std::size_t i) const;
-    // Ordered multi-shard locks (indices 0..N-1) for cross-function walks.
-    // Always acquire in ascending index order to avoid deadlock.
+    // Ordered multi-shard locks (indices 0..N-1) for cross-function walks
+    // (reset / invalidate_all collect / ratio). Always acquire in ascending
+    // index order to avoid deadlock. on_arena_compact must not use these
+    // (#3199 — per-shard unique_lock_shard_ only).
     using ShardUniqueLocks =
         std::array<std::unique_lock<std::shared_mutex>, kShapeProfilerShardCount>;
     using ShardSharedLocks =
