@@ -2116,6 +2116,19 @@ def cmd_lint():
             "Issue #3200 moving pin/EnvFrame Soft-gate linter failed — run python3 scripts/coverage/checks/check_moving_pin_guard_soft_gate_3200.py"
         )
         return r
+    # Issue #3201: production residual single-mark cascades hard-abort
+    # by default (AURA_IR_DIRTY_BATCH_ONLY unset + production_defaults).
+    # env=0 remains Soft. Extends test_batch_dirty_discipline; no invent.
+    irdb3201_script = COVERAGE_CHECKS / "check_ir_dirty_batch_only_production_default_3201.py"
+    if not irdb3201_script.exists():
+        fail(f"missing {irdb3201_script}")
+        return 1
+    r = run([sys.executable, str(irdb3201_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3201 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3201.py"
+        )
+        return r
     # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
     # Occurrence persist / TypeLinearCommitProof on one authoritative face.
     # Reuses invalidate_gen (no second proof model). Soft observe-only.
