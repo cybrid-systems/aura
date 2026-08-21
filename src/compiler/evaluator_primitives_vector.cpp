@@ -243,12 +243,19 @@ void register_vector_and_hash_primitives(PrimRegistrar add, std::pmr::vector<Pai
         pure_general(2, "(vector int) -> any", "Element at index in a vector."));
     register_prim(
         add, ev, "vector-set!",
-        [&vector_heap, &string_heap, &error_values,
+        [&ev, &vector_heap, &string_heap, &error_values,
          primitive_error_counter](std::span<const EvalValue> a) {
             if (a.size() < 3 || !is_vector(a[0])) {
                 return make_primitive_error(string_heap, error_values, "vector-set!: not a vector",
                                             primitive_error_counter);
             }
+            if (!is_int(a[1])) {
+                return make_primitive_error(string_heap, error_values,
+                                            "vector-set!: index must be an integer",
+                                            primitive_error_counter);
+            }
+            // Issue #3235: lock symmetry with set-car! / hash-set! (#1397/#1399).
+            std::lock_guard lock(ev.alloc_storage_lock_);
             auto idx = as_vector_idx(a[0]);
             auto pos = static_cast<std::size_t>(as_int(a[1]));
             if (idx >= vector_heap.size() || pos >= vector_heap[idx].size()) {

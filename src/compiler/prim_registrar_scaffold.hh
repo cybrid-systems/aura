@@ -89,11 +89,14 @@ struct PrimSpec {
     bool effect_enforced_in_body = false;
     bool security_exempt = false;
     bool guard_exempt = false;            // #2986 metadata-only mutate:*
-    bool requires_mutation_guard = false; // #3197 non-exempt mutate:*
+    bool requires_mutation_guard = false; // #3197 / #3235 non-exempt mutate:*
     std::string_view doc{};
     std::string_view category = kPrimCategoryGeneral;
     std::string_view schema{};
 };
+
+// Issue #3235: mutate_general PrimCall auto-acquires MutationBoundaryGuard.
+inline constexpr int kContainerMutateGuardIssue = 3235;
 
 // ── Common PrimSpec factories (Agent-friendly) ──────────────────────────
 
@@ -126,7 +129,7 @@ struct PrimSpec {
     s.pure = false;
     s.safety_flags = kPrimSafetyMutates;
     s.security_level = kPrimSecSandboxed;
-    s.requires_mutation_guard = true; // #3197
+    s.requires_mutation_guard = true; // #3197 / #3235 PrimCall auto-Guard
     // required_effects left 0 — #2152 stamps from mutate:/workspace: names.
     return s;
 }

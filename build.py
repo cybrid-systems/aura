@@ -2183,6 +2183,19 @@ def cmd_lint():
             "Issue #3234 pass SCC no-std-function linter failed — run python3 scripts/coverage/checks/check_pass_scc_no_std_function_3234.py"
         )
         return r
+    # Issue #3235: vector-set! / hash-set! / set-car! auto-acquire
+    # MutationBoundaryGuard (mutate_general PrimCall). Soft/dev still
+    # mutates. Extends test_hash_table_grow; no docs/design / invent.
+    cmg3235_script = COVERAGE_CHECKS / "check_container_mutate_guard_3235.py"
+    if not cmg3235_script.exists():
+        fail(f"missing {cmg3235_script}")
+        return 1
+    r = run([sys.executable, str(cmg3235_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3235 container mutate Guard linter failed — run python3 scripts/coverage/checks/check_container_mutate_guard_3235.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

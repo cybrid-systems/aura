@@ -576,6 +576,25 @@ types::EvalValue Evaluator::abort_after_insert_child_for_test(ast::NodeId parent
     });
 }
 
+Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& ok) noexcept {
+    ok = true;
+    if (any_active_mutation_boundary())
+        return {};
+    bool flag = true;
+    auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, &flag);
+    if (!gr) {
+        ok = false;
+        return {};
+    }
+    if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+        m->mutation_boundary_primitives_wrapped.fetch_add(1, std::memory_order_relaxed);
+        m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
+    }
+    auto* raw = gr->release();
+    return HeapMutateGuardHandle{
+        raw, [](void* p) noexcept { delete static_cast<MutationBoundaryGuard*>(p); }};
+}
+
 Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     auto& stack = active_mutation_stack();
     if (stack.empty())
