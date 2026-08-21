@@ -351,10 +351,13 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
             f->inject_synthetic_mutation_boundary_yield();
         }
     }
-    // Issue #3194: past inbody window, same-fiber force-releases
-    // workspace hold + depth (reuse #3118/#3035). Cross-fiber helper
-    // only re-arms pending-cancel (AC2 — no preemptive mutex drop while
-    // the other fiber's Guard is live). Soft already returned.
+    // Issue #3194 / #3222: past inbody window, same-fiber
+    // force-releases workspace hold + depth (reuse #3118/#3035).
+    // Cross-fiber helper only re-arms pending-cancel (AC2 — no
+    // preemptive mutex drop while the other fiber's Guard is live).
+    // #3222: Fiber::check_gc_safepoint also polls so a live same-fiber
+    // body hits this without waiting for scheduler idle (idle is
+    // always cross-fiber). Soft already returned.
     aura_evaluator_force_release_outermost_holder(fid);
     return 1;
 }
@@ -787,8 +790,14 @@ void Fiber::check_gc_safepoint() {
     // dtor. Issue #3071 bounds the remaining window: after cancel is
     // armed, the scheduler idle path polls and re-arms force-safepoint
     // if the holder is still outermost-held past 2× SLO (no unlock).
+    // Issue #3222: idle poll is always cross-fiber (pending-cancel
+    // only). Same-fiber inbody poll from this edge force-releases
+    // hold + depth past the bound so steal/GC are not starved until
+    // dtor. Soft: poll is metric-only. Poll first while the cancel-arm
+    // timestamp is still live; fail-closed consume clears the arm.
     if (auto* cur = g_current_fiber) {
         if (cur->peek_hold_budget_cancel()) {
+            (void)aura_hold_budget_poll_inbody_window();
             (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
         }
         if (cur->is_force_safepoint_requested()) {

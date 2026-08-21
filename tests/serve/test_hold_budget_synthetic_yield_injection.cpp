@@ -561,11 +561,175 @@ int run_test_hold_budget_inbody_force_release() {
     return failed == 0 ? 0 : 1;
 }
 
+// @reason: Issue #3222 — I1 residual of #3194. Scheduler idle poll is
+//   always cross-fiber (pending-cancel only). Same-fiber inbody poll
+//   from Fiber::check_gc_safepoint force-releases hold + depth past
+//   2×SLO so a live body cannot keep workspace_mtx_ until dtor.
+//   AC1: same-fiber check_gc_safepoint past bound force-releases + marks failed
+//   AC2: cross-fiber helper only pending-cancel; poll cannot spell "unlock"
+//   AC3: Soft observe-only
+//   AC4: reuse forced_unlock_total + forced_fail_closed_total
+//   AC5/AC6: extend this suite + linter; no invent / docs/design
+
+int run_test_hold_budget_inbody_force_unlock() {
+    std::println("=== Issue #3222: hold-budget inbody force-unlock (I1 residual of #3194) ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // ac3222_1_same_fiber_safepoint_force_unlock
+    {
+        std::println(
+            "\n--- AC1: same-fiber check_gc_safepoint force-releases past inbody bound ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Fiber;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3222 AC1: reject_enabled under production");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> ran{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3222 AC1: fiber current");
+                f->request_hold_budget_cancel();
+                aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                Fiber::check_gc_safepoint();
+                held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                                 std::memory_order_relaxed);
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                                  std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3222 AC1: fiber body ran");
+        CHECK(ok_flag.load() == 0, "3222 AC1: success flag forced false");
+        CHECK(held_after.load() == 0, "3222 AC1: workspace hold cleared at safepoint");
+        CHECK(depth_after.load() == 0, "3222 AC1: depth slot == 0");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() >= 1,
+              "3222 AC1: forced_unlock_total");
+        CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() >= 1,
+              "3222 AC1: forced_fail_closed_total");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ac3222_2_cross_fiber_no_preemptive_unlock
+    {
+        std::println("\n--- AC2: cross-fiber pending-cancel only ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto pos = emb.find("aura_evaluator_force_unlock_outermost_holder");
+        CHECK(pos != std::string::npos, "3222 AC2: force_unlock ABI present");
+        CHECK(emb.find("aura_evaluator_force_release_outermost_holder(fiber_id)") !=
+                  std::string::npos,
+              "3222 AC2: force_unlock reuses #3194 force_release");
+        const auto rel = emb.find("aura_evaluator_force_release_outermost_holder");
+        CHECK(rel != std::string::npos, "3222 AC2: force_release helper present");
+        const auto win = emb.substr(rel, 1800);
+        CHECK(win.find("cur->id() == fiber_id") != std::string::npos, "3222 AC2: same-fiber test");
+        CHECK(win.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+              "3222 AC2: cross-fiber pending-cancel");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        const auto poll_win = fc.substr(poll_pos, 7000);
+        CHECK(poll_win.find("aura_evaluator_force_unlock_outermost_holder") == std::string::npos,
+              "3222 AC2: poll does not spell force_unlock (#3160 AC12)");
+        CHECK(poll_win.find("aura_evaluator_force_release_outermost_holder") != std::string::npos,
+              "3222 AC2: poll still calls force_release");
+        const auto sp = fc.find("void Fiber::check_gc_safepoint()");
+        CHECK(sp != std::string::npos, "3222 AC2: check_gc_safepoint present");
+        const auto sp_win = fc.substr(sp, 2500);
+        CHECK(sp_win.find("aura_hold_budget_poll_inbody_window()") != std::string::npos,
+              "3222 AC2: check_gc_safepoint polls inbody window (same-fiber)");
+    }
+
+    // ac3222_3_soft_observe_only
+    {
+        std::println("\n--- AC3: Soft observe-only ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3222 AC3: Soft reject_enabled false");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_cancel_armed_fiber.store(1, std::memory_order_release);
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        aura::serve::Fiber::check_gc_safepoint();
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3222 AC3: no force-unlock under Soft");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(emb.find("if (!mutation_hold_budget_reject_enabled())") != std::string::npos,
+              "3222 AC3: helper gates on reject_enabled");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ── AC4/AC5/AC6: counters + linter + no invent ──
+    {
+        std::println("\n--- AC4/AC6: reuse counters + linter ---");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        const auto t = read_file("tests/serve/test_hold_budget_synthetic_yield_injection.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_hold_budget_inbody_force_unlock_3222.py");
+        const auto build = read_file("build.py");
+        CHECK(mhb.find("kMutationHoldBudgetInbodyForceUnlockIssue") != std::string::npos,
+              "3222 AC4: issue stamp");
+        CHECK(mhb.find("g_3222_") == std::string::npos, "3222 AC4: no new g_3222_* counter");
+        CHECK(t.find("ac3222_1_same_fiber_safepoint_force_unlock") != std::string::npos ||
+                  t.find("3222 AC1: same-fiber") != std::string::npos,
+              "3222 AC5: AC1 in this suite");
+        CHECK(t.find("ac3222_2_cross_fiber_no_preemptive_unlock") != std::string::npos ||
+                  t.find("3222 AC2: cross-fiber") != std::string::npos,
+              "3222 AC5: AC2 in this suite");
+        CHECK(t.find("ac3222_3_soft_observe_only") != std::string::npos ||
+                  t.find("3222 AC3: Soft") != std::string::npos,
+              "3222 AC5: AC3 in this suite");
+        CHECK(!lint.empty() && lint.find("3222") != std::string::npos, "3222 AC6: linter");
+        CHECK(build.find("check_hold_budget_inbody_force_unlock_3222") != std::string::npos,
+              "3222 AC6: build.py");
+        CHECK(read_file("docs/design/3222-hold-budget-inbody-force-unlock.md").empty(),
+              "3222 AC6: no docs/design/");
+        CHECK(read_file("tests/serve/test_issue_3222.cpp").empty(),
+              "3222 AC6: no invent test_issue_3222");
+        CHECK(read_file("tests/issues/test_issue_3222.cpp").empty(),
+              "3222 AC6: no tests/issues/test_issue_3222");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3222 hold-budget inbody force-unlock: {} passed, {} failed ===", passed,
+                 failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
     const int rc2 = run_test_hold_budget_inbody_escalate();
     const int rc3 = run_test_hold_budget_inbody_force_release();
-    return rc1 != 0 ? rc1 : (rc2 != 0 ? rc2 : rc3);
+    const int rc4 = run_test_hold_budget_inbody_force_unlock();
+    return rc1 != 0 ? rc1 : (rc2 != 0 ? rc2 : (rc3 != 0 ? rc3 : rc4));
 }
 #endif

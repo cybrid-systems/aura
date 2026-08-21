@@ -1379,6 +1379,9 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept;
 extern "C" int aura_hold_budget_cancel_armed(void) noexcept;
 // Issue #3194: same-fiber force-release past inbody window (weak in fiber_bridge).
 extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fiber_id) noexcept;
+// Issue #3222: sketch-named alias of force_release (poll cannot spell
+// "unlock" — #3160 AC12). Weak in fiber_bridge.
+extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber_id) noexcept;
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup, to avoid the circular include between
