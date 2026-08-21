@@ -33,6 +33,7 @@ using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_error;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::core::bump_mutation_epoch;
 using aura::core::capture_query_epoch;
@@ -296,31 +297,26 @@ int run_test_query_epoch_contract() {
             // Bind QueryResult into a cell so we can re-check after mutate.
             CHECK(cs.eval("(define qr (query :find \"f\" :as-query-result))").has_value(),
                   "define qr");
-            auto fresh0 = cs.eval("(query:result-fresh? qr)");
-            CHECK(fresh0.has_value(), "fresh? call ok");
-            // Soft non-strict: after mutate epoch advances → fresh? is #f
+            auto bound = cs.eval("qr");
+            CHECK(bound.has_value() && is_hash(*bound), "qr is QueryResult hash");
+            // Issue #3175 SlimSurface: query:result-fresh? / query:result-matches
+            // stay compiled (sink_query_prim) and are not public. Freshness is
+            // query_result_check_fresh / is_fresh_with_refs (#2933/#3231).
             CHECK(cs.eval("(mutate:set-body \"f\" \"(lambda (x) 2)\")").has_value() ||
                       cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
                   "mutate/redefine f");
             CHECK(cs.eval("(eval-current)").has_value(), "re-eval");
-            auto fresh1 = cs.eval("(query:result-fresh? qr)");
-            CHECK(fresh1.has_value(), "fresh? after mutate");
-            // Soft: matches still extractable (not strict)
-            auto m = cs.eval("(query:result-matches qr)");
-            CHECK(m.has_value(), "matches under Soft after mutate");
-            // Force epoch advance if redefine did not (set-code may share gen).
+            auto snap = capture_query_epoch(/*gen=*/1, /*ws=*/0);
             bump_mutation_epoch();
-            // Soft: not true
-            auto soft_stale = cs.eval("(query:result-fresh? qr)");
-            CHECK(soft_stale.has_value(), "soft fresh? returns value after bump");
-            // Expect #f (not fresh) under Soft non-strict
-            if (soft_stale && is_bool(*soft_stale))
-                CHECK(!as_bool(*soft_stale), "soft: fresh? is #f after epoch bump");
-            // Strict: source-cites query-epoch-stale on the fail path;
-            // Soft already proved is_fresh → #f above after epoch bump.
-            set_query_epoch_strict(true);
-            (void)cs.eval("(query:result-fresh? qr)"); // may surface error or #f
+            aura::core::QueryResult held{};
+            held.epoch = snap;
+            CHECK(!held.is_fresh(current_mutation_epoch(), /*gen=*/1),
+                  "soft: held QueryResult not fresh after epoch bump");
             auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+            CHECK(qw.find("sink_query_prim(\"query:result-fresh?\"") != std::string::npos,
+                  "fresh? prim sunk #3175 SlimSurface");
+            CHECK(qw.find("sink_query_prim(\"query:result-matches\"") != std::string::npos,
+                  "matches prim sunk #3175 SlimSurface");
             CHECK(qw.find("query-epoch-stale") != std::string::npos &&
                       qw.find("query:result-fresh?") != std::string::npos,
                   "strict: result-fresh? wires query-epoch-stale under strict");
@@ -394,15 +390,16 @@ int run_test_query_epoch_contract() {
                       cs.eval("(set-code \"(define f (lambda (x) 2))\")").has_value(),
                   "AC2 mutate/redefine f");
             CHECK(cs.eval("(eval-current)").has_value(), "AC2 re-eval");
+            auto snap = capture_query_epoch(/*gen=*/1, /*ws=*/0);
             bump_mutation_epoch(); // belt: set-code may share gen
-            auto fresh = cs.eval("(query:result-fresh? qr)");
-            CHECK(fresh.has_value(), "AC2: result-fresh? returned");
-            // Live query-epoch-stale is the C++ finish_query_epoch canary
-            // below (same helper end_query_epoch uses). EDSL result-fresh?
-            // is source-cited; #f after epoch bump is the Soft/held-result
-            // observe path (2933). Production fail-closed is finish false.
-            if (fresh && is_bool(*fresh))
-                CHECK(!as_bool(*fresh), "AC2: held QueryResult not green after mutate");
+            auto qr_hash = cs.eval("qr");
+            CHECK(qr_hash.has_value() && is_hash(*qr_hash), "AC2: held QueryResult still a hash");
+            // Issue #3175 SlimSurface: query:result-fresh? is sunk. Production
+            // fail-closed is finish_query_epoch false (C++ canary below).
+            aura::core::QueryResult held{};
+            held.epoch = snap;
+            CHECK(!held.is_fresh(current_mutation_epoch(), /*gen=*/1),
+                  "AC2: held QueryResult not green after mutate");
             auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
             CHECK(qw.find("query-epoch-stale") != std::string::npos &&
                       qw.find("query:result-fresh?") != std::string::npos,
@@ -453,6 +450,35 @@ int run_test_query_epoch_contract() {
             CHECK(read_file("docs/design/3075-query-epoch-production-strict.md").empty(),
                   "AC5: no docs/design/3075-*");
         }
+    }
+
+    {
+        std::println("\n--- #3231: production :as-query-result forces schema-2 ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::kQueryResultLayoutOnlyRejectIssue;
+        CHECK(kQueryResultLayoutOnlyRejectIssue == 3231, "3231: issue constant");
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value(), "3231: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3231: eval");
+        auto bare = cs.eval("(query :find \"f\")");
+        CHECK(bare.has_value() && !is_hash(*bare), "3231: Soft-default bare list (no keyword)");
+        auto qr = cs.eval("(query :find \"f\" :as-query-result)");
+        CHECK(qr.has_value(), "3231: production :as-query-result returns");
+        CHECK(is_hash(*qr), "3231: production QueryResult is schema-2 hash, not layout-only");
+        apply_dev_audit_defaults();
+        auto soft = cs.eval("(query :find \"f\" :as-query-result)");
+        CHECK(soft.has_value(), "3231: Soft :as-query-result still returns");
+        const auto hh = read_file("src/core/workspace_epoch.hh");
+        const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(hh.find("kQueryResultLayoutOnlyRejectIssue") != std::string::npos, "3231: stamp");
+        CHECK(qw.find("query-result-layout-only") != std::string::npos, "3231: finish reject");
+        CHECK(qw.find("production_defaults_active()") != std::string::npos,
+              "3231: production_defaults_active gate");
+        CHECK(read_file("tests/compiler/test_issue_3231.cpp").empty(), "3231: no invent");
+        CHECK(read_file("docs/design/3231-query-result-layout-only.md").empty(),
+              "3231: no docs/design");
     }
 
     reset_query_epoch_metrics_for_test();

@@ -435,9 +435,11 @@ struct QueryResultMatch {
     // were captured at capture time (via :as-query-result / :query-result #t).
     // Layout-only schema-1 matches leave wrap_epoch == 0 + cow_epoch == 0 +
     // tenant_id == 0, so this naturally returns false for them.
+    // Issue #3231: reserved != 0 is the production schema-2 stamp even when
+    // wrap/tenant/fiber/cow/mid are still 0 (single-tenant never-wrapped).
     [[nodiscard]] constexpr bool has_full_provenance() const noexcept {
         return wrap_epoch != 0 || cow_epoch_at_capture != 0 || tenant_id != 0 || fiber_id != 0 ||
-               mutation_id_at_capture != 0;
+               mutation_id_at_capture != 0 || reserved != 0;
     }
 };
 
@@ -487,6 +489,8 @@ struct QueryResult {
     // QueryResultMatch with the full StableNodeRef provenance. Production
     // Agent loops use this from :as-query-result / :query-result #t finish
     // paths. Soft / single-tenant bare path keeps the 2-arg push_match.
+    // Issue #3231: finish path gated on production_defaults_active() must
+    // not accept schema-1 (layout-only) after this overload.
     bool push_match_full(std::uint32_t node_id, std::uint16_t generation, std::uint16_t wrap_epoch,
                          std::uint16_t cow_epoch_at_capture, std::uint32_t tenant_id,
                          std::uint32_t fiber_id, std::uint32_t mutation_id_at_capture,
@@ -515,6 +519,10 @@ inline std::atomic<std::uint32_t>& g_query_result_wired() noexcept {
 }
 inline constexpr int kQueryResultIssue = 2933;
 inline constexpr int kQueryResultFullProvenanceIssue = 3103;
+// Issue #3231: production :as-query-result must not export schema-1.
+inline constexpr int kQueryResultLayoutOnlyRejectIssue = 3231;
+inline constexpr const char* kQueryResultLayoutOnlyErrorKind = "query-result-layout-only";
+inline constexpr std::uint8_t kQueryResultMatchSchema2 = 1;
 
 // Issue #3103: full-provenance path observability (additive; production/Full
 // keeps the schema-1 Soft counters untouched). Bumped at capture-time when
