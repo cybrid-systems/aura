@@ -133,6 +133,9 @@ struct AgentDirectoryEntry {
     std::uint64_t id = 0;
     std::string status;     // "alive" | "done" | "cancelled" | "spawn-failed" | "unknown"
     std::string scope_path; // "" / "root" for root; "0", "0/1" for child indices
+    // Issue #3220: production Timeout after auto-wait — reservation /
+    // name-table still held. Empty on Soft / reclaimable handles.
+    std::string lifecycle; // "" | "reclaimed-pending"
     bool ok = false;
 };
 
@@ -163,6 +166,7 @@ struct CrossScopeEntry {
     std::string scope_path;       // per-source relative scope_path
     std::string source_path;      // bp_scope_id() of the source scope
     std::uint64_t source_seq = 0; // input span index (0..N-1)
+    std::string lifecycle;        // Issue #3220: "" | "reclaimed-pending"
     bool ok = false;
 };
 
@@ -1062,6 +1066,12 @@ private:
             } else {
                 e.status = "alive";
             }
+            // Issue #3220: production Timeout still holds reservation /
+            // name-table. Additive lifecycle so Agents do not reuse the
+            // name. Soft: skip string (zero intern).
+            if ((h.must_wait_reclaimed || h.reclaimed_deferred_cleanup) &&
+                aura::compiler::typed_audit::production_defaults_active())
+                e.lifecycle = "reclaimed-pending";
             if (filter.alive_only && e.status != "alive")
                 continue;
             if (!filter.name_prefix.empty()) {
@@ -1390,6 +1400,7 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
             ce.scope_path = e.scope_path;
             ce.source_path = source_path;
             ce.source_seq = i;
+            ce.lifecycle = e.lifecycle;
             ce.ok = e.ok;
             out.entries.push_back(std::move(ce));
         }

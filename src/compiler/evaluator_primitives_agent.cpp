@@ -3037,6 +3037,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         kv.emplace_back("schema-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
         kv.emplace_back("issue-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
     };
+    // Issue #3220: additive lifecycle=reclaimed-pending. Production-only
+    // intern (Soft: one production_defaults load, no string).
+    auto add_reclaimed_pending_lifecycle = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv,
+                                                 bool pending) {
+        if (!pending)
+            return;
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        auto lidx = ev.string_heap_.size();
+        ev.string_heap_.push_back("reclaimed-pending");
+        kv.emplace_back("lifecycle", make_string(lidx));
+        kv.emplace_back("schema-3220", make_int(aura::orch::kReclaimedPendingLifecycleIssue));
+        kv.emplace_back("issue-3220", make_int(aura::orch::kReclaimedPendingLifecycleIssue));
+    };
 
     // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
     // Lazy-init: shared across calls in-process; stopped on process exit.
@@ -3273,8 +3287,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (orch:agent-join name [:timeout-ms n] [:drain-ms n])
     // Issue #2153: :drain-ms secondary cancel-drain window (default 2000).
     add("orch:agent-join",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_identity_plane](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
+         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:agent-join: need name",
@@ -3420,6 +3434,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // configured and wait_reclaimed_body ran once after Reclaimed.
                 kv.emplace_back("wait-reclaimed", make_bool(hp->wait_reclaimed_used));
                 kv.emplace_back("wait-timeout", make_bool(hp->wait_reclaimed_timeout));
+                kv.emplace_back("wait-reclaimed-timeout", make_bool(hp->wait_reclaimed_timeout));
                 kv.emplace_back("schema-2970", make_int(2970));
                 kv.emplace_back("issue-2970", make_int(2970));
                 kv.emplace_back("join-wait-reclaimed-wired", make_int(1));
@@ -3434,6 +3449,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("schema-3051", make_int(3051));
                 kv.emplace_back("issue-3051", make_int(3051));
                 kv.emplace_back("join-auto-wait-reclaimed-wired", make_int(1));
+                // Issue #3220: Timeout after auto-wait still holds the
+                // name; additive lifecycle so Agents do not reuse it.
+                add_reclaimed_pending_lifecycle(kv, hp->must_wait_reclaimed ||
+                                                        hp->reclaimed_deferred_cleanup);
             }
             // Issue #3014: body try_acquire reject — keys only on reject
             // (zero extra hash keys on success / Soft ok path).
@@ -4009,8 +4028,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // fiber may be done — ok=#t with status=done (handle still in scope).
     // After scope slot dropped (empty session) → not-found.
     add("orch:scope-resolve",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_identity_plane](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
+         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:scope-resolve: usage (orch:scope-resolve name "
@@ -4095,6 +4114,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-3050", make_int(3050)},
                 {"issue-3050", make_int(3050)},
             };
+            // Issue #3220: additive lifecycle while reservation still held.
+            add_reclaimed_pending_lifecycle(kv, hp->must_wait_reclaimed ||
+                                                    hp->reclaimed_deferred_cleanup);
             // Issue #3216: scope-handle plane (production-only intern).
             add_identity_plane(kv, "scope-handle");
             return build_orch_hash(kv);
@@ -4110,8 +4132,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Soft / sandbox never denies. Snapshot is best-effort (AC2).
     // Returns hash {ok, agents, count, scopes-visited, schema=2751, …}.
     add("orch:agent-directory",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_identity_plane](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
+         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             aura::orch::AgentDirectoryFilter filter{};
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
@@ -4149,6 +4171,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"ok", make_bool(e.ok)},
                     {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
                 };
+                // Issue #3220: additive lifecycle on directory rows.
+                add_reclaimed_pending_lifecycle(ekv, !e.lifecycle.empty());
                 agent_elems.push_back(build_orch_hash(ekv));
             }
             const auto vidx = ev.vector_heap_.size();
@@ -5796,6 +5820,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3216", aura::orch::kIdentityPlaneHandoffBoundaryIssue);
             insert_kv("issue-3216", aura::orch::kIdentityPlaneHandoffBoundaryIssue);
             insert_kv("identity-plane-wired", 1);
+            // Issue #3220: host-forget risk after production auto-wait Timeout
+            // (reuse query:orch-module-stats; no new query:*).
+            insert_kv("host-forget-reclaimed-risk-total",
+                      static_cast<std::int64_t>(
+                          os.host_forget_reclaimed_risk_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3220", aura::orch::kReclaimedPendingLifecycleIssue);
+            insert_kv("issue-3220", aura::orch::kReclaimedPendingLifecycleIssue);
+            insert_kv("reclaimed-pending-lifecycle-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
