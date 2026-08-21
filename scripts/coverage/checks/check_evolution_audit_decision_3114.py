@@ -4,6 +4,7 @@ Issue #3149: residual — add last-se-reason string key (additive).
 Issue #3152: residual — add forensic-source enum + 3 sentinels (additive).
              Maps typed-trail-miss=1 to next forensic step (trail / SE /
              WAL). Pure loads only — no WAL scan, no mutate.
+Issue #3205: residual — optional :durable mid point-query into WAL.
 
 Contract (one row per AC):
   AC1  register_stats_impl query:evolution-audit-decision + catalog name.
@@ -26,11 +27,12 @@ Contract (one row per AC):
        consistency (matches the SE row for the same mid).
   AC8  (#3149) Soft / no event → empty string semantics same as
        last-se-reason-code == 0. AURA_SANDBOX=off → no extra cost.
-  AC9  (#3149 + #3152) cumulative capacity:
+  AC9  (#3149 + #3152 + #3205) cumulative capacity:
        kEvolutionAuditDecisionPlannedKeys bumped from 32 → 33 (#3149)
-       then 33 → 37 (#3152) to cover last-se-reason + schema-3149 +
-       issue-3149 + forensic-source + 3 enum sentinels + schema-3152 +
-       issue-3152. overflow=0 on the normal path.
+       then 33 → 37 (#3152) then 37 → 40 (#3205) to cover last-se-reason
+       + schema-3149 + issue-3149 + forensic-source + 3 enum sentinels
+       + schema-3152 + issue-3152 + durable-hit + schema-3205 +
+       issue-3205. overflow=0 on the normal path.
   AC10 (#3149) source-cite + no test_issue_3149.cpp / docs/design/3149-*
        per #81967 / #1655. Suite + facade tests extended to verify
        last-se-reason equals query:security-audit same-mid row reason
@@ -167,7 +169,9 @@ def main() -> int:
     # (#3149) then 33 → 37 (#3152) to cover last-se-reason + 3 sentinels
     # + schema-3149 + issue-3149 + forensic-source + 3 enum sentinels +
     # schema-3152 + issue-3152. overflow=0 on the normal path.
-    must("kEvolutionAuditDecisionPlannedKeys = 37", "AC9 planned keys bumped to 37 (#3149+#3152)", query)
+    must("kEvolutionAuditDecisionPlannedKeys = 40", "AC9 planned keys bumped to 40 (#3149+#3152+#3205)", query)
+    must("schema-3205", "AC9 schema-3205 sentinel", query)
+    must("issue-3205", "AC9 issue-3205 sentinel", query)
     must("schema-3149", "AC9 schema-3149 sentinel", query)
     must("issue-3149", "AC9 issue-3149 sentinel", query)
     # Coexist with old sentinels (no replacement).
@@ -216,6 +220,20 @@ def main() -> int:
     if docs3149.is_dir():
         for f in sorted(docs3149.glob("3149-*")):
             fails.append(f"AC10: docs/design/{f.name} present (forbidden #1655)")
+
+    # ── AC12 (#3205): optional :durable mid point-query. Default path
+    # still no WAL scan. Soft / Off refuse disk I/O. Additive durable-hit.
+    must("Issue #3205", "AC12 source-cite", query)
+    must("find_recent_by_mutation_id", "AC12 SE WAL point-query", query)
+    must("want_durable", "AC12 :durable parse", query)
+    must('insert_kv("durable-hit", durable_hit)', "AC12 durable-hit key", query)
+    must("3205 AC", "AC12 test marker in unify", unify)
+    if (ROOT / "tests" / "compiler" / "test_issue_3205.cpp").is_file():
+        fails.append("AC12: tests/compiler/test_issue_3205.cpp present (forbidden #81967)")
+    docs3205 = ROOT / "docs" / "design"
+    if docs3205.is_dir():
+        for f in sorted(docs3205.glob("3205-*")):
+            fails.append(f"AC12: docs/design/{f.name} present (forbidden #1655)")
 
     must("check_evolution_audit_decision_3114", "linter wired in build.py", build)
     must("Issue #3114", "linter error message", build)

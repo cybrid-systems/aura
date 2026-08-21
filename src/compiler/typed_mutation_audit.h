@@ -80,6 +80,9 @@ inline constexpr int kTypedTrailWrapMissIssue = 3113;
 // last mid + SE + typed outcome + commit readiness + playbook + densify
 // + posture. Not an auto-executor (playbook stays observe-only).
 inline constexpr int kEvolutionAuditDecisionIssue = 3114;
+// Issue #3205: optional :durable mid point-query into SE / mutation WAL
+// (default path still no scan). Additive residual after #3152.
+inline constexpr int kEvolutionAuditDecisionDurableIssue = 3205;
 // Issue #3217: deny-path stamp order (all abort variants).
 //   1. structural restore / dual-topology abort
 //   2. coercion / occurrence / proof clear (abort path)

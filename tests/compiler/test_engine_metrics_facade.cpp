@@ -227,6 +227,12 @@ int main() {
               "#3114 AC5: observe-only");
         CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "overflow") == -1,
               "#3114 AC4: no overflow under default cap");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "schema-3205") ==
+                  3205,
+              "#3205 AC3: schema-3205 additive");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "durable-hit") ==
+                  0,
+              "#3205 AC2: default durable-hit=0");
         CHECK(aura_query_hash_overflow_total() == soak0,
               "#3020 AC5: soak — no query_hash_overflow_total bump under default catalog");
 

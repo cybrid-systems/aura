@@ -47,6 +47,7 @@ using types::as_closure_id;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
+using types::as_keyword_idx;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
@@ -59,6 +60,7 @@ using types::is_error;
 using types::is_float;
 using types::is_hash;
 using types::is_int;
+using types::is_keyword;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
@@ -5377,6 +5379,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     // densify + posture. Decision observation, not an auto-executor
     // (playbook stays observe-only; no reemit / drain / reload).
     // Pure loads only: no should_audit, no WAL scan, no mutate.
+    // Issue #3205: optional :durable is the sole WAL point-query
+    // (production + WAL enabled; Soft / no keyword refuse disk I/O).
     // Optional mid arg filters SE + typed join (AC6, does not block AC1–5).
     ObservabilityPrims::register_stats_impl(
         "query:evolution-audit-decision", [&ev](const auto& args) -> EvalValue {
@@ -5387,6 +5391,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::compiler::typed_audit::g_tls_boundary_audit_mid;
             using aura::compiler::typed_audit::g_tls_boundary_audit_noted;
             using aura::compiler::typed_audit::get_strategy;
+            using aura::compiler::typed_audit::kEvolutionAuditDecisionDurableIssue;
             using aura::compiler::typed_audit::kEvolutionAuditDecisionIssue;
             using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
             using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
@@ -5399,9 +5404,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
 
             // 26 live keys + 1 additive key (last-se-reason, #3149)
             // + 4 additive keys (forensic-source + 3 enum sentinels, #3152)
-            // = 31 live + 4 enum sentinels = 35 minimum; planned 37 →
-            // query_hash_capacity_for ≥64 (well above the 64 ceiling).
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 37;
+            // + 3 additive keys (durable-hit + schema-3205 + issue-3205)
+            // = 38 minimum; planned 40 → query_hash_capacity_for 128.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 40;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -5567,6 +5572,62 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 posture_degraded = d.would_arm_degraded || wrap_risk;
             }
 
+            // Issue #3205: optional :durable mid point-query. Default
+            // (no keyword) still no WAL scan. Soft / Off refuse I/O even
+            // with :durable. Join key is join_mid (explicit mid or last
+            // stamped) — never a synthetic process-origin mid.
+            std::int64_t durable_hit = 0;
+            bool want_durable = false;
+            for (const auto& arg : args) {
+                if (is_keyword(arg)) {
+                    const auto kidx = as_keyword_idx(arg);
+                    const auto& kt = ev.keyword_table();
+                    if (kidx >= kt.size())
+                        continue;
+                    std::string_view k = kt[kidx];
+                    if (!k.empty() && k.front() == ':')
+                        k.remove_prefix(1);
+                    if (k == "durable")
+                        want_durable = true;
+                } else if (is_string(arg)) {
+                    const auto sidx = as_string_idx(arg);
+                    if (sidx >= ev.string_heap_.size())
+                        continue;
+                    const auto& s = ev.string_heap_[sidx];
+                    if (s == "durable" || s == ":durable")
+                        want_durable = true;
+                }
+            }
+            if (want_durable && join_mid != 0 && production_defaults_active()) {
+                using ::aura::core::audit_wal::g_mutation_audit_wal;
+                using ::aura::core::security_event_wal::g_security_event_wal;
+                auto& se_wal = g_security_event_wal();
+                auto& mut_wal = g_mutation_audit_wal();
+                if (se_wal.is_enabled() || mut_wal.is_enabled()) {
+                    if (auto rec = se_wal.find_recent_by_mutation_id(join_mid, 2)) {
+                        if (rec->reason[0] != '\0') {
+                            const auto n = strnlen(rec->reason, sizeof(rec->reason) - 1);
+                            last_se_reason_str.assign(rec->reason, n);
+                        }
+                        last_se_denied = rec->denied ? 1 : 0;
+                        last_se_reason_code = static_cast<std::int64_t>(rec->kind) + 1;
+                        if (forensic_source < 3)
+                            forensic_source = 3;
+                        durable_hit = 1;
+                    } else if (auto mrec =
+                                   mut_wal.find_recent_by_provenance_mutation_id(join_mid, 2)) {
+                        last_se_denied = mrec->effect_denied ? 1 : 0;
+                        if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
+                            const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
+                            last_se_reason_str.assign(mrec->op, n);
+                        }
+                        if (forensic_source < 3)
+                            forensic_source = 3;
+                        durable_hit = 1;
+                    }
+                }
+            }
+
             insert_kv("last-audit-mid", static_cast<std::int64_t>(join_mid));
             insert_kv("proof-audit-mid",
                       static_cast<std::int64_t>(filt_mid && proof_mid != join_mid ? 0 : proof_mid));
@@ -5617,6 +5678,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // same evolution-audit-decision handler, single PR).
             insert_kv("schema-3152", 3152);
             insert_kv("issue-3152", 3152);
+            // Issue #3205: additive durable-hit + schema/issue sentinels.
+            // Default path durable-hit=0 (no scan). overflow still 0.
+            insert_kv("durable-hit", durable_hit);
+            insert_kv("schema-3205", kEvolutionAuditDecisionDurableIssue);
+            insert_kv("issue-3205", kEvolutionAuditDecisionDurableIssue);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
