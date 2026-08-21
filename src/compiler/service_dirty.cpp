@@ -293,7 +293,9 @@ void CompilerService::mark_define_dirty(const std::string& name) {
         HotUpdateRegistry::g_dual_track_bypass_prevented_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
         if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
-                name.c_str(), HotUpdateRegistry::ReemitReason::ResidualForceHeal)) {
+                name.c_str(), HotUpdateRegistry::ReemitReason::Cascade)) {
+            // Issue #3221: cascade dirty is Cascade, not ResidualForceHeal
+            // (reserve ResidualForceHeal for #3096 age-gated auto-heal).
             // Facade took ownership: bump the "facade took ownership" counter
             // (distinct from "entered forwarding"). Direct path below is the
             // Soft / Off fallback only — skipped here.
@@ -811,7 +813,9 @@ void CompilerService::invalidate_function(const std::string& name) {
         HotUpdateRegistry::g_dual_track_bypass_prevented_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
         if (aura::compiler::hot_update_registry().hard_invalidate_via_facade(
-                name.c_str(), HotUpdateRegistry::ReemitReason::ResidualForceHeal)) {
+                name.c_str(), HotUpdateRegistry::ReemitReason::Cascade)) {
+            // Issue #3221: hard invalidate is Cascade, not ResidualForceHeal
+            // (reserve ResidualForceHeal for #3096 age-gated auto-heal).
             // Facade took ownership: bump the "facade took ownership" counter
             // (distinct from "entered forwarding"). Direct path below is the
             // Soft / Off fallback only — skipped here.

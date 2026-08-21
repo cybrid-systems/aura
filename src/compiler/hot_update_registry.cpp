@@ -97,7 +97,9 @@ void HotUpdateRegistry::on_stable_func_id_preserve(bool preserved) noexcept {
 // restamp IR while leaving last_success / only_covered stale.
 std::uint64_t HotUpdateRegistry::decide_and_reemit(std::uint64_t defuse_version,
                                                    ReemitReason reason) noexcept {
-    (void)reason;
+    // Issue #3221: remember why we entered so cascade dirty is not
+    // indistinguishable from ResidualForceHeal auto-heal.
+    last_reemit_reason_.store(static_cast<std::uint8_t>(reason), std::memory_order_relaxed);
     // Always call the low-level C ABI (storm / Defer / SoftEnter / owner /
     // provider-not-wired already no-op there). Extra work only on n>0
     // when force-JIT bits are live and last_success was not stamped.
@@ -386,7 +388,7 @@ void HotUpdateRegistry::reset_coverage_verify_for_test() noexcept {
 // drive one #2601 retry. Soft / mask idle → zero-cost (residual observe only
 // under Soft when residual != 0). Returns true when scheduled (seed + drive
 // attempted via #2601 machinery). Cap/backoff/storm-skip from #2601 respected.
-bool HotUpdateRegistry::maybe_coverage_verify_min_dirty() noexcept {
+bool HotUpdateRegistry::maybe_coverage_verify_min_dirty(ReemitReason reason) noexcept {
     const auto force = force_jit_regions_mask_.load(std::memory_order_relaxed);
     if (force == 0)
         return false; // idle zero-cost
@@ -453,7 +455,7 @@ bool HotUpdateRegistry::maybe_coverage_verify_min_dirty() noexcept {
 
     consume_exhausted_min_dirty_retry_attempt();
     aot_exhausted_min_dirty_retry_total_.fetch_add(1, std::memory_order_relaxed);
-    const auto n = decide_and_reemit(aura_get_aot_defuse_version(), ReemitReason::CoverageVerify);
+    const auto n = decide_and_reemit(aura_get_aot_defuse_version(), reason);
     if (n > 0) {
         aot_exhausted_min_dirty_retry_success_total_.fetch_add(1, std::memory_order_relaxed);
         coverage_verify_success_total_.fetch_add(1, std::memory_order_relaxed);
@@ -728,12 +730,10 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
         residual_force_auto_heal_last_mask_.store(residual, std::memory_order_relaxed);
         residual_force_auto_heal_total_.fetch_add(1, std::memory_order_relaxed);
         residual_force_observe_age_.store(0, std::memory_order_relaxed);
-        // Drive coverage-verify min-dirty (production facade; uses
-        // decide_and_reemit with ReemitReason::CoverageVerify internally).
-        // The success path (force mask reduced / cleared) is observed via
-        // the existing #2952 / #2601 counters — no new query key needed
-        // (AC item 4: no new middle metrics keys).
-        (void)maybe_coverage_verify_min_dirty();
+        // Drive coverage-verify min-dirty. Issue #3221: this age-gated
+        // auto-heal is ResidualForceHeal (not Cascade dirty). Storm-clear
+        // / drain still use CoverageVerify via the default argument.
+        (void)maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal);
     }
 }
 

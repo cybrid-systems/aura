@@ -634,6 +634,81 @@ static void ac3219_eval_core_joint_after_production_facade() {
     }
 }
 
+// ── Issue #3221: production mark_define_dirty / invalidate_function
+// must pass Cascade into the facade, not ResidualForceHeal.
+// ResidualForceHeal stays on the #3096 age-gated auto-heal path;
+// CoverageVerify stays on storm-clear / drain coverage-verify.
+
+static void ac3221_cascade_reason_not_residual_force_heal() {
+    std::println("\n--- #3221: production dirty/invalidate pass Cascade ---");
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto build = read_file("build.py");
+
+    const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+    CHECK(md_pos != std::string::npos, "ac3221 AC1: mark_define_dirty present");
+    const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+    const auto md_win = svc.substr(md_pos, (md_end == std::string::npos ? 12000 : md_end - md_pos));
+    CHECK(md_win.find("ReemitReason::Cascade") != std::string::npos,
+          "ac3221 AC1: mark_define_dirty passes Cascade");
+    CHECK(md_win.find("ReemitReason::ResidualForceHeal") == std::string::npos,
+          "ac3221 AC1: mark_define_dirty does not pass ResidualForceHeal");
+    CHECK(md_win.find("Issue #3221") != std::string::npos,
+          "ac3221 AC1: mark_define_dirty cites #3221");
+
+    const auto if_pos = svc.find("void CompilerService::invalidate_function");
+    CHECK(if_pos != std::string::npos, "ac3221 AC1: invalidate_function present");
+    const auto if_end = svc.find("\nvoid CompilerService::", if_pos + 1);
+    const auto if_win = svc.substr(if_pos, (if_end == std::string::npos ? 16000 : if_end - if_pos));
+    CHECK(if_win.find("ReemitReason::Cascade") != std::string::npos,
+          "ac3221 AC1: invalidate_function passes Cascade");
+    CHECK(if_win.find("ReemitReason::ResidualForceHeal") == std::string::npos,
+          "ac3221 AC1: invalidate_function does not pass ResidualForceHeal");
+
+    CHECK(hur.find("maybe_coverage_verify_min_dirty(ReemitReason::ResidualForceHeal)") !=
+              std::string::npos,
+          "ac3221 AC2: #3096 auto-heal uses ResidualForceHeal");
+    CHECK(hur.find("decide_and_reemit(aura_get_aot_defuse_version(), reason)") != std::string::npos,
+          "ac3221 AC2: coverage-verify decide uses caller reason (default CoverageVerify)");
+    CHECK(hh.find("ReemitReason::CoverageVerify") != std::string::npos,
+          "ac3221 AC2: CoverageVerify remains the maybe_coverage_verify default");
+    CHECK(hh.find("last_reemit_reason") != std::string::npos,
+          "ac3221 AC4: last_reemit_reason hook");
+    CHECK(hh.find("kHotUpdateCascadeReasonIssue = 3221") != std::string::npos,
+          "ac3221 AC4: issue constant");
+    CHECK(build.find("check_cascade_reason_not_residual_force_heal_3221") != std::string::npos,
+          "ac3221 AC3: build.py wires linter");
+    CHECK(read_file("tests/compiler/test_issue_3221.cpp").empty() &&
+              read_file("tests/issues/test_issue_3221.cpp").empty(),
+          "ac3221 AC3: no test_issue_3221.cpp per #81967");
+    CHECK(read_file("docs/design/3221-cascade-reason.md").empty(),
+          "ac3221 AC3: no docs/design/3221-* per #1655");
+
+    apply_production_audit_defaults();
+    CHECK(aura_production_defaults_active_probe() != 0, "ac3221 AC4: production_defaults_active");
+    {
+        auto& reg = hot_update_registry();
+        (void)reg.decide_and_reemit(1, HotUpdateRegistry::ReemitReason::Cascade);
+        CHECK(reg.last_reemit_reason() == HotUpdateRegistry::ReemitReason::Cascade,
+              "ac3221 AC4: last_reemit_reason Cascade after decide");
+        CompilerService cs;
+        cs.public_mark_define_dirty("ac3221_md");
+        CHECK(reg.last_reemit_reason() == HotUpdateRegistry::ReemitReason::Cascade,
+              "ac3221 AC4: production mark_define_dirty last reason Cascade");
+        cs.public_invalidate_function("ac3221_inv");
+        CHECK(reg.last_reemit_reason() == HotUpdateRegistry::ReemitReason::Cascade,
+              "ac3221 AC4: production invalidate_function last reason Cascade");
+        (void)reg.decide_and_reemit(1, HotUpdateRegistry::ReemitReason::ResidualForceHeal);
+        CHECK(reg.last_reemit_reason() == HotUpdateRegistry::ReemitReason::ResidualForceHeal,
+              "ac3221 AC2: ResidualForceHeal still stampable on auto-heal path");
+        (void)reg.decide_and_reemit(1, HotUpdateRegistry::ReemitReason::CoverageVerify);
+        CHECK(reg.last_reemit_reason() == HotUpdateRegistry::ReemitReason::CoverageVerify,
+              "ac3221 AC2: CoverageVerify still stampable");
+    }
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_issue_3112() {
@@ -668,6 +743,10 @@ int run_test_issue_3112() {
     // Evaluator/core so is_bridge_stale / defuse_version_ lockstep with
     // g_aot_table_epoch / g_aot_defuse_version. Soft/Off unchanged.
     ac3219_eval_core_joint_after_production_facade();
+
+    // Issue #3221: production dirty / invalidate pass Cascade, not
+    // ResidualForceHeal. Age-gated auto-heal keeps ResidualForceHeal.
+    ac3221_cascade_reason_not_residual_force_heal();
 
     std::print("[test_issue_3112] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
