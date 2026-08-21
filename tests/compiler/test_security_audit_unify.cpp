@@ -48,6 +48,7 @@ using aura::compiler::CompilerService;
 using aura::compiler::security::apply_production_security_defaults;
 using aura::compiler::security::kCapWildcard;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditOutcome;
 using aura::compiler::typed_audit::capture_audit_event_forced;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
@@ -79,6 +80,7 @@ using aura::core::security_event::kSecurityAuditUnifyIssue;
 using aura::core::security_event::kSecurityEventRingSize;
 using aura::core::security_event::reset_security_event_ring_for_test;
 using aura::core::security_event::SecurityEventKind;
+using aura::core::security_event_wal::emit_security_event_durable;
 using aura::core::security_event_wal::g_security_event_wal;
 using aura::core::security_event_wal::reset_security_event_wal_for_test;
 using aura::core::workspace_isolation::reset_tenant_isolation_for_test;
@@ -107,6 +109,28 @@ std::int64_t href_evol_mid(CompilerService& cs, std::uint64_t mid, std::string_v
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+std::int64_t href_evol_mid_durable(CompilerService& cs, std::uint64_t mid, std::string_view key) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" {} \"durable\") \"{}\")", mid,
+        key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+std::string href_evol_reason(CompilerService& cs, std::uint64_t mid, bool durable) {
+    auto r = cs.eval(std::format(
+        "(hash-ref (engine:metrics \"query:evolution-audit-decision\" {}{}) \"last-se-reason\")",
+        mid, durable ? " \"durable\"" : ""));
+    if (!r || !is_string(*r))
+        return {};
+    const auto idx = as_string_idx(*r);
+    const auto heap = cs.evaluator().string_heap();
+    if (idx >= heap.size())
+        return {};
+    return std::string(heap[idx]);
 }
 
 std::vector<std::string> list_string_lines(CompilerService& cs, const EvalValue& v) {
@@ -602,6 +626,10 @@ int run_test_security_audit_unify() {
         // by the linter (check_evolution_audit_decision_3114.py AC10).
         // Suite-level coverage is sufficient (#3149 extends the existing
         // test_security_audit_unify.cpp file per #81967).
+        CHECK(href_evol(cs, "schema-3205") == 3205, "3205 AC3: schema-3205 additive");
+        CHECK(href_evol(cs, "issue-3205") == 3205, "3205 AC3: issue-3205 additive");
+        CHECK(href_evol(cs, "durable-hit") == 0, "3205 AC2: default durable-hit=0");
+        CHECK(href_evol(cs, "overflow") == -1, "3205 AC3: overflow=0 path (hash-ref -1)");
     }
 
     {
@@ -613,11 +641,11 @@ int run_test_security_audit_unify() {
         // evolution-audit-decision call, the last-se-reason string key
         // should equal this reason (NUL-safe truncated).
         constexpr const char* kReason = "invariant-force-rollback";
-        append_security_event(g_security_event_ring(), SecurityEventKind::InvariantDeny,
+        append_security_event(g_security_event_ring(), SecurityEventKind::InvariantFail,
                               /*tenant=*/11, mid, /*epoch=*/1, kEffectMutate, "op-3149", kReason,
                               /*denied=*/true, /*fiber=*/8);
         const auto code = href_evol_mid(cs, mid, "last-se-reason-code");
-        CHECK(code == static_cast<std::int64_t>(SecurityEventKind::InvariantDeny) + 1,
+        CHECK(code == static_cast<std::int64_t>(SecurityEventKind::InvariantFail) + 1,
               "3149 AC7: last-se-reason-code matches SE kind+1");
         // The string side is omitted by href_evol (which returns int).
         // We assert the string surface at the C++ source level (linter
@@ -625,6 +653,95 @@ int run_test_security_audit_unify() {
         // NUL-safe strnlen truncation). The Aura string lookup path is
         // tested via the engine:metrics surface (test_engine_metrics_facade.cpp
         // covers the hash_read string plumbing).
+    }
+
+    // ── Issue #3205: optional :durable mid point-query into WAL ──
+    {
+        std::println("\n--- 3205 AC1: wrap SE ring, :durable recovers WAL reason ---");
+        reset_process();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        apply_production_audit_defaults();
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3205-durable-wal";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3205 AC1: enable SE WAL");
+        const std::uint64_t mid = 3205;
+        constexpr const char* kReason = "durable-wrap-deny";
+        emit_security_event_durable(SecurityEventKind::EffectDeny, /*tenant=*/12, mid, /*epoch=*/1,
+                                    kEffectMutate, "op-3205", kReason, /*denied=*/true,
+                                    /*fiber=*/9);
+        aura::compiler::typed_audit::capture_security_correlated_audit(mid, "op-3205", /*epoch=*/1,
+                                                                       /*denied=*/true, 0, 9);
+        for (std::size_t i = 0; i < kTypedMutationAuditTrailSize; ++i) {
+            capture_audit_event_forced(95000 + i, "wrap-fill-3205", MutationKind::Other, 1, 1,
+                                       AuditOutcome::Success);
+        }
+        for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
+            append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow,
+                                  /*tenant=*/1, 40000 + i, /*epoch=*/1, kEffectMutate, "wrap",
+                                  "fill", false, /*fiber=*/1);
+        }
+        CHECK(href_evol_mid(cs, mid, "typed-trail-miss") == 1, "3205 AC1: typed miss after wrap");
+        CHECK(href_evol_mid(cs, mid, "forensic-source") == 3,
+              "3205 AC1: no :durable → forensic-source=3");
+        CHECK(href_evol_mid(cs, mid, "durable-hit") == 0, "3205 AC1: no :durable → durable-hit=0");
+        CHECK(href_evol_reason(cs, mid, /*durable=*/false).empty(),
+              "3205 AC1: no :durable → reason empty after ring wrap");
+        CHECK(href_evol_mid_durable(cs, mid, "durable-hit") == 1,
+              "ac3205_1_durable_hit: :durable recovers WAL row");
+        CHECK(href_evol_reason(cs, mid, /*durable=*/true) == kReason,
+              "3205 AC1: :durable last-se-reason matches WAL");
+        CHECK(href_evol_mid_durable(cs, mid, "last-se-denied") == 1,
+              "3205 AC1: :durable last-se-denied");
+        CHECK(href_evol_mid_durable(cs, mid, "forensic-source") >= 3,
+              "3205 AC1: forensic-source stays >=3");
+        cs.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir, ec);
+    }
+
+    {
+        std::println("\n--- 3205 AC2: WAL off + :durable is a no-I/O miss ---");
+        reset_process();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        apply_production_audit_defaults();
+        CHECK(!g_security_event_wal().is_enabled(), "3205 AC2: SE WAL off");
+        CHECK(!g_mutation_audit_wal().is_enabled(), "3205 AC2: mutation WAL off");
+        const std::uint64_t mid = 32051;
+        append_security_event(g_security_event_ring(), SecurityEventKind::EffectDeny, 3, mid, 1,
+                              kEffectMutate, "op", "wal-off-deny", true, 2);
+        const auto hit0 = href_evol_mid(cs, mid, "durable-hit");
+        const auto hit1 = href_evol_mid_durable(cs, mid, "durable-hit");
+        CHECK(hit0 == 0 && hit1 == 0, "ac3205_2_wal_off: :durable matches no-durable");
+        CHECK(href_evol_reason(cs, mid, true) == href_evol_reason(cs, mid, false),
+              "3205 AC2: reason unchanged with WAL off");
+    }
+
+    {
+        std::println("\n--- 3205 AC2/AC5: Soft :durable refuses disk scan ---");
+        reset_process();
+        CompilerService cs;
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3205-soft-wal";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3205 AC2: Soft WAL enable");
+        const std::uint64_t mid = 32052;
+        emit_security_event_durable(SecurityEventKind::EffectDeny, 4, mid, 1, kEffectMutate, "op",
+                                    "soft-durable-deny", true, 2);
+        for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
+            append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow, 1,
+                                  41000 + i, 1, kEffectMutate, "wrap", "fill", false, 1);
+        }
+        CHECK(href_evol_mid_durable(cs, mid, "durable-hit") == 0,
+              "ac3205_3_soft_quiet: Soft :durable does not scan");
+        CHECK(href_evol_reason(cs, mid, true).empty(), "3205 AC2: Soft keeps empty after wrap");
+        cs.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir, ec);
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

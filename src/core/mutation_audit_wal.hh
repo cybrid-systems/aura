@@ -12,6 +12,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -269,6 +270,32 @@ struct MutationAuditWal {
         g_audit_wal_metrics().audit_wal_bytes_written.fetch_add(sizeof(rec),
                                                                 std::memory_order_relaxed);
         return true;
+    }
+
+    // Issue #3205: fallback mid point-query (SE WAL preferred). Current
+    // segment + at most one prior rotate. Disabled / mid==0 → nullopt.
+    [[nodiscard]] std::optional<AuditWalRecord>
+    find_recent_by_provenance_mutation_id(std::uint64_t mid,
+                                          std::uint32_t max_segments = 2) noexcept {
+        if (mid == 0 || !enabled || max_segments == 0)
+            return std::nullopt;
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!enabled || dir.empty())
+            return std::nullopt;
+        if (fp)
+            std::fflush(fp);
+        namespace fs = std::filesystem;
+        const std::uint32_t n = std::min(max_segments, segment_index + 1);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const auto seg = segment_index - i;
+            const auto path = (fs::path(dir) / ("audit-" + std::to_string(seg) + ".wal")).string();
+            auto recs = read_segment_file(path);
+            for (auto it = recs.rbegin(); it != recs.rend(); ++it) {
+                if (it->provenance_mutation_id == mid)
+                    return *it;
+            }
+        }
+        return std::nullopt;
     }
 
     static std::vector<AuditWalRecord> read_segment_file(const std::string& path) noexcept {

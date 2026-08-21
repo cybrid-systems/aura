@@ -109,8 +109,8 @@ static void ac3_soft_zero_cost() {
 static void ac4_capacity_schema() {
     std::println("\n--- AC4: capacity / schema ---");
     auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 37") != std::string::npos,
-          "planned_keys bumped 33 -> 37");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 40") != std::string::npos,
+          "planned_keys bumped 37 -> 40 (#3205)");
     CHECK(src.find("insert_kv(\"schema-3152\", 3152)") != std::string::npos,
           "schema-3152 sentinel present");
     CHECK(src.find("insert_kv(\"issue-3152\", 3152)") != std::string::npos,
@@ -142,6 +142,19 @@ static void ac5_parallel_with_3149() {
     }
 }
 
+static void ac6_durable_3205() {
+    std::println("\n--- AC6: #3205 :durable point-query ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(src.find("Issue #3205") != std::string::npos, "cites #3205");
+    CHECK(src.find("find_recent_by_mutation_id") != std::string::npos, "SE WAL mid point-query");
+    CHECK(src.find("insert_kv(\"durable-hit\", durable_hit)") != std::string::npos,
+          "durable-hit key");
+    CHECK(src.find("insert_kv(\"schema-3205\",") != std::string::npos, "schema-3205");
+    CHECK(src.find("insert_kv(\"issue-3205\",") != std::string::npos, "issue-3205");
+    CHECK(src.find("want_durable") != std::string::npos, ":durable keyword parse");
+    CHECK(src.find("production_defaults_active()") != std::string::npos, "production gate on scan");
+}
+
 } // namespace
 
 int main() {
@@ -150,6 +163,7 @@ int main() {
     ac3_soft_zero_cost();
     ac4_capacity_schema();
     ac5_parallel_with_3149();
+    ac6_durable_3205();
     if (g_failed)
         return 1;
     std::println("evolution-audit-decision forensic-source (#3152): OK ({} passed)", g_passed);

@@ -47,6 +47,7 @@ using aura::compiler::security::kCapSynthesize;
 using aura::compiler::security::kCapSysOpen;
 using aura::compiler::security::kCapSysRead;
 using aura::compiler::security::kCapSysWrite;
+using aura::compiler::security::kCapTenantAdmin;
 using aura::compiler::security::kEffectMacroSelfEvo;
 using aura::compiler::security::kEffectRead;
 using aura::compiler::security::kEffectSyscall;
@@ -59,6 +60,7 @@ using aura::core::capability::check_and_record_effect;
 using aura::core::capability::Effect;
 using aura::core::capability::effect_for_cap_name;
 using aura::core::capability::EffectProvenance;
+using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::has_effect;
 using aura::core::capability::make_grant_provenance;
@@ -416,45 +418,49 @@ static void ac3141_4_additive_counter_only() {
           "AC4: no tests/issues/test_issue_3141.cpp");
 }
 
-// AC6 / AC7: source-cite gates + SECURITY_EXEMPT residual list documented.static void
-// ac6_source_and_security_exempt_doc() {
-std::println("\n--- #2489 AC6/AC7: source-cite + SECURITY_EXEMPT doc ---");
-const auto cap = read_file("src/core/capability_model.hh");
-CHECK(cap.find("Issue #2489") != std::string::npos, "AC6: capability_model.hh cites #2489");
-CHECK(cap.find("self-evo") != std::string::npos && cap.find("synthesize") != std::string::npos &&
-          cap.find("strategy") != std::string::npos,
-      "AC6: self-evo / synthesize / strategy mappings present");
-CHECK(cap.find("sys-open") != std::string::npos && cap.find("sys-write") != std::string::npos &&
-          cap.find("sys-read") != std::string::npos,
-      "AC6: sys-open / sys-write / sys-read mappings present");
-CHECK(cap.find("\"agent\"") != std::string::npos && cap.find("\"capability\"") != std::string::npos,
-      "AC6: agent / capability mappings present");
-CHECK(cap.find("SECURITY_EXEMPT") != std::string::npos,
-      "AC7: SECURITY_EXEMPT residual list documented");
-// Residual staged list must contain the low-risk display names and
-// must NOT contain the newly-promoted ones.
-CHECK(cap.find("compile-stats") != std::string::npos, "AC7: residual list includes compile-stats");
-CHECK(cap.find("query") != std::string::npos, "AC7: residual list includes query");
-CHECK(cap.find("sandbox") != std::string::npos, "AC7: residual list includes sandbox");
+// AC6 / AC7: source-cite gates + SECURITY_EXEMPT residual list documented.
+static void ac6_source_and_security_exempt_doc() {
+    std::println("\n--- #2489 AC6/AC7: source-cite + SECURITY_EXEMPT doc ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #2489") != std::string::npos, "AC6: capability_model.hh cites #2489");
+    CHECK(cap.find("self-evo") != std::string::npos &&
+              cap.find("synthesize") != std::string::npos &&
+              cap.find("strategy") != std::string::npos,
+          "AC6: self-evo / synthesize / strategy mappings present");
+    CHECK(cap.find("sys-open") != std::string::npos && cap.find("sys-write") != std::string::npos &&
+              cap.find("sys-read") != std::string::npos,
+          "AC6: sys-open / sys-write / sys-read mappings present");
+    CHECK(cap.find("\"agent\"") != std::string::npos &&
+              cap.find("\"capability\"") != std::string::npos,
+          "AC6: agent / capability mappings present");
+    CHECK(cap.find("SECURITY_EXEMPT") != std::string::npos,
+          "AC7: SECURITY_EXEMPT residual list documented");
+    // Residual staged list must contain the low-risk display names and
+    // must NOT contain the newly-promoted ones.
+    CHECK(cap.find("compile-stats") != std::string::npos,
+          "AC7: residual list includes compile-stats");
+    CHECK(cap.find("query") != std::string::npos, "AC7: residual list includes query");
+    CHECK(cap.find("sandbox") != std::string::npos, "AC7: residual list includes sandbox");
 
-const auto sec = read_file("src/compiler/evaluator_security.cpp");
-CHECK(sec.find("Issue #2489") != std::string::npos, "AC6: evaluator_security.cpp cites #2489");
-CHECK(sec.find("effect_for_cap_name") != std::string::npos,
-      "AC6: has_capability uses effect_for_cap_name");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #2489") != std::string::npos, "AC6: evaluator_security.cpp cites #2489");
+    CHECK(sec.find("effect_for_cap_name") != std::string::npos,
+          "AC6: has_capability uses effect_for_cap_name");
 
-const auto sch = read_file("src/compiler/security_capabilities.h");
-CHECK(sch.find("Issue #2489") != std::string::npos, "AC6: security_capabilities.h cites #2489");
+    const auto sch = read_file("src/compiler/security_capabilities.h");
+    CHECK(sch.find("Issue #2489") != std::string::npos, "AC6: security_capabilities.h cites #2489");
 
-const auto cmake = read_file("CMakeLists.txt");
-CHECK(cmake.find("test_capability_high_risk_promote") != std::string::npos,
-      "AC6: CMake registers test");
-const auto build = read_file("build.py");
-CHECK(build.find("check_capability_high_risk_promote_2489") != std::string::npos ||
-          build.find("cmd_capability_high_risk_promote_2489_coverage") != std::string::npos,
-      "AC6: build.py gate entry");
-const auto gate = read_file("scripts/coverage/checks/check_capability_high_risk_promote_2489.py");
-CHECK(!gate.empty() && gate.find("Issue #2489") != std::string::npos,
-      "AC6: coverage linter present");
+    const auto cmake = read_file("CMakeLists.txt");
+    CHECK(cmake.find("test_capability_high_risk_promote") != std::string::npos,
+          "AC6: CMake registers test");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_capability_high_risk_promote_2489") != std::string::npos ||
+              build.find("cmd_capability_high_risk_promote_2489_coverage") != std::string::npos,
+          "AC6: build.py gate entry");
+    const auto gate =
+        read_file("scripts/coverage/checks/check_capability_high_risk_promote_2489.py");
+    CHECK(!gate.empty() && gate.find("Issue #2489") != std::string::npos,
+          "AC6: coverage linter present");
 }
 
 } // namespace

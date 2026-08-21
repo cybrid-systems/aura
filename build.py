@@ -4468,6 +4468,19 @@ def cmd_lint():
             "Issue #3114 evolution-audit-decision linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_3114.py"
         )
         return r
+    # Issue #3205: optional :durable mid point-query into WAL on
+    # query:evolution-audit-decision. Soft / no keyword: zero I/O.
+    # Extends test_security_audit_unify + #3114 linter.
+    ead3205_script = COVERAGE_CHECKS / "check_evolution_audit_decision_durable_3205.py"
+    if not ead3205_script.exists():
+        fail(f"missing {ead3205_script}")
+        return 1
+    r = run([sys.executable, str(ead3205_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3205 evolution-audit-decision durable linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py"
+        )
+        return r
     # Issue #3115: mutate:replace-type / replace-value MacroIntroduced gate.
     # Reuse reject_structural_macro_hygiene; lockless batch rejects too.
     # Extends test_hygiene_mutate_closed_loop; no test_issue_3115.cpp.

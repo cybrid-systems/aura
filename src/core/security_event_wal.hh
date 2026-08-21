@@ -31,6 +31,7 @@
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -311,6 +312,34 @@ struct SecurityEventWal {
     [[nodiscard]] std::string directory() const noexcept {
         std::lock_guard<std::mutex> lock(mtx);
         return dir;
+    }
+
+    // Issue #3205: Agent mid point-query. Linear scan of current segment
+    // plus at most (max_segments-1) prior rotate segments (default 2).
+    // Newest-first. Disabled / mid==0 → nullopt, no I/O. Caller must
+    // gate on production + :durable (Soft default never calls this).
+    [[nodiscard]] std::optional<SecurityEventWalRecord>
+    find_recent_by_mutation_id(std::uint64_t mid, std::uint32_t max_segments = 2) noexcept {
+        if (mid == 0 || !enabled || max_segments == 0)
+            return std::nullopt;
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!enabled || dir.empty())
+            return std::nullopt;
+        if (fp)
+            std::fflush(fp);
+        namespace fs = std::filesystem;
+        const std::uint32_t n = std::min(max_segments, segment_index + 1);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const auto seg = segment_index - i;
+            const auto path =
+                (fs::path(dir) / ("security-event-" + std::to_string(seg) + ".wal")).string();
+            auto recs = read_segment_file(path);
+            for (auto it = recs.rbegin(); it != recs.rend(); ++it) {
+                if (it->mutation_id == mid)
+                    return *it;
+            }
+        }
+        return std::nullopt;
     }
 
     // Append one SecurityEvent to the side-car. Bumps ring_wrap_total
