@@ -93,20 +93,26 @@ template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
 
 // Issue #3103: hoisted out of the query:pattern lambda (nested function
 // definitions are not C++ — GCC 16 -Wtemplate-body / -Werror rejects them).
-static void
+// Returns false if any match fails the Agent export torn/budget gate
+// (Issue #3198). Caller must not publish a durable QueryResult hash.
+static bool
 stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
                                    const aura::ast::FlatAST& flat,
                                    aura::ast::FlatAST::StableNodeRef& scratch_ref) noexcept {
     if (qr.match_count == 0)
-        return;
-    if (!qr.matches[0].has_full_provenance())
-        return; // already layout-only (schema-1), skip
+        return true;
     for (std::size_t i = 0; i < qr.match_count; ++i) {
-        scratch_ref = ev.make_stamped_ref(qr.matches[i].node_id);
+        const auto nid = qr.matches[i].node_id;
+        // Issue #3198: do not layout-stamp a lagging gen into schema-2.
+        if (!ev.allow_query_stable_ref_export(nid))
+            return false;
+        scratch_ref = ev.make_stamped_ref(nid);
         const auto observed_gen = qr.matches[i].generation;
         if (observed_gen != 0)
             scratch_ref.gen = observed_gen;
         ev.stamp_query_stable_ref_export(scratch_ref);
+        if (scratch_ref.id == aura::ast::NULL_NODE)
+            return false;
         qr.matches[i].wrap_epoch = static_cast<std::uint16_t>(scratch_ref.wrap_epoch);
         qr.matches[i].cow_epoch_at_capture =
             static_cast<std::uint16_t>(scratch_ref.cow_epoch_at_capture);
@@ -118,6 +124,7 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
     }
     aura::core::note_query_result_full_provenance();
     (void)flat;
+    return true;
 }
 
 static aura::core::QueryResultFreshness
@@ -207,8 +214,8 @@ void register_workspace_query_primitives(
     // hash (schema-2933). Opt-in via :as-query-result / :query-result #t.
     // Default (no keyword) remains the bare list (AC2 Soft regression).
     // Capture `ws` by value (struct-of-refs); do NOT capture &ws.
-    auto make_query_result_hash = [ws, &ev](const aura::core::QueryEpoch& epoch, EvalValue matches,
-                                            bool pinned) -> EvalValue {
+    auto make_query_result_hash = [ws, mev, &ev](const aura::core::QueryEpoch& epoch,
+                                                 EvalValue matches, bool pinned) -> EvalValue {
         auto* ht = FlatHashTable::create(32);
         if (!ht)
             return matches; // Soft: fall back to bare list if hash OOM
@@ -293,28 +300,39 @@ void register_workspace_query_primitives(
                     }
                 }
                 if (got && node_id < ws.workspace_flat->size()) {
+                    // Issue #3198: :as-query-result must not wrap a lagging
+                    // gen as durable schema-2 memory.
+                    if (!ev.allow_query_stable_ref_export(node_id))
+                        return mev("restamp-lag",
+                                   "budget-exceeded: :as-query-result: restamp budget exceeded; "
+                                   "generation torn for export (Issue #3198 / #3121)");
                     qr.push_match_full(node_id, gen, 0, 0, 0, 0, 0, 0);
                     pushed = true;
                 }
                 cur = ws.pairs[outer].cdr;
             }
-            if (pushed && qr.matches[0].has_full_provenance()) {
+            if (pushed) {
                 aura::ast::FlatAST::StableNodeRef scratch_ref{};
-                stamp_query_result_full_provenance(qr, ev, *ws.workspace_flat, scratch_ref);
-                // Expose schema-2 fields as hash keys. The first match
-                // carries the canonical wrap_epoch / tenant_id for the
-                // result (multi-match results aggregate at the Agent's
-                // unpack step; see #3103 lineage).
-                const auto& m = qr.matches[0];
-                insert_kv("wrap-epoch", make_int(static_cast<std::int64_t>(m.wrap_epoch)));
-                insert_kv("cow-epoch-at-capture",
-                          make_int(static_cast<std::int64_t>(m.cow_epoch_at_capture)));
-                insert_kv("tenant-id", make_int(static_cast<std::int64_t>(m.tenant_id)));
-                insert_kv("fiber-id", make_int(static_cast<std::int64_t>(m.fiber_id)));
-                insert_kv("mutation-id-at-capture",
-                          make_int(static_cast<std::int64_t>(m.mutation_id_at_capture)));
-                insert_kv("schema-3137", make_int(3137));
-                insert_kv("query-result-wired-full", make_int(1));
+                if (!stamp_query_result_full_provenance(qr, ev, *ws.workspace_flat, scratch_ref))
+                    return mev("restamp-lag",
+                               "budget-exceeded: :as-query-result: restamp budget exceeded; "
+                               "generation torn for export (Issue #3198 / #3121)");
+                if (qr.matches[0].has_full_provenance()) {
+                    // Expose schema-2 fields as hash keys. The first match
+                    // carries the canonical wrap_epoch / tenant_id for the
+                    // result (multi-match results aggregate at the Agent's
+                    // unpack step; see #3103 lineage).
+                    const auto& m = qr.matches[0];
+                    insert_kv("wrap-epoch", make_int(static_cast<std::int64_t>(m.wrap_epoch)));
+                    insert_kv("cow-epoch-at-capture",
+                              make_int(static_cast<std::int64_t>(m.cow_epoch_at_capture)));
+                    insert_kv("tenant-id", make_int(static_cast<std::int64_t>(m.tenant_id)));
+                    insert_kv("fiber-id", make_int(static_cast<std::int64_t>(m.fiber_id)));
+                    insert_kv("mutation-id-at-capture",
+                              make_int(static_cast<std::int64_t>(m.mutation_id_at_capture)));
+                    insert_kv("schema-3137", make_int(3137));
+                    insert_kv("query-result-wired-full", make_int(1));
+                }
             }
         }
         aura::core::note_query_result_created();
@@ -550,7 +568,7 @@ void register_workspace_query_primitives(
             }
         }
         auto& flat = *ws.workspace_flat;
-        // Issue #3000: gate *before* for_each_stable_child / make_ref_layout
+        // Issue #3000 / #3198: gate *before* for_each_stable_child / make_ref_layout
         // (lazy-align would hide a pre-mutate node_gen_). Production +
         // restamp-budget exceeded + child not eagerly restamped → typed
         // restamp-lag (not -1 / no last-reason). Soft: observe, stamp as today.
@@ -593,9 +611,15 @@ void register_workspace_query_primitives(
         // Fill (gen, nil) and (id, ^gen-pair) for each child.
         // The list-node cdr is filled in the second loop.
         std::size_t i = 0;
+        bool stamp_ok = true;
         flat.for_each_stable_child(node, [&](aura::ast::FlatAST::StableNodeRef ref) {
             // Issue #2759 / #2960: sole production isolation stamp + query counters.
             ev.stamp_query_stable_ref_export(ref);
+            // Issue #3198: do not pack a nulled/lagging child as durable memory.
+            if (ref.id == aura::ast::NULL_NODE) {
+                stamp_ok = false;
+                return;
+            }
             const auto gen_idx = static_cast<int>(base + 3 * i);
             const auto pair_idx = static_cast<int>(base + 3 * i + 1);
             const auto list_idx = static_cast<int>(base + 3 * i + 2);
@@ -606,6 +630,12 @@ void register_workspace_query_primitives(
             ws.pairs[list_idx] = {make_pair(pair_idx), make_void()};
             ++i;
         });
+        if (!stamp_ok)
+            return mev("restamp-lag",
+                       "budget-exceeded: query:children-stable: restamp budget exceeded; "
+                       "generation torn for export (Issue #3198 / #3121 / #3037 / #3000); ; // "
+                       "Issue #3138: Agent recovery hint recovery: re-query after budget "
+                       "window or force full restamp before reusing refs");
         // Thread the list-node cdrs: list[i].cdr = list[i+1]
         // for i in 0..N-2; list[N-1].cdr = nil (already set).
         for (std::size_t j = 0; j + 1 < n; ++j) {

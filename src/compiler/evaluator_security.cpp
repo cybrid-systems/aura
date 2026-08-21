@@ -1487,6 +1487,9 @@ Evaluator::make_stamped_safe_ref(ast::NodeId id, std::uint32_t workspace_id,
 // before return (Agent export contract). Parity with #2152 dispatch
 // required_effects: side effects are non-bypassable; isolation should match.
 ast::FlatAST::StableNodeRef Evaluator::export_ref(ast::NodeId id) const noexcept {
+    // Issue #3198: Agent export must not bypass the torn/budget gate.
+    if (!allow_query_stable_ref_export(id))
+        return {};
     // const surface kept for #2224 call sites; finalize mutates only the
     // returned ref + process-wide atomics (via non-const ensure helper).
     return const_cast<Evaluator*>(this)->finalize_agent_export(make_stamped_ref(id));
@@ -1494,6 +1497,9 @@ ast::FlatAST::StableNodeRef Evaluator::export_ref(ast::NodeId id) const noexcept
 
 ast::FlatAST::StableNodeRef Evaluator::export_ref_safe(ast::NodeId id, std::uint32_t workspace_id,
                                                        std::uint32_t fiber_id) const noexcept {
+    // Issue #3198: same gate as export_ref (query:*-stable / ensure-ref).
+    if (!allow_query_stable_ref_export(id))
+        return {};
     return const_cast<Evaluator*>(this)->finalize_agent_export(
         make_stamped_safe_ref(id, workspace_id, fiber_id));
 }
@@ -1533,6 +1539,9 @@ Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept {
 
 std::optional<ast::FlatAST::StableNodeRef>
 Evaluator::export_held_ref(ast::FlatAST::StableNodeRef ref) noexcept {
+    // Issue #3198: Agent re-export must not bypass the torn/budget gate.
+    if (!allow_query_stable_ref_export(ref.id))
+        return std::nullopt;
     // Re-export long-held handle (mailbox / cross-fiber). finalize_agent_export
     // owns export metrics; callers get nullopt on unrefreshable.
     auto out = finalize_agent_export(std::move(ref));

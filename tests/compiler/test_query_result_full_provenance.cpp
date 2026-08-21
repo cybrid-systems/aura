@@ -17,6 +17,10 @@
 //        when any of those is non-zero.
 //   AC6: query_result_is_fresh_with_refs is declared in the header
 //        (signature check via SFINAE-friendly static_assert).
+//
+//   Issue #3198: :as-query-result / schema-2 stamp fail-closed on restamp
+//   budget exceed is live-covered in test_hygiene_mutate_closed_loop
+//   (ac3198_*) plus check_query_stable_restamp_export_uniform_3198.py.
 
 #include "test_harness.hpp"
 

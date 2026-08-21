@@ -2797,6 +2797,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // required_effects; primary outbound surface for ast: / query: /
         // mutate return paths).
         const auto ref = ev.export_ref(id);
+        // Issue #3198: export_ref now fail-closes on torn; do not pack (0 . 0).
+        if (ref.id == aura::ast::NULL_NODE)
+            return mev("restamp-lag",
+                       "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
+                       "generation torn for export (Issue #3198 / #3121 / #3058); ; // Issue "
+                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
+                       "full restamp before reusing refs");
         const auto pid = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
                              make_int(static_cast<std::int64_t>(ref.gen))});
