@@ -3557,6 +3557,21 @@ def cmd_lint():
             "Issue #3222 hold-budget inbody force-unlock linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_unlock_3222.py"
         )
         return r
+    # Issue #3223: cross-fiber force_degrade nudges victim inbody poll
+    # so the holder worker force-releases past 2×SLO (reuse #3222).
+    # Foreign thread never unlocks. Soft observe-only. Reuses
+    # cross-fiber fired/consumed + forced_unlock_total. Extends
+    # test_hold_budget_synthetic_yield_injection; no docs/design / invent.
+    hb3223_script = COVERAGE_CHECKS / "check_cross_fiber_urgent_inbody_poll_3223.py"
+    if not hb3223_script.exists():
+        fail(f"missing {hb3223_script}")
+        return 1
+    r = run([sys.executable, str(hb3223_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3223 cross-fiber urgent inbody poll linter failed — run python3 scripts/coverage/checks/check_cross_fiber_urgent_inbody_poll_3223.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into

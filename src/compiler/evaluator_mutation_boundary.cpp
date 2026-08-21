@@ -1851,7 +1851,8 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
                 // Issue #2720: P0 holder-degrade path (#2701 residual).
                 // Force-degrade the recorded holder fiber — same-fiber
                 // cancel via g_current_fiber + mark_outermost_mutation_failed,
-                // cross-fiber counter bump only (real cancel = follow-up).
+                // cross-fiber pending-cancel + urgent inbody poll (#3223)
+                // so the victim worker force-releases past 2×SLO.
                 // try_acquire already rejected *this* admit; this also
                 // unblocks steal/GC by retiring the over-budget holder.
                 const auto hold_snap = mutation_hold_live_snapshot();
@@ -1987,7 +1988,7 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
                 // Force-degrade the recorded holder fiber — same pattern
                 // as try_acquire above. Same-fiber cancel via
                 // g_current_fiber + mark_outermost_mutation_failed;
-                // cross-fiber counter bump only (real cancel = follow-up).
+                // cross-fiber pending-cancel + urgent inbody poll (#3223).
                 const auto hold_snap = mutation_hold_live_snapshot();
                 if (hold_snap.fiber_id != 0) {
                     aura_evaluator_force_degrade_outermost_holder(hold_snap.fiber_id);

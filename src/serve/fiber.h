@@ -783,6 +783,15 @@ public:
     [[nodiscard]] bool peek_hold_budget_cancel() const noexcept {
         return pending_hold_budget_cancel_.load(std::memory_order_acquire);
     }
+    // Issue #3223: victim-worker inbody poll nudge. Set by cross-fiber
+    // force_degrade (aura_fiber_request_urgent_inbody_poll). Keeps the
+    // inbody arm live across an early safepoint consume so the holder
+    // thread can force-release past 2×SLO. Foreign thread never unlocks.
+    void request_urgent_inbody_poll() noexcept;
+    void clear_urgent_inbody_poll() noexcept;
+    [[nodiscard]] bool peek_urgent_inbody_poll() const noexcept {
+        return urgent_inbody_poll_.load(std::memory_order_acquire);
+    }
     // Issue #2727: per-Fiber durable evaluator identity for precise
     // GC-defer + residual checks in steal_safety (#2721 residual).
     // Replaces the prior mutation_stack_ptr() proxy with a stable,
@@ -1246,6 +1255,8 @@ private:
     // guards never observe or clear this flag (consume lives in the
     // outermost dtor Phase-5 exit path only).
     std::atomic<bool> pending_hold_budget_cancel_{false};
+    // Issue #3223: victim-worker inbody poll pending (cross-fiber nudge).
+    std::atomic<bool> urgent_inbody_poll_{false};
     // Issue #2118: orch agent body soft mutation-boundary window active
     // (per-fiber stack depth registered; steal/GC visibility).
     std::atomic<bool> orch_agent_boundary_active_{false};
@@ -1382,6 +1393,10 @@ extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fibe
 // Issue #3222: sketch-named alias of force_release (poll cannot spell
 // "unlock" — #3160 AC12). Weak in fiber_bridge.
 extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber_id) noexcept;
+// Issue #3223: cross-fiber force_degrade nudge — inject synthetic yield
+// + urgent inbody poll on the victim Fiber. Does not unlock.
+extern "C" int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcept;
+extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fiber_id) noexcept;
 
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup, to avoid the circular include between
