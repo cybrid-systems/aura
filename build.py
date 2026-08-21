@@ -2170,6 +2170,19 @@ def cmd_lint():
             "Issue #3233 PCV stale-span exclusive linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_exclusive_3233.py"
         )
         return r
+    # Issue #3234: compute_sccs Tarjan local recursive struct (zero
+    # std::function on the pass surface). Soft/behaviour unchanged.
+    # Extends test_hot_pass_hard_dod; no docs/design / invent.
+    scc3234_script = COVERAGE_CHECKS / "check_pass_scc_no_std_function_3234.py"
+    if not scc3234_script.exists():
+        fail(f"missing {scc3234_script}")
+        return 1
+    r = run([sys.executable, str(scc3234_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3234 pass SCC no-std-function linter failed — run python3 scripts/coverage/checks/check_pass_scc_no_std_function_3234.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

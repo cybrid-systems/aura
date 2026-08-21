@@ -10,7 +10,6 @@ module;
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <functional>
 #include <map>
 #include <optional>
 #include <span>
@@ -3236,6 +3235,10 @@ static_assert(RequiresDirtySoAEntryPass<ComputeKindWrap>,
 // Data-flow analysis is O(C) per function; the per-call-site
 // inline check is O(1) (func_id → function lookup is O(1) via
 // a pre-built index).
+// Issue #3234: Tarjan strongconnect is a local recursive struct
+// (zero type-erasure on the pass surface).
+export inline constexpr int kPassSccNoStdFunctionIssue = 3234;
+
 export class InlinePass {
 public:
     void run(aura::ir::IRModule& module) {
@@ -4123,40 +4126,49 @@ private:
         std::vector<std::uint32_t> stack;
         std::uint32_t next_index = 0;
         std::uint32_t next_scc = 0;
-        // Recursive lambda (Tarjan's algorithm is naturally
-        // recursive; depth is bounded by the SCC size, which
-        // is bounded by n).
-        // We use std::function for the recursion so we can
-        // have a self-referential closure. The std::function
-        // heap-allocates the closure, which is fine for the
-        // one-time per-run cost.
-        std::function<void(std::uint32_t)> strongconnect = [&](std::uint32_t v) {
-            index[v] = static_cast<std::int64_t>(next_index);
-            lowlink[v] = static_cast<std::int64_t>(next_index);
-            ++next_index;
-            stack.push_back(v);
-            on_stack[v] = true;
-            for (std::uint32_t w : graph[v]) {
-                if (w >= n)
-                    continue;
-                if (index[w] == -1) {
-                    strongconnect(w);
-                    lowlink[v] = std::min(lowlink[v], lowlink[w]);
-                } else if (on_stack[w]) {
-                    lowlink[v] = std::min(lowlink[v], index[w]);
+        // Issue #3234: local recursive struct (Tarjan strongconnect).
+        // Depth is bounded by SCC size (≤ n). Same ids / reverse-topo
+        // numbering as the previous self-referential closure.
+        struct StrongConnect {
+            std::size_t n;
+            const std::vector<std::vector<std::uint32_t>>& graph;
+            std::vector<std::int64_t>& index;
+            std::vector<std::int64_t>& lowlink;
+            std::vector<bool>& on_stack;
+            std::vector<std::uint32_t>& scc_id;
+            std::vector<std::uint32_t>& stack;
+            std::uint32_t& next_index;
+            std::uint32_t& next_scc;
+            void operator()(std::uint32_t v) {
+                index[v] = static_cast<std::int64_t>(next_index);
+                lowlink[v] = static_cast<std::int64_t>(next_index);
+                ++next_index;
+                stack.push_back(v);
+                on_stack[v] = true;
+                for (std::uint32_t w : graph[v]) {
+                    if (w >= n)
+                        continue;
+                    if (index[w] == -1) {
+                        (*this)(w);
+                        lowlink[v] = std::min(lowlink[v], lowlink[w]);
+                    } else if (on_stack[w]) {
+                        lowlink[v] = std::min(lowlink[v], index[w]);
+                    }
+                }
+                if (lowlink[v] == index[v]) {
+                    std::uint32_t w;
+                    do {
+                        w = stack.back();
+                        stack.pop_back();
+                        on_stack[w] = false;
+                        scc_id[w] = next_scc;
+                    } while (w != v);
+                    ++next_scc;
                 }
             }
-            if (lowlink[v] == index[v]) {
-                std::uint32_t w;
-                do {
-                    w = stack.back();
-                    stack.pop_back();
-                    on_stack[w] = false;
-                    scc_id[w] = next_scc;
-                } while (w != v);
-                ++next_scc;
-            }
         };
+        StrongConnect strongconnect{n,      graph, index,      lowlink, on_stack,
+                                    scc_id, stack, next_index, next_scc};
         for (std::uint32_t v = 0; v < n; ++v) {
             if (index[v] == -1)
                 strongconnect(v);
