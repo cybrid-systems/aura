@@ -9372,6 +9372,8 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         if (!engine.last_type_export_authoritative()) {
             last_type_export_authoritative_ = false;
             last_partial_cs_live_ = false;
+            // Issue #3203: no live refined TypeId from a half-solved CS.
+            last_occurrence_vars_.clear();
         }
     }
 

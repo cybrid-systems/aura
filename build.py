@@ -2142,6 +2142,19 @@ def cmd_lint():
             "Issue #3202 production Strict ground unify linter failed — run python3 scripts/coverage/checks/check_production_strict_ground_unify_3202.py"
         )
         return r
+    # Issue #3203: Soft TIMEOUT/CONFLICT must never grant query:type
+    # authority (residual of #3081). Persist grant cannot override a
+    # half-solved face. Extends test_solve_delta_unresolved_export.
+    stug3203_script = COVERAGE_CHECKS / "check_soft_timeout_export_uniform_gate_3203.py"
+    if not stug3203_script.exists():
+        fail(f"missing {stug3203_script}")
+        return 1
+    r = run([sys.executable, str(stug3203_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3203 Soft TIMEOUT export uniform gate linter failed — run python3 scripts/coverage/checks/check_soft_timeout_export_uniform_gate_3203.py"
+        )
+        return r
     # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
     # Occurrence persist / TypeLinearCommitProof on one authoritative face.
     # Reuses invalidate_gen (no second proof model). Soft observe-only.

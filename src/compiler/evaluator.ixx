@@ -3618,16 +3618,31 @@ public:
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
-    // Issue #3003 / #3081: query:type / get-inferred-type authority.
+    // Issue #3003 / #3081 / #3203: query:type / get-inferred-type authority.
     // False after Production / Full solve_delta that is not SOLVED, and
     // after Soft TIMEOUT / CONFLICT (allow_timeout_commit included).
-    [[nodiscard]] bool type_export_authoritative() const noexcept {
+    // Issue #3203: persist grant cannot override a non-SOLVED last face.
+    [[nodiscard]] bool type_export_is_authoritative() const noexcept {
+        if (!last_type_solve_solved_)
+            return false;
         return type_export_authoritative_;
+    }
+    [[nodiscard]] bool type_export_authoritative() const noexcept {
+        return type_export_is_authoritative();
     }
     // Issue #3004: Production infer SOLVED but persist+Full audit not yet
     // committed. query:type signals "in-flight" (not durable authority).
     [[nodiscard]] bool type_export_inflight() const noexcept { return type_export_inflight_; }
+    void note_infer_solve_solved(bool solved) noexcept { last_type_solve_solved_ = solved; }
     void grant_type_export_authority() noexcept {
+        // Issue #3203: never stamp durable authority over TIMEOUT/CONFLICT
+        // even if outermost persist would grant. Quiet SOLVED: last_type_solve_solved_
+        // is true (default) — no production_defaults load.
+        if (!last_type_solve_solved_) {
+            type_export_authoritative_ = false;
+            type_export_inflight_ = false;
+            return;
+        }
         type_export_authoritative_ = true;
         type_export_inflight_ = false;
     }
@@ -3646,6 +3661,7 @@ public:
     // Soft + no nested: inflight is false and depth<=1 → same grant/clear
     // as today (one extra bool + slot load on typecheck, not on query).
     void copy_infer_type_export_authority(bool infer_authoritative) noexcept {
+        last_type_solve_solved_ = infer_authoritative;
         if (type_export_inflight_ || mutation_boundary_depth_slot_value() > 1) {
             note_type_export_inflight();
             return;
@@ -15147,6 +15163,9 @@ private:
     // Production: false until persist + Full audit success (#3004).
     bool type_export_authoritative_ = true;
     bool type_export_inflight_ = false;
+    // Issue #3203: last infer face was SOLVED (default true = quiet path).
+    // TIMEOUT/CONFLICT stays false so persist grant cannot override.
+    bool last_type_solve_solved_ = true;
     // Issue #3170: staged occurrence-persist fingerprint (0 = unstaged).
     std::uint64_t expected_occurrence_fp_ = 0;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.
