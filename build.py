@@ -2102,6 +2102,20 @@ def cmd_lint():
             "Issue #3199 shape compact no-all-shards lock linter failed — run python3 scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py"
         )
         return r
+    # Issue #3200: production Moving pin/EnvFrame Soft-gate must arm
+    # sticky densify-off + Agent throttle (no silent amortisation gap).
+    # Soft observe-only. Extends test_arena_moving_densify_health;
+    # no docs/design / invent.
+    mpgs3200_script = COVERAGE_CHECKS / "check_moving_pin_guard_soft_gate_3200.py"
+    if not mpgs3200_script.exists():
+        fail(f"missing {mpgs3200_script}")
+        return 1
+    r = run([sys.executable, str(mpgs3200_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3200 moving pin/EnvFrame Soft-gate linter failed — run python3 scripts/coverage/checks/check_moving_pin_guard_soft_gate_3200.py"
+        )
+        return r
     # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
     # Occurrence persist / TypeLinearCommitProof on one authoritative face.
     # Reuses invalidate_gen (no second proof model). Soft observe-only.
