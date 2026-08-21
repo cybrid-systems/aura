@@ -72,6 +72,9 @@ inline constexpr std::uint64_t kHotUpdateDeoptStormEpoch = ~std::uint64_t{0};
 // Issue #3059: single production reemit facade (cascade / BoundaryExit /
 // reload / exhausted min-dirty / residual pipeline).
 inline constexpr int kHotUpdateDecideAndReemitIssue = 3059;
+// Issue #3221: production mark_define_dirty / invalidate_function pass
+// Cascade (not ResidualForceHeal) into the facade.
+inline constexpr int kHotUpdateCascadeReasonIssue = 3221;
 
 class HotUpdateRegistry {
 public:
@@ -811,6 +814,8 @@ private:
     //     use this mask instead of the full demoted mask (sticky until
     //     wholesale clear / reset — Agent / test injection).
     std::atomic<std::uint64_t> last_reemit_success_region_mask_{0};
+    // Issue #3221: last ReemitReason passed to decide_and_reemit.
+    std::atomic<std::uint8_t> last_reemit_reason_{0};
     // Issue #3026: observe-only residual-force stale watchdog (no auto-heal).
     // Soft / Off never ages. Production ages residual across BoundaryExits
     // and bumps residual_force_stale_observe_total_ every N exits (32).
@@ -1062,7 +1067,13 @@ public:
     // Soft / mask idle → zero extra work (observe residual-uncovered only).
     // Returns true when a min-dirty reemit was scheduled (seed + #2601 drive).
     // Cap/backoff/storm-skip from #2601 respected; no silent drop on re-entry.
-    bool maybe_coverage_verify_min_dirty() noexcept;
+    bool
+    maybe_coverage_verify_min_dirty(ReemitReason reason = ReemitReason::CoverageVerify) noexcept;
+    // Issue #3221: last reason passed to decide_and_reemit (test / Agent
+    // hook). Cascade=0 … ResidualForceHeal=7. No new query:* name.
+    [[nodiscard]] ReemitReason last_reemit_reason() const noexcept {
+        return static_cast<ReemitReason>(last_reemit_reason_.load(std::memory_order_relaxed));
+    }
     // Pure resolve: env AURA_COVERAGE_VERIFY_MIN_DIRTY=0/1 → Soft/sandbox=off
     // → production_defaults → false.
     [[nodiscard]] bool resolve_coverage_verify_min_dirty_enabled() const noexcept;

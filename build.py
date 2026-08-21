@@ -3526,6 +3526,21 @@ def cmd_lint():
             "Issue #3219 Evaluator/core joint after production facade linter failed — run python3 scripts/coverage/checks/check_eval_core_joint_after_production_facade_3219.py"
         )
         return r
+    # Issue #3221: production mark_define_dirty / invalidate_function
+    # pass Cascade into the facade, not ResidualForceHeal. Age-gated
+    # auto-heal (#3096) keeps ResidualForceHeal; coverage-verify keeps
+    # CoverageVerify. Extends test_compiler_hot_update_facade; no
+    # docs/design / invent / new query:*.
+    cr3221_script = COVERAGE_CHECKS / "check_cascade_reason_not_residual_force_heal_3221.py"
+    if not cr3221_script.exists():
+        fail(f"missing {cr3221_script}")
+        return 1
+    r = run([sys.executable, str(cr3221_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3221 cascade reason not ResidualForceHeal linter failed — run python3 scripts/coverage/checks/check_cascade_reason_not_residual_force_heal_3221.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into
