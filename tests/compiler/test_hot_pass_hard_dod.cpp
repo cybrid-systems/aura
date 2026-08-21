@@ -3,6 +3,8 @@
 //          production pipeline stages; eliminate soft unmarked Legacy skips.
 //          Issue #3042 — drop residual std::function dirty predicates from
 //          PureWrap production stages (column-view / fn-pointer preds).
+//          Issue #3234 — Tarjan compute_sccs local recursive struct (zero
+//          type-erasure on the pass surface).
 //
 //   AC1: All production pack stages HotPassDodCompliant (or explicit Legacy)
 //   AC2: Production pack note_pass_soa_enforcement → concept_rejection delta 0
@@ -11,6 +13,8 @@
 //   AC5: schema-2434 + source-cite + inventory
 //   #3042 AC1–AC5: no std::function dirty members/setters; inlineable preds;
 //                  dod + short-circuit + schema-3042 + concept_rejection==0
+//   #3234 AC1–AC4: grep-clean pass_impls; InlinePass still runs; same Tarjan
+//                  body; source-cite / no invent
 
 #include "test_harness.hpp"
 
@@ -41,6 +45,7 @@ using aura::compiler::DefineDirtyMaskView;
 using aura::compiler::HotPassDodCompliant;
 using aura::compiler::InlinePass;
 using aura::compiler::InstructionDirtyPred;
+using aura::compiler::kPassSccNoStdFunctionIssue;
 using aura::compiler::kPureWrapNoStdFunctionDirtyIssue;
 using aura::compiler::LinearOwnershipPass;
 using aura::compiler::MonomorphizePass;
@@ -318,7 +323,45 @@ int run_test_hot_pass_hard_dod() {
               "3042 AC4: short-circuit advanced");
     }
 
-    std::println("\n=== #2434/#3042 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3234: Tarjan compute_sccs — no type-erased callable ──────
+    {
+        std::println("\n--- #3234 AC1: pass_impls has zero std::function ---");
+        CHECK(kPassSccNoStdFunctionIssue == 3234, "3234 AC1: issue constant");
+        auto impls = read_file("src/compiler/pass_impls.ixx");
+        CHECK(!impls.empty(), "3234 AC1: read pass_impls.ixx");
+        CHECK(impls.find("std::function") == std::string::npos, "3234 AC1: no std::function");
+        CHECK(impls.find("#include <functional>") == std::string::npos,
+              "3234 AC1: no <functional>");
+        CHECK(impls.find("struct StrongConnect") != std::string::npos, "3234 AC1: StrongConnect");
+        CHECK(impls.find("(*this)(w)") != std::string::npos, "3234 AC1: recurse via operator()");
+
+        std::println("\n--- #3234 AC2: InlinePass / SCC-dependent run still green ---");
+        auto mod = make_mod(2);
+        InlinePass inliner;
+        inliner.run(mod);
+        CHECK(mod.functions.size() == 1, "3234 AC2: module intact");
+        CHECK(impls.find("compute_sccs") != std::string::npos, "3234 AC2: compute_sccs");
+        CHECK(impls.find("scc_id_of_fid_") != std::string::npos, "3234 AC2: scc map");
+
+        std::println("\n--- #3234 AC3: same Tarjan body / reverse-topo ids ---");
+        CHECK(impls.find("lowlink") != std::string::npos, "3234 AC3: lowlink");
+        CHECK(impls.find("on_stack") != std::string::npos, "3234 AC3: on_stack");
+        CHECK(impls.find("numbered in reverse topological order") != std::string::npos,
+              "3234 AC3: reverse-topo");
+        InlinePass inliner2;
+        inliner2.run(mod);
+        CHECK(mod.functions.size() == 1, "3234 AC3: second run still green");
+
+        std::println("\n--- #3234 AC4: source-cite; no invent ---");
+        const auto build = read_file("build.py");
+        CHECK(impls.find("Issue #3234") != std::string::npos, "3234 AC4: pass_impls cite");
+        CHECK(build.find("check_pass_scc_no_std_function_3234") != std::string::npos,
+              "3234 AC4: build.py");
+        CHECK(read_file("docs/design/3234-pass-scc.md").empty(), "3234 AC4: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3234.cpp").empty(), "3234 AC4: no invent");
+    }
+
+    std::println("\n=== #2434/#3042/#3234 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

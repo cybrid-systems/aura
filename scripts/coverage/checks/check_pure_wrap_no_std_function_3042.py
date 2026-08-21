@@ -66,8 +66,9 @@ def main() -> int:
     must("kPureWrapNoStdFunctionDirtyIssue = 3042", "AC1 core", core)
     must("set_block_dirty_pred", "AC1 pipeline", core)
     must("set_instruction_dirty_pred", "AC1 pipeline", core)
-    # SCC recursion std::function must remain (not a dirty predicate).
-    must("std::function<void(std::uint32_t)> strongconnect", "AC1 scc leftover", impls)
+    # Issue #3234 closed the Tarjan leftover; dirty-predicate grep stays.
+    if "std::function<void(std::uint32_t)> strongconnect" in impls:
+        fails.append("AC1: SCC leftover still present (closed by #3234)")
 
     # ── AC2: inlineable column-view / fn-pointer preds ──
     must("struct BlockDirtyPred", "AC2", core)
