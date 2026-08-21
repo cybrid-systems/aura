@@ -2157,6 +2157,19 @@ def cmd_lint():
             "Issue #3232 nested abort authority face residual linter failed — run python3 scripts/coverage/checks/check_nested_abort_authority_face_3232.py"
         )
         return r
+    # Issue #3233: stale SafePCVSpan after Guard forces exclusive set_child
+    # (no full COW). Live span + checkpoint still COW. Soft unchanged.
+    # Extends test_pcv_exclusive_with_set; no docs/design / invent.
+    pcv3233_script = COVERAGE_CHECKS / "check_pcv_stale_span_exclusive_3233.py"
+    if not pcv3233_script.exists():
+        fail(f"missing {pcv3233_script}")
+        return 1
+    r = run([sys.executable, str(pcv3233_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3233 PCV stale-span exclusive linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_exclusive_3233.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

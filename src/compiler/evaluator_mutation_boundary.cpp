@@ -420,6 +420,8 @@ void Evaluator::enter_mutation_boundary() {
                 m->mutation_lightweight_total.fetch_add(1, std::memory_order_relaxed);
         } else {
             children_snapshot = workspace_flat_->snapshot_children();
+            // Issue #3233: checkpoint snapshot is a live PCV observer.
+            aura::ast::pcv_checkpoint_live_enter();
             if (fine_rollback) {
                 sym_id_snapshot = workspace_flat_->snapshot_sym_id();
                 param_snapshot = workspace_flat_->snapshot_param_columns();
@@ -581,6 +583,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool nested_boundary = stack.size() > 1;
     auto cp = stack.back();
     stack.pop_back();
+    // Issue #3233: pair pcv_checkpoint_live_enter from snapshot.
+    struct PcvCkptExit {
+        bool on;
+        ~PcvCkptExit() {
+            if (on)
+                aura::ast::pcv_checkpoint_live_exit();
+        }
+    } pcv_ckpt_exit{!cp.lightweight};
     if (stack.empty())
         typed_audit::clear_boundary_audit_mid();
     // Issue #3102: AC5 — boundary exit (success or abort) decays the TLS

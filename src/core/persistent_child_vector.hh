@@ -86,6 +86,7 @@
 #include <cstdlib>
 #include <initializer_list>
 #include <iterator>
+#include <limits>
 #include <memory>
 #include <span>
 #include <stdexcept>
@@ -125,6 +126,12 @@ struct PcvHotpathMetrics {
     // refresh on next use or surface stale marker; Soft/Off skips bump
     // (AC2 happy path keeps zero extra work).
     std::atomic<std::uint64_t> pcv_span_stale_across_guard_total{0};
+    // Issue #3233: SafePCVSpan held across Guard still aliases storage
+    // (use_count()>1) after fingerprint mismatch. Production locked
+    // set_child force-inplace exclusive (no full COW alloc). Append at
+    // struct END (#2906). Soft leaves this 0 (COW unchanged).
+    std::atomic<std::uint32_t> stale_span_force_exclusive_enabled{0};
+    std::atomic<std::uint64_t> stale_span_force_exclusive_total{0};
 };
 inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
     static PcvHotpathMetrics m;
@@ -144,6 +151,7 @@ inline void reset_pcv_hotpath_metrics_for_test() noexcept {
     m.flatast_locked_move_out_exclusive_total.store(0, std::memory_order_relaxed);
     m.flatast_locked_move_out_cow_total.store(0, std::memory_order_relaxed);
     m.pcv_span_stale_across_guard_total.store(0, std::memory_order_relaxed);
+    m.stale_span_force_exclusive_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_hit_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_miss_total.store(0, std::memory_order_relaxed);
     m.tls_scratch_recycle_total.store(0, std::memory_order_relaxed);
@@ -163,6 +171,32 @@ inline constexpr int kPcvTlsDefaultOnIssue = 2521;
 // after a structural Guard exits. AC1 production / AC2 happy path / AC3
 // non-regression / AC4 additive counter only.
 inline constexpr int kPcvSpanStaleAcrossGuardIssue = 3167;
+// Issue #3233: next locked set_child after fingerprint mismatch forces
+// exclusive in-place even if a stale SafePCVSpan still holds a ref.
+inline constexpr int kPcvStaleSpanExclusiveIssue = 3233;
+
+[[nodiscard]] inline bool pcv_stale_span_exclusive_enabled() noexcept {
+    return g_pcv_hotpath_metrics().stale_span_force_exclusive_enabled.load(
+               std::memory_order_relaxed) != 0;
+}
+inline void pcv_set_stale_span_exclusive_enabled(bool on) noexcept {
+    g_pcv_hotpath_metrics().stale_span_force_exclusive_enabled.store(on ? 1u : 0u,
+                                                                     std::memory_order_relaxed);
+}
+
+// Issue #3233: MutationCheckpoint children_ snapshot is a live observer
+// (must COW). Thread-local depth: enter on snapshot, exit on boundary exit.
+inline thread_local std::uint32_t g_pcv_checkpoint_live_tls{0};
+inline void pcv_checkpoint_live_enter() noexcept {
+    ++g_pcv_checkpoint_live_tls;
+}
+inline void pcv_checkpoint_live_exit() noexcept {
+    if (g_pcv_checkpoint_live_tls > 0)
+        --g_pcv_checkpoint_live_tls;
+}
+[[nodiscard]] inline bool pcv_checkpoint_children_live() noexcept {
+    return g_pcv_checkpoint_live_tls != 0;
+}
 // Sentinel for an un-captured SafePCVSpan (default-constructed or empty
 // children_safe). captured_node_id() == kPcvSpanNoOwner means callers must
 // not call is_stale / force_refresh on this handle (use_count()==0).
@@ -330,6 +364,14 @@ public:
     // Issue #2058: sole owner of storage (safe for in-place mutate).
     // Empty / null storage is treated as unique.
     [[nodiscard]] bool is_unique() const noexcept { return !data_ || data_.use_count() == 1; }
+    // Issue #3233: generation stamped at last children_safe pin (0 = never).
+    [[nodiscard]] std::uint64_t last_pin_generation() const noexcept {
+        return data_ ? data_->last_pin_generation : 0;
+    }
+    void stamp_last_pin_generation(std::uint64_t gen) const noexcept {
+        if (data_)
+            data_->last_pin_generation = gen;
+    }
 
     // Issue #300 follow-up #1: identity of the shared storage
     // block (for teardown dedup when aliased PCVs exist).
@@ -494,15 +536,20 @@ public:
     // FlatAST locked paths should move children_[id] out, call cow_*,
     // then move back — so the common case is unique.
 
-    void cow_set(size_type i, const T& v) {
+    void cow_set(size_type i, const T& v, bool force_inplace = false) {
         g_pcv_hotpath_metrics().cow_set_total.fetch_add(1, std::memory_order_relaxed);
         if (i >= size_)
             return;
-        if (is_unique() && data_) {
+        if ((is_unique() || force_inplace) && data_) {
             // Storage is shared_ptr<const Storage> but unique_ptr<T[]>::get()
             // on const unique_ptr still yields T* — sole owner may write.
+            // Issue #3233: force_inplace = stale SafePCVSpan extra ref after
+            // Guard fingerprint mismatch (Agent must re-pin; no full COW).
             data_->data.get()[i] = v;
             g_pcv_hotpath_metrics().unique_inplace_total.fetch_add(1, std::memory_order_relaxed);
+            if (force_inplace && !is_unique())
+                g_pcv_hotpath_metrics().stale_span_force_exclusive_total.fetch_add(
+                    1, std::memory_order_relaxed);
             return;
         }
         *this = with_set(i, v);
@@ -595,6 +642,9 @@ private:
         Storage(size_type n)
             : data(std::make_unique<T[]>(n))
             , size(n) {}
+        // Issue #3233: last children_safe pin generation (mutable so a
+        // const StoragePtr from share_storage can stamp). 0 = never pinned.
+        mutable std::uint64_t last_pin_generation = 0;
     };
 
     using StoragePtr = std::shared_ptr<const Storage>;
@@ -669,6 +719,8 @@ private:
                 // a stale PCV size_ cannot re-walk old NodeIds.
                 if (raw && raw->data)
                     std::fill_n(raw->data.get(), kTlsMaxElems, T{});
+                if (raw)
+                    raw->last_pin_generation = 0;
                 g_pcv_hotpath_metrics().tls_scratch_hit_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
                 tls_last_alloc_was_hit() = true;
