@@ -126,6 +126,10 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                                 std::uint64_t current_fiber_id) noexcept {
     if (!qr.is_fresh_live(flat.generation()))
         return aura::core::QueryResultFreshness::StaleByEpoch;
+    // Issue #3196: nested success authority-gap — held QueryResult is
+    // not fresh until outermost triad. Soft never sets the face.
+    if (flat.nested_authority_gap())
+        return aura::core::QueryResultFreshness::StaleByEpoch;
     if (qr.match_count == 0)
         return aura::core::QueryResultFreshness::Fresh;
     if (!qr.matches[0].has_full_provenance())

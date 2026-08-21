@@ -802,6 +802,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     m->nested_exit_dirty_pending_total.fetch_add(1, std::memory_order_relaxed);
             }
         }
+        // Issue #3196: nested success must publish an authority-gap face
+        // that query:*-stable / stamp export / QueryResult freshness
+        // consult. Does NOT run unified_restamp_after_boundary (outermost
+        // still owns the triad). Soft / Off: zero extra (AC2).
+        if (success && (typed_audit::production_defaults_active() ||
+                        typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+            defuse_index_ = nullptr;
+            workspace_flat_->note_nested_authority_gap();
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                m->nested_authority_gap_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     // Issue #1283: unified provenance capture at Guard boundary exit.
     // Stamps defuse_version / mutation impact into Agent-visible metrics
@@ -3135,6 +3146,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 m->lifetime_pin_restamps_total.fetch_add(static_cast<std::uint64_t>(ur.pins),
                                                          std::memory_order_relaxed);
         }
+        // Issue #3196: outermost triad published — drop nested authority-gap.
+        if (auto* ws = ev_->workspace_flat())
+            ws->clear_nested_authority_gap();
         // Issue #2003: EnvFrame lifetime scan at boundary exit.
         {
             aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{

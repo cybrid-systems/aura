@@ -2136,6 +2136,11 @@ public:
     // restamp. Distinct from last_budget_exceeded so Soft can observe
     // without changing is_valid/make_ref (lazy-align still #2934 AC2).
     mutable std::atomic<std::uint32_t> restamp_generation_torn_{0};
+    // Issue #3196: nested Guard success authority-gap. Set on nested
+    // production/Full success exit; cleared after outermost triad.
+    // query:*-stable / stamp export / QueryResult freshness fail-closed
+    // until outermost unified_restamp. Soft never sets this.
+    mutable std::atomic<std::uint32_t> nested_authority_gap_{0};
     // Eager-restamp bits: set only when restamp_all writes node_gen_.
     // Lazy-align must not flip these (#3037: no silent pre-mutate export).
     std::vector<std::uint8_t> restamp_eager_;
@@ -7968,6 +7973,16 @@ public:
     // of node_gen_ must not stamp-green a pre-mutate handle).
     [[nodiscard]] bool restamp_generation_torn() const noexcept {
         return restamp_generation_torn_.load(std::memory_order_relaxed) != 0;
+    }
+    // Issue #3196: nested success → outermost dtor window.
+    void note_nested_authority_gap() noexcept {
+        nested_authority_gap_.store(1, std::memory_order_relaxed);
+    }
+    void clear_nested_authority_gap() noexcept {
+        nested_authority_gap_.store(0, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool nested_authority_gap() const noexcept {
+        return nested_authority_gap_.load(std::memory_order_relaxed) != 0;
     }
     // Issue #3037: true only if restamp_all wrote node_gen_[id] this call.
     // Lazy-align / is_valid must not flip this bit.

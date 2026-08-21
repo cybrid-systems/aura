@@ -29,6 +29,8 @@
 //                   regression
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "serve/metrics.h"
 
 #include <atomic>
@@ -719,15 +721,85 @@ namespace _2313_detail {
 
 } // namespace _2313_detail
 
+namespace _3196_detail {
+
+    static void run_3196_nested_authority_gap() {
+        std::println("\n=== Issue #3196: nested Guard success authority-gap ===");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+
+        apply_production_audit_defaults();
+        {
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(),
+                  "3196: set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "3196: eval-current");
+            auto& ev = cs.evaluator();
+            auto* flat = ev.workspace_flat();
+            CHECK(flat != nullptr, "3196: workspace_flat");
+            auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            CHECK(m != nullptr, "3196: metrics");
+            const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard outer(ev, &ok);
+                CHECK(ok, "3196 AC1: outer");
+                {
+                    Evaluator::MutationBoundaryGuard inner(ev, &ok);
+                    CHECK(ok, "3196 AC1: inner");
+                    const auto extra = flat->add_literal(196);
+                    flat->insert_child(0, 0, extra);
+                }
+                CHECK(flat->nested_authority_gap(), "3196 AC1: gap after nested success");
+                CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) > gap0,
+                      "3196 AC1: gap total bumped");
+                CHECK(!ev.allow_query_stable_ref_export(0),
+                      "3196 AC1: query:*-stable export fail-closed");
+                auto r = cs.eval("(eval-current)");
+                CHECK(r.has_value(), "3196 AC5: eval-current in window does not crash");
+            }
+            CHECK(!flat->nested_authority_gap(), "3196 AC3: outermost clears gap");
+            CHECK(ev.allow_query_stable_ref_export(0), "3196 AC3: export after outermost");
+        }
+
+        apply_dev_audit_defaults();
+        {
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "3196 AC2: set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "3196 AC2: eval");
+            auto& ev = cs.evaluator();
+            auto* flat = ev.workspace_flat();
+            auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard outer(ev, &ok);
+                Evaluator::MutationBoundaryGuard inner(ev, &ok);
+                const auto extra = flat->add_literal(197);
+                flat->insert_child(0, 0, extra);
+            }
+            CHECK(!flat->nested_authority_gap(), "3196 AC2: Soft no gap");
+            CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) == gap0,
+                  "3196 AC2: Soft no bump");
+        }
+
+        CHECK(!std::filesystem::exists("docs/design/3196-nested-authority-gap.md"),
+              "3196: no docs/design");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_3196.cpp"), "3196: no invent");
+    }
+
+} // namespace _3196_detail
+
 } // namespace aura_mutation_boundary_batch
 
 int main() {
     std::println("=== B pilot #10: mutation_boundary family batch "
-                 "(#1591 + #1444 + #417 + #548 + #2313) ===");
+                 "(#1591 + #1444 + #417 + #548 + #2313 + #3196) ===");
     aura_mutation_boundary_batch::_1591_detail::run_1591_safe_yield_fairness();
     aura_mutation_boundary_batch::_1444_detail::run_1444_full_coverage();
     aura_mutation_boundary_batch::_417_detail::run_417_invariant_closed_loop();
     aura_mutation_boundary_batch::_548_detail::run_548_panic_rollback_fiber();
     aura_mutation_boundary_batch::_2313_detail::run_2313_hold_budget();
+    aura_mutation_boundary_batch::_3196_detail::run_3196_nested_authority_gap();
     return RUN_ALL_TESTS();
 }

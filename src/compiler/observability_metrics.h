@@ -9504,6 +9504,13 @@ struct CompilerMetrics {
     // only bumps under production_defaults_active(), AC3 invariant).
     // Additive, struct-end layout-stable (#2906) — Agent dashboards.
     std::atomic<std::uint64_t> solve_delta_partial_cleared_total{0};
+    // Issue #3196: nested MutationBoundaryGuard success authority-gap.
+    // Bumped on production/Full nested success exit when the
+    // generation-torn / authority-gap face is published for Agent
+    // query:*-stable until the outermost triad. Soft / Off: never
+    // bumped (AC2). Not a public query key (AC4).
+    static constexpr int kNestedGuardAuthorityGapIssue = 3196;
+    std::atomic<std::uint64_t> nested_authority_gap_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header
