@@ -33,6 +33,7 @@ using aura::compiler::AdtMatchGoal;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
+using aura::compiler::kAdtExhaustCommitRecheckIssue;
 using aura::compiler::kAdtExhaustCompleteSeedIssue;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -537,6 +538,58 @@ static void ac3083_5_schema_and_linter() {
           "3083 AC5: no docs/design/");
 }
 
+// ── Issue #3236: match+arms cone + Production recheck before proof ──
+static void ac3236_1_match_and_arms_into_cone() {
+    std::println("\n--- #3236 AC1: match node + arms enter cone ---");
+    CHECK(kAdtExhaustCommitRecheckIssue == 3236, "3236 AC1: issue stamp");
+    const std::vector<aura::compiler::dirty::NodeId> match_and_arms{10, 11, 12};
+    CHECK(aura::compiler::dirty::force_adt_exhaust_sites_into_cone(match_and_arms) == 3,
+          "3236 AC1: match+2 arms forced");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("Issue #3236") != std::string::npos, "3236 AC1: impl cite");
+    CHECK(tci.find("flat.children(nid)") != std::string::npos, "3236 AC1: arm children");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(etc.find("Issue #3236") != std::string::npos, "3236 AC1: commit recheck");
+    CHECK(etc.find("force_reason=*/1") != std::string::npos ||
+              etc.find("force_reason = 1") != std::string::npos ||
+              etc.find("/*force_reason=*/1") != std::string::npos,
+          "3236 AC1: reused solve force_reason");
+}
+
+static void ac3236_2_soft_quiet() {
+    std::println("\n--- #3236 AC2: Soft observe; quiet empty ---");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(etc.find("adt_exhaust_soft_observe_total") != std::string::npos,
+          "3236 AC2: Soft observe");
+    CHECK(etc.find("goals || cone") != std::string::npos, "3236 AC2: quiet skip when no ADT");
+    const std::vector<aura::compiler::dirty::NodeId> empty;
+    CHECK(aura::compiler::dirty::force_adt_exhaust_sites_into_cone(empty) == 0,
+          "3236 AC2: empty sites 0 extra");
+}
+
+static void ac3236_3_lineage() {
+    std::println("\n--- #3236 AC3: no regression #3045/#3083 ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("force_adt_exhaust_undermark_into_cone") != std::string::npos,
+          "3236 AC3: #3045 force retained");
+    CHECK(tci.find("seed_adt_matches_for_dirty_types") != std::string::npos,
+          "3236 AC3: #3083 complete seed retained");
+    CHECK(read_file("src/compiler/dirty_propagation.ixx")
+                  .find("force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3236 AC3: #3228 residual CastOp retained");
+}
+
+static void ac3236_4_source_linter() {
+    std::println("\n--- #3236 AC4: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kAdtExhaustCommitRecheckIssue = 3236") != std::string::npos, "3236 AC4: stamp");
+    CHECK(build.find("check_adt_exhaust_commit_recheck_3236") != std::string::npos,
+          "3236 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3236.cpp").empty(), "3236 AC4: no invent");
+    CHECK(read_file("docs/design/3236-adt-exhaust-commit.md").empty(), "3236 AC4: no docs/design");
+}
+
 static void ac3005_6_linter_no_design() {
     std::println("\n--- #3005 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
@@ -583,7 +636,12 @@ int run_test_adt_match_goal_table() {
     ac3083_3_soft_observe();
     ac3083_4_quiet_empty();
     ac3083_5_schema_and_linter();
-    std::println("\n=== #2564/#3005/#3045/#3083: {} passed, {} failed ===", g_passed, g_failed);
+    ac3236_1_match_and_arms_into_cone();
+    ac3236_2_soft_quiet();
+    ac3236_3_lineage();
+    ac3236_4_source_linter();
+    std::println("\n=== #2564/#3005/#3045/#3083/#3236: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

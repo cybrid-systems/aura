@@ -468,6 +468,7 @@ bool Evaluator::run_post_mutate_typecheck_no_lock() {
                 // mutate_type_gate Hard) sees the non-exhaustive residual.
                 // Issue #3083: complete seed so every match of a mutated
                 // ADT type enters the cone (no silent under-seed).
+                // Issue #3236: force also marks match arms into the cone.
                 // Quiet: no mutation seeds → force is a no-op.
                 {
                     std::vector<aura::ast::NodeId> seeds;
@@ -1091,6 +1092,64 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                     } else if (gate.observed && post_escalate == SolveResult::SOLVED) {
                         // Soft: allow SOLVED even when truncated (AC1).
                         cr.solve_ok = true;
+                    }
+                }
+                // Issue #3236: Production/Full exhaustiveness recheck before
+                // TypeLinearCommitProof. Quiet: empty cone + empty ADT goals
+                // → two size reads. Soft: observe. Non-exhaustive → reject
+                // with reused force_reason solve (1).
+                {
+                    ConstraintSystem* cs_ex = nullptr;
+                    if (commit_type_checker_opaque_)
+                        cs_ex = &static_cast<TypeChecker*>(commit_type_checker_opaque_)
+                                     ->constraint_system();
+                    const bool goals = cs_ex && (cs_ex->adt_match_goals_size() != 0 ||
+                                                 cs_ex->adt_reverify_roots_size() != 0);
+                    const bool cone = aura::compiler::dirty::type_ir_union_cone_nonempty();
+                    if (goals || cone) {
+                        const bool hard_ex =
+                            production_defaults_active() || get_strategy() == AuditStrategy::Full;
+                        if (!hard_ex) {
+                            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+                                m->adt_exhaust_soft_observe_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        } else if (workspace_flat_ && workspace_pool_) {
+                            auto* treg =
+                                static_cast<aura::core::TypeRegistry*>(ensure_type_registry());
+                            bool exh_fail = false;
+                            if (treg) {
+                                for (aura::ast::NodeId id = 0; id < workspace_flat_->size(); ++id) {
+                                    if (!workspace_flat_->has_match_info(id))
+                                        continue;
+                                    auto exh = check_match_exhaustiveness(
+                                        *workspace_flat_, *workspace_pool_, *treg, id);
+                                    const bool unproven = exh.via_dynamic ||
+                                                          !exh.missing_constructors.empty() ||
+                                                          (exh.checked && !exh.exhaustive);
+                                    if (!unproven)
+                                        continue;
+                                    exh_fail = true;
+                                    if (auto* m =
+                                            static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                                        m->adt_exhaust_production_reject_total.fetch_add(
+                                            1, std::memory_order_relaxed);
+                                        if (exh.via_dynamic)
+                                            m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(
+                                                1, std::memory_order_relaxed);
+                                    }
+                                    mutate_type_gate::g_exhaustiveness_reject_total.fetch_add(
+                                        1, std::memory_order_relaxed);
+                                }
+                            }
+                            if (exh_fail) {
+                                cr.solve_ok = false;
+                                (void)build_type_linear_commit_proof_from_live_with_outcome(
+                                    after_epoch, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                                    kProofLiveGoalCountHintAuto, 0, false,
+                                    /*force_reason=*/1);
+                                publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+                            }
+                        }
                     }
                 }
                 // Issue #3031: pending_full_solve / locality residual must

@@ -2196,6 +2196,19 @@ def cmd_lint():
             "Issue #3235 container mutate Guard linter failed — run python3 scripts/coverage/checks/check_container_mutate_guard_3235.py"
         )
         return r
+    # Issue #3236: ADT match+arms cone + Production exhaustiveness
+    # recheck before TypeLinearCommitProof. Soft observe; quiet 0 extra.
+    # Extends test_adt_match_goal_table; no docs/design / invent.
+    aec3236_script = COVERAGE_CHECKS / "check_adt_exhaust_commit_recheck_3236.py"
+    if not aec3236_script.exists():
+        fail(f"missing {aec3236_script}")
+        return 1
+    r = run([sys.executable, str(aec3236_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3236 ADT exhaust commit recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_commit_recheck_3236.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;
