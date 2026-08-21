@@ -1386,9 +1386,9 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
-    if (!ws->restamp_last_budget_exceeded())
+    if (!ws->nested_authority_gap() && !ws->restamp_last_budget_exceeded())
         return true;
-    if (ws->node_eagerly_restamped(id))
+    if (!ws->nested_authority_gap() && ws->node_eagerly_restamped(id))
         return true;
     // Issue #3076: production Hard sibling — Soft observe must not rise.
     if (typed_audit::should_hard_reject_soft_sibling()) {
@@ -1420,7 +1420,7 @@ bool Evaluator::query_stable_hard_reject_torn() const noexcept {
     auto* ws = workspace_flat_;
     if (!ws)
         return false;
-    return ws->restamp_last_budget_exceeded();
+    return ws->restamp_last_budget_exceeded() || ws->nested_authority_gap();
 }
 
 // Issue #2960: query Agent export — remake brace-init residuals, stamp tenant+fiber,

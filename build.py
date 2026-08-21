@@ -2101,6 +2101,19 @@ def cmd_lint():
             "Issue #3195 production multi-worker residual-zero sticky linter failed — run python3 scripts/coverage/checks/check_production_multi_worker_residual_sticky_3195.py"
         )
         return r
+    # Issue #3196: nested Guard success authority-gap for Agent query
+    # window (I5 residual). Minimal invalidate; outermost owns triad.
+    # Extends test_mutation_boundary_batch + hygiene nested Guards.
+    ngag3196_script = COVERAGE_CHECKS / "check_nested_guard_authority_gap_3196.py"
+    if not ngag3196_script.exists():
+        fail(f"missing {ngag3196_script}")
+        return 1
+    r = run([sys.executable, str(ngag3196_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3196 nested Guard authority-gap linter failed — run python3 scripts/coverage/checks/check_nested_guard_authority_gap_3196.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

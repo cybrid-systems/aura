@@ -25,6 +25,7 @@
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
@@ -32,6 +33,7 @@ import aura.core.ast;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_pair_idx;
@@ -2207,6 +2209,135 @@ static void ac3166_5_source_and_linter() {
     }
 }
 
+static void ac3196_1_production_nested_export_fail_closed() {
+    std::println("\n--- #3196 AC1: production nested success → export fail-closed ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3196 AC1: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "3196 AC1: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "3196 AC1: compiler_metrics");
+    const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3196 AC1: live node");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3196 AC1: outer guard");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            CHECK(ok, "3196 AC1: inner guard");
+            const auto extra = flat->add_literal(96);
+            flat->insert_child(live, 0, extra);
+        }
+        CHECK(flat->nested_authority_gap(), "3196 AC1: gap set after nested success");
+        CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) > gap0,
+              "3196 AC1: nested_authority_gap_total bumped");
+        CHECK(!ev.allow_query_stable_ref_export(live),
+              "3196 AC1: query export fail-closed in nested window");
+        CHECK(ev.query_stable_hard_reject_torn(), "3196 AC1: torn probe sees gap");
+        aura::ast::FlatAST::StableNodeRef ref = flat->make_ref_layout(live);
+        ev.stamp_query_stable_ref_export(ref);
+        CHECK(ref.id == aura::ast::NULL_NODE, "3196 AC1: stamp export nulls half-authority ref");
+    }
+    CHECK(!flat->nested_authority_gap(), "3196 AC1: outermost triad clears gap");
+    CHECK(ev.allow_query_stable_ref_export(live), "3196 AC1: export allowed after outermost");
+    apply_dev_audit_defaults();
+}
+
+static void ac3196_2_soft_zero_extra() {
+    std::println("\n--- #3196 AC2: Soft nested success → zero extra ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3196 AC2: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "3196 AC2: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "3196 AC2: compiler_metrics");
+    const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+    aura::ast::NodeId live = 0;
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3196 AC2: outer guard");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            CHECK(ok, "3196 AC2: inner guard");
+            const auto extra = flat->add_literal(97);
+            flat->insert_child(live, 0, extra);
+        }
+        CHECK(!flat->nested_authority_gap(), "3196 AC2: Soft does not set gap");
+        CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) == gap0,
+              "3196 AC2: Soft does not bump nested_authority_gap_total");
+        CHECK(ev.allow_query_stable_ref_export(live), "3196 AC2: Soft export still allowed");
+    }
+}
+
+static void ac3196_3_outermost_clears_gap() {
+    std::println("\n--- #3196 AC3: outermost-only path does not set gap ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3196 AC3: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3196 AC3: outermost guard");
+        const auto extra = flat->add_literal(98);
+        flat->insert_child(0, 0, extra);
+        CHECK(!flat->nested_authority_gap(), "3196 AC3: no gap while outermost still live");
+    }
+    CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) == gap0,
+          "3196 AC3: outermost-only does not bump gap total");
+    CHECK(!flat->nested_authority_gap(), "3196 AC3: no leftover gap");
+    apply_dev_audit_defaults();
+}
+
+static void ac3196_4_source_and_linter() {
+    std::println("\n--- #3196 AC4/AC5: source-cite + no invent / docs ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto sec = read_file("src/compiler/evaluator_security.cpp");
+    auto ast = read_file("src/core/ast.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto batch = read_file("tests/compiler/test_mutation_boundary_batch.cpp");
+    auto build = read_file("build.py");
+    CHECK(mb.find("Issue #3196") != std::string::npos, "3196 AC4: boundary cites #3196");
+    CHECK(mb.find("note_nested_authority_gap") != std::string::npos, "3196 AC4: note gap");
+    CHECK(mb.find("clear_nested_authority_gap") != std::string::npos, "3196 AC4: outermost clears");
+    CHECK(mb.find("unified_restamp_after_boundary") != std::string::npos,
+          "3196 AC3: outermost triad still present");
+    CHECK(sec.find("nested_authority_gap()") != std::string::npos,
+          "3196 AC4: export gate consults");
+    CHECK(ast.find("note_nested_authority_gap") != std::string::npos, "3196 AC4: FlatAST face");
+    CHECK(met.find("nested_authority_gap_total{0}") != std::string::npos, "3196 AC4: counter");
+    CHECK(met.find("kNestedGuardAuthorityGapIssue = 3196") != std::string::npos,
+          "3196 AC4: issue stamp");
+    CHECK(batch.find("3196") != std::string::npos, "3196 AC5: batch suite extended");
+    CHECK(build.find("check_nested_guard_authority_gap_3196") != std::string::npos,
+          "3196 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3196-nested-authority-gap.md").empty(),
+          "3196 AC5: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3196.cpp").empty(), "3196 AC5: no invent");
+    CHECK(read_file("tests/compiler/test_issue_3196.cpp").empty(), "3196 AC5: no invent compiler");
+}
+
 static void ac3095_1_post_restore_invariant_keys() {
     std::println("\n--- #3095 AC1: post-restore macro hygiene invariant keys ---");
     CompilerService cs;
@@ -2240,6 +2371,58 @@ static void ac3095_1_post_restore_invariant_keys() {
         const auto helper_ret =
             cs.evaluator().check_macro_hygiene_invariant_post_restore("ac3095-test");
         CHECK(helper_ret == 0, "AC4: helper returns 0 on healthy flat");
+    }
+}
+
+// ── Issue #3167 ACs ──
+static void ac3167_3_2906_non_regression() {
+    std::println("\n--- #3167 AC3: #2906 non-regression — fingerprint does not regress "
+                 "flatast-locked exclusive move-out ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3167 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC3: eval");
+    auto v = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
+                                 "\"flatast-locked-move-out-exclusive-total\")"));
+    CHECK(v && is_int(*v) && as_int(*v) >= 0,
+          "AC3 #2906: flatast-locked-move-out-exclusive-total still surfaces");
+    auto s = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
+                                 "\"schema\")"));
+    CHECK(s && is_int(*s), "AC3 #2906: schema key still present");
+    CHECK(as_int(*s) == 2906, "AC3 #2906: schema is #2906 (unchanged)");
+    auto pcv_key = cs.eval(std::format("(hash-ref (engine:metrics \"query:pcv-hotpath-stats\") "
+                                       "\"pcv-span-stale-across-guard-total\")"));
+    CHECK(pcv_key && is_int(*pcv_key) && as_int(*pcv_key) >= 0,
+          "AC3/AC4: pcv-span-stale-across-guard-total additive");
+}
+
+static void ac3167_6_source_and_linter() {
+    std::println("\n--- #3167 AC5/AC6: source-cite + linter + no docs/design/* ---");
+    int rc = std::system("python3 scripts/check_pcv_span_stale_coverage_3167.py "
+                         "--self-test > /dev/null 2>&1");
+    CHECK(rc == 0, "3167 AC5: linter --self-test passes");
+    const auto pcv = read_file("src/core/persistent_child_vector.hh");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/check_pcv_span_stale_coverage_3167.py");
+    CHECK(pcv.find("Issue #3167") != std::string::npos,
+          "3167 AC6: persistent_child_vector.hh cites #3167");
+    CHECK(pcv.find("force_refresh_pcv_span") != std::string::npos,
+          "3167 AC6: 6-arg ctor + fingerprint in pcv header");
+    CHECK(ast.find("force_refresh_pcv_span") != std::string::npos,
+          "3167 AC6: force_refresh_pcv_span in ast.ixx");
+    CHECK(ast.find("pcv_span_stale_across_guard_total") != std::string::npos,
+          "3167 AC6: counter accessor in ast.ixx");
+    CHECK(build.find("check_pcv_span_stale_coverage_3167") != std::string::npos,
+          "3167 AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("Issue #3167") != std::string::npos, "3167 AC5: linter");
+    CHECK(read_file("docs/design/3167-pcv-span-stale.md").empty(),
+          "3167 AC6: no docs/design/3167-* per #1655");
+    for (const auto& rel : {std::string("tests/issues/test_issue_3167.cpp"),
+                            std::string("tests/compiler/test_issue_3167.cpp"),
+                            std::string("tests/serve/test_issue_3167.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3167 AC5: forbidden {} per #81967", rel));
     }
 }
 
@@ -2338,70 +2521,14 @@ int main() {
     ac3166_3_outermost_zero_regression();
     ac3166_4_nested_abort_outermost_no_double();
     ac3166_5_source_and_linter();
+    std::println("\n=== Issue #3196: nested Guard success authority-gap (Agent query window) ===");
+    ac3196_1_production_nested_export_fail_closed();
+    ac3196_2_soft_zero_extra();
+    ac3196_3_outermost_clears_gap();
+    ac3196_4_source_and_linter();
     std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard (I2 residual) ===");
     ac3167_3_2906_non_regression();
     ac3167_6_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
-}
-
-// ── Issue #3167 ACs ──
-// SafePCVSpan / children_safe_view across MutationBoundaryGuard must not
-// remain live without pin or forced re-query (I2 residual). Production
-// contract: stale → forced re-pin + counter bumped; Soft/Off: unchanged
-// (COW frozen view). #2906 (flatast-locked-move-out exclusive) MUST NOT
-// regress — fingerprint is observation-only metadata, doesn't gate move-out.
-static void ac3167_3_2906_non_regression() {
-    std::println("\n--- #3167 AC3: #2906 non-regression — fingerprint does not regress "
-                 "flatast-locked exclusive move-out ---");
-    // Wire #2906 observability key — if flatast-locked-move-out-exclusive-total
-    // is still exposed, the #2906 contract survived. If it disappears, the
-    // #3167 fingerprint path broke #2906.
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3167 AC3: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC3: eval");
-    auto v = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
-                                 "\"flatast-locked-move-out-exclusive-total\")"));
-    CHECK(v && is_int(*v) && as_int(*v) >= 0,
-          "AC3 #2906: flatast-locked-move-out-exclusive-total still surfaces");
-    auto s = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
-                                 "\"schema\")"));
-    CHECK(s && is_int(*s), "AC3 #2906: schema key still present");
-    CHECK(as_int(*s) == 2906, "AC3 #2906: schema is #2906 (unchanged)");
-    // pcv_span_stale_across_guard_total must be additive, NOT replacing #2906.
-    auto pcv_key = cs.eval(std::format("(hash-ref (engine:metrics \"query:pcv-hotpath-stats\") "
-                                       "\"pcv-span-stale-across-guard-total\")"));
-    CHECK(pcv_key && is_int(*pcv_key) && as_int(*pcv_key) >= 0,
-          "AC3/AC4: pcv-span-stale-across-guard-total additive");
-}
-
-static void ac3167_6_source_and_linter() {
-    std::println("\n--- #3167 AC5/AC6: source-cite + linter + no docs/design/* ---");
-    int rc = std::system("python3 scripts/check_pcv_span_stale_coverage_3167.py "
-                         "--self-test > /dev/null 2>&1");
-    CHECK(rc == 0, "3167 AC5: linter --self-test passes");
-    const auto pcv = read_file("src/core/persistent_child_vector.hh");
-    const auto ast = read_file("src/core/ast.ixx");
-    const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/check_pcv_span_stale_coverage_3167.py");
-    CHECK(pcv.find("Issue #3167") != std::string::npos,
-          "3167 AC6: persistent_child_vector.hh cites #3167");
-    CHECK(pcv.find("force_refresh_pcv_span") != std::string::npos,
-          "3167 AC6: 6-arg ctor + fingerprint in pcv header");
-    CHECK(ast.find("force_refresh_pcv_span") != std::string::npos,
-          "3167 AC6: force_refresh_pcv_span in ast.ixx");
-    CHECK(ast.find("pcv_span_stale_across_guard_total") != std::string::npos,
-          "3167 AC6: counter accessor in ast.ixx");
-    CHECK(build.find("check_pcv_span_stale_coverage_3167") != std::string::npos,
-          "3167 AC6: build.py wires linter");
-    CHECK(!lint.empty() && lint.find("Issue #3167") != std::string::npos, "3167 AC5: linter");
-    CHECK(read_file("docs/design/3167-pcv-span-stale.md").empty(),
-          "3167 AC6: no docs/design/3167-* per #1655");
-    for (const auto& rel : {std::string("tests/issues/test_issue_3167.cpp"),
-                            std::string("tests/compiler/test_issue_3167.cpp"),
-                            std::string("tests/serve/test_issue_3167.cpp")}) {
-        std::error_code ec;
-        CHECK(!std::filesystem::exists(rel, ec),
-              std::format("3167 AC5: forbidden {} per #81967", rel));
-    }
 }
