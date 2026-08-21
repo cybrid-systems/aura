@@ -2483,6 +2483,122 @@ static void ac3203_5_source_and_linter() {
           "3203 AC5: no docs/design/");
 }
 
+// ── Issue #3237: query:type gates on Full audit + no residual dirty/TIMEOUT ──
+static void ac3237_1_production_residual_not_authoritative() {
+    std::println("\n--- #3237 AC1: Production residual → not-authoritative, no green ---");
+    using aura::compiler::kTypeExportFullAuditGateIssue;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::last_proof_would_allow_commit_v_read;
+    using aura::compiler::typed_audit::note_pending_full_solve_residual;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    CHECK(kTypeExportFullAuditGateIssue == 3237, "3237 AC1: issue stamp");
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3237 AC1: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().copy_infer_type_export_authority(true);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "3237 AC1: SOLVED grant is authoritative before residual");
+
+    const auto allow0 = last_proof_would_allow_commit_v_read();
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "ac3237_1_production_residual_not_authoritative: residual face refuses");
+    svc.evaluator().grant_type_export_authority();
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "3237 AC1: grant cannot override residual face");
+    CHECK(last_proof_would_allow_commit_v_read() == allow0,
+          "3237 AC1: grant does not stamp green would_allow");
+    auto git = svc.eval("(get-inferred-type 0)");
+    CHECK(git.has_value(), "3237 AC1: get-inferred-type returned");
+    auto qto = svc.eval("(query-type-of \"f\")");
+    CHECK(qto.has_value(), "3237 AC1: query-type-of returned");
+
+    reset_pending_full_solve_residual_for_test();
+    svc.evaluator().copy_infer_type_export_authority(false);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "3237 AC1: TIMEOUT face stays not-authoritative");
+
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3237") != std::string::npos, "3237 AC1: persist skip green");
+    CHECK(mb.find("force_reason=*/16") != std::string::npos ||
+              mb.find("/*force_reason=*/16") != std::string::npos,
+          "3237 AC1: reused force_reason 16");
+
+    reset_pending_full_solve_residual_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3237_2_soft_quiet() {
+    std::println("\n--- #3237 AC2: Soft unchanged; quiet residual-clear ---");
+    using aura::compiler::typed_audit::note_pending_full_solve_residual;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    using aura::compiler::typed_audit::type_export_residual_faces_clear;
+    apply_dev_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    CHECK(type_export_residual_faces_clear(), "3237 AC2: quiet empty face");
+    note_pending_full_solve_residual(3, /*hard=*/false);
+    CHECK(type_export_residual_faces_clear(),
+          "ac3237_2_soft_quiet: Soft observe does not latch face");
+
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3237 AC2: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().copy_infer_type_export_authority(true);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "3237 AC2: Soft SOLVED grant remains authoritative");
+
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto helper = ev.find("bool type_export_is_authoritative() const noexcept");
+    CHECK(helper != std::string::npos, "3237 AC2: helper present");
+    const auto body_end = ev.find("}", helper);
+    CHECK(body_end != std::string::npos, "3237 AC2: helper body");
+    const auto slice = ev.substr(helper, body_end - helper);
+    CHECK(slice.find("production_defaults_active") == std::string::npos,
+          "3237 AC2: no production_defaults on quiet helper");
+    CHECK(slice.find("if (!last_type_solve_solved_)") != std::string::npos,
+          "3237 AC2: TIMEOUT check first");
+    reset_pending_full_solve_residual_for_test();
+}
+
+static void ac3237_3_lineage() {
+    std::println("\n--- #3237 AC3: lineage #3004/#3031/#3203/#3225 ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(mb.find("grant_type_export_authority") != std::string::npos,
+          "3237 AC3: #3004 persist grant retained");
+    CHECK(mb.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3237 AC3: #3031 drain retained");
+    CHECK(ev.find("if (!last_type_solve_solved_") != std::string::npos,
+          "3237 AC3: #3203 TIMEOUT refuse retained");
+    CHECK(mb.find("Issue #3225") != std::string::npos, "3237 AC3: #3225 seqlock retained");
+}
+
+static void ac3237_4_source_linter() {
+    std::println("\n--- #3237 AC4: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kTypeExportFullAuditGateIssue = 3237") != std::string::npos,
+          "ac3237_4_source_linter: stamp");
+    CHECK(build.find("check_type_export_full_audit_gate_3237") != std::string::npos,
+          "3237 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3237.cpp").empty(), "3237 AC4: no invent");
+    CHECK(read_file("docs/design/3237-type-export-full-audit.md").empty(),
+          "3237 AC4: no docs/design");
+}
+
 // ── #3108: commit_readiness recover must re-gate on solve_status==SOLVED ─
 //
 // Closes the half-green residual of #2750 / #2909 / #2962 / #2911 /
@@ -2658,6 +2774,11 @@ int run_test_solve_delta_unresolved_export() {
     ac3203_3_solved_still_grants();
     ac3203_4_quiet_solved_zero_cost();
     ac3203_5_source_and_linter();
+    std::println("\n=== Issue #3237: query:type Full-audit residual gate ===");
+    ac3237_1_production_residual_not_authoritative();
+    ac3237_2_soft_quiet();
+    ac3237_3_lineage();
+    ac3237_4_source_linter();
     std::println("\n=== Issue #3108: commit_readiness recover re-gate ===");
     ac3108_1_recover_regate_wired();
     ac3108_2_production_rejects_via_existing_path();

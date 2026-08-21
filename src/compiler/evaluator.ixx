@@ -3618,14 +3618,18 @@ public:
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
-    // Issue #3003 / #3081 / #3203: query:type / get-inferred-type authority.
-    // False after Production / Full solve_delta that is not SOLVED, and
-    // after Soft TIMEOUT / CONFLICT (allow_timeout_commit included).
+    // Issue #3003 / #3081 / #3203 / #3237: query:type / get-inferred-type
+    // authority. False after Production / Full solve_delta that is not
+    // SOLVED, after Soft TIMEOUT / CONFLICT, and after a latched
+    // pending_full_solve residual face (Full-audit not closed).
     // Issue #3203: persist grant cannot override a non-SOLVED last face.
+    // Issue #3237: query-time residual check (no production_defaults load).
     [[nodiscard]] bool type_export_is_authoritative() const noexcept {
         if (!last_type_solve_solved_)
             return false;
-        return type_export_authoritative_;
+        if (!type_export_authoritative_)
+            return false;
+        return aura::compiler::typed_audit::type_export_residual_faces_clear();
     }
     [[nodiscard]] bool type_export_authoritative() const noexcept {
         return type_export_is_authoritative();
@@ -3638,7 +3642,10 @@ public:
         // Issue #3203: never stamp durable authority over TIMEOUT/CONFLICT
         // even if outermost persist would grant. Quiet SOLVED: last_type_solve_solved_
         // is true (default) — no production_defaults load.
-        if (!last_type_solve_solved_) {
+        // Issue #3237: pending_full_solve residual face (Production latch)
+        // also refuses — no green query:type over an unclosed Full audit.
+        if (!last_type_solve_solved_ ||
+            !aura::compiler::typed_audit::type_export_residual_faces_clear()) {
             type_export_authoritative_ = false;
             type_export_inflight_ = false;
             return;

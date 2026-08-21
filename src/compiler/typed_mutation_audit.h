@@ -2512,6 +2512,15 @@ inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcep
     if (hard)
         g_pending_full_solve_residual_face.store(1, std::memory_order_relaxed);
 }
+
+// Issue #3237: query:type / type_export_is_authoritative residual gate.
+// Production/Full latches pending_full_solve_residual_face; Soft never
+// does (#3031). Quiet: one relaxed load of 0. No production_defaults
+// load (#3203 AC4). Callers already refused TIMEOUT via last-solve.
+// Stamp lives on TypeChecker (kTypeExportFullAuditGateIssue).
+[[nodiscard]] inline bool type_export_residual_faces_clear() noexcept {
+    return !pending_full_solve_residual_face_hit();
+}
 inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_recover_total{0};

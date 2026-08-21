@@ -2209,6 +2209,19 @@ def cmd_lint():
             "Issue #3236 ADT exhaust commit recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_commit_recheck_3236.py"
         )
         return r
+    # Issue #3237: query:type / type_export_is_authoritative gates on
+    # Full-audit residual faces (pending_full_solve + TIMEOUT). Soft
+    # unchanged; quiet two loads. Extends test_solve_delta_unresolved_export.
+    tefg3237_script = COVERAGE_CHECKS / "check_type_export_full_audit_gate_3237.py"
+    if not tefg3237_script.exists():
+        fail(f"missing {tefg3237_script}")
+        return 1
+    r = run([sys.executable, str(tefg3237_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3237 type-export Full-audit gate linter failed — run python3 scripts/coverage/checks/check_type_export_full_audit_gate_3237.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

@@ -447,6 +447,10 @@ inline constexpr int kSoftTimeoutExportNonAuthoritativeIssue = 3081;
 // Issue #3203: uniform enforcement — Soft TIMEOUT/CONFLICT must not grant
 // durable query:type / occurrence TypeId even if persist later stamps grant.
 inline constexpr int kSoftTimeoutExportUniformGateIssue = 3203;
+// Issue #3237: residual of #3004/#3031/#3203 — production query:type /
+// type_export_is_authoritative requires Full-audit residual faces clear
+// (pending_full_solve empty). Soft observe unchanged; quiet two loads.
+export inline constexpr int kTypeExportFullAuditGateIssue = 3237;
 
 // Issue #3005: ADT variant / match-pattern mutate must put exhaustiveness
 // goals into the dirty cone / solve_delta dep-closure. Production / Full
@@ -2101,6 +2105,8 @@ public:
     [[nodiscard]] SolveResult last_solve_status() const noexcept { return last_solve_status_; }
     // Issue #3203: never grant on TIMEOUT/CONFLICT even if the flag was stamped.
     // Quiet SOLVED: one compare then the flag (no production_defaults load).
+    // Issue #3237: query:type residual-face gate lives on Evaluator (process
+    // pending_full_solve face is not a per-engine latch).
     [[nodiscard]] bool type_export_is_authoritative() const noexcept {
         if (last_solve_status_ != SolveResult::SOLVED)
             return false;
@@ -2751,6 +2757,7 @@ export struct TypeChecker {
     }
     // Issue #3203: Soft TIMEOUT/CONFLICT never exports durable TypeIds.
     // Quiet SOLVED: compare last_delta_solve_status_ first (no extra atomic).
+    // Issue #3237: query:type residual-face gate lives on Evaluator.
     [[nodiscard]] bool type_export_is_authoritative() const noexcept {
         if (last_delta_solve_status_ != SolveResult::SOLVED)
             return false;

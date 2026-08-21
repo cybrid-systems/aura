@@ -928,8 +928,9 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
-        // Issue #3081: authority first — never leak a half-solved type
-        // (or confuse Agents with out-of-range) when export is not truth.
+        // Issue #3081 / Issue #3237: authority first — never leak a
+        // half-solved type (or a pre-Full-audit residual) when export is
+        // not truth.
         if (!ev.type_export_authoritative()) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
@@ -974,7 +975,7 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         auto sym = ev.canonical_pool()->intern(name);
 
         auto& flat = *ev.workspace_flat_;
-        // Issue #3081: authority first (same as get-inferred-type).
+        // Issue #3081 / Issue #3237: authority first (same as get-inferred-type).
         if (!ev.type_export_authoritative()) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
