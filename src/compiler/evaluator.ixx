@@ -6849,14 +6849,77 @@ public:
     // evaluator_ctor.cpp to tier-assign the 7 EDSL escape hatches).
     // The O(1) name → slot → meta lookup is only paid for the
     // gate path (skipped when name is empty or security_level is 0).
+    // Issue #3235: type-erased Guard holder so this inline method can
+    // live before MutationBoundaryGuard is complete.
+    struct HeapMutateGuardHandle {
+        void* p = nullptr;
+        void (*drop)(void*) noexcept = nullptr;
+        HeapMutateGuardHandle() noexcept = default;
+        HeapMutateGuardHandle(void* q, void (*d)(void*) noexcept) noexcept
+            : p(q)
+            , drop(d) {}
+        HeapMutateGuardHandle(const HeapMutateGuardHandle&) = delete;
+        HeapMutateGuardHandle& operator=(const HeapMutateGuardHandle&) = delete;
+        HeapMutateGuardHandle(HeapMutateGuardHandle&& o) noexcept
+            : p(o.p)
+            , drop(o.drop) {
+            o.p = nullptr;
+            o.drop = nullptr;
+        }
+        HeapMutateGuardHandle& operator=(HeapMutateGuardHandle&& o) noexcept {
+            if (this != &o) {
+                if (p && drop)
+                    drop(p);
+                p = o.p;
+                drop = o.drop;
+                o.p = nullptr;
+                o.drop = nullptr;
+            }
+            return *this;
+        }
+        ~HeapMutateGuardHandle() {
+            if (p && drop)
+                drop(p);
+        }
+    };
+    // Issue #3235: auto-acquire Guard for mutate_general prims (vector-set!,
+    // hash-set!, set-car!) that stamp requires_mutation_guard but are not
+    // add_mutate. Nested boundary → empty handle, ok=true. Acquire fail →
+    // ok=false. Impl: evaluator_mutation_boundary.cpp
+    [[nodiscard]] HeapMutateGuardHandle maybe_auto_guard_heap_mutate(bool& ok) noexcept;
     template <typename Call>
     inline types::EvalValue invoke_prim_with_telemetry(std::string_view name, Call&& call) {
         bump_primitive_call_count();
 
+        HeapMutateGuardHandle heap_guard;
         if (!name.empty()) {
             const auto slot = primitives_.slot_for_name(name);
             if (slot < primitives_.slot_count()) {
                 const auto& meta = primitives_.meta_for_slot(slot);
+                // Issue #3235: unify classic container mutators with mutate:*
+                // under MutationBoundaryGuard. add_mutate bodies already
+                // acquire (effect_enforced_in_body) — skip double wrap.
+                const bool heap_mutate = meta.requires_mutation_guard && !meta.guard_exempt &&
+                                         !meta.effect_enforced_in_body;
+                if (heap_mutate) {
+                    bool ok = true;
+                    heap_guard = maybe_auto_guard_heap_mutate(ok);
+                    if (!ok) {
+                        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                            m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                            if (typed_audit::production_defaults_active()) {
+                                m->naked_mutate_fail_closed_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                mark_outermost_mutation_failed();
+                            }
+                        }
+                        return primitives_detail::make_primitive_error(
+                            string_heap_, error_values_,
+                            std::string("naked mutate: ") + std::string(name) +
+                                " requires MutationBoundaryGuard",
+                            primitive_error_counter_ptr());
+                    }
+                }
                 // Issue #1676: render-critical / rendering+hot fast path —
                 // trusted tier skips string capability / deprecation tax.
                 // Issue #2136 / #2152: still enforce required_effects (explicit
@@ -6923,7 +6986,10 @@ public:
                         "capability denied: privileged primitive requires kCapWildcard",
                         primitive_error_counter_ptr());
                 }
-                if (meta.security_level == kPrimSecSandboxed &&
+                // Issue #3235: heap mutators are Guard-gated (language
+                // vector-set! / hash-set! / set-car!). Skip kCapSandbox so
+                // production Restricted CLI can mutate containers.
+                if (meta.security_level == kPrimSecSandboxed && !heap_mutate &&
                     !has_capability(security::kCapSandbox)) {
                     bump_capability_denial();
                     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {

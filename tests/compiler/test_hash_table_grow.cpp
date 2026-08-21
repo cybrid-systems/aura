@@ -10,18 +10,27 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_concurrency_health.hh"
+#include "compiler/observability_metrics.h"
+#include "compiler/security_defaults.hh"
+#include "compiler/typed_mutation_audit.h"
+
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_error;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -121,6 +130,58 @@ static void ac5_gate() {
     CHECK(build.find("cmd_hash_table_grow_coverage") != std::string::npos, "AC5: coverage cmd");
 }
 
+static void ac3235_1_vector_set_mutates() {
+    std::println("\n--- #3235 AC1: vector-set! mutates slot ---");
+    CompilerService cs;
+    auto r = cs.eval("(begin (define v (vector 1 2 3 4)) (vector-set! v 0 42) (vector-ref v 0))");
+    CHECK(r && !is_error(*r) && is_int(*r) && as_int(*r) == 42, "3235 AC1: vector-ref 42");
+}
+
+static void ac3235_2_hash_and_pair() {
+    std::println("\n--- #3235 AC2: hash-set! + set-car! mutate ---");
+    CompilerService cs;
+    auto h = cs.eval("(begin (define h (hash 1 2)) (hash-set! h 3 4) (hash-ref h 3))");
+    CHECK(h && !is_error(*h) && is_int(*h) && as_int(*h) == 4, "3235 AC2: hash-ref 4");
+    auto p = cs.eval("(begin (define xs (cons 1 2)) (set-car! xs 99) (car xs))");
+    CHECK(p && !is_error(*p) && is_int(*p) && as_int(*p) == 99, "3235 AC2: car 99");
+}
+
+static void ac3235_3_production_guard() {
+    std::println("\n--- #3235 AC3: production Restricted + Guard acquire ---");
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
+    ::setenv("AURA_PIPELINE_STRICT", "0", 1);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::security::apply_production_security_defaults();
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "3235 AC3: metrics");
+    const auto acq0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    auto r = cs.eval("(begin (define v (vector 1 2 3 4)) (vector-set! v 0 42) (vector-ref v 0))");
+    CHECK(r && !is_error(*r) && is_int(*r) && as_int(*r) == 42, "3235 AC3: production vector-set!");
+    CHECK(m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed) > acq0,
+          "3235 AC3: try_acquire bumped");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+}
+
+static void ac3235_4_source() {
+    std::println("\n--- #3235 AC4: source-cite lock + PrimCall Guard ---");
+    const auto eix = read_file("src/compiler/evaluator.ixx");
+    const auto vec = read_file("src/compiler/evaluator_primitives_vector.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    CHECK(eix.find("maybe_auto_guard_heap_mutate") != std::string::npos, "3235 AC4: PrimCall");
+    CHECK(eix.find("Issue #3235") != std::string::npos, "3235 AC4: evaluator cite");
+    CHECK(vec.find("alloc_storage_lock_") != std::string::npos, "3235 AC4: vector-set! lock");
+    CHECK(mb.find("maybe_auto_guard_heap_mutate") != std::string::npos, "3235 AC4: helper");
+    CHECK(build.find("check_container_mutate_guard_3235") != std::string::npos,
+          "3235 AC4: build.py");
+    CHECK(read_file("docs/design/3235-container-mutate.md").empty(), "3235 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3235.cpp").empty(), "3235 AC4: no invent");
+}
+
 } // namespace
 
 int run_test_hash_table_grow() {
@@ -130,7 +191,12 @@ int run_test_hash_table_grow() {
     ac3_update_after_growth();
     ac4_source();
     ac5_gate();
-    std::println("\n=== #2654: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3235: container mutation Guard ===");
+    ac3235_1_vector_set_mutates();
+    ac3235_2_hash_and_pair();
+    ac3235_3_production_guard();
+    ac3235_4_source();
+    std::println("\n=== #2654/#3235: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
