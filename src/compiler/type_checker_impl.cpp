@@ -650,6 +650,9 @@ std::size_t ConstraintSystem::append_occurrence_snapshot(std::uint64_t mutation_
         return 0; // AC2: soft zero cost
     if (occurrence_goals_.empty())
         return 0;
+    // Issue #3225: production seqlock around persist write so a concurrent
+    // rehydrate can detect a torn copy (odd seq / gen change). Soft: no bump.
+    aura::compiler::typed_audit::occurrence_persist_seq_begin_write();
     const auto mid = mutation_id != 0
                          ? mutation_id
                          : (active_mutation_id_ != 0 ? active_mutation_id_
@@ -681,6 +684,7 @@ std::size_t ConstraintSystem::append_occurrence_snapshot(std::uint64_t mutation_
         if (truncated > 0)
             m->occurrence_persist_trunc_total.fetch_add(truncated, std::memory_order_relaxed);
     }
+    aura::compiler::typed_audit::occurrence_persist_seq_end_write();
     return written;
 }
 
@@ -698,11 +702,29 @@ ConstraintSystem::rehydrate_occurrence_from_persist(std::uint64_t preferred_mid)
         return 0; // live table still authoritative
     if (occurrence_persist_log_.empty())
         return 0;
+    // Issue #3225: seqlock read. Production: odd seq or gen change mid-copy
+    // is a torn persist vs concurrent outermost write → miss (empty goals,
+    // reject via existing empty-after-fence). Soft: skip seq (no structural
+    // change). Quiet (disabled) already returned.
+    const bool hard = aura::compiler::typed_audit::occurrence_persist_seq_hard();
+    std::uint64_t g0 = 0;
+    if (hard) {
+        g0 = aura::compiler::typed_audit::g_occurrence_persist_seq.load(std::memory_order_acquire);
+        if (g0 & 1ull) {
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->occurrence_persist_rehydrate_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            aura::compiler::typed_audit::note_occurrence_empty_after_fence(true);
+            (void)aura::compiler::typed_audit::invalidate_fast_path_on_rehydrate_miss();
+            return 0;
+        }
+    }
     // Resolve which mid to rehydrate: preferred, else most-recent entry's mid.
     std::uint64_t mid = preferred_mid;
     if (mid == 0)
         mid = occurrence_persist_log_.back().source_mutation_id;
-    std::size_t n = 0;
+    std::vector<OccurrencePersistEntry> snap;
     const auto cap = occurrence_persist_cap();
     for (const auto& e : occurrence_persist_log_) {
         if (mid != 0 && e.source_mutation_id != mid && preferred_mid != 0)
@@ -713,6 +735,25 @@ ConstraintSystem::rehydrate_occurrence_from_persist(std::uint64_t preferred_mid)
             continue;
         if (!e.var.valid())
             continue;
+        if (snap.size() >= cap)
+            break;
+        snap.push_back(e);
+    }
+    if (hard) {
+        const auto g1 =
+            aura::compiler::typed_audit::g_occurrence_persist_seq.load(std::memory_order_acquire);
+        if (g0 != g1) {
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->occurrence_persist_rehydrate_miss_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            aura::compiler::typed_audit::note_occurrence_empty_after_fence(true);
+            (void)aura::compiler::typed_audit::invalidate_fast_path_on_rehydrate_miss();
+            return 0;
+        }
+    }
+    std::size_t n = 0;
+    for (const auto& e : snap) {
         if (occurrence_goals_.size() >= cap) {
             if (metrics_) {
                 auto* m = static_cast<struct CompilerMetrics*>(metrics_);

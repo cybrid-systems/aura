@@ -1391,6 +1391,34 @@ inline std::atomic<std::uint64_t> g_occurrence_commit_snapshot_mid{0};
 [[nodiscard]] inline std::uint64_t occurrence_commit_snapshot_mid_v_read() noexcept {
     return g_occurrence_commit_snapshot_mid.load(std::memory_order_relaxed);
 }
+// Issue #3225: persist side-buffer seqlock. Production write advances
+// seq odd→even around the copy; rehydrate that sees odd or mid-copy
+// change treats as miss (empty goals, reject proof via existing
+// empty-after-fence + invalidate_fast_path). Soft/quiet: unused.
+// Reuses miss + empty-after-fence — no new counter / query key.
+inline constexpr int kOccurrencePersistSeqIssue = 3225;
+inline std::atomic<std::uint64_t> g_occurrence_persist_seq{0};
+[[nodiscard]] inline std::uint64_t occurrence_persist_seq_v_read() noexcept {
+    return g_occurrence_persist_seq.load(std::memory_order_relaxed);
+}
+inline void reset_occurrence_persist_seq_for_test() noexcept {
+    g_occurrence_persist_seq.store(0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool occurrence_persist_seq_hard() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+inline void occurrence_persist_seq_begin_write() noexcept {
+    if (occurrence_persist_seq_hard())
+        g_occurrence_persist_seq.fetch_add(1, std::memory_order_release);
+}
+inline void occurrence_persist_seq_end_write() noexcept {
+    if (occurrence_persist_seq_hard())
+        g_occurrence_persist_seq.fetch_add(1, std::memory_order_release);
+}
+inline void bump_occurrence_persist_seq_for_test() noexcept {
+    g_occurrence_persist_seq.fetch_add(1, std::memory_order_release);
+}
+
 inline void note_occurrence_commit_snapshot_written(std::uint64_t mid,
                                                     std::uint64_t entries_written) noexcept {
     if (entries_written == 0)
