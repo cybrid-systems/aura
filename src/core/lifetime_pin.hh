@@ -92,6 +92,11 @@ inline constexpr int kFfiOpaquePinOrRemapResidualIssue = 3057;
 // one required-pref load. No second pin registry; do not bump
 // kGeneralObjectPinAdoptSiteCount (new sites roll in via auto_wire).
 inline constexpr int kGeneralObjectPinAllocateResidualIssue = 3053;
+// Issue #3214: densify-tracked allocate of any size (pmr / large /
+// small-pool fallback), not only small-pool owns, must join the same
+// pin / slot / EXEMPT triad. Soft is one required-pref load. No second
+// pin registry; do not bump kGeneralObjectPinAdoptSiteCount.
+inline constexpr int kDensifyTrackedAllocateCoverIssue = 3214;
 
 // ── Object class × required protocol inventory (#2298 AC5 / #2363) ────
 // | Class                         | Protocol                          |

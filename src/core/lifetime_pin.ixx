@@ -25,6 +25,7 @@ import std;
 export namespace aura::core::lifetime {
 
 // Phase / inventory stamps
+using ::aura::core::lifetime::kDensifyTrackedAllocateCoverIssue;
 using ::aura::core::lifetime::kFfiOpaquePinOrRemapIssue;
 using ::aura::core::lifetime::kFfiOpaquePinOrRemapResidualIssue;
 using ::aura::core::lifetime::kGeneralObjectPinAdoptIssue;

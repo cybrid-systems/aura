@@ -2983,6 +2983,23 @@ def cmd_lint():
             "Issue #3180 production small-pool cover linter failed — run python3 scripts/coverage/checks/check_production_small_pool_cover_3180.py"
         )
         return r
+    # Issue #3214: required-regime intermediate allocate must cover triad
+    # on all densify-tracked paths (not only small-pool). Broadens
+    # maybe_note_allocate_intermediate_ + allocate_raw_impl pmr path
+    # through existing note_intermediate_create_with_cover_ (no second
+    # registry). Soft remains a single required-active load. Extends
+    # test_moving_densify_fail_closed / test_arena_required_cover_no_value_only
+    # / test_general_object_pin_coverage_gate (#81967); no docs/design/ (#1655).
+    padc3214_script = COVERAGE_CHECKS / "check_production_all_densify_allocate_cover_3214.py"
+    if not padc3214_script.exists():
+        fail(f"missing {padc3214_script}")
+        return 1
+    r = run([sys.executable, str(padc3214_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3214 densify-tracked allocate cover linter failed — run python3 scripts/coverage/checks/check_production_all_densify_allocate_cover_3214.py"
+        )
+        return r
     # Issue #3181: clone walk in_quote boundary (binding/ref split
     # residual of #3154). pre_scan #3154 stops at NodeTag::Quote; clone
     # walk now mirrors it via `in_quote` parameter (NodeTag::Quote OR

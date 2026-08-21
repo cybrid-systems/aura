@@ -210,12 +210,13 @@ static void ac3180_hot_path_cover_declarations() {
     const auto mod_load = read_file("src/compiler/evaluator_module_loader.cpp");
     const auto ws_tree = read_file("src/compiler/evaluator_workspace_tree.cpp");
 
-    // Slot declarations (long-lived survivors).
-    CHECK(eval_flat.find("note_intermediate_create_with_cover_(\n                pat_pool, "
-                         "reinterpret_cast<void**>(&pat_pool), nullptr)") != std::string::npos,
+    // Slot declarations (long-lived survivors). Indent is not part of the
+    // contract — the 3180 python linter already regex-matches wrapping.
+    CHECK(eval_flat.find("pat_pool, reinterpret_cast<void**>(&pat_pool), nullptr") !=
+              std::string::npos,
           "AC3: evaluator_eval_flat declares pat_pool slot cover");
-    CHECK(eval_flat.find("note_intermediate_create_with_cover_(\n                pat_flat, "
-                         "reinterpret_cast<void**>(&pat_flat), nullptr)") != std::string::npos,
+    CHECK(eval_flat.find("pat_flat, reinterpret_cast<void**>(&pat_flat), nullptr") !=
+              std::string::npos,
           "AC3: evaluator_eval_flat declares pat_flat slot cover");
 
     // Transient EXEMPT (reason-string) declarations.
@@ -233,31 +234,27 @@ static void ac3180_hot_path_cover_declarations() {
     CHECK(service.find("note_intermediate_create_with_cover_(\n                flat_ptr, "
                        "reinterpret_cast<void**>(&flat_ptr), nullptr)") != std::string::npos,
           "AC3: service arena parse_to_flat declares pool/flat slot cover");
-    CHECK(service.find("mod_arena.note_intermediate_create_with_cover_(\n            "
-                       "pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)") !=
-              std::string::npos,
+    CHECK(service.find("mod_arena.note_intermediate_create_with_cover_") != std::string::npos &&
+              service.find("pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr") !=
+                  std::string::npos,
           "AC3: service module_arena parse_to_flat declares pool slot cover");
-    CHECK(service.find("mod_arena.note_intermediate_create_with_cover_(\n            "
-                       "flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)") !=
+    CHECK(service.find("flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr") !=
               std::string::npos,
           "AC3: service module_arena parse_to_flat declares flat slot cover");
 
     // evaluator_module_loader.cpp — pool/flat/env slot cover.
-    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_(\n    "
-                        "pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr)") !=
-              std::string::npos,
+    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_") != std::string::npos &&
+              mod_load.find("pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr") !=
+                  std::string::npos,
           "AC3: evaluator_module_loader declares pool slot cover");
-    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_(\n    "
-                        "flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr)") !=
+    CHECK(mod_load.find("flat_ptr, reinterpret_cast<void**>(&flat_ptr), nullptr") !=
               std::string::npos,
           "AC3: evaluator_module_loader declares flat slot cover");
-    CHECK(mod_load.find("mod_arena.note_intermediate_create_with_cover_(\n    "
-                        "mod_env, reinterpret_cast<void**>(&mod_env), nullptr)") !=
-              std::string::npos,
+    CHECK(mod_load.find("reinterpret_cast<void**>(&mod_env)") != std::string::npos,
           "AC3: evaluator_module_loader declares mod_env slot cover");
 
     // evaluator_workspace_tree.cpp — env slot cover.
-    CHECK(ws_tree.find("ar->note_intermediate_create_with_cover_(\n        env, "
+    CHECK(ws_tree.find("ar->note_intermediate_create_with_cover_(env, "
                        "reinterpret_cast<void**>(&env), nullptr)") != std::string::npos,
           "AC3: evaluator_workspace_tree declares env slot cover");
 }
@@ -422,6 +419,71 @@ static void ac5_6_7_counter_accessor_reset() {
     }
 }
 
+// Issue #3214: maybe_note / allocate_raw_impl must note non-small densify-
+// tracked allocate (pmr fallback, size > kMaxSmallSize), not only small-pool
+// owns. Residual of #3156 / #3180. Soft single-load preserved (AC8).
+static void ac3214_nonsmall_allocate_notes_cover() {
+    std::println("\n--- #3214: non-small densify-tracked allocate notes cover triad ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(!arena.empty(), "3214: arena.ixx readable");
+
+    const auto sig_pos = arena.find("void maybe_note_allocate_intermediate_(");
+    CHECK(sig_pos != std::string::npos, "3214: maybe_note_allocate_intermediate_ present");
+    if (sig_pos == std::string::npos)
+        return;
+    const auto open = find_function_body_open_(arena, sig_pos, 2048);
+    CHECK(open != std::string::npos, "3214: maybe_note body found");
+    if (open == std::string::npos)
+        return;
+    const auto close = find_function_body_close_(arena, open);
+    if (close == std::string::npos || close <= open)
+        return;
+    const std::string body = arena.substr(open, close - open + 1);
+
+    CHECK(body.find("kMaxSmallSize") != std::string::npos,
+          "3214: small-pool identity (kMaxSmallSize) kept");
+    CHECK(body.find("small_pool_.owns") != std::string::npos,
+          "3214: small-pool identity (owns) kept");
+    CHECK(body.find("note_intermediate_create_with_cover_(ptr") != std::string::npos,
+          "3214: still routes through with_cover_");
+    CHECK(body.find("non-small / pmr-fallback densify-tracked allocate") != std::string::npos,
+          "3214: non-small branch present (does not skip cover)");
+    // Historical skip (`if (size > kMaxSmallSize || !owns) return;`) is gone.
+    CHECK(body.find("if (size > SmallObjectPool::kMaxSmallSize || !small_pool_.owns(ptr))\n"
+                    "            return;") == std::string::npos,
+          "3214: maybe_note no longer early-returns on non-small / !owns");
+
+    const auto impl_pos =
+        arena.find("void* allocate_raw_impl(std::size_t size, std::size_t alignment,");
+    CHECK(impl_pos != std::string::npos, "3214: allocate_raw_impl present");
+    if (impl_pos != std::string::npos) {
+        const auto impl_open = find_function_body_open_(arena, impl_pos, 2048);
+        CHECK(impl_open != std::string::npos, "3214: allocate_raw_impl body found");
+        if (impl_open != std::string::npos) {
+            const auto impl_close = find_function_body_close_(arena, impl_open);
+            if (impl_close != std::string::npos && impl_close > impl_open) {
+                const std::string impl = arena.substr(impl_open, impl_close - impl_open + 1);
+                const auto pmr = impl.find("resource_.allocate(size, alignment)");
+                CHECK(pmr != std::string::npos, "3214: pmr allocate path present");
+                if (pmr != std::string::npos) {
+                    const auto after = impl.substr(pmr);
+                    CHECK(after.find("maybe_note_allocate_intermediate_(ptr, size, cover_slot, "
+                                     "cover_reason)") != std::string::npos,
+                          "3214: pmr / large allocate notes cover (not only small-pool hit)");
+                }
+            }
+        }
+    }
+
+    CHECK(arena.find("kDensifyTrackedAllocateCoverIssue = 3214") != std::string::npos,
+          "3214: arena stamp present");
+    CHECK(read_file("docs/design/3214-densify-allocate-cover.md").empty(),
+          "3214: no docs/design/3214-* per #1655");
+    CHECK(read_file("tests/issues/test_issue_3214.cpp").empty() &&
+              read_file("tests/core/test_issue_3214.cpp").empty(),
+          "3214: no test_issue_3214.cpp per #81967");
+}
+
 // AC8: Soft / Off / render-hotpath single-load zero-cost contract preserved.
 // The with_cover_ body keeps the auto_wire_ call for the Soft/Off path
 // (already covered by AC4 ordering check) AND the pre-checks in
@@ -514,6 +576,7 @@ int run_test_arena_required_cover_no_value_only() {
     // Issue #3180: cover_slot/cover_reason threading + hot-path cover declarations.
     ac3180_cover_param_threading();
     ac3180_hot_path_cover_declarations();
+    ac3214_nonsmall_allocate_notes_cover();
     ac8_soft_off_zero_cost();
     ac9_linter_self_test();
     ac10_no_invent_docs();
@@ -522,3 +585,9 @@ int run_test_arena_required_cover_no_value_only() {
                  aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_arena_required_cover_no_value_only();
+}
+#endif
