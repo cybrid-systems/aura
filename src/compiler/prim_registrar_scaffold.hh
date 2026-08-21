@@ -88,7 +88,8 @@ struct PrimSpec {
     std::uint16_t required_effects = 0; // 0 → #2152 infer
     bool effect_enforced_in_body = false;
     bool security_exempt = false;
-    bool guard_exempt = false; // #2986 metadata-only mutate:*
+    bool guard_exempt = false;            // #2986 metadata-only mutate:*
+    bool requires_mutation_guard = false; // #3197 non-exempt mutate:*
     std::string_view doc{};
     std::string_view category = kPrimCategoryGeneral;
     std::string_view schema{};
@@ -125,6 +126,7 @@ struct PrimSpec {
     s.pure = false;
     s.safety_flags = kPrimSafetyMutates;
     s.security_level = kPrimSecSandboxed;
+    s.requires_mutation_guard = true; // #3197
     // required_effects left 0 — #2152 stamps from mutate:/workspace: names.
     return s;
 }
@@ -145,6 +147,7 @@ template <typename PrimMetaT>
     meta.effect_enforced_in_body = s.effect_enforced_in_body;
     meta.security_exempt = s.security_exempt;
     meta.guard_exempt = s.guard_exempt;
+    meta.requires_mutation_guard = s.requires_mutation_guard;
     meta.doc = std::string(s.doc);
     meta.category = std::string(s.category);
     meta.schema = std::string(s.schema);

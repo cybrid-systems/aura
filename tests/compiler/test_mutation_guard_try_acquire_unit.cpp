@@ -359,6 +359,62 @@ static void ac2986_6_source_and_linter() {
     CHECK(read_file("tests/compiler/test_issue_2986.cpp").empty(), "2986 AC6: no invent test");
 }
 
+static void ac3197_1_prim_meta_requires_guard() {
+    std::println("\n--- #3197 AC1: PrimMeta.requires_mutation_guard stamped ---");
+    CompilerService cs;
+    auto& prims = cs.evaluator().primitives();
+    const auto rebind = prims.slot_for_name("mutate:rebind");
+    CHECK(rebind < prims.slot_count(), "3197 AC1: mutate:rebind registered");
+    const auto& rm = prims.meta_for_slot(rebind);
+    CHECK(rm.requires_mutation_guard, "3197 AC1: rebind requires_mutation_guard");
+    CHECK(!rm.guard_exempt, "3197 AC1: rebind not guard_exempt");
+    const auto set_body = prims.slot_for_name("mutate:set-body");
+    CHECK(set_body < prims.slot_count(), "3197 AC1: mutate:set-body registered");
+    CHECK(prims.meta_for_slot(set_body).requires_mutation_guard,
+          "3197 AC1: set-body requires_mutation_guard");
+    const auto check_ref = prims.slot_for_name("mutate:check-stable-ref");
+    CHECK(check_ref < prims.slot_count(), "3197 AC1: check-stable-ref registered");
+    const auto& cm = prims.meta_for_slot(check_ref);
+    CHECK(cm.guard_exempt, "3197 AC1: check-stable-ref guard_exempt");
+    CHECK(!cm.requires_mutation_guard, "3197 AC1: exempt does not require guard");
+}
+
+static void ac3197_2_token_and_fail_closed() {
+    std::println("\n--- #3197 AC2: acquire token + production fail-closed cited ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto disp = read_file("src/compiler/mutate_dispatch.hh");
+    CHECK(disp.find("note_mutate_guard_acquire_token") != std::string::npos,
+          "3197 AC2: token note");
+    CHECK(disp.find("kNakedMutatePrimMetaIssue = 3197") != std::string::npos, "3197 AC2: stamp");
+    CHECK(mut.find("mutate_guard_acquire_token") != std::string::npos,
+          "3197 AC2: post-check token");
+    CHECK(mut.find("requires_mutation_guard = !guard_exempt") != std::string::npos,
+          "3197 AC2: stamp from add_mutate");
+    CHECK(mut.find("naked-mutate") != std::string::npos, "3197 AC2: structured kind");
+    CHECK(mut.find("mark_outermost_mutation_failed") != std::string::npos, "3197 AC2: mark-failed");
+}
+
+static void ac3197_4_soft_observe() {
+    std::println("\n--- #3197 AC4: Soft observe path preserved ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("naked_mutate_attempt") != std::string::npos, "3197 AC4: attempt counter");
+    CHECK(mut.find("production_defaults_active()") != std::string::npos,
+          "3197 AC4: production gate still on fail-closed only");
+}
+
+static void ac3197_5_source_and_linter() {
+    std::println("\n--- #3197 AC5: source-cite + linter + no invent ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_naked_mutate_prim_meta_3197.py");
+    CHECK(!lint.empty() && lint.find("3197") != std::string::npos, "3197 AC5: linter");
+    CHECK(build.find("check_naked_mutate_prim_meta_3197") != std::string::npos,
+          "3197 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3197-naked-mutate-prim-meta.md").empty(),
+          "3197 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3197.cpp").empty(), "3197 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3197.cpp").empty(), "3197 AC5: no invent issues/");
+}
+
 } // namespace
 
 int run_test_mutation_guard_try_acquire_unit() {
@@ -377,6 +433,10 @@ int run_test_mutation_guard_try_acquire_unit() {
     ac2986_4_exempt_policy_setters();
     ac2986_5_zero_happy_overhead();
     ac2986_6_source_and_linter();
+    ac3197_1_prim_meta_requires_guard();
+    ac3197_2_token_and_fail_closed();
+    ac3197_4_soft_observe();
+    ac3197_5_source_and_linter();
 
     std::println("\n=== test_mutation_guard_try_acquire_unit: {} passed, {} failed ===", g_passed,
                  g_failed);
