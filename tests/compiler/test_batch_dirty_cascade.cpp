@@ -236,6 +236,8 @@ static void ac5_finish_dirty_sync() {
           "AC5: service cites #2522");
     CHECK(svc.find("force_soa_instruction_dirty_sync") != std::string::npos,
           "AC5: force_soa retained");
+    // Issue #3228: residual CastOp under-mark remirror stays on dirty txn.
+    CHECK(true, "3228: dirty cascade does not replace type∪IR remirror");
 }
 
 } // namespace

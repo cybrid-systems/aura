@@ -12,6 +12,9 @@
 //              nodes into the type∪IR dirty cone (production/Full).
 // Issue #3120: persist residual CastOp across type-txn wipe; remirror
 //              after non-empty production cone (Soft observe-only).
+// Issue #3228: empty cone + residual persist must remirror (columnar
+//              under-mark). Soft uses apply_dev_audit_defaults (Sampled);
+//              production_defaults_active=0 alone is still Full (#2818).
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -38,6 +41,7 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
 using aura::compiler::dirty::force_dead_coercion_elim_into_cone;
+using aura::compiler::dirty::force_residual_castop_undermark_into_cone;
 using aura::compiler::dirty::kDeadCoercionElimConeIssue;
 using aura::compiler::dirty::kResidualCastopTypeTxnRemirrorIssue;
 using aura::compiler::dirty::last_type_cone_ast;
@@ -394,6 +398,38 @@ static bool cone_contains(aura::compiler::dirty::NodeId nid) {
     return false;
 }
 
+// Issue #2818: cold-start strategy is Full. Soft AC2 must opt into Sampled
+// (apply_dev_audit_defaults) — clearing production_defaults_active alone
+// still takes the persist / remirror path.
+struct SoftAuditScope {
+    std::uint32_t prod;
+    std::uint32_t ratio;
+    std::uint32_t opt_in;
+    aura::compiler::typed_audit::AuditStrategy strat;
+    SoftAuditScope() {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::compiler::typed_audit::get_sample_ratio;
+        using aura::compiler::typed_audit::get_strategy;
+        prod = g_typed_mutation_audit_counters.production_defaults_active.load(
+            std::memory_order_relaxed);
+        ratio = get_sample_ratio();
+        opt_in = g_typed_mutation_audit_counters.dev_audit_opt_in.load(std::memory_order_relaxed);
+        strat = get_strategy();
+        apply_dev_audit_defaults();
+    }
+    ~SoftAuditScope() {
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::compiler::typed_audit::set_sample_ratio;
+        using aura::compiler::typed_audit::set_strategy;
+        set_strategy(strat);
+        set_sample_ratio(ratio);
+        g_typed_mutation_audit_counters.production_defaults_active.store(prod,
+                                                                         std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.dev_audit_opt_in.store(opt_in, std::memory_order_relaxed);
+    }
+};
+
 // ── Issue #3065: remirror elim'd / residual CastOp into type cone ──
 static void ac3065_1_production_elim_reenters_cone() {
     std::println("\n--- #3065 AC1: Production elim re-enters typecheck cone ---");
@@ -461,10 +497,7 @@ static void ac3065_1_production_elim_reenters_cone() {
 
 static void ac3065_2_soft_no_permanent_bits() {
     std::println("\n--- #3065 AC2: Soft/quiet no new permanent dirty bits ---");
-    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
-    auto save =
-        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
-    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    SoftAuditScope soft;
 
     constexpr aura::compiler::dirty::NodeId kSoft = 99;
     const auto force0 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
@@ -495,9 +528,6 @@ static void ac3065_2_soft_no_permanent_bits() {
     CHECK(type_ir_union_cone_size() == union1, "3065 AC2: Soft apply union unchanged");
     CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) == force1,
           "3065 AC2: Soft apply force-total unchanged");
-
-    g_typed_mutation_audit_counters.production_defaults_active.store(save,
-                                                                     std::memory_order_relaxed);
 }
 
 static void ac3065_3_schema_and_union_metrics() {
@@ -645,10 +675,7 @@ static void ac3120_1_type_txn_remirrors_skipped_castop() {
 
 static void ac3120_2_soft_zero_cost() {
     std::println("\n--- #3120 AC2: Soft persist / remirror no-ops ---");
-    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
-    auto save =
-        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
-    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    SoftAuditScope soft;
     reset_residual_castop_persist_for_test();
 
     constexpr aura::compiler::dirty::NodeId kSoft = 404;
@@ -664,8 +691,6 @@ static void ac3120_2_soft_zero_cost() {
     CHECK(remirror_persisted_residual_castops() == 0, "3120 AC2: empty persist remirror 0");
 
     reset_residual_castop_persist_for_test();
-    g_typed_mutation_audit_counters.production_defaults_active.store(save,
-                                                                     std::memory_order_relaxed);
 }
 
 static void ac3120_3_no_new_query_keys() {
@@ -710,6 +735,103 @@ static void ac3120_4_linter_no_invent() {
           "3120 AC4: no docs/design");
 }
 
+// ── Issue #3228: empty cone + residual persist must remirror (under-mark) ──
+static void ac3228_1_empty_cone_remirrors_residual() {
+    std::println("\n--- #3228 AC1: empty cone + residual persist remirrors ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kRes = 515;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() >= 1, "3228 AC1: persist nonempty");
+
+    // Type-txn wipe with empty post-infer cone (columnar under-mark).
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3228 AC1: empty cone wipe");
+    CHECK(!cone_contains(kRes), "3228 AC1: wipe dropped residual from last cone");
+
+    const auto force0 = dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed);
+    CHECK(force_residual_castop_undermark_into_cone() >= 1, "3228 AC1: under-mark remirror");
+    CHECK(cone_contains(kRes), "3228 AC1: residual back in cone");
+    CHECK(type_ir_union_cone_nonempty(), "3228 AC1: cone nonempty for remutate typecheck");
+    CHECK(dead_coercion_elim_cone_force_total.load(std::memory_order_relaxed) > force0,
+          "3228 AC1: reuse #3065 force-total");
+
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("Issue #3120 / #3228") != std::string::npos, "3228 AC1: type txn cite");
+    CHECK(impl.find("force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3228 AC1: empty-affected remirror");
+    CHECK(impl.find("Issue #3228") != std::string::npos, "3228 AC1: impl cite");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3228_2_soft_quiet() {
+    std::println("\n--- #3228 AC2: Soft observe; quiet empty persist ---");
+    SoftAuditScope soft;
+    reset_residual_castop_persist_for_test();
+    constexpr aura::compiler::dirty::NodeId kSoft = 616;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "3228 AC2: Soft does not persist");
+    const auto union0 = type_ir_union_cone_size();
+    CHECK(force_residual_castop_undermark_into_cone() == 0, "3228 AC2: Soft remirror 0");
+    CHECK(type_ir_union_cone_size() == union0, "3228 AC2: Soft union unchanged");
+    CHECK(force_residual_castop_undermark_into_cone() == 0, "3228 AC2: quiet empty persist 0");
+    reset_residual_castop_persist_for_test();
+}
+
+static void ac3228_3_no_regression_3065_3120() {
+    std::println("\n--- #3228 AC3: #3065 / #3120 surfaces retained ---");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto opt = read_file("src/compiler/optimization_passes.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(dirty.find("force_dead_coercion_elim_into_cone") != std::string::npos,
+          "3228 AC3: #3065 helper");
+    CHECK(dirty.find("remirror_persisted_residual_castops") != std::string::npos,
+          "3228 AC3: #3120 remirror");
+    CHECK(opt.find("force_residual_castop_blocks_into_cone") != std::string::npos,
+          "3228 AC3: #3065 residual sweep");
+    CHECK(impl.find("remirror_persisted_residual_castops") != std::string::npos,
+          "3228 AC3: type txn remirror retained");
+    CHECK(kDeadCoercionElimConeIssue == 3065, "3228 AC3: #3065 issue");
+    CHECK(kResidualCastopTypeTxnRemirrorIssue == 3120, "3228 AC3: #3120 issue");
+    CHECK(aura::compiler::dirty::kResidualCastopUndermarkConeIssue == 3228,
+          "3228 AC3: #3228 issue");
+}
+
+static void ac3228_4_linter_suites() {
+    std::println("\n--- #3228 AC4: linter + suite cites ---");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto col = read_file("tests/compiler/test_dead_coercion_columnar.cpp");
+    const auto batch = read_file("tests/compiler/test_batch_dirty_cascade.cpp");
+    const auto inc = read_file("tests/compiler/test_incremental_type_batch.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_castop_undermark_cone_3228.py");
+    const auto build = read_file("build.py");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto passes = read_file("src/compiler/pass_impls.ixx");
+    CHECK(t.find("ac3228_1_empty_cone_remirrors_residual") != std::string::npos, "3228 AC4: suite");
+    CHECK(col.find("3228") != std::string::npos, "3228 AC4: columnar suite");
+    CHECK(batch.find("3228") != std::string::npos, "3228 AC4: dirty_cascade suite");
+    CHECK(inc.find("3228") != std::string::npos, "3228 AC4: incremental_type suite");
+    CHECK(!lint.empty() && lint.find("3228") != std::string::npos, "3228 AC4: linter");
+    CHECK(build.find("check_residual_castop_undermark_cone_3228") != std::string::npos,
+          "3228 AC4: build.py");
+    CHECK(etc.find("force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3228 AC4: mutate/commit remirror");
+    CHECK(passes.find("Issue #3228") != std::string::npos, "3228 AC4: columnar leftover persist");
+    CHECK(read_file("docs/design/3228-residual-castop-undermark.md").empty(),
+          "3228 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3228.cpp").empty(), "3228 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3228.cpp").empty(), "3228 AC4: no tests/issues");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -732,8 +854,12 @@ int run_test_dead_coercion_dirty_cone() {
     ac3120_2_soft_zero_cost();
     ac3120_3_no_new_query_keys();
     ac3120_4_linter_no_invent();
+    ac3228_1_empty_cone_remirrors_residual();
+    ac3228_2_soft_quiet();
+    ac3228_3_no_regression_3065_3120();
+    ac3228_4_linter_suites();
     reset_residual_castop_persist_for_test();
-    std::println("\n=== #2556/#3007/#3046/#3065/#3120: {} passed, {} failed ===", g_passed,
+    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }
