@@ -24,6 +24,14 @@
 // registry, #2342/#2375); lifetime_pin.ixx only re-exports. Do not both
 // #include and import the pin API in this TU (GCC module ambiguity).
 // See check_module_import_contiguity_2678.py for lint gate.
+//
+// Issue #3217 deny-path stamp order (all abort variants, including
+// composite / nested / lockless-child / linear-synth / densify force /
+// AOT hot-update fail):
+//   1. structural restore / dual-topology abort
+//   2. coercion / occurrence / proof clear
+//   3. THEN record_boundary_deny_after_restore / capture_* / SE
+// Forbidden: Success stamp then rollback; SE deny before restore completes.
 // ═══════════════════════════════════════════════════════════════════════════
 
 module;
@@ -1134,6 +1142,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                 // first (deny_if_linear_synth_hard_fail is the thin alias).
                 if (force_linear_rollback(composite ? "composite-linear-synth-hard-fail"
                                                     : "linear-synth-hard-fail")) {
+                    // Issue #3217: fence then restore then proof clear then stamp.
+                    if (abort_ir_cache_begin_force_fn_)
+                        abort_ir_cache_begin_force_fn_();
                     // Structural undo (mirror hard-gate force-rollback body).
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled =
@@ -1162,13 +1173,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     defuse_index_ = nullptr;
                     // Issue #3116: synth-hard-fail rollback is a production abort.
                     dual_clear_coercion_state_on_abort();
+                    // Issue #3217 / #3030: proof clear before deny stamp.
+                    typed_audit::clear_type_linear_commit_proof_on_abort();
                     if (!nested_boundary)
                         clear_txn_dirty();
-                    typed_audit::record_boundary_outcome(
+                    typed_audit::record_boundary_deny_after_restore(
                         mid,
                         composite ? "composite-linear-synth-hard-fail" : "linear-synth-hard-fail",
-                        cp.version, epoch_after, /*success=*/false,
-                        static_cast<std::uint32_t>(audit_target), 0, fid);
+                        cp.version, epoch_after, static_cast<std::uint32_t>(audit_target), 0, fid);
                     if (strict_sandbox)
                         typed_audit::capture_audit_event_forced(
                             mid, "strict-linear-synth-denied",
@@ -1479,12 +1491,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // or clear when no remaining nested guards.
                             if (!nested_boundary)
                                 clear_txn_dirty();
-                            typed_audit::record_boundary_outcome(
+                            typed_audit::record_boundary_deny_after_restore(
                                 mid,
                                 composite ? "composite-invariant-force-rollback"
                                           : "invariant-force-rollback",
-                                cp.version, epoch_after, /*success=*/false,
-                                static_cast<std::uint32_t>(audit_target), 0, fid);
+                                cp.version, epoch_after, static_cast<std::uint32_t>(audit_target),
+                                0, fid);
                             // Strict trail: Error outcome for Agent dashboards.
                             if (strict_sandbox)
                                 typed_audit::capture_audit_event_forced(
@@ -1612,10 +1624,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     last_mutate_error_ = "guard-reflect-validate-fail-strict-rollback";
                     const std::uint64_t mid = cp.audit_mid;
                     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-                    typed_audit::record_boundary_outcome(
+                    typed_audit::record_boundary_deny_after_restore(
                         mid, "guard-reflect-validate-force-rollback", cp.version,
-                        defuse_version_.load(std::memory_order_acquire), /*success=*/false, 0, 0,
-                        fid);
+                        defuse_version_.load(std::memory_order_acquire), 0, 0, fid);
                     return cp;
                 }
                 // Soft / non-Strict: metric-only; mutation stays committed.
@@ -1626,8 +1637,8 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         const std::uint64_t epoch_after = defuse_version_.load(std::memory_order_acquire);
         const std::uint64_t mid = cp.audit_mid;
         const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
-        typed_audit::record_boundary_outcome(mid, "rollback", cp.version, epoch_after,
-                                             /*success=*/false, 0, 0, fid);
+        typed_audit::record_boundary_deny_after_restore(mid, "rollback", cp.version, epoch_after, 0,
+                                                        0, fid);
     }
     // Issue #2690: unified PendingRecovery drain. Boundary exit routes
     // through the same single-owner drain as `maybe_storm_clear_health_pass`

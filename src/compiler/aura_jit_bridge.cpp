@@ -2943,6 +2943,8 @@ static bool aura_reload_aot_module_for_eval_once(void* eval_ptr, const char* pat
     // Also used as TypedMutationAudit before_epoch (#1882).
     const std::uint64_t epoch_before = g_aot_table_epoch.load(std::memory_order_acquire);
     auto audit_fail = [&](std::string_view reason) {
+        // Issue #3217: Error after the swap is refused (epoch not advanced).
+        // Success is only captured after commit below — never Success-then-rollback.
         aura::compiler::typed_audit::capture_aot_hotupdate_audit(
             /*success=*/false, epoch_before, g_aot_table_epoch.load(std::memory_order_acquire),
             reason);
