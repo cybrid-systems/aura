@@ -57,8 +57,10 @@ import std;
 
 namespace {
 
+using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
+using aura::orch::load_mailbox_bp_recent;
 using aura::orch::note_mailbox_bp_recent_event;
 using aura::serve::Scheduler;
 using aura::test::g_failed;
@@ -102,6 +104,11 @@ int run_test_per_scope_bp_admit() {
     }
 
     Scheduler sched;
+
+    auto set_prod = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+    };
 
     auto make_spec = [](const std::string& name) {
         AgentSpec spec;
@@ -342,11 +349,6 @@ int run_test_per_scope_bp_admit() {
         CHECK(aura::orch::kBpScopeInheritIssue == 3015, "#3015 AC1: issue stamp");
         CHECK(aura::orch::kBpScopeProcessBucket == "-", "#3015 AC1: process-bucket sentinel");
 
-        auto set_prod = [](bool on) {
-            aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
-                .store(on ? 1u : 0u, std::memory_order_relaxed);
-        };
-
         auto reset_3015 = [&]() {
             reset_all();
             g_orch_module_stats.spawn_bp_admit_reject_scope_total.store(0,
@@ -509,15 +511,18 @@ int run_test_per_scope_bp_admit() {
         spec.bp_scope_id.clear();
         auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
         CHECK(h.ok, "3147 AC2 setup: direct spawn with empty bp_scope_id admits");
-        CHECK(h.bp_scope_id.empty(),
-              "3147 AC2: h.bp_scope_id is empty (Soft / MVP / explicit opt-in)");
+        // Issue #3179: production empty spec is resolved to a non-empty
+        // session-local key (not the process bucket). Soft still leaves
+        // empty (AC5 below).
+        CHECK(!h.bp_scope_id.empty() && h.bp_scope_id != aura::orch::kBpScopeProcessBucket,
+              "3147 AC2: production empty spec → resolved non-process key (#3179)");
         const auto proc_before =
             g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
         note_mailbox_bp_recent_event(h.bp_scope_id);
         const auto proc_after =
             g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
-        CHECK(proc_after == proc_before + 1,
-              "3147 AC2: empty bp_scope_id routes to process bucket");
+        CHECK(proc_after == proc_before,
+              "3147 AC2: resolved non-process key does not bump process bucket");
         auto spec2 = make_spec("explicit-dash");
         spec2.bp_scope_id = std::string{aura::orch::kBpScopeProcessBucket};
         auto h2 = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec2));
@@ -534,7 +539,7 @@ int run_test_per_scope_bp_admit() {
     {
         std::println("\n--- #3147 AC3: emit_keepalive BP routes to same scope gauge ---");
         const auto spawn_src = read_file("src/orch/agent_spawn.h");
-        const auto emit_idx = spawn_src.find("void emit_keepalive(");
+        const auto emit_idx = spawn_src.find("emit_keepalive(");
         CHECK(emit_idx != std::string::npos, "3147 AC3 setup: emit_keepalive present");
         if (emit_idx != std::string::npos) {
             const auto snip = spawn_src.substr(emit_idx, 4000);
@@ -582,8 +587,9 @@ int run_test_per_scope_bp_admit() {
               "3147 AC8: agent_spawn.h cites Issue #3147");
         CHECK(spawn3147.find("std::string bp_scope_id{};") != std::string::npos,
               "3147 AC8: AgentHandle::bp_scope_id field present (layout-stable end of struct)");
-        CHECK(spawn3147.find("h.bp_scope_id = std::move(spec.bp_scope_id);") != std::string::npos,
-              "3147 AC8: spawn propagates spec.bp_scope_id → handle");
+        CHECK(spawn3147.find("h.bp_scope_id = resolve_bare_bp_scope_id(spec.bp_scope_id)") !=
+                  std::string::npos,
+              "3147 AC8: spawn persists resolved spec.bp_scope_id → handle (#3179)");
         CHECK(spawn3147.find("note_mailbox_bp_recent_event(h.bp_scope_id)") != std::string::npos,
               "3147 AC8: agent_send / emit_keepalive BP arms pass h.bp_scope_id");
         CHECK(test3147_self.find("#3147") != std::string::npos,
@@ -608,9 +614,10 @@ int run_test_per_scope_bp_admit() {
               "3147 AC8: #3147 linter exists");
         CHECK(build3147.find("check_mailbox_bp_scope_handle_3147") != std::string::npos,
               "3147 AC8: build.py wires #3147 linter");
-        CHECK(spawn3147.find("global_agent_registry") == std::string::npos &&
+        CHECK(spawn3147.find("class AgentRegistry") == std::string::npos &&
+                  spawn3147.find("struct AgentRegistry") == std::string::npos &&
                   spawn3147.find("process_agent_registry") == std::string::npos,
-              "3147 AC8: no process-global AgentRegistry");
+              "3147 AC8: no process-global AgentRegistry type");
     }
 
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);

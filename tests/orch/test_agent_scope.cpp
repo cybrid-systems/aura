@@ -889,6 +889,123 @@ static void ac2777_read_apis_guarded() {
     }
 }
 
+// ── Issue #3216: HandoffToken observe-only + directory_snapshot HardDeny.
+static void ac3216_handoff_directory_hard_deny() {
+    std::println("\n--- #3216 AC4: handoff observe-only + directory_snapshot HardDeny ---");
+    CHECK(aura::orch::kIdentityPlaneHandoffBoundaryIssue == 3216, "ac3216: issue stamp");
+
+    auto set_prod = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+    };
+
+    {
+        set_prod(true);
+        unsetenv("AURA_SANDBOX");
+        unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+        CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
+                  aura::orch::AgentScopeConcurrentPolicy::HardDeny,
+              "ac3216: production → HardDeny");
+
+        const auto mis0 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto hd0 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
+            std::memory_order_relaxed);
+        const auto dir0 =
+            g_orch_module_stats.directory_snapshot_concurrent_total.load(std::memory_order_relaxed);
+
+        Scheduler sched(2);
+        SchedRunner runner(sched);
+        AgentScope scope(sched);
+
+        std::atomic<bool> stop_body{false};
+        AgentSpec hang;
+        hang.name = "3216-hang";
+        hang.body = [&] {
+            while (!stop_body.load(std::memory_order_acquire)) {
+                if (aura::serve::g_current_fiber &&
+                    aura::serve::g_current_fiber->is_cancel_requested())
+                    return;
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        };
+        hang.attach_mailbox = true;
+        hang.keepalive_interval_ms = 0;
+        auto& src = scope.spawn(std::move(hang));
+        CHECK(src.ok, "ac3216: spawn ok");
+        const auto reserved_before = src.reserved_memory_bytes;
+        auto tok = aura::orch::agent_export_handoff(src);
+        CHECK(tok.mailbox != nullptr && tok.fiber != nullptr, "ac3216: token live");
+        aura::orch::JoinViaTokenPolicy jp;
+        jp.timeout_ms = 30;
+        auto obs = aura::orch::join_via_handoff(tok, jp);
+        CHECK(obs.still_running || obs.status == aura::serve::JoinStatus::Timeout ||
+                  obs.status == aura::serve::JoinStatus::Ok,
+              "ac3216: join_via_handoff observes source");
+        CHECK(src.reserved_memory_bytes == reserved_before,
+              "ac3216: source reservation unchanged (observe-only)");
+
+        std::atomic<int> ready{0};
+        std::atomic<bool> go{false};
+        std::atomic<bool> join_entered{false};
+        std::atomic<bool> snap_done{false};
+
+        std::thread t_join([&] {
+            ready.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            join_entered.store(true, std::memory_order_release);
+            (void)scope.join_all(std::optional<std::uint64_t>{800});
+        });
+        std::thread t_snap([&] {
+            ready.fetch_add(1, std::memory_order_acq_rel);
+            while (!go.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            while (!join_entered.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            (void)scope.directory_snapshot();
+            snap_done.store(true, std::memory_order_release);
+        });
+
+        while (ready.load(std::memory_order_acquire) < 2)
+            std::this_thread::yield();
+        go.store(true, std::memory_order_release);
+        t_snap.join();
+        stop_body.store(true, std::memory_order_release);
+        scope.cancel_all();
+        t_join.join();
+
+        const auto mis1 =
+            g_orch_module_stats.agent_scope_concurrent_misuse_total.load(std::memory_order_relaxed);
+        const auto hd1 = g_orch_module_stats.agent_scope_concurrent_hard_deny_total.load(
+            std::memory_order_relaxed);
+        const auto dir1 =
+            g_orch_module_stats.directory_snapshot_concurrent_total.load(std::memory_order_relaxed);
+        CHECK(mis1 > mis0, "ac3216: concurrent join + directory_snapshot → misuse");
+        CHECK(hd1 > hd0, "ac3216: production HardDeny total bumps");
+        CHECK(dir1 > dir0, "ac3216: directory_snapshot_concurrent_total bumps");
+        CHECK(snap_done.load(), "ac3216: directory_snapshot completed");
+        CHECK(src.reserved_memory_bytes == reserved_before || src.reserved_memory_bytes == 0,
+              "ac3216: handoff did not take source reservation");
+        set_prod(false);
+    }
+
+    {
+        auto spawn_src = read_file("src/orch/agent_spawn.h");
+        auto scope_src = read_file("src/orch/agent_scope.h");
+        CHECK(spawn_src.find("kIdentityPlaneHandoffBoundaryIssue = 3216") != std::string::npos,
+              "ac3216: spawn cites issue constant");
+        CHECK(scope_src.find("HandoffToken") != std::string::npos ||
+                  scope_src.find("join_via_handoff") != std::string::npos ||
+                  scope_src.find("observation-only") != std::string::npos,
+              "ac3216: agent_scope documents HandoffToken boundary");
+        CHECK(spawn_src.find("process-global name table") != std::string::npos ||
+                  spawn_src.find("observation-only") != std::string::npos,
+              "ac3216: HandoffToken remains observe-only");
+    }
+}
+
 // ── Issue #2782: Scheduler destroyed before AgentScope (no UAF) ──────
 static void ac2782_scheduler_destroyed_before_scope() {
     std::println("\n--- #2782 ac2782_scheduler_destroyed_before_scope ---");
@@ -1258,6 +1375,7 @@ int run_test_agent_scope() {
     ac2399_concurrent_detect();
     ac2946_production_hard_deny();
     ac2777_read_apis_guarded();
+    ac3216_handoff_directory_hard_deny();
     std::println("\n=== Issue #2782: AgentScope Scheduler lifetime ===");
     ac2782_scheduler_destroyed_before_scope();
     ac2782_source_and_query();
@@ -1269,8 +1387,9 @@ int run_test_agent_scope() {
     ac2976_5_source_linter();
     ac2976_6_mvp();
     ac3125_cross_scope_directory();
-    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125: passed={} failed={} ===",
-                 g_passed, g_failed);
+    std::println(
+        "\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216: passed={} failed={} ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

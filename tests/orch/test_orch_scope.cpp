@@ -38,6 +38,7 @@
 
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h"
+#include "compiler/typed_mutation_audit.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
@@ -630,6 +631,80 @@ int run_test_orch_scope() {
         CHECK(stats_total >= 0, "#3125 facade: cross-scope-directory-total int");
         CHECK(stats_wired == 1, "#3125 facade: cross-scope-directory-wired = 1");
         CHECK(stats_schema == 3125, "#3125 facade: schema-3125 = 3125");
+    }
+
+    // ── #3216: identity-plane on scope-resolve / directory + facade.
+    // Empty-session resolve/directory only — no extra scope-spawn (batch-safe).
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        std::println("\n--- #3216: identity-plane facade + scope-resolve/directory ---");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        const auto spawn_h = read_file("src/orch/agent_spawn.h");
+        const auto names_h = read_file("src/compiler/agent_name_table.h");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto readme_src = read_file("src/orch/README.md");
+        CHECK(spawn_h.find("kIdentityPlaneHandoffBoundaryIssue = 3216") != std::string::npos,
+              "#3216 source: kIdentityPlaneHandoffBoundaryIssue");
+        CHECK(scope_h.find("name-table") != std::string::npos, "#3216 source: name-table plane");
+        CHECK(scope_h.find("scope-handle") != std::string::npos,
+              "#3216 source: scope-handle plane");
+        CHECK(names_h.find("name-table plane") != std::string::npos,
+              "#3216 source: AgentNameTable plane cite");
+        CHECK(prim_src.find("add_identity_plane") != std::string::npos,
+              "#3216 source: add_identity_plane helper");
+        CHECK(prim_src.find("\"scope-handle\"") != std::string::npos,
+              "#3216 source: scope-handle intern");
+        CHECK(prim_src.find("\"directory\"") != std::string::npos,
+              "#3216 source: directory intern");
+        CHECK(prim_src.find("orch:resolve-via-token") == std::string::npos,
+              "#3216: no orch:resolve-via-token");
+        CHECK(readme_src.find("Issue #3216") != std::string::npos, "#3216 source: README cites");
+
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        const std::string prev_sb_s = prev_sb ? prev_sb : "";
+        reset_all();
+        CompilerService cs;
+        CHECK(href(cs, "schema-3216") == 3216, "#3216 facade: schema-3216");
+        CHECK(href(cs, "identity-plane-wired") == 1, "#3216 facade: identity-plane-wired");
+
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        apply_production_audit_defaults();
+        auto plane_miss = cs.eval(
+            R"((let ((r (orch:scope-resolve "no-such-ac3216-scope")))
+                 (if (string=? (hash-ref r "identity-plane") "scope-handle") 1 0)))");
+        CHECK(plane_miss && is_int(*plane_miss) && as_int(*plane_miss) == 1,
+              "ac3216_scope: miss identity-plane=scope-handle");
+        auto st_miss = cs.eval(
+            R"((let ((r (orch:scope-resolve "no-such-ac3216-scope")))
+                 (if (string=? (hash-ref r "status") "not-found") 1 0)))");
+        CHECK(st_miss && is_int(*st_miss) && as_int(*st_miss) == 1,
+              "ac3216_scope: miss status=not-found");
+        auto dir_plane = cs.eval(
+            R"((let ((r (orch:agent-directory)))
+                 (if (string=? (hash-ref r "identity-plane") "directory") 1 0)))");
+        CHECK(dir_plane && is_int(*dir_plane) && as_int(*dir_plane) == 1,
+              "ac3216_dir: identity-plane=directory");
+        auto dir_schema =
+            cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "schema-3216")))");
+        CHECK(dir_schema && is_int(*dir_schema) && as_int(*dir_schema) == 3216,
+              "ac3216_dir: schema-3216");
+
+        ::setenv("AURA_SANDBOX", "off", 1);
+        apply_dev_audit_defaults();
+        auto soft_scope = cs.eval(
+            R"((hash-has-key? (orch:scope-resolve "no-such-ac3216-soft") "identity-plane"))");
+        CHECK(soft_scope && is_bool(*soft_scope) && !as_bool(*soft_scope),
+              "ac3216_scope: Soft miss has no identity-plane");
+        auto soft_dir = cs.eval(R"((hash-has-key? (orch:agent-directory) "identity-plane"))");
+        CHECK(soft_dir && is_bool(*soft_dir) && !as_bool(*soft_dir),
+              "ac3216_dir: Soft directory has no identity-plane");
+
+        if (prev_sb_s.empty())
+            ::unsetenv("AURA_SANDBOX");
+        else
+            ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);

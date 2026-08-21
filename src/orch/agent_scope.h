@@ -16,14 +16,21 @@
 // Issue #2161: scope-level watch_all (batch liveness + optional stall cancel).
 //
 // Distinct from evaluator-local OrchAgentNameTable (#2078) and
-// serve::parallel_orch::parallel_intend (#1587):
-//   - OrchAgentNameTable: per-Evaluator name bookkeeping for Aura primitives
-//     (orch:spawn-agent / orch:agent-join).
-//   - parallel_intend:    short-lived batch thunks (no long-lived names).
-//   - AgentScope:         long-lived named agents, parent-cancel + join_all
-//                         semantics, bound to an explicit owner (Scheduler
-//                         reference). NOT a global registry. Hierarchy
-//                         (#2537) is a tree of scopes, still no static map.
+// serve::parallel_orch::parallel_intend (#1587). Issue #3216 identity
+// planes (no unified resolve, no process-global table):
+//   - name-table (OrchAgentNameTable / agent_names_): per-Evaluator
+//     bookkeeping for Aura orch:spawn-agent / orch:agent-join.
+//   - scope-handle (AgentScope::handles_): supervision authority;
+//     orch:scope-resolve live find.
+//   - directory (directory_snapshot / orch:agent-directory): read-only
+//     projection of the same scope tree. Not a second name table.
+//   - HandoffToken / join_via_handoff: observation-only cross-Evaluator
+//     lifecycle close (#3148 / #3216). Not a fourth plane; no ownership
+//     move; no session-spanning workflow.
+//   - parallel_intend: short-lived batch thunks (no long-lived names).
+//   - AgentScope: long-lived named agents, parent-cancel + join_all
+//     semantics, bound to an explicit owner (Scheduler reference).
+//     Hierarchy (#2537) is a tree of scopes, still no static map.
 //
 // Rules (per Issue #2083 AC4 / #2226 / #2537):
 //   - No process-global registry (the orch MVP scope linter still forbids

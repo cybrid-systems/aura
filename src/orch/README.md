@@ -8,7 +8,7 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 |-----------|-------------------|--------|
 | `(orch:spawn-agent name [thunk] [:attach-mailbox bool] [:high-water n] [:keepalive-interval-ms n] [:max-no-yield-ms n])` | `name` string; optional 0-arg thunk; optional keywords | hash `{ok, id, name, schema=1588, schema-2011, quota-exceeded[, error]}`; **quota reject → typed Aura error** |
 | `(orch:agent-poll name)` | Issue #2540 coop yield edge | hash `{ok, yielded, schema-2540}` — forces `Fiber::yield` when `max_no_yield_ms` window elapsed |
-| `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid/**reclaimed** — Issue #2743) |
+| `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid/**reclaimed** — Issue #2743); production adds `identity-plane="name-table"` (#3216) |
 | `(orch:agent-send name payload)` | payload string/int/bool | hash `{ok, status, schema}` (`status` = ok/backpressure/closed); unknown agent → error |
 | `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` |
 | `(orch:parallel-intend tasks …)` | alias of `(parallel-intend …)` | same as parallel-intend batch hash |
@@ -187,6 +187,8 @@ Rules (per Issue #2083 AC4 / #2161 AC5 / #2226 / #2537):
      + `watch_all` (#2161) semantics, bound to an explicit owner
      (Scheduler reference). Hierarchy (#2537) is an explicit tree of
      scopes (`parent_` / `children_` / `spawn_child`), still no global map.
+   See **Identity planes (Issue #3216)** below — three planes plus
+   observation-only `HandoffToken`, not a unified process-global table.
 
 ### Hierarchical AgentScope (Issue #2537)
 
@@ -721,10 +723,40 @@ Metrics (`query:orch-module-stats`):
 Regression: `tests/orch/test_orch_scope` (#2751 AC block) + C++ hierarchy
 coverage via `AgentScope::directory_snapshot` in the same suite.
 
+### Identity planes and HandoffToken boundary (Issue #3216)
+
+Session-local multi-agent identity is three planes, not a process-global
+table (MVP linter still forbids `AgentRegistry` / `global_agent_registry` /
+`conduct_parallel`):
+
+| Plane | Authority | Aura surface |
+|-------|-----------|--------------|
+| `name-table` | per-Evaluator `OrchAgentNameTable` / `agent_names_` | `orch:spawn-agent` / `orch:agent-join` |
+| `scope-handle` | `AgentScope::handles_` (supervision) | `orch:scope-resolve` |
+| `directory` | `directory_snapshot` (read-only projection) | `orch:agent-directory` |
+
+Cross-Evaluator: `HandoffToken` + `join_via_handoff` / `orch:join-via-token`
+is **observation-only** — no ownership move, no reservation transfer, no
+session-spanning workflow. `handoff-token-present` is an additive flag, not
+a fourth identity plane. There is no `orch:resolve-via-token` (SlimSurface).
+
+Production hashes (`typed_audit::production_defaults_active`):
+- `orch:agent-join` → `identity-plane="name-table"` (miss: `status=invalid`)
+- `orch:scope-resolve` → `identity-plane="scope-handle"` (miss: `status=not-found`)
+- `orch:agent-directory` → `identity-plane="directory"`
+- `orch:join-via-token` → `handoff-token-present` (`#t` if token staged) plus
+  existing `still-running` when the source body has not exited
+- `query:orch-module-stats` → `schema-3216` / `identity-plane-wired`
+
+Soft / Off: those identity keys are absent (one load of
+`production_defaults_active`, zero extra intern). Concurrent
+`directory_snapshot` during `join_all` stays HardDeny under production
+(#2946 / #2777).
+
 ### `orch:cross-scope-directory` merge (Issue #3125)
 
 C++ helper that joins N per‑Scope directory snapshots into a single
-cross‑scope snapshot. Caller passes an explicit
+cross-scope directory merge. Caller passes an explicit
 `std::span<AgentScope* const>` (no process-global registry walk). The
 merge applies one `CrossScopeFilter` (alive_only / name_prefix /
 source_scope_paths allow-list / dedup_by_name) and labels every

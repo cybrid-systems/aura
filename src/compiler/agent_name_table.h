@@ -39,6 +39,12 @@ namespace aura::compiler {
 // implementation does not need a .cpp file (avoids C++20 modules
 // "declarations in both fragments" conflict when the .h is included from
 // evaluator.ixx's global fragment + a .cpp in the same module's purview).
+//
+// Issue #3216 identity plane: this is the name-table plane (Aura
+// orch:spawn-agent / orch:agent-join). Distinct from AgentScope::handles_
+// (scope-handle) and directory_snapshot (directory). Not a process-global
+// table — one AgentNameTable per Evaluator. Cross-Evaluator handoff uses
+// observation-only HandoffToken (#3148), not a merge of this table.
 struct AgentNameTable {
     AgentNameTable()
         : impl_(std::make_unique<Impl>()) {}

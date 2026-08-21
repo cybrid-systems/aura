@@ -3017,6 +3017,27 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         return k;
     };
 
+    // Issue #3216: additive identity-plane intern, production-only.
+    // Soft / Off: one load of production_defaults_active, no string intern.
+    auto add_identity_plane = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv,
+                                    const char* plane) {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        auto pidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(plane);
+        kv.emplace_back("identity-plane", make_string(pidx));
+        kv.emplace_back("schema-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
+        kv.emplace_back("issue-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
+    };
+    auto add_handoff_token_present = [](std::vector<std::pair<std::string, EvalValue>>& kv,
+                                        bool present) {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        kv.emplace_back("handoff-token-present", make_bool(present));
+        kv.emplace_back("schema-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
+        kv.emplace_back("issue-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
+    };
+
     // Keep a process-local scheduler for orch:spawn-agent tests (stdin-friendly).
     // Lazy-init: shared across calls in-process; stopped on process exit.
     struct OrchSchedHolder {
@@ -3252,7 +3273,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (orch:agent-join name [:timeout-ms n] [:drain-ms n])
     // Issue #2153: :drain-ms secondary cancel-drain window (default 2000).
     add("orch:agent-join",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_identity_plane](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:agent-join: need name",
@@ -3295,6 +3317,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"schema-2153", make_int(aura::orch::kJoinDrainTimeoutIssue)},
                     {"drain-ms", make_int(static_cast<std::int64_t>(policy.drain_ms))},
                 };
+                // Issue #3216: name-table miss (production-only intern).
+                add_identity_plane(kv, "name-table");
                 return build_orch_hash(kv);
             }
 
@@ -3419,6 +3443,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("issue-3014", make_int(3014));
                 kv.emplace_back("body-acquire-rejected-wired", make_int(1));
             }
+            // Issue #3216: name-table plane (production-only intern).
+            add_identity_plane(kv, "name-table");
             return build_orch_hash(kv);
         });
 
@@ -3983,7 +4009,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // fiber may be done — ok=#t with status=done (handle still in scope).
     // After scope slot dropped (empty session) → not-found.
     add("orch:scope-resolve",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_identity_plane](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:scope-resolve: usage (orch:scope-resolve name "
@@ -4022,6 +4049,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"issue-2926", make_int(2926)},
                     {"scope-resolve-wired", make_int(1)},
                 };
+                // Issue #3216: scope-handle miss (production-only intern).
+                add_identity_plane(kv, "scope-handle");
                 return build_orch_hash(kv);
             }
             // Live status (same labels as directory_snapshot #2751).
@@ -4066,6 +4095,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-3050", make_int(3050)},
                 {"issue-3050", make_int(3050)},
             };
+            // Issue #3216: scope-handle plane (production-only intern).
+            add_identity_plane(kv, "scope-handle");
             return build_orch_hash(kv);
         });
 
@@ -4079,7 +4110,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Soft / sandbox never denies. Snapshot is best-effort (AC2).
     // Returns hash {ok, agents, count, scopes-visited, schema=2751, …}.
     add("orch:agent-directory",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_identity_plane](std::span<const EvalValue> a) -> EvalValue {
             aura::orch::AgentDirectoryFilter filter{};
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
@@ -4137,6 +4169,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-2083", make_int(2083)},
                 {"issue-2751", make_int(aura::orch::kAgentDirectoryIssue)},
             };
+            // Issue #3216: directory plane (production-only intern).
+            add_identity_plane(kv, "directory");
             return build_orch_hash(kv);
         });
 
@@ -5757,6 +5791,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2158", aura::orch::kAgentApplyPerEvalMutexIssue);
             insert_kv("issue-2158", aura::orch::kAgentApplyPerEvalMutexIssue);
             insert_kv("agent-apply-per-eval-mutex-wired", 1);
+            // Issue #3216: identity-plane / handoff-token-present schema
+            // sentinel. Additive keys only; no new query:* name (SlimSurface).
+            insert_kv("schema-3216", aura::orch::kIdentityPlaneHandoffBoundaryIssue);
+            insert_kv("issue-3216", aura::orch::kIdentityPlaneHandoffBoundaryIssue);
+            insert_kv("identity-plane-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
@@ -5843,7 +5882,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // handoff_join_via_token_total counter pair bumped by the C++
     // helper (no new query key, no metrics middle insertion per AC6).
     add("orch:join-via-token",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_handoff_token_present](std::span<const EvalValue> a) -> EvalValue {
             auto make_invalid_hash = [&]() {
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
@@ -5860,6 +5900,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"schema", make_int(1588)},
                     {"issue-3148", make_int(3148)},
                 };
+                // Issue #3216: token not staged (production-only intern).
+                add_handoff_token_present(kv, false);
                 return build_orch_hash(kv);
             };
             if (a.empty() || !types::is_string(a[0]))
@@ -5921,6 +5963,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"issue-3148", make_int(3148)},
                 {"handoff-join-via-token-wired", make_int(1)},
             };
+            // Issue #3216: token was staged (not a fourth identity plane).
+            add_handoff_token_present(kv, true);
             return build_orch_hash(kv);
         });
 }
