@@ -38,6 +38,7 @@ import aura.diag;
 import aura.compiler.hardware_backend;
 import aura.compiler.service; // Issue #1442: typed_mutate_atomic
 import aura.compiler.soa_view;
+import aura.compiler.macro_expansion; // Issue #3215: note_hygiene_last_limit_reason
 
 // Issue #1950: after module + imports so Evaluator/EvalValue are in scope.
 #include "compiler/mutation_guard_helpers.hh"
@@ -474,6 +475,8 @@ namespace {
                 continue;
             if (flat.is_macro_introduced(id)) {
                 ev.record_hygiene_violation_attempt();
+                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
                 // Issue #1275: EDSL hygiene awareness — naked macro
                 // mutate without :allow-macro? / global opt-out.
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
@@ -679,6 +682,8 @@ namespace {
         if (id == aura::ast::NULL_NODE || id >= flat.size() || !flat.is_macro_introduced(id))
             return std::nullopt;
         ev.record_hygiene_violation_attempt();
+        aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+            aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
             m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
             m->macro_hygiene_provenance_hits_total.fetch_add(1, std::memory_order_relaxed);
@@ -4514,6 +4519,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ev, flat, match_id, &match.match_ref, allow_macro_all,
                     /*per_call already folded into allow_macro_all*/ false, mev, &was_macro)) {
                 flat.note_replace_pattern_hygiene_reject();
+                aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                    aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
                 flat.rollback_atomic_batch();
                 ok = false;
                 return *err;
@@ -6195,6 +6202,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     ok = false;
                     flat.note_rename_symbol_hygiene_reject();
                     ev.record_hygiene_violation_attempt();
+                    aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                        aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
                     return ev.make_merr("hygiene",
                                         "cannot rename-symbol through MacroIntroduced / MacroDef "
                                         "without :allow-macro? #t");

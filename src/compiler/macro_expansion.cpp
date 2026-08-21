@@ -305,6 +305,29 @@ void reset_hygiene_runtime_caps_for_test() noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
 }
 
+void note_hygiene_last_limit_reason(std::uint8_t code) noexcept {
+    // Issue #3215: extra store only on reject/detection (callers already
+    // returned on the quiet !is_macro_introduced / rest-already-stamped path).
+    g_macro_hygiene_last_limit_reason.store(code, std::memory_order_relaxed);
+}
+
+const char* hygiene_last_limit_reason_string() noexcept {
+    switch (g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)) {
+        case 1:
+            return "hygiene-gensym-ceiling";
+        case 2:
+            return "hygiene-depth-limit";
+        case 3:
+            return "hygiene-pass-limit";
+        case 4:
+            return "hygiene-macro-introduced";
+        case 5:
+            return "hygiene-rest-unmarked";
+        default:
+            return "";
+    }
+}
+
 // Combine hard ceiling + process runtime + optional capability depth.
 // capability_depth<=0 means "no capability clamp" (Off / unconstrained).
 static int combine_depth_limit(int capability_depth) noexcept {
@@ -369,6 +392,7 @@ std::atomic<std::uint64_t> g_macro_self_evo_gensym_map_size_exceeded_total{0};
 std::atomic<std::uint64_t> g_clone_walk_gensym_ceiling_exceeded_total{0};
 // Issue #3029: last Agent-visible limit reason (not a new hot-path metric).
 // 0=none 1=hygiene-gensym-ceiling 2=hygiene-depth-limit 3=hygiene-pass-limit
+// Issue #3215: 4=hygiene-macro-introduced 5=hygiene-rest-unmarked
 std::atomic<std::uint8_t> g_macro_hygiene_last_limit_reason{0};
 // Issue #2811: rename_binding_pre ceiling denials that correctly leave
 // hyg_ctr unadvanced (pre-#2811: hyg_ctr++ ran before the size check →
@@ -895,17 +919,12 @@ extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noex
 extern "C" std::uint64_t aura_macro_hygiene_last_limit_reason_v_read(void) noexcept {
     return g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
 }
+extern "C" void aura_note_macro_hygiene_last_limit_reason(std::uint8_t code) noexcept {
+    note_hygiene_last_limit_reason(code);
+}
+
 extern "C" const char* aura_macro_hygiene_last_limit_reason_string(void) noexcept {
-    switch (g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed)) {
-        case 1:
-            return "hygiene-gensym-ceiling";
-        case 2:
-            return "hygiene-depth-limit";
-        case 3:
-            return "hygiene-pass-limit";
-        default:
-            return "";
-    }
+    return hygiene_last_limit_reason_string();
 }
 extern "C" void aura_test_reset_macro_hygiene_last_limit_reason_for_test(void) noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
@@ -1814,6 +1833,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 it->second = fresh;
                 g_macro_rest_param_hygiene_total.fetch_add(1, std::memory_order_relaxed);
                 g_macro_rest_param_hygiene_incomplete_total.fetch_add(1, std::memory_order_relaxed);
+                // Issue #3215: rest spine should have been stamped — Agent reason.
+                note_hygiene_last_limit_reason(kHygieneLimitReasonRestUnmarked);
                 return target_pool.intern(fresh);
             }
             return target_pool.intern(it->second);
@@ -2089,6 +2110,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                                 1, std::memory_order_relaxed);
                             g_hygiene_violation_in_macro_expand_total.fetch_add(
                                 1, std::memory_order_relaxed);
+                            // Issue #3215: rest spine should have been stamped — Agent reason.
+                            note_hygiene_last_limit_reason(kHygieneLimitReasonRestUnmarked);
                         }
                     }
                 }

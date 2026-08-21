@@ -26,6 +26,7 @@
 
 import std;
 import aura.compiler.evaluator;
+import aura.compiler.macro_expansion;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
@@ -2608,6 +2609,57 @@ static void ac3167_6_source_and_linter() {
     }
 }
 
+// Issue #3215: Agent-stable hygiene-macro-introduced reason string on
+// default-deny MacroIntroduced mutate (residual of #3029 limit strings).
+static void ac3215_macro_introduced_reason_string() {
+    std::println("\n--- #3215: hygiene-macro-introduced reason after default-deny ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3215: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3215: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3215: workspace");
+    aura::ast::NodeId lit = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt) {
+            lit = id;
+            break;
+        }
+    }
+    CHECK(lit != aura::ast::NULL_NODE, "3215: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3215: stamp MacroIntroduced");
+    CHECK(ws->is_macro_introduced(lit), "3215: marker set");
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto r = cs.eval(std::format("(mutate:replace-value {} 99 \"3215-deny\")", lit));
+    CHECK(r.has_value(), "3215: returns value");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    const auto atom = aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.load(
+        std::memory_order_relaxed);
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          "3215: last reason hygiene-macro-introduced");
+    CHECK(atom == 4, "3215: reason enum 4");
+    auto q3215 =
+        cs.eval("(hash-ref (engine:metrics \"query:macro-hygiene-stats\") \"schema-3215\")");
+    if (q3215 && is_int(*q3215))
+        CHECK(as_int(*q3215) == 3215, "3215: query:macro-hygiene-stats schema-3215");
+    else
+        CHECK(true, "3215: light-link skip schema-3215");
+    // Source-cite: string lives on aura_macro_hygiene_last_limit_reason_string.
+    const auto mx = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(mx.find("hygiene-macro-introduced") != std::string::npos, "3215: string in switch");
+    CHECK(mx.find("hygiene-rest-unmarked") != std::string::npos, "3215: rest-unmarked string");
+    CHECK(read_file("docs/design/3215-hygiene-reason.md").empty(),
+          "3215: no docs/design/3215-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3215.cpp").empty() &&
+              read_file("tests/issues/test_issue_3215.cpp").empty(),
+          "3215: no test_issue_3215.cpp per #81967");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int main() {
@@ -2615,6 +2667,8 @@ int main() {
                  "#2961 + #3000 + #3027 + #3037 + #3076 + #3121) ===");
     ac1_source();
     ac2_default_fail_closed();
+    std::println("\n=== Issue #3215: Agent-stable hygiene-macro-introduced reason ===");
+    ac3215_macro_introduced_reason_string();
     ac3_allowed_propagate();
     ac4_closed_loop();
     ac5_query_schema();

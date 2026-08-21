@@ -41,9 +41,11 @@ using aura::ast::StringPool;
 using aura::ast::SyntaxMarker;
 using aura::compiler::CompilerService;
 using aura::compiler::macro_exp::clone_macro_body;
+using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::g_macro_rest_gensym_serial;
 using aura::compiler::macro_exp::g_macro_rest_param_hygiene_incomplete_total;
 using aura::compiler::macro_exp::g_macro_rest_param_hygiene_total;
+using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -290,6 +292,46 @@ int run_test_rest_param_hygiene() {
             CHECK(as_int(*r2) != 99, "not captured 99");
         else
             CHECK(true, "list/pair result (hygienic)");
+    }
+
+    // Issue #3215: rest spine that should have been stamped but was not
+    // sets hygiene-rest-unmarked (same last_limit_reason string as 3029).
+    {
+        std::println("\n--- #3215: hygiene-rest-unmarked after incomplete rest stamp ---");
+        g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
+        const auto inc0 =
+            g_macro_rest_param_hygiene_incomplete_total.load(std::memory_order_relaxed);
+        FlatAST src;
+        StringPool src_pool;
+        auto rest_sid = src_pool.intern("rest");
+        auto y_sid = src_pool.intern("y");
+        auto body = src.add_variable(rest_sid);
+        std::vector<aura::ast::SymId> params{y_sid, rest_sid};
+        auto lam = src.add_lambda(params, body, /*dotted=*/true);
+        FlatAST tgt;
+        StringPool tgt_pool;
+        NameMap nm;
+        nm["rest"] = "rest"; // not __rest_ — detection/repair path
+        auto cloned = clone_macro_body(tgt, tgt_pool, src, src_pool, lam, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "3215: clone ok");
+        CHECK(g_macro_rest_param_hygiene_incomplete_total.load(std::memory_order_relaxed) >=
+                  inc0 + 1,
+              "3215: incomplete rest stamp bumped");
+        const auto* rs = hygiene_last_limit_reason_string();
+        const auto atom = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+        CHECK(rs != nullptr && std::string(rs) == "hygiene-rest-unmarked",
+              "3215: last reason hygiene-rest-unmarked");
+        CHECK(atom == 5, "3215: reason enum 5");
+        CompilerService cs;
+        CHECK(cs.eval("(+ 1 1)").has_value(), "3215: warm");
+        CHECK(href(cs, "query:macro-hygiene-stats", "hygiene-limit-reason-rest-unmarked") == 5,
+              "3215: stats map rest-unmarked=5");
+        CHECK(href(cs, "query:macro-hygiene-stats", "schema-3215") == 3215, "3215: schema-3215");
+        const auto mx = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(mx.find("hygiene-rest-unmarked") != std::string::npos, "3215: string in switch");
+        CHECK(read_file("docs/design/3215-hygiene-reason.md").empty(),
+              "3215: no docs/design/3215-* per #1655");
     }
 
     std::println("\n=== #2169 rest-param hygiene: {} passed, {} failed ===", g_passed, g_failed);
