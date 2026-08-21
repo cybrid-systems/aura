@@ -58,6 +58,7 @@ export using ::aura::ast::kRestampOverBudgetExportIssue;
 export using ::aura::ast::kUnifiedRestampIssue;
 export using ::aura::ast::kUnifiedRestampQueryVisibleIssue;
 export using ::aura::ast::kQueryStableRestampLagStructuredIssue;
+export using ::aura::ast::kQueryStableRestampExportUniformIssue;
 export using ::aura::ast::kRestampLagErrorKind;
 export using ::aura::ast::kRestampLagReasonBudgetExceeded;
 export using ::aura::ast::unified_restamp_torn_visible_total_v_read;

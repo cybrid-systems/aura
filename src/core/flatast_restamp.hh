@@ -119,6 +119,10 @@ inline constexpr int kUnifiedRestampQueryVisibleIssue = 3058;
 inline constexpr int kQueryStableRestampLagStructuredIssue = 3121;
 inline constexpr const char* kRestampLagErrorKind = "restamp-lag";
 inline constexpr const char* kRestampLagReasonBudgetExceeded = "budget-exceeded";
+// Issue #3198: every Agent export path (query:*-stable / ensure-ref /
+// :as-query-result / export_ref) must fail-closed on the same torn face.
+// No new public query key — reuse restamp-lag / torn counters.
+inline constexpr int kQueryStableRestampExportUniformIssue = 3198;
 inline std::atomic<std::uint64_t> g_unified_restamp_torn_visible_total{0};
 inline std::atomic<std::uint64_t> g_unified_restamp_calls_total{0};
 [[nodiscard]] inline std::uint64_t unified_restamp_torn_visible_total_v_read() noexcept {

@@ -2073,6 +2073,21 @@ def cmd_lint():
             "Issue #3197 naked-mutate PrimMeta linter failed — run python3 scripts/coverage/checks/check_naked_mutate_prim_meta_3197.py"
         )
         return r
+    # Issue #3198: restamp budget exceed fail-closed on every Agent
+    # query:*-stable / :as-query-result / export_ref path (I2/I6 residual).
+    # Reuses restamp-lag / torn counters. Soft observe-only.
+    # Extends test_hygiene_mutate_closed_loop + provenance_batch +
+    # query-result full provenance; no docs/design / invent.
+    qsreu3198_script = COVERAGE_CHECKS / "check_query_stable_restamp_export_uniform_3198.py"
+    if not qsreu3198_script.exists():
+        fail(f"missing {qsreu3198_script}")
+        return 1
+    r = run([sys.executable, str(qsreu3198_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3198 query-stable restamp export uniform linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_export_uniform_3198.py"
+        )
+        return r
     # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
     # Occurrence persist / TypeLinearCommitProof on one authoritative face.
     # Reuses invalidate_gen (no second proof model). Soft observe-only.

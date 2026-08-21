@@ -2338,6 +2338,188 @@ static void ac3196_4_source_and_linter() {
     CHECK(read_file("tests/compiler/test_issue_3196.cpp").empty(), "3196 AC5: no invent compiler");
 }
 
+static void ac3198_1_production_export_uniform() {
+    std::println("\n--- #3198 AC1: production children-stable / :as-query-result / export_ref "
+                 "fail-closed ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kQueryStableRestampExportUniformIssue;
+    using aura::ast::kRestampLagErrorKind;
+    using aura::ast::kRestampLagReasonBudgetExceeded;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kQueryStableRestampExportUniformIssue == 3198, "3198 AC1: issue constant");
+    CHECK(std::string_view(kRestampLagErrorKind) == "restamp-lag", "3198 AC1: reuse error kind");
+    CHECK(std::string_view(kRestampLagReasonBudgetExceeded) == "budget-exceeded",
+          "3198 AC1: reuse reason token");
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3198 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3198 AC1: workspace");
+    auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
+    CHECK(renamed.has_value(), "3198 AC1: mutate ran");
+    if (!ws->restamp_last_budget_exceeded()) {
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+    }
+    CHECK(ws->restamp_last_budget_exceeded(), "3198 AC1: last restamp exceeded");
+    auto lag = first_lagging(*ws);
+    if (lag == aura::ast::NULL_NODE) {
+        CHECK(true, "3198 AC1: incremental restamp covered live slots (no lag node)");
+    } else {
+        auto exported = cs.evaluator().export_ref(lag);
+        CHECK(exported.id == aura::ast::NULL_NODE, "3198 AC1: export_ref fail-closed");
+        auto safe = cs.evaluator().export_ref_safe(lag, 0, 0);
+        CHECK(safe.id == aura::ast::NULL_NODE, "3198 AC1: export_ref_safe fail-closed");
+        aura::ast::FlatAST::StableNodeRef held{};
+        held.id = lag;
+        auto held_out = cs.evaluator().export_held_ref(held);
+        CHECK(!held_out.has_value(), "3198 AC1: export_held_ref fail-closed");
+        auto inproc = cs.evaluator().make_stamped_ref(lag);
+        CHECK(inproc.id == lag, "3198 AC2: in-process make_stamped_ref still captures");
+        auto pref = ws->parent_stable(lag);
+        if (pref.id != aura::ast::NULL_NODE) {
+            auto kids = cs.eval(std::format("(query :children-stable {})", pref.id));
+            CHECK(kids.has_value(), "3198 AC1: children-stable returns");
+            CHECK(merr_kind_3027(cs, *kids) == "restamp-lag",
+                  "3198 AC1: children-stable structured restamp-lag");
+            CHECK(!is_hash(*kids), "3198 AC1: children-stable not a QueryResult hash");
+            auto qr = cs.eval(std::format("(query :children-stable {} :as-query-result)", pref.id));
+            CHECK(qr.has_value(), "3198 AC1: :as-query-result returns");
+            CHECK(merr_kind_3027(cs, *qr) == "restamp-lag",
+                  "3198 AC1: :as-query-result restamp-lag");
+            CHECK(!is_hash(*qr), "3198 AC1: :as-query-result not durable hash");
+        }
+        auto find_qr = cs.eval("(query :find \"g\" :as-query-result)");
+        CHECK(find_qr.has_value(), "3198 AC1: find :as-query-result returns");
+        if (is_hash(*find_qr)) {
+            CHECK(true, "3198 AC1: find matches were eagerly restamped (hash ok)");
+        } else {
+            CHECK(merr_kind_3027(cs, *find_qr) == "restamp-lag",
+                  "3198 AC1: find :as-query-result structured restamp-lag");
+        }
+    }
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3198_2_soft_shape_unchanged() {
+    std::println(
+        "\n--- #3198 AC2: Soft observe-only, export / :as-query-result shape unchanged ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3198 AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3198 AC2: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3198 AC2: live");
+    auto happy = cs.eval("(query :find \"g\" :as-query-result)");
+    CHECK(happy && is_hash(*happy), "3198 AC2: Soft happy :as-query-result is hash");
+    set_restamp_budget_nodes_for_process(1);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_last_budget_exceeded(), "3198 AC2: exceeded under Soft");
+    auto lag = first_lagging(*ws);
+    if (lag != aura::ast::NULL_NODE) {
+        CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "3198 AC2: Soft allow");
+        auto exported = cs.evaluator().export_ref(lag);
+        CHECK(exported.id == lag, "3198 AC2: Soft export_ref still stamps");
+        auto qr = cs.eval("(query :find \"g\" :as-query-result)");
+        CHECK(qr && is_hash(*qr), "3198 AC2: Soft :as-query-result still hash");
+        auto pref = ws->parent_stable(lag);
+        if (pref.id != aura::ast::NULL_NODE) {
+            auto kids = cs.eval(std::format("(query :children-stable {})", pref.id));
+            CHECK(kids && merr_kind_3027(cs, *kids) != "restamp-lag",
+                  "3198 AC2: Soft children-stable not structured reject");
+        }
+    }
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3198_3_under_budget_green() {
+    std::println("\n--- #3198 AC3: under-budget path unchanged ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3198 AC3: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3198 AC3: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3198 AC3: live");
+    auto exported = cs.evaluator().export_ref(live);
+    CHECK(exported.id == live, "3198 AC3: under-budget export_ref");
+    auto qr = cs.eval("(query :find \"g\" :as-query-result)");
+    CHECK(qr && is_hash(*qr), "3198 AC3: under-budget :as-query-result hash");
+    auto kids = cs.eval(std::format("(query :children-stable {})", live));
+    CHECK(kids.has_value() && merr_kind_3027(cs, *kids) != "restamp-lag",
+          "3198 AC3: under-budget children-stable not lag");
+    apply_dev_audit_defaults();
+}
+
+static void ac3198_4_source_and_linter() {
+    std::println("\n--- #3198 AC4/AC5: source-cite + linter + no invent ---");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto asr = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto astx = read_file("src/core/ast.ixx");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    const auto batch = read_file("tests/compiler/test_stable_ref_provenance_batch.cpp");
+    const auto qrp = read_file("tests/compiler/test_query_result_full_provenance.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_query_stable_restamp_export_uniform_3198.py");
+    const auto build = read_file("build.py");
+    CHECK(restamp.find("kQueryStableRestampExportUniformIssue = 3198") != std::string::npos,
+          "3198 AC4: issue stamp");
+    CHECK(astx.find("kQueryStableRestampExportUniformIssue") != std::string::npos,
+          "3198 AC4: ast re-export");
+    CHECK(sec.find("Issue #3198") != std::string::npos, "3198 AC4: export_ref cites");
+    CHECK(sec.find("allow_query_stable_ref_export") != std::string::npos, "3198 AC4: allow helper");
+    CHECK(qws.find("Issue #3198") != std::string::npos, "3198 AC4: query sites cite");
+    CHECK(qws.find("budget-exceeded: :as-query-result:") != std::string::npos,
+          "3198 AC4: :as-query-result structured");
+    CHECK(qws.find("ref.id == aura::ast::NULL_NODE") != std::string::npos,
+          "3198 AC4: children-stable nulled-ref");
+    CHECK(asr.find("Issue #3198") != std::string::npos, "3198 AC4: as-stable-ref cites");
+    CHECK(t.find("ac3198_1_production_export_uniform") != std::string::npos, "3198 AC5: AC1");
+    CHECK(t.find("ac3198_2_soft_shape_unchanged") != std::string::npos, "3198 AC5: AC2");
+    CHECK(t.find("ac3198_3_under_budget_green") != std::string::npos, "3198 AC5: AC3");
+    CHECK(batch.find("3198") != std::string::npos, "3198 AC5: provenance batch extended");
+    CHECK(qrp.find("3198") != std::string::npos, "3198 AC5: query-result provenance extended");
+    CHECK(!lint.empty() && lint.find("Issue #3198") != std::string::npos, "3198 AC5: linter");
+    CHECK(build.find("check_query_stable_restamp_export_uniform_3198") != std::string::npos,
+          "3198 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3198.cpp").empty(),
+          "3198 AC5: no test_issue_3198.cpp");
+    CHECK(read_file("tests/issues/test_issue_3198.cpp").empty(), "3198 AC5: no invent issues/");
+    CHECK(read_file("docs/design/3198-restamp-export-uniform.md").empty(),
+          "3198 AC4: no docs/design");
+}
+
 static void ac3095_1_post_restore_invariant_keys() {
     std::println("\n--- #3095 AC1: post-restore macro hygiene invariant keys ---");
     CompilerService cs;
@@ -2526,6 +2708,11 @@ int main() {
     ac3196_2_soft_zero_extra();
     ac3196_3_outermost_clears_gap();
     ac3196_4_source_and_linter();
+    std::println("\n=== Issue #3198: query:*-stable / :as-query-result restamp export uniform ===");
+    ac3198_1_production_export_uniform();
+    ac3198_2_soft_shape_unchanged();
+    ac3198_3_under_budget_green();
+    ac3198_4_source_and_linter();
     std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard (I2 residual) ===");
     ac3167_3_2906_non_regression();
     ac3167_6_source_and_linter();

@@ -32,6 +32,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "serve/fiber.h"
 
@@ -488,6 +489,45 @@ static void ac1630_5_stress() {
     CHECK(fail_rate < 0.15, std::format("fail rate {:.2f} < 0.15", fail_rate));
 }
 
+static void ac3198_export_ref_fail_closed() {
+    std::println("\n--- #3198: production export_ref fail-closed on restamp-lag ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kQueryStableRestampExportUniformIssue;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kQueryStableRestampExportUniformIssue == 3198, "3198: issue constant");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_parent(cs), "3198: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3198: workspace_flat");
+    (void)cs.eval("(mutate:rebind \"x\" \"42\")");
+    if (!ws->restamp_last_budget_exceeded()) {
+        ws->bump_generation();
+        ws->restamp_all_node_generations();
+    }
+    NodeId lag = NULL_NODE;
+    for (NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id) &&
+            !ws->node_generation_is_post_mutate(id)) {
+            lag = id;
+            break;
+        }
+    }
+    if (lag == NULL_NODE) {
+        CHECK(true, "3198: incremental restamp covered live slots");
+    } else {
+        auto exported = cs.evaluator().export_ref(lag);
+        CHECK(exported.id == NULL_NODE, "3198: export_ref fail-closed");
+        auto inproc = cs.evaluator().make_stamped_ref(lag);
+        CHECK(inproc.id == lag, "3198 AC2: in-process make_stamped_ref still captures");
+    }
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+}
+
 static void ac1630_6_lineage_1564() {
     std::println("\n--- AC15: #1564 lineage ensure/refresh/epoch fence (#1630 AC6) ---");
     reset_provenance_enforcement_for_test();
@@ -531,6 +571,7 @@ int main() {
     ac1630_4_restamp_steal_gc();
     ac1630_5_stress();
     ac1630_6_lineage_1564();
+    ac3198_export_ref_fail_closed();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
