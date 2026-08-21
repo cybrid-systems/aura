@@ -30,3 +30,11 @@ extern "C" __attribute__((weak)) void* aura_get_storm_eval_context(void) noexcep
 // Strong definition lives in ir_cache_pure.ixx (full-module binaries).
 // test_concurrent does not compile that module.
 extern "C" __attribute__((weak)) void aura_clear_partial_relower_threshold_force(void) {}
+
+// Issue #2263 / #2964: linear_fast_path_ok() in typed_mutation_audit.h
+// calls this. Strong def is typed_mutation_audit_hooks.cpp (full-module
+// binaries). test_concurrent does not compile that TU — without a stub
+// asan-build fails: undefined symbol aura_escape_move_gate_active.
+extern "C" __attribute__((weak)) int aura_escape_move_gate_active() noexcept {
+    return 0; // stub: no escape gate in the concurrent-fiber binary
+}
