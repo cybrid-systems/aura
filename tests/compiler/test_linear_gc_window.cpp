@@ -68,6 +68,9 @@ void ac1_source() {
     CHECK(!lock.empty() && lock.find("#2043") != std::string::npos, "lock_order #2043");
     CHECK(lock.find("finalize_linear_gc_invalidation_window_") != std::string::npos,
           "lock_order documents window");
+    auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    CHECK(gc.find("rebind_linear_proof_after_root_migration") != std::string::npos,
+          "3227: compact_sweep rebinds linear proof");
 }
 
 void ac2_soft_dirty_epoch() {

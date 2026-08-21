@@ -3614,6 +3614,19 @@ def cmd_lint():
             "Issue #3226 production soundness real-compare linter failed — run python3 scripts/coverage/checks/check_prod_soundness_real_compare_3226.py"
         )
         return r
+    # Issue #3227: post-compact / remount re-bind TypeLinearCommitProof
+    # (densify/steal invalidate_gen + #2984). Soft observe; last==0 quiet.
+    # Extends test_type_linear_commit_health; no docs/design / invent.
+    lpm3227_script = COVERAGE_CHECKS / "check_linear_post_migration_proof_rebind_3227.py"
+    if not lpm3227_script.exists():
+        fail(f"missing {lpm3227_script}")
+        return 1
+    r = run([sys.executable, str(lpm3227_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3227 linear post-migration proof rebind linter failed — run python3 scripts/coverage/checks/check_linear_post_migration_proof_rebind_3227.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into

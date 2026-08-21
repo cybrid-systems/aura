@@ -1145,9 +1145,10 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
             std::memory_order_relaxed);
     }
 
-    // Issue #2984: post-compact TypeLinearCommitProof.linear_root_count
-    // consistency (pure compact, no densify Phase-5). last==0 → no collect.
-    (void)typed_audit::note_arena_compact_linear_root_consistency();
+    // Issue #2984: note_arena_compact_linear_root_consistency (count).
+    // Issue #3227: rebind / reject face + densify/steal invalidate_gen
+    // so Move/Drop cannot elide against remapped roots. last==0 quiet.
+    (void)typed_audit::rebind_linear_proof_after_root_migration();
 
     return result;
 }
