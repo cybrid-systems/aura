@@ -36,6 +36,9 @@ extern "C" void aura_bump_reemit_success_sync_covered_remount_totals(std::uint64
 // Issue #2977: force_jit + last_success masks (HotUpdateRegistry C ABI).
 extern "C" std::uint64_t aura_hot_update_force_jit_regions_mask(void);
 extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
+// Issue #3229: hashed-name define-id side set (skip peer remount).
+extern "C" int aura_hot_update_relower_success_define_active(void);
+extern "C" int aura_hot_update_relower_success_covers_define(std::uint32_t id);
 // Issue #2638 residual sid=0 cap-hit counter.
 extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Issue #2928: storm / throttle gates (production in hot_update_registry.cpp).
@@ -2798,6 +2801,13 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
                     continue;
                 if ((residual_closure_sid_region_bits_unlocked(cid) & prefer_mask) == 0)
                     continue;
+                // Issue #3229: hashed-name coverage is not define-complete.
+                if (cid < g_closure_stable_func_ids.size()) {
+                    const auto sid = g_closure_stable_func_ids[cid];
+                    if (sid != 0 && aura_hot_update_relower_success_define_active() != 0 &&
+                        aura_hot_update_relower_success_covers_define(sid) == 0)
+                        continue;
+                }
                 if (heal_slot(cid))
                     ++prefer_hit;
                 ++used;
@@ -2933,6 +2943,11 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
             const std::uint32_t sid = g_closure_stable_func_ids[cid];
             if (sid == 0)
                 continue; // AC3: anon / pure-anon stay residual / #2950
+            // Issue #3229: hashed-name 6-bit coverage is not define-complete.
+            // Skip remount of a named peer that did not itself succeed.
+            if (aura_hot_update_relower_success_define_active() != 0 &&
+                aura_hot_update_relower_success_covers_define(sid) == 0)
+                continue;
             if ((residual_closure_sid_region_bits_unlocked(cid) & mask) == 0)
                 continue;
             if (used >= cap) {

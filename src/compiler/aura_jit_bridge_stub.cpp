@@ -547,6 +547,13 @@ aura_hot_update_last_reemit_success_region_mask(void) {
 extern "C" __attribute__((weak)) std::uint64_t aura_hot_update_residual_force_mask(void) {
     return 0;
 }
+extern "C" __attribute__((weak)) int aura_hot_update_relower_success_define_active(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) int
+aura_hot_update_relower_success_covers_define(std::uint32_t /*id*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t
 aura_hot_update_residual_force_stale_observe_total(void) {
     return 0;

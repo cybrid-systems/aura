@@ -3640,6 +3640,19 @@ def cmd_lint():
             "Issue #3228 residual CastOp under-mark cone linter failed — run python3 scripts/coverage/checks/check_residual_castop_undermark_cone_3228.py"
         )
         return r
+    # Issue #3229: hashed-name 6-bit success coverage needs a define-id
+    # side set so colliding peers stay residual. Soft skip; quiet 0 extra.
+    # Extends test_hot_update_relower_success_coverage; no docs/design.
+    rsd3229_script = COVERAGE_CHECKS / "check_relower_success_define_collision_3229.py"
+    if not rsd3229_script.exists():
+        fail(f"missing {rsd3229_script}")
+        return 1
+    r = run([sys.executable, str(rsd3229_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3229 relower success define-collision linter failed — run python3 scripts/coverage/checks/check_relower_success_define_collision_3229.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into

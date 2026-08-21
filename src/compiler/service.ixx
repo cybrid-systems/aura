@@ -4990,8 +4990,12 @@ public:
         // shrinks for the covered region (under production + named residual
         // bits). Soft / Off: caller gated via production_defaults_active →
         // zero extra work (hash + one load + branch).
-        if (aura_production_defaults_active_probe() != 0)
+        if (aura_production_defaults_active_probe() != 0) {
             hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));
+            // Issue #3229: define-id side set so a 6-bit collision does
+            // not cover a peer. Soft skipped by the probe above.
+            hot_update_registry().note_relower_success_define(relower_success_define_id(name));
+        }
         // Issue #196: rebuild the per-block dirty bitmask to
         // match the new irs layout, then mark all blocks clean.
         // init_block_dirty_from_irs() sizes to irs[].blocks.size()
@@ -6101,9 +6105,13 @@ public:
                     // Issue #2183 AC1: restamp after successful partial peel.
                     restamp_cache_entry_live_(it->second);
                     // Issue #3136: success-path bitmap coherence (see 4968).
-                    if (aura_production_defaults_active_probe() != 0)
+                    if (aura_production_defaults_active_probe() != 0) {
                         hot_update_registry().note_relower_success_coverage(
                             1ULL << (fnv1a_64(name) & 63));
+                        // Issue #3229: define-id side set (6-bit collision).
+                        hot_update_registry().note_relower_success_define(
+                            relower_success_define_id(name));
+                    }
                     (void)flat;
                     (void)pool;
                     (void)expanded_root;
@@ -6286,9 +6294,13 @@ public:
                         // Issue #2183 AC1: restamp after successful per-fn partial.
                         restamp_cache_entry_live_(it->second);
                         // Issue #3136: success-path bitmap coherence (see 4968).
-                        if (aura_production_defaults_active_probe() != 0)
+                        if (aura_production_defaults_active_probe() != 0) {
                             hot_update_registry().note_relower_success_coverage(
                                 1ULL << (fnv1a_64(name) & 63));
+                            // Issue #3229: define-id side set (6-bit collision).
+                            hot_update_registry().note_relower_success_define(
+                                relower_success_define_id(name));
+                        }
                         // Issue #1514: sync JIT — evict native code for this
                         // define so next exec recompiles only the dirty fn.
                         (void)jit_.partial_recompile(name.c_str(), dirty_ids.data(),
@@ -7189,8 +7201,12 @@ public:
             return false;
         restamp_cache_entry_live_(it->second);
         // Issue #3136: success-path bitmap coherence (see store_ir_cache_v2).
-        if (aura_production_defaults_active_probe() != 0)
+        if (aura_production_defaults_active_probe() != 0) {
             hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));
+            // Issue #3229: define-id side set so a 6-bit collision does
+            // not cover a peer. Soft skipped by the probe above.
+            hot_update_registry().note_relower_success_define(relower_success_define_id(name));
+        }
         return true;
     }
 

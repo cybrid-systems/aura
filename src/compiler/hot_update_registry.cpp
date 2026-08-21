@@ -477,6 +477,8 @@ void HotUpdateRegistry::on_reload_success() noexcept {
     force_jit_stable_successes_.store(0, std::memory_order_relaxed);
     // Issue #2895: clear sticky coverage override on full recovery.
     reemit_success_coverage_override_.store(0, std::memory_order_relaxed);
+    // Issue #3229: reload success is wholesale — drop define-id side set.
+    clear_relower_success_defines();
     // Issue #2601: clear retry state (reload succeeded — no more
     // bounded retries needed; the next exhaust will re-seed).
     exhausted_min_dirty_retry_attempts_left_.store(0, std::memory_order_relaxed);
@@ -546,7 +548,13 @@ void HotUpdateRegistry::maybe_force_jit_repromote_on_clean_success() noexcept {
     const auto last_cov = last_reemit_success_region_mask_.load(std::memory_order_relaxed);
     const bool partial = resolve_force_jit_repromote_only_covered();
     if (partial && last_cov != 0) {
-        const auto clear_bits = mask & last_cov;
+        auto clear_bits = mask & last_cov;
+        // Issue #3229: hashed-name 6-bit coverage is not define-complete.
+        // Do not clear force-JIT bits while the define-id side set is
+        // active (a colliding peer is still residual). Pipeline
+        // note_reemit_success_coverage clears the set first.
+        if (relower_success_define_active_.load(std::memory_order_relaxed) != 0)
+            clear_bits = 0;
         if (clear_bits == 0) {
             // No overlap — leave mask; window already consumed so reset
             // streak (Agent must re-cover). Keep sticky override.
@@ -622,6 +630,7 @@ void HotUpdateRegistry::reset_force_jit_repromote_for_test() noexcept {
     // Issue #2895 / #2949: coverage + partial knobs / counters.
     // Auto mode (override=0) → Soft wholesale; production injects only_covered.
     last_reemit_success_region_mask_.store(0, std::memory_order_relaxed);
+    clear_relower_success_defines();
     force_jit_repromote_only_covered_bits_.store(0, std::memory_order_relaxed);
     force_jit_repromote_only_covered_override_.store(0, std::memory_order_relaxed);
     force_jit_repromote_partial_total_.store(0, std::memory_order_relaxed);
@@ -740,6 +749,12 @@ void HotUpdateRegistry::observe_residual_force_stale() noexcept {
 extern "C" std::uint64_t aura_hot_update_residual_force_mask(void) {
     return aura::compiler::hot_update_registry().residual_force_mask();
 }
+extern "C" int aura_hot_update_relower_success_define_active(void) {
+    return aura::compiler::hot_update_registry().relower_success_define_active() ? 1 : 0;
+}
+extern "C" int aura_hot_update_relower_success_covers_define(std::uint32_t id) {
+    return aura::compiler::hot_update_registry().relower_success_covers_define(id) ? 1 : 0;
+}
 extern "C" std::uint64_t aura_hot_update_residual_force_stale_observe_total(void) {
     return aura::compiler::hot_update_registry().residual_force_stale_observe_total();
 }
@@ -791,6 +806,9 @@ void HotUpdateRegistry::note_reemit_success_coverage(
     // can read last-success mask before the next pipeline call.
     reemit_success_coverage_override_.store(covered_force_jit_bits, std::memory_order_relaxed);
     last_reemit_success_region_mask_.store(covered_force_jit_bits, std::memory_order_relaxed);
+    // Issue #3229: pipeline coverage is region-complete — drop hashed-name
+    // define-id granularity so remount / re-promote stay #2978/#2895.
+    clear_relower_success_defines();
 }
 
 // Issue #2949: production default only_covered partial re-promote.
