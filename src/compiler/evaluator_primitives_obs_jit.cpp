@@ -12385,6 +12385,14 @@ void ObservabilityPrims::register_jit_p97(PrimRegistrar add, Evaluator& ev) {
             insert_kv("production-auto-arm-wired", 1);
             insert_kv("schema-3123", mdh::kProductionAutoArmMovingIssue);
             insert_kv("issue-3123", mdh::kProductionAutoArmMovingIssue);
+            // Issue #3200: production pin/EnvFrame Soft-gate → sticky +
+            // throttle. Additive on this health hash (no new query:*).
+            insert_kv("pin-or-guard-soft-gate-total",
+                      static_cast<std::int64_t>(s.production_pin_guard_soft_gate_total));
+            insert_kv("last-pin-or-guard-soft-gate", s.last_pin_guard_soft_gate ? 1 : 0);
+            insert_kv("pin-or-guard-soft-gate-wired", 1);
+            insert_kv("schema-3200", mdh::kMovingPinGuardSoftGateIssue);
+            insert_kv("issue-3200", mdh::kMovingPinGuardSoftGateIssue);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

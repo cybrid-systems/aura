@@ -641,6 +641,8 @@ export inline constexpr std::uint8_t kStickyClearZeroMoveClean = 2;
 export inline constexpr std::uint8_t kStickyClearRecovery = 3;
 export inline constexpr std::uint8_t kStickyClearPhase5Green = 4;
 export inline constexpr int kProductionAutoArmMovingIssue = 3123;
+// Issue #3200: production pin/EnvFrame Soft-gate → sticky + Agent throttle.
+export inline constexpr int kMovingPinGuardSoftGateIssue = 3200;
 
 export inline void clear_moving_incomplete_remap_sticky_densify_off() noexcept {
     g_moving_incomplete_remap_sticky_densify_off.store(0, std::memory_order_release);
@@ -760,6 +762,39 @@ should_production_auto_arm_moving(double current_fragmentation) noexcept {
     if (arena_mutation_boundary_depth() != 0)
         return false;
     return true;
+}
+
+// Issue #3200: production pack wanted Moving (high frag + feature on) but
+// live pins / EnvFrame guards Soft-gate. MutationBoundary / render stay
+// Soft-gate without sticky (non-goal). Quiet residual==0 never calls this.
+export [[nodiscard]] inline bool
+production_moving_wanted_but_pin_or_guard(double current_fragmentation) noexcept {
+    if (!production_auto_arm_pack_active())
+        return false;
+    if (current_fragmentation < kAutoMovingCompactThreshold)
+        return false;
+    if (!moving_compact_feature_enabled())
+        return false;
+    if (arena_mutation_boundary_depth() != 0)
+        return false;
+    return aura::core::lifetime::live_pin_count() != 0 ||
+           aura::core::envframe_lifetime::active_guard_depth() != 0;
+}
+
+// Arm existing sticky densify-off + Agent throttle so the outer loop
+// cannot pretend Moving amortisation occurred. Soft pack never calls.
+export inline void arm_production_pin_guard_soft_gate() noexcept {
+    const auto prev_sticky =
+        g_moving_incomplete_remap_sticky_densify_off.exchange(1, std::memory_order_acq_rel);
+    if (prev_sticky == 0) {
+        g_moving_incomplete_remap_sticky_densify_off_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    aura::core::moving_densify_health::note_production_pin_guard_soft_gate();
+    aura::core::moving_densify_health::note_agent_throttle_for_moving_densify();
+    aura::core::moving_densify_health::publish_last_moving_densify_window(
+        /*had_moving_densify=*/true, /*pin_contract_held=*/false,
+        /*moving_incomplete_remap=*/false, /*objects_moved=*/0, /*untracked_kept=*/0,
+        /*root_remap_fail_total=*/0);
 }
 
 inline void stamp_last_moving_compact_now() noexcept {
@@ -1745,24 +1780,29 @@ public:
                 g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
             }
+            const bool pin_block = aura::core::lifetime::live_pin_count() > 0;
+            const bool guard_block = aura::core::envframe_lifetime::active_guard_depth() > 0;
             if (aura::core::arena_policy::in_render_hotpath() ||
                 arena_mutation_boundary_depth() > 0 ||
-                aura::gc_hooks::should_defer_destructive_gc() ||
-                aura::core::lifetime::live_pin_count() > 0 ||
-                aura::core::envframe_lifetime::active_guard_depth() > 0) {
+                aura::gc_hooks::should_defer_destructive_gc() || pin_block || guard_block) {
                 result.moving_blocked_precondition = true;
                 result.soft_gated = true;
-                if (aura::core::lifetime::live_pin_count() > 0) {
+                if (pin_block) {
                     result.force_blocked_by_pin = true;
                     ++stats_.force_compact_blocked_by_pin;
                     g_force_compact_blocked_by_pin_total.fetch_add(1, std::memory_order_relaxed);
                 }
-                if (aura::core::envframe_lifetime::active_guard_depth() > 0) {
+                if (guard_block) {
                     result.force_blocked_by_envframe_guard = true;
                     ++stats_.force_compact_blocked_by_envframe_guard;
                     g_force_compact_blocked_by_envframe_guard_total.fetch_add(
                         1, std::memory_order_relaxed);
                 }
+                // Issue #3200: production pack + pins/EnvFrame must not leave
+                // a silent amortisation gap. Soft/sandbox observe-only.
+                // Render / MutationBoundary stay Soft-gate (no sticky).
+                if ((pin_block || guard_block) && production_auto_arm_pack_active())
+                    arm_production_pin_guard_soft_gate();
                 ++stats_.moving_blocked_precondition_total;
                 g_moving_blocked_precondition_total.fetch_add(1, std::memory_order_relaxed);
                 return result;
@@ -2834,6 +2874,11 @@ public:
                         saved = 1;
                     }
                 } else {
+                    // Issue #3200: production wanted Moving but pins/guards
+                    // blocked auto-arm — arm sticky so Soft fallback is not
+                    // a silent amortisation win.
+                    if (production_moving_wanted_but_pin_or_guard(frag_before))
+                        arm_production_pin_guard_soft_gate();
                     const auto marked = live_compact(/*force=*/false);
                     if (marked > 0 || small_pool_.free_slot_count() == 0)
                         saved = 1;

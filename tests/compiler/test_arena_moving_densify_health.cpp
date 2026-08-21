@@ -23,6 +23,7 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.arena; // Issue #2775: ASTArena::register_external_root_for_densify direct test
+import aura.core.envframe_lifetime;
 import aura.core.lifetime_pin;
 
 namespace {
@@ -654,6 +655,105 @@ static void ac3123_5_agent_surface_and_linter() {
     CHECK(!design.good(), "AC5: no docs/design/3123-* per #1655");
 }
 
+static void ac3200_1_production_pin_sticky_throttle() {
+    std::println("\n--- #3200 AC1: production pin Soft-gate → sticky + throttle ---");
+    CHECK(mdh::kMovingPinGuardSoftGateIssue == 3200, "3200 AC1: issue stamp");
+    CHECK(aura::ast::kMovingPinGuardSoftGateIssue == 3200, "3200 AC1: arena stamp");
+    MovingFlagGuard3123 on(1);
+    AutoArmPrefGuard prod(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::reset_moving_densify_health_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p = arena.create<Pod16_3123>(1, 2, 3, 4);
+    aura::core::lifetime::LifetimePin pin;
+    pin.pin(p, arena.generation(), arena.arena_id());
+    CHECK(aura::core::lifetime::live_pin_count() > 0, "3200 AC1: live pin");
+    const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
+    CHECK(r.moving_blocked_precondition, "3200 AC1: Moving blocked");
+    CHECK(r.soft_gated, "3200 AC1: soft_gated");
+    CHECK(r.force_blocked_by_pin, "3200 AC1: force_blocked_by_pin");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3200 AC1: sticky densify-off armed");
+    CHECK(mdh::last_pin_guard_soft_gate(), "3200 AC1: health last-pin-or-guard");
+    CHECK(mdh::production_pin_guard_soft_gate_total() >= 1, "3200 AC1: gate total");
+    CHECK(mdh::agent_throttle_for_moving_densify(), "3200 AC1: Agent throttle");
+    auto s = mdh::snapshot();
+    CHECK(!s.would_allow_mutate, "3200 AC1: would-allow-mutate false");
+    CHECK(s.force_reason_code == mdh::kForcePin, "3200 AC1: force-reason pin");
+    CHECK(s.agent_throttle, "3200 AC1: snapshot throttle");
+}
+
+static void ac3200_2_soft_observe_only() {
+    std::println("\n--- #3200 AC2: Soft pin Soft-gate does not arm sticky ---");
+    MovingFlagGuard3123 on(1);
+    AutoArmPrefGuard soft(0);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::reset_moving_densify_health_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p = arena.create<Pod16_3123>(1, 2, 3, 4);
+    aura::core::lifetime::LifetimePin pin;
+    pin.pin(p, arena.generation(), arena.arena_id());
+    const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
+    CHECK(r.moving_blocked_precondition, "3200 AC2: still blocked");
+    CHECK(r.force_blocked_by_pin, "3200 AC2: pin block observed");
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3200 AC2: Soft does not arm sticky");
+    CHECK(!mdh::last_pin_guard_soft_gate(), "3200 AC2: Soft does not note pin-or-guard");
+    CHECK(!mdh::agent_throttle_for_moving_densify(), "3200 AC2: Soft no throttle");
+}
+
+static void ac3200_3_untracked_fail_closed_unchanged() {
+    std::println("\n--- #3200 AC3: incomplete-remap fail-closed + sticky preserved ---");
+    CHECK(mdh::kMovingDensifyFailClosedIssue == 2495, "3200 AC3: fail-closed lineage");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("g_moving_incomplete_remap_sticky_densify_off") != std::string::npos,
+          "3200 AC3: sticky still armed on untracked");
+    CHECK(arena_src.find("untracked_kept_count") != std::string::npos, "3200 AC3: untracked kept");
+}
+
+static void ac3200_4_quiet_zero_extra() {
+    std::println("\n--- #3200 AC4: quiet residual==0 path zero extra ---");
+    MovingFlagGuard3123 on(1);
+    AutoArmPrefGuard prod(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    mdh::reset_moving_densify_health_for_test();
+    CHECK(aura::core::lifetime::live_pin_count() == 0, "3200 AC4: zero pins");
+    CHECK(aura::core::envframe_lifetime::active_guard_depth() == 0, "3200 AC4: zero guards");
+    CHECK(!aura::ast::production_moving_wanted_but_pin_or_guard(0.90),
+          "3200 AC4: quiet high-frag does not pin-or-guard-arm");
+    const auto tot0 = mdh::production_pin_guard_soft_gate_total();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16_3123>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16_3123>(5, 6, 7, 8);
+    CHECK(p0 && p1, "3200 AC4: create");
+    (void)arena.live_compact(aura::ast::LiveCompactMode::Moving);
+    CHECK(mdh::production_pin_guard_soft_gate_total() == tot0,
+          "3200 AC4: quiet Moving does not bump pin-or-guard total");
+}
+
+static void ac3200_5_source_and_linter() {
+    std::println("\n--- #3200 AC5/AC6: source-cite + linter + no invent ---");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto hh = read_file("src/core/moving_densify_health.hh");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    const auto t = read_file("tests/compiler/test_arena_moving_densify_health.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_moving_pin_guard_soft_gate_3200.py");
+    const auto build = read_file("build.py");
+    CHECK(arena_src.find("Issue #3200") != std::string::npos, "3200 AC6: arena cites");
+    CHECK(arena_src.find("arm_production_pin_guard_soft_gate") != std::string::npos,
+          "3200 AC6: arm helper");
+    CHECK(hh.find("kMovingPinGuardSoftGateIssue = 3200") != std::string::npos,
+          "3200 AC5: health stamp");
+    CHECK(q.find("schema-3200") != std::string::npos, "3200 AC5: schema on existing health query");
+    CHECK(q.find("pin-or-guard-soft-gate-total") != std::string::npos, "3200 AC5: query key");
+    CHECK(t.find("ac3200_1_production_pin_sticky_throttle") != std::string::npos, "3200 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3200") != std::string::npos, "3200 AC5: linter");
+    CHECK(build.find("check_moving_pin_guard_soft_gate_3200") != std::string::npos,
+          "3200 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3200.cpp").empty(), "3200 AC5: no invent");
+    CHECK(read_file("docs/design/3200-pin-guard-soft-gate.md").empty(), "3200 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_arena_moving_densify_health() {
@@ -679,7 +779,14 @@ int run_test_arena_moving_densify_health() {
     ac3123_3_sticky_clears_only_on_healthy();
     ac3123_4_soft_force_unchanged();
     ac3123_5_agent_surface_and_linter();
-    std::println("\n=== #2619/#2682/#2775/#3123: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3200: production pin/EnvFrame Soft-gate → sticky ===");
+    ac3200_1_production_pin_sticky_throttle();
+    ac3200_2_soft_observe_only();
+    ac3200_3_untracked_fail_closed_unchanged();
+    ac3200_4_quiet_zero_extra();
+    ac3200_5_source_and_linter();
+    std::println("\n=== #2619/#2682/#2775/#3123/#3200: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
