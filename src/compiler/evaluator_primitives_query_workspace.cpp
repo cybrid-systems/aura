@@ -107,9 +107,8 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
         if (!ev.allow_query_stable_ref_export(nid))
             return false;
         scratch_ref = ev.make_stamped_ref(nid);
-        const auto observed_gen = qr.matches[i].generation;
-        if (observed_gen != 0)
-            scratch_ref.gen = observed_gen;
+        // Issue #3230: do not paint a pre-mutate observed gen onto the
+        // stamped layout (durable QueryResult would look green).
         ev.stamp_query_stable_ref_export(scratch_ref);
         if (scratch_ref.id == aura::ast::NULL_NODE)
             return false;
@@ -407,9 +406,13 @@ void register_workspace_query_primitives(
             // stamp tenant+fiber. stamp_stable_ref alone left wrap/cow at 0
             // and multi-round restamp could fail closed after the first pass.
             ev.stamp_query_stable_ref_export(ref);
-            // Preserve Agent-held gen for staleness detect (refresh path).
-            if (packed->gen != 0)
-                ref.gen = packed->gen;
+            if (ref.id == aura::ast::NULL_NODE) {
+                *ok = false;
+                return mev("restamp-lag",
+                           std::string("budget-exceeded: ") + op +
+                               ": restamp budget exceeded; generation torn for export "
+                               "(Issue #3230 / #3121)");
+            }
             ev.bump_stable_ref_validated_in_primitives_count();
         } else if (is_int(arg)) {
             const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
@@ -417,6 +420,14 @@ void register_workspace_query_primitives(
                 *ok = false;
                 return mev("out-of-range", std::string(op) + ": node ID " + std::to_string(node) +
                                                " >= flat size " + std::to_string(flat.size()));
+            }
+            // Issue #3230: torn/budget before make_stamped_ref (lazy-align).
+            if (!ev.allow_query_stable_ref_export(node)) {
+                *ok = false;
+                return mev("restamp-lag",
+                           std::string("budget-exceeded: ") + op +
+                               ": restamp budget exceeded; generation torn for export "
+                               "(Issue #3230 / #3121)");
             }
             ev.bump_raw_nodeid_usage_in_primitives_count();
             ref = ev.make_stamped_ref(node);
@@ -840,6 +851,13 @@ void register_workspace_query_primitives(
                 layer = wt->active_idx();
             }
             const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+            // Issue #3230: torn/budget before make_safe_ref_layout.
+            if (!ev.allow_query_stable_ref_export(node))
+                return mev("restamp-lag",
+                           "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
+                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037); ; "
+                           "// Issue #3138: Agent recovery hint recovery: re-query after budget "
+                           "window or force full restamp before reusing refs");
             held = ev.make_stamped_safe_ref(node, layer, cur_fiber);
         } else if (is_pair(a[0])) {
             from_packed = true;
@@ -858,6 +876,13 @@ void register_workspace_query_primitives(
                 layer = wt->active_idx();
             }
             const std::uint32_t cur_fiber = static_cast<std::uint32_t>(aura_fiber_current_id());
+            // Issue #3230: torn/budget before make_safe_ref_layout.
+            if (!ev.allow_query_stable_ref_export(held.id))
+                return mev("restamp-lag",
+                           "budget-exceeded: query:ensure-ref: restamp budget exceeded; "
+                           "generation torn for export (Issue #3230 / #3121 / #3058 / #3037); ; "
+                           "// Issue #3138: Agent recovery hint recovery: re-query after budget "
+                           "window or force full restamp before reusing refs");
             // Preserve captured gen for staleness; stamp fiber/tenant.
             auto stamped = ev.make_stamped_safe_ref(held.id, layer, cur_fiber);
             // If packed gen is older, force stale so refresh path runs.

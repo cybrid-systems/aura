@@ -21,6 +21,8 @@
 //   Issue #3198: :as-query-result / schema-2 stamp fail-closed on restamp
 //   budget exceed is live-covered in test_hygiene_mutate_closed_loop
 //   (ac3198_*) plus check_query_stable_restamp_export_uniform_3198.py.
+//   Issue #3230: stamp path consults restamp_over_budget_torn before
+//   make_ref_layout so durable QueryResult cannot carry a pre-mutate gen.
 
 #include "test_harness.hpp"
 

@@ -123,6 +123,15 @@ inline constexpr const char* kRestampLagReasonBudgetExceeded = "budget-exceeded"
 // :as-query-result / export_ref) must fail-closed on the same torn face.
 // No new public query key — reuse restamp-lag / torn counters.
 inline constexpr int kQueryStableRestampExportUniformIssue = 3198;
+// Issue #3230: production query:*-stable export must consult torn/budget
+// *before* make_ref_layout / make_safe_ref_layout / stamp-green.
+// Equivalent to last_budget_exceeded || generation_torn (#3037).
+// Soft/Off observe-only. No new public query key.
+inline constexpr int kQueryStableRestampLagHardRejectIssue = 3230;
+[[nodiscard]] inline bool restamp_over_budget_torn(bool last_budget_exceeded,
+                                                   bool generation_torn) noexcept {
+    return last_budget_exceeded || generation_torn;
+}
 inline std::atomic<std::uint64_t> g_unified_restamp_torn_visible_total{0};
 inline std::atomic<std::uint64_t> g_unified_restamp_calls_total{0};
 [[nodiscard]] inline std::uint64_t unified_restamp_torn_visible_total_v_read() noexcept {

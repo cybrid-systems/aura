@@ -6630,12 +6630,13 @@ public:
     // Remakes brace-init residuals via make_ref_layout when workspace has
     // non-zero wrap/cow (counts unstamped_prevented), then stamp_stable_ref
     // and bumps query_stable_ref_stamped_total.
-    // Issue #3000 / #3037: production + last restamp-budget exceeded +
-    // node not eagerly restamped → reject (null ref; restamp-lag /
+    // Issue #3000 / #3037 / #3230: production + restamp_over_budget_torn
+    // + node not eagerly restamped → reject (null ref; restamp-lag /
     // torn). Soft: observe only, stamp as #2960. Call
     // allow_query_stable_ref_export before make_ref_layout so lazy-align
     // cannot hide a pre-mutate gen. Eager bit (not node_gen_==generation_)
-    // is the post-mutate authority after over-budget.
+    // is the post-mutate authority after over-budget. Never restore a
+    // pre-mutate gen onto a remade layout (#3230).
     void stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept;
     // Issue #3000 / #3037: export-face restamp-lag / torn gate. Quiet
     // path (budget unlimited / not exceeded): one relaxed load, no new

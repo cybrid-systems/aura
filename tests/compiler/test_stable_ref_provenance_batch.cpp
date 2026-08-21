@@ -491,6 +491,8 @@ static void ac1630_5_stress() {
 
 static void ac3198_export_ref_fail_closed() {
     std::println("\n--- #3198: production export_ref fail-closed on restamp-lag ---");
+    // Issue #3230: export_ref still consults restamp_over_budget_torn
+    // before make_ref_layout / stamp-green.
     using aura::ast::clear_restamp_budget_nodes_override_for_test;
     using aura::ast::kQueryStableRestampExportUniformIssue;
     using aura::ast::set_restamp_budget_nodes_for_process;
