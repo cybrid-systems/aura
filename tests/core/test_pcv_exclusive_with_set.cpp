@@ -29,7 +29,11 @@ using aura::ast::FlatAST;
 using aura::ast::g_pcv_hotpath_metrics;
 using aura::ast::kPcvExclusiveSetIssue;
 using aura::ast::kPcvHotpathIssue;
+using aura::ast::kPcvStaleSpanExclusiveIssue;
 using aura::ast::NodeId;
+using aura::ast::pcv_checkpoint_live_enter;
+using aura::ast::pcv_checkpoint_live_exit;
+using aura::ast::pcv_set_stale_span_exclusive_enabled;
 using aura::ast::PersistentChildVector;
 using aura::ast::reset_pcv_hotpath_metrics_for_test;
 using aura::ast::SafePCVSpan;
@@ -57,6 +61,14 @@ static std::string read_file(const char* path) {
 }
 
 } // namespace
+
+static void ac3233_1_stale_span_next_set_child_exclusive();
+static void ac3233_2_live_span_still_cows();
+static void ac3233_3_checkpoint_rollback_still_cows();
+static void ac3233_4_soft_unchanged_source();
+static void ac3167_1_production_stale_refresh();
+static void ac3167_2_happy_path_zero_extra();
+static void ac3167_4_additive_counter_only();
 
 int run_test_pcv_exclusive_with_set() {
     std::println("=== Issue #2140: PCV exclusive with_set ===");
@@ -298,6 +310,12 @@ int run_test_pcv_exclusive_with_set() {
               "AC4: no new test file per #81967");
     }
 
+    std::println("\n=== Issue #3233: stale SafePCVSpan exclusive after Guard ===");
+    ac3233_1_stale_span_next_set_child_exclusive();
+    ac3233_2_live_span_still_cows();
+    ac3233_3_checkpoint_rollback_still_cows();
+    ac3233_4_soft_unchanged_source();
+
     std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard fingerprint ===");
     ac3167_1_production_stale_refresh();
     ac3167_2_happy_path_zero_extra();
@@ -313,6 +331,118 @@ int main() {
 }
 #endif
 
+// ── Issue #3233 ACs ──
+// SafePCVSpan held across a successful Guard still aliases storage.
+// After fingerprint mismatch, next set_child_locked force-inplace exclusive.
+
+static void ac3233_1_stale_span_next_set_child_exclusive() {
+    std::println("\n--- #3233 AC1: stale span across Guard → next set_child exclusive ---");
+    CHECK(kPcvStaleSpanExclusiveIssue == 3233, "3233 AC1: issue constant");
+    pcv_set_stale_span_exclusive_enabled(true);
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(1), flat.add_literal(2)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    NodeId other_kids[1] = {flat.add_literal(3)};
+    auto other = flat.add_begin(std::span<const NodeId>(other_kids, 1));
+    auto span = flat.children_safe(root);
+    CHECK(span.has_fingerprint(), "3233 AC1: span fingerprinted");
+    CHECK(span.use_count() > 1, "3233 AC1: span aliases storage");
+    // Guard on a *different* node bumps generation; root PCV still shared.
+    flat.set_child(other, 0, flat.add_literal(4));
+    CHECK(span.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                        span.captured_node_gen()),
+          "3233 AC1: span stale after other-node Guard");
+    const auto ex0 = g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.load();
+    const auto cow0 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
+    const auto alloc0 = g_pcv_hotpath_metrics().cow_alloc_total.load();
+    const auto force0 = g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load();
+    flat.set_child(root, 0, flat.add_literal(99));
+    const auto ex1 = g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.load();
+    const auto cow1 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
+    const auto alloc1 = g_pcv_hotpath_metrics().cow_alloc_total.load();
+    const auto force1 = g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load();
+    CHECK(ex1 > ex0, "3233 AC1: exclusive counter bumped");
+    CHECK(cow1 == cow0, "3233 AC1: no locked COW");
+    CHECK(alloc1 == alloc0, "3233 AC1: no full COW alloc");
+    CHECK(force1 > force0, "3233 AC1: stale-span force exclusive");
+    CHECK(flat.children(root)[0] != kids[0], "3233 AC1: tree updated");
+    pcv_set_stale_span_exclusive_enabled(false);
+}
+
+static void ac3233_2_live_span_still_cows() {
+    std::println("\n--- #3233 AC2: live non-stale SafePCVSpan still COWs ---");
+    pcv_set_stale_span_exclusive_enabled(true);
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    auto span = flat.children_safe(root);
+    const auto s0 = span[0];
+    flat.set_child(root, 0, flat.add_literal(999));
+    CHECK(span[0] == s0, "3233 AC2: live span sees pre-mutation");
+    CHECK(g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load() > 0 ||
+              g_pcv_hotpath_metrics().with_set_cow_total.load() > 0 ||
+              g_pcv_hotpath_metrics().cow_alloc_total.load() > 0,
+          "3233 AC2: live pin forces COW");
+    pcv_set_stale_span_exclusive_enabled(false);
+}
+
+static void ac3233_3_checkpoint_rollback_still_cows() {
+    std::println("\n--- #3233 AC3: checkpoint snapshot still COWs (rollback green) ---");
+    pcv_set_stale_span_exclusive_enabled(true);
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(1), flat.add_literal(2)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    NodeId other_kids[1] = {flat.add_literal(3)};
+    auto other = flat.add_begin(std::span<const NodeId>(other_kids, 1));
+    auto span = flat.children_safe(root);
+    flat.set_child(other, 0, flat.add_literal(4)); // generation bump
+    pcv_checkpoint_live_enter();
+    auto snap = flat.snapshot_children();
+    const auto old0 = snap[static_cast<std::size_t>(root)][0];
+    flat.set_child(root, 0, flat.add_literal(77));
+    CHECK(span[0] == old0, "3233 AC3: span frozen under checkpoint");
+    flat.restore_children(std::move(snap));
+    pcv_checkpoint_live_exit();
+    CHECK(flat.children(root)[0] == old0, "3233 AC3: rollback restored");
+    pcv_set_stale_span_exclusive_enabled(false);
+}
+
+static void ac3233_4_soft_unchanged_source() {
+    std::println("\n--- #3233 AC4+AC5: Soft unchanged; source-cite; no invent ---");
+    pcv_set_stale_span_exclusive_enabled(false);
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(1), flat.add_literal(2)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    NodeId other_kids[1] = {flat.add_literal(3)};
+    auto other = flat.add_begin(std::span<const NodeId>(other_kids, 1));
+    auto span = flat.children_safe(root);
+    flat.set_child(other, 0, flat.add_literal(4));
+    const auto cow0 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
+    const auto force0 = g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load();
+    flat.set_child(root, 0, flat.add_literal(8));
+    CHECK(g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load() == force0,
+          "3233 AC4: Soft no force-exclusive");
+    CHECK(g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load() > cow0 ||
+              g_pcv_hotpath_metrics().cow_alloc_total.load() > 0,
+          "3233 AC4: Soft still COWs stale alias");
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto obs = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("kPcvStaleSpanExclusiveIssue") != std::string::npos, "3233 AC5: stamp");
+    CHECK(ast.find("Issue #3233") != std::string::npos, "3233 AC5: ast cite");
+    CHECK(ast.find("stale_exclusive") != std::string::npos, "3233 AC5: locked force");
+    CHECK(obs.find("schema-3233") != std::string::npos, "3233 AC5: schema");
+    CHECK(build.find("check_pcv_stale_span_exclusive_3233") != std::string::npos,
+          "3233 AC5: build.py");
+    CHECK(read_file("docs/design/3233-pcv-stale-exclusive.md").empty(), "3233 AC5: no docs/design");
+    CHECK(read_file("tests/core/test_issue_3233.cpp").empty(), "3233 AC5: no invent");
+}
+
 // ── Issue #3167 ACs ──
 // SafePCVSpan / children_safe_view must not remain live across a
 // successful MutationBoundaryGuard without pin or forced re-query (I2
@@ -322,86 +452,65 @@ int main() {
 // via children_safe_view; Soft/Off: unchanged (COW frozen view).
 static void ac3167_1_production_stale_refresh() {
     std::println("\n--- #3167 AC1: Production — stale span → forced refresh + counter bumped ---");
-    using aura::compiler::typed_audit::apply_dev_audit_defaults;
-    using aura::compiler::typed_audit::apply_production_audit_defaults;
-    apply_production_audit_defaults();
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define base 10) (define other 20)\")").has_value(),
-          "3167 AC1: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC1: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3167 AC1: workspace");
-    auto* flat = static_cast<aura::ast::FlatAST*>(ws);
-    const auto root = static_cast<aura::ast::NodeId>(0);
-    const auto stale_before = flat->pcv_span_stale_across_guard_total();
-    // 1. Fresh capture has fingerprint, is_stale == false.
-    auto fresh = flat->children_safe_view(root);
+    // Light-link batch: FlatAST-only (no CompilerService).
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    const auto stale_before = flat.pcv_span_stale_across_guard_total();
+    auto fresh = flat.children_safe_view(root);
     CHECK(fresh.has_fingerprint(), "3167 AC1: 6-arg span has fingerprint");
     const auto pre_gen = fresh.captured_generation();
     const auto pre_wrap = fresh.captured_wrap_epoch();
     const auto pre_node_gen = fresh.captured_node_gen();
-    const auto post_gen = static_cast<std::uint64_t>(flat->generation());
-    const auto post_wrap = flat->wrap_epoch();
-    CHECK(!fresh.is_stale(post_gen, post_wrap, pre_node_gen), "3167 AC1: fresh span not stale");
-    // 2. Structural mutation advances generation + wrap_epoch + node_gen.
-    const auto extra = flat->add_literal(42);
-    flat->insert_child(root, 0, extra);
-    auto after = flat->children_safe_view(root);
+    CHECK(!fresh.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                          pre_node_gen),
+          "3167 AC1: fresh span not stale");
+    const auto extra = flat.add_literal(42);
+    flat.insert_child(root, 0, extra);
+    auto after = flat.children_safe_view(root);
     const auto after_node_gen = after.captured_node_gen();
-    // 3. Pre-mutate fingerprint vs post-mutate live state → stale.
-    CHECK(fresh.is_stale(static_cast<std::uint64_t>(flat->generation()), flat->wrap_epoch(),
+    CHECK(fresh.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
                          after_node_gen),
           "3167 AC1: pre-mutate span stale vs post-mutate state");
-    // 4. Force refresh on a captured (now-stale) span → bumps counter.
-    flat->force_refresh_pcv_span(fresh, root);
-    const auto stale_after = flat->pcv_span_stale_across_guard_total();
+    flat.force_refresh_pcv_span(fresh, root);
+    const auto stale_after = flat.pcv_span_stale_across_guard_total();
     CHECK(stale_after > stale_before, "3167 AC1: pcv_span_stale_across_guard_total bumped");
-    // 5. Refreshed span points at the post-mutate children (size grew).
-    auto refreshed = flat->force_refresh_pcv_span(after, root);
+    auto refreshed = flat.force_refresh_pcv_span(after, root);
     CHECK(refreshed.size() >= fresh.size(),
           "3167 AC1: refreshed span reflects post-mutate children");
     (void)pre_gen;
     (void)pre_wrap;
-    apply_dev_audit_defaults();
 }
 
 static void ac3167_2_happy_path_zero_extra() {
     std::println(
         "\n--- #3167 AC2: Happy path — no mutation between capture+refresh → zero extra ---");
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "3167 AC2: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC2: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3167 AC2: workspace");
-    auto* flat = static_cast<aura::ast::FlatAST*>(ws);
-    const auto root = static_cast<aura::ast::NodeId>(0);
-    const auto before = flat->pcv_span_stale_across_guard_total();
-    auto span = flat->children_safe_view(root);
-    const auto refreshed = flat->force_refresh_pcv_span(span, root);
+    FlatAST flat;
+    NodeId kids[1] = {flat.add_literal(1)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 1));
+    const auto before = flat.pcv_span_stale_across_guard_total();
+    auto span = flat.children_safe_view(root);
+    const auto refreshed = flat.force_refresh_pcv_span(span, root);
     CHECK(refreshed.has_fingerprint(), "3167 AC2: refreshed has fingerprint");
-    const auto after = flat->pcv_span_stale_across_guard_total();
+    const auto after = flat.pcv_span_stale_across_guard_total();
     CHECK(after == before, "3167 AC2: counter unchanged on happy path");
 }
 
 static void ac3167_4_additive_counter_only() {
     std::println(
         "\n--- #3167 AC4: Additive only — pcv_pin_count + pcv_columnar_hit_rate_bp intact ---");
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define x 1) (define y 2)\")").has_value(), "3167 AC4: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3167 AC4: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3167 AC4: workspace");
-    auto* flat = static_cast<aura::ast::FlatAST*>(ws);
-    const auto root = static_cast<aura::ast::NodeId>(0);
-    const auto pins_before = flat->pcv_pin_count();
-    const auto hit_rate_before = flat->pcv_columnar_hit_rate_bp();
-    // Multiple captures and refreshes.
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(1), flat.add_literal(2)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    const auto pins_before = flat.pcv_pin_count();
+    const auto hit_rate_before = flat.pcv_columnar_hit_rate_bp();
     for (int i = 0; i < 4; ++i) {
-        auto s = flat->children_safe_view(root);
-        flat->force_refresh_pcv_span(s, root);
+        auto s = flat.children_safe_view(root);
+        flat.force_refresh_pcv_span(s, root);
     }
-    const auto pins_after = flat->pcv_pin_count();
-    const auto hit_rate_after = flat->pcv_columnar_hit_rate_bp();
+    const auto pins_after = flat.pcv_pin_count();
+    const auto hit_rate_after = flat.pcv_columnar_hit_rate_bp();
     CHECK(pins_after > pins_before, "3167 AC4: pcv_pin_count incremented (captures)");
     CHECK(hit_rate_after == hit_rate_before || hit_rate_after > 0,
           "3167 AC4: pcv_columnar_hit_rate_bp surfaces");

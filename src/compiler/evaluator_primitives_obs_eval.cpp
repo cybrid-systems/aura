@@ -7052,6 +7052,13 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("flatast-locked-exclusive-wired", 1);
             insert_kv("schema-2906", aura::ast::kPcvFlatastLockedExclusiveIssue);
             insert_kv("issue-2906", aura::ast::kPcvFlatastLockedExclusiveIssue);
+            // Issue #3233: stale-span exclusive after Guard fingerprint mismatch.
+            insert_kv("stale-span-force-exclusive-total", load(m.stale_span_force_exclusive_total));
+            insert_kv("stale-span-force-exclusive-enabled",
+                      static_cast<std::int64_t>(
+                          m.stale_span_force_exclusive_enabled.load(std::memory_order_relaxed)));
+            insert_kv("schema-3233", aura::ast::kPcvStaleSpanExclusiveIssue);
+            insert_kv("issue-3233", aura::ast::kPcvStaleSpanExclusiveIssue);
             // Issue #2406 / #2521 TLS freelist surface
             insert_kv("tls-scratch-hit-total", load(m.tls_scratch_hit_total));
             insert_kv("tls-scratch-miss-total", load(m.tls_scratch_miss_total));

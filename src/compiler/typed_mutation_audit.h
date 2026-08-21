@@ -48,6 +48,9 @@ extern "C" int aura_escape_move_gate_active() noexcept;
 // contract_handler / value_tags / shape_profiler compile.
 extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) noexcept;
 extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept;
+// Issue #3233: production arms PCV stale-span exclusive (defined in
+// typed_mutation_audit_hooks.cpp). Soft/dev clears it.
+extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept;
 
 namespace aura::compiler {
 // Issue #3170 AC3 source-cite: clear_occurrence_persist_buffer bumps this
@@ -859,6 +862,7 @@ inline void apply_production_audit_defaults() noexcept {
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(0, std::memory_order_relaxed);
     aura::core::set_query_epoch_strict(true);
     clear_mid_fallback_refuse_se_tls();
+    aura_pcv_set_stale_span_exclusive(1);
 }
 
 // Issue #2053: restore fast-iteration Sampled defaults (tests / AURA_SANDBOX=off).
@@ -874,6 +878,7 @@ inline void apply_dev_audit_defaults() noexcept {
     g_typed_mutation_audit_counters.dev_audit_opt_in.store(1, std::memory_order_relaxed);
     aura::core::set_query_epoch_strict(false);
     clear_mid_fallback_refuse_se_tls();
+    aura_pcv_set_stale_span_exclusive(0);
 }
 
 // Issue #2818: one-shot warn when Sampled under-samples without apply_dev

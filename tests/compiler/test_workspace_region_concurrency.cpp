@@ -18,6 +18,7 @@
 
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
+#include "compiler/mutation_concurrency_health.hh"
 #include "compiler/mutation_hold_budget.h"
 
 #include <atomic>
@@ -411,6 +412,9 @@ static void ac3039_1_production_overlap_hard_reject() {
     std::println("\n--- #3039 AC1: production ScopedParallel overlap → hard reject ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     apply_production_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(workspace:set-concurrent-mutation-policy 1)").has_value(),
@@ -425,7 +429,8 @@ static void ac3039_1_production_overlap_hard_reject() {
     bool ok1 = true;
     auto g1 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok1);
     CHECK(g1.has_value() && *g1, "3039 AC1: first region admit");
-    (*g1).reset();
+    if (g1.has_value())
+        (*g1).reset();
     bool ok2 = true;
     auto g2 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, key, 1, &ok2);
     CHECK(!g2.has_value(), "3039 AC1: overlap hard-rejects (no admit)");
@@ -438,12 +443,16 @@ static void ac3039_1_production_overlap_hard_reject() {
     CHECK(m->scoped_parallel_conflict_fallback_total.load(std::memory_order_relaxed) == fb0,
           "3039 AC1: no GlobalExclusive fallback");
     apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
 }
 
 static void ac3039_2_production_disjoint_proceeds() {
     std::println("\n--- #3039 AC2: production ScopedParallel disjoint → RegionExclusive ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+    aura::compiler::MutationConcurrencyHealthSnapshot clean;
+    aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean);
     apply_production_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(workspace:set-concurrent-mutation-policy \"scoped-parallel\")").has_value(),
@@ -458,7 +467,8 @@ static void ac3039_2_production_disjoint_proceeds() {
     bool ok1 = true;
     auto g1 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k0, 1, &ok1);
     CHECK(g1.has_value() && *g1, "3039 AC2: first disjoint admit");
-    (*g1).reset();
+    if (g1.has_value())
+        (*g1).reset();
     bool ok2 = true;
     auto g2 = Evaluator::MutationBoundaryGuard::try_acquire_for_region(ev, k1, 1, &ok2);
     CHECK(g2.has_value() && *g2, "3039 AC2: second disjoint admit");
@@ -467,6 +477,7 @@ static void ac3039_2_production_disjoint_proceeds() {
     CHECK(m->scoped_parallel_admit_total.load(std::memory_order_relaxed) > admit0,
           "3039 AC2: ScopedParallel admit credited");
     apply_dev_audit_defaults();
+    aura::compiler::reset_mutation_concurrency_health_admit_for_test();
 }
 
 static void ac3039_3_soft_observe_only() {

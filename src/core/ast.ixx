@@ -4561,6 +4561,9 @@ public:
             return {};
         auto keep = share_storage(children_[id]);
         std::span<const NodeId> sp(children_[id].data(), children_[id].size());
+        // Issue #3233: stamp pin generation so the next locked set_child
+        // after a Guard bump can tell stale-span aliases from live pins.
+        children_[id].stamp_last_pin_generation(static_cast<std::uint64_t>(generation_));
         // Issue #3167: capture FlatAST node_id + generation_ + wrap_epoch_
         // + node_gen_[id] at this moment so force_refresh_pcv_span() can
         // detect staleness after a successful structural Guard mutates
@@ -5121,8 +5124,15 @@ public:
         if (old_cid != NULL_NODE && old_cid < parent_.size())
             parent_[old_cid] = NULL_NODE;
         const bool exclusive_before = list.is_unique();
-        list.cow_set(idx, child);
-        if (exclusive_before)
+        // Issue #3233: stale SafePCVSpan extra ref after Guard generation
+        // bump — force in-place exclusive (no full COW). Live pin this
+        // generation and MutationCheckpoint snapshots still COW.
+        const auto pin_gen = list.last_pin_generation();
+        const bool stale_exclusive = pcv_stale_span_exclusive_enabled() && !exclusive_before &&
+                                     !pcv_checkpoint_children_live() && pin_gen != 0 &&
+                                     pin_gen < static_cast<std::uint64_t>(generation_);
+        list.cow_set(idx, child, stale_exclusive);
+        if (exclusive_before || stale_exclusive)
             g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.fetch_add(
                 1, std::memory_order_relaxed);
         else

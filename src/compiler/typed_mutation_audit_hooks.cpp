@@ -10,6 +10,7 @@
 
 #include "typed_mutation_audit.h"
 #include "compiler/observability_metrics.h"
+#include "core/persistent_child_vector.hh"
 #include "compiler/ownership_escape_lowering_gate.h"
 
 #include <atomic>
@@ -19,6 +20,10 @@
 #include <string>
 #include <string_view>
 #include <unordered_set>
+
+extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept {
+    aura::ast::pcv_set_stale_span_exclusive_enabled(on != 0);
+}
 
 namespace aura::compiler {
 // Issue #2262: free process storage (evaluator bumps hard_empty_miss;
