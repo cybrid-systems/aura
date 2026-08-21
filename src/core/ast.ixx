@@ -59,6 +59,8 @@ export using ::aura::ast::kUnifiedRestampIssue;
 export using ::aura::ast::kUnifiedRestampQueryVisibleIssue;
 export using ::aura::ast::kQueryStableRestampLagStructuredIssue;
 export using ::aura::ast::kQueryStableRestampExportUniformIssue;
+export using ::aura::ast::kQueryStableRestampLagHardRejectIssue;
+export using ::aura::ast::restamp_over_budget_torn;
 export using ::aura::ast::kRestampLagErrorKind;
 export using ::aura::ast::kRestampLagReasonBudgetExceeded;
 export using ::aura::ast::unified_restamp_torn_visible_total_v_read;
@@ -7974,6 +7976,12 @@ public:
     // of node_gen_ must not stamp-green a pre-mutate handle).
     [[nodiscard]] bool restamp_generation_torn() const noexcept {
         return restamp_generation_torn_.load(std::memory_order_relaxed) != 0;
+    }
+    // Issue #3230: last restamp exceeded budget or marked generation torn.
+    // Stamp/export faces consult this before make_ref_layout.
+    [[nodiscard]] bool restamp_over_budget_torn() const noexcept {
+        return ::aura::ast::restamp_over_budget_torn(restamp_last_budget_exceeded(),
+                                                     restamp_generation_torn());
     }
     // Issue #3196: nested success → outermost dtor window.
     void note_nested_authority_gap() noexcept {

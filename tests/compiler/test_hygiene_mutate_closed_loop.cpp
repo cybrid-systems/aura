@@ -2652,6 +2652,151 @@ static void ac3198_4_source_and_linter() {
           "3198 AC4: no docs/design");
 }
 
+static void ac3230_1_production_stamp_before_layout() {
+    std::println("\n--- #3230 AC1: production over-budget never stamps green lagging gen ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kQueryStableRestampLagHardRejectIssue;
+    using aura::ast::kRestampLagErrorKind;
+    using aura::ast::kRestampLagReasonBudgetExceeded;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kQueryStableRestampLagHardRejectIssue == 3230, "3230 AC1: issue constant");
+    CHECK(std::string_view(kRestampLagErrorKind) == "restamp-lag", "3230 AC1: reuse error kind");
+    CHECK(std::string_view(kRestampLagReasonBudgetExceeded) == "budget-exceeded",
+          "3230 AC1: reuse reason");
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(1);
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3230 AC1: dense workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3230 AC1: workspace");
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_over_budget_torn(), "3230 AC1: torn/budget flag");
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3230 AC1: non-eager node");
+    (void)ws->make_ref_layout(lag);
+    CHECK(ws->node_generation_is_post_mutate(lag), "3230 AC1: lazy-align hid lag");
+    CHECK(!cs.evaluator().allow_query_stable_ref_export(lag),
+          "3230 AC1: production still rejects after lazy-align");
+    aura::ast::FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    brace.gen = 1;
+    cs.evaluator().stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == aura::ast::NULL_NODE, "3230 AC1: stamp nulls, never green lagging gen");
+    auto sr = cs.eval(std::format("(query:stable-ref {})", lag));
+    CHECK(sr.has_value(), "3230 AC1: query:stable-ref returns");
+    CHECK(merr_kind_3027(cs, *sr) == "restamp-lag", "3230 AC1: stable-ref structured");
+    CHECK(merr_cadr_3121(cs, *sr).find("budget-exceeded") == 0, "3230 AC1: reason token");
+    auto asr = cs.eval(std::format("(query:as-stable-ref {})", lag));
+    CHECK(asr.has_value() && merr_kind_3027(cs, *asr) == "restamp-lag",
+          "3230 AC1: as-stable-ref structured");
+    auto ens = cs.eval(std::format("(query:ensure-ref {})", lag));
+    CHECK(ens.has_value() && merr_kind_3027(cs, *ens) == "restamp-lag",
+          "3230 AC1: ensure-ref structured");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3230_2_soft_and_quiet() {
+    std::println("\n--- #3230 AC2: Soft observe; budget=0 quiet ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3230 AC2: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3230 AC2: workspace");
+    set_restamp_budget_nodes_for_process(1);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    auto lag = first_non_eager(*ws);
+    CHECK(lag != aura::ast::NULL_NODE, "3230 AC2: non-eager");
+    const auto rej0 =
+        aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+            std::memory_order_relaxed);
+    CHECK(cs.evaluator().allow_query_stable_ref_export(lag), "3230 AC2: Soft allow");
+    aura::ast::FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    cs.evaluator().stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == lag, "3230 AC2: Soft stamp proceeds");
+    CHECK(aura::core::provenance::g_query_stable_ref_restamp_torn_reject_total_atomic().load(
+              std::memory_order_relaxed) == rej0,
+          "3230 AC2: Soft no reject bump");
+    clear_restamp_budget_nodes_override_for_test();
+    aura::core::provenance::reset_provenance_enforcement_for_test();
+}
+
+static void ac3230_3_under_budget_green() {
+    std::println("\n--- #3230 AC3: under-budget restamp_all unchanged ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3230 AC3: workspace");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3230 AC3: workspace");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3230 AC3: live node");
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(!ws->restamp_over_budget_torn(), "3230 AC3: not torn under unlimited");
+    CHECK(cs.evaluator().allow_query_stable_ref_export(live), "3230 AC3: export allowed");
+    auto sr = cs.eval(std::format("(query:stable-ref {})", live));
+    CHECK(sr.has_value() && merr_kind_3027(cs, *sr) != "restamp-lag",
+          "3230 AC3: stable-ref not lag");
+}
+
+static void ac3230_4_source_and_linter() {
+    std::println("\n--- #3230 AC4/AC5/AC6: source-cite + linter + no invent ---");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    const auto astx = read_file("src/core/ast.ixx");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    const auto batch = read_file("tests/compiler/test_stable_ref_provenance_batch.cpp");
+    const auto qrp = read_file("tests/compiler/test_query_result_full_provenance.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_query_stable_restamp_lag_hard_reject_3230.py");
+    const auto build = read_file("build.py");
+    CHECK(restamp.find("kQueryStableRestampLagHardRejectIssue = 3230") != std::string::npos,
+          "3230 AC4: issue stamp");
+    CHECK(restamp.find("restamp_over_budget_torn") != std::string::npos, "3230 AC4: helper");
+    CHECK(astx.find("restamp_over_budget_torn") != std::string::npos, "3230 AC4: FlatAST helper");
+    CHECK(sec.find("Issue #3230") != std::string::npos, "3230 AC4: stamp cites");
+    CHECK(sec.find("restamp_over_budget_torn") != std::string::npos,
+          "3230 AC4: allow consults torn");
+    CHECK(ev.find("Issue #3230") != std::string::npos || ev.find("#3230") != std::string::npos,
+          "3230 AC4: evaluator comment");
+    CHECK(qws.find("Issue #3230") != std::string::npos, "3230 AC4: ensure-ref before layout");
+    CHECK(qws.find("make_stamped_safe_ref") != std::string::npos, "3230 AC4: ensure-ref layout");
+    CHECK(t.find("ac3230_1_production_stamp_before_layout") != std::string::npos, "3230 AC6: AC1");
+    CHECK(t.find("ac3230_2_soft_and_quiet") != std::string::npos, "3230 AC6: AC2");
+    CHECK(t.find("ac3230_3_under_budget_green") != std::string::npos, "3230 AC6: AC3");
+    CHECK(batch.find("3230") != std::string::npos, "3230 AC6: provenance batch");
+    CHECK(qrp.find("3230") != std::string::npos, "3230 AC6: query-result suite");
+    CHECK(!lint.empty() && lint.find("3230") != std::string::npos, "3230 AC6: linter");
+    CHECK(build.find("check_query_stable_restamp_lag_hard_reject_3230") != std::string::npos,
+          "3230 AC6: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3230.cpp").empty(), "3230 AC6: no invent");
+    CHECK(read_file("tests/issues/test_issue_3230.cpp").empty(), "3230 AC6: no tests/issues");
+    CHECK(read_file("docs/design/3230-query-stable-restamp-lag.md").empty(),
+          "3230 AC6: no docs/design");
+}
+
 static void ac3095_1_post_restore_invariant_keys() {
     std::println("\n--- #3095 AC1: post-restore macro hygiene invariant keys ---");
     CompilerService cs;
@@ -2903,6 +3048,12 @@ int main() {
     ac3198_2_soft_shape_unchanged();
     ac3198_3_under_budget_green();
     ac3198_4_source_and_linter();
+    std::println(
+        "\n=== Issue #3230: query:*-stable hard-reject restamp-lag before stamp-green ===");
+    ac3230_1_production_stamp_before_layout();
+    ac3230_2_soft_and_quiet();
+    ac3230_3_under_budget_green();
+    ac3230_4_source_and_linter();
     std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard (I2 residual) ===");
     ac3167_3_2906_non_regression();
     ac3167_6_source_and_linter();

@@ -1386,7 +1386,8 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
-    if (!ws->nested_authority_gap() && !ws->restamp_last_budget_exceeded())
+    // #3230: !ws->restamp_last_budget_exceeded() && !torn.
+    if (!ws->nested_authority_gap() && !ws->restamp_over_budget_torn())
         return true;
     if (!ws->nested_authority_gap() && ws->node_eagerly_restamped(id))
         return true;
@@ -1428,6 +1429,8 @@ bool Evaluator::query_stable_hard_reject_torn() const noexcept {
 // Issue #3000: production restamp-lag reject (null ref; do not stamp-green).
 void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) const noexcept {
     if (workspace_flat_ && ref.id != ast::NULL_NODE) {
+        // Issue #3230: consult torn/budget *before* make_ref_layout so
+        // lazy-align cannot hide a pre-mutate gen. Soft allow proceeds.
         if (!allow_query_stable_ref_export(ref.id)) {
             ref = {};
             return;
@@ -1439,14 +1442,15 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
         const bool layout_missing =
             (we != 0 && ref.wrap_epoch == 0) || (ce != 0 && ref.cow_epoch_at_capture == 0);
         if (layout_missing) {
-            const auto gen = ref.gen;
             const auto id = ref.id;
             ref = workspace_flat_->make_ref_layout(id);
-            if (gen != 0)
-                ref.gen = gen;
+            // Issue #3230: layout gen is post-mutate authority. Do not
+            // paint a pre-mutate gen onto a remade layout.
             ::aura::core::provenance::record_query_stable_ref_unstamped_prevented();
         }
     }
+    if (ref.id == ast::NULL_NODE)
+        return;
     stamp_stable_ref(ref);
     ::aura::core::provenance::record_query_stable_ref_stamped();
 }
