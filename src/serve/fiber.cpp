@@ -351,6 +351,11 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
             f->inject_synthetic_mutation_boundary_yield();
         }
     }
+    // Issue #3194: past inbody window, same-fiber force-releases
+    // workspace hold + depth (reuse #3118/#3035). Cross-fiber helper
+    // only re-arms pending-cancel (AC2 — no preemptive mutex drop while
+    // the other fiber's Guard is live). Soft already returned.
+    aura_evaluator_force_release_outermost_holder(fid);
     return 1;
 }
 

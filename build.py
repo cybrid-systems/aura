@@ -2074,6 +2074,19 @@ def cmd_lint():
             "Issue #3193 nested abort authority face linter failed — run python3 scripts/coverage/checks/check_nested_abort_authority_face_3193.py"
         )
         return r
+    # Issue #3194: non-cooperative hold-budget inbody force-release (I1).
+    # Same-fiber reuses #3118/#3035; cross-fiber pending-cancel only.
+    # Extends test_hold_budget_synthetic_yield_injection; no docs/design.
+    hb3194_script = COVERAGE_CHECKS / "check_hold_budget_inbody_force_release_3194.py"
+    if not hb3194_script.exists():
+        fail(f"missing {hb3194_script}")
+        return 1
+    r = run([sys.executable, str(hb3194_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3194 hold-budget inbody force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_release_3194.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

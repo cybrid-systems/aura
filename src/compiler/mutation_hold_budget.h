@@ -447,6 +447,11 @@ inline constexpr int kMutationHoldBudgetCancelForceReleaseIssue = 3118;
 inline std::atomic<std::uint64_t> g_mutation_hold_budget_inbody_window_exceeded_total{0};
 inline std::atomic<std::uint32_t> g_mutation_hold_budget_inbody_window_wired{1};
 inline constexpr int kMutationHoldBudgetInbodyWindowIssue = 3071;
+// Issue #3194: I1 residual — non-cooperative body past inbody window.
+// Same-fiber force-release reuses #3118/#3035 (unlock + depth 0);
+// cross-fiber pending-cancel only. Soft: helper no-ops. Reuses
+// forced_unlock_total + forced_fail_closed_total — no new counters.
+inline constexpr int kMutationHoldBudgetInbodyForceReleaseIssue = 3194;
 // Issue #3073: production soak readiness gate (residual-zero ×
 // hold-after-cancel max). Wired sentinel only — no extra hot-path work.
 // Soak abort lives in the chaos harness; Agents read schema-3073.

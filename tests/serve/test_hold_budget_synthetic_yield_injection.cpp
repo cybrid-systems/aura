@@ -21,12 +21,20 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_hold_budget.h"
+#include "compiler/typed_mutation_audit.h"
+#include "serve/fiber.h"
+#include "serve/scheduler.h"
+
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <format>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.evaluator;
@@ -229,11 +237,6 @@ int run_test_hold_budget_synthetic_yield_injection() {
 //         suite (#81967); no tests/issues/test_issue_3160.cpp.
 //   AC15: source-cite + coverage linter; no docs/design/3160-* per #1655.
 
-namespace {
-using aura::test::g_failed_3160 = g_failed;
-using aura::test::g_passed_3160 = g_passed;
-} // namespace
-
 int run_test_hold_budget_inbody_escalate() {
     std::println("=== Issue #3160: hold-budget inbody window escalate after 2× bound ===");
     int saved_failed = aura::test::g_failed;
@@ -406,10 +409,163 @@ int run_test_hold_budget_inbody_escalate() {
     return failed == 0 ? 0 : 1;
 }
 
+// @reason: Issue #3194 — non-cooperative inbody window force-release (I1).
+//   AC1: same-fiber poll past bound force-releases hold + depth + marks failed
+//   AC2: cross-fiber helper only pending-cancel
+//   AC3: Soft observe-only
+//   AC4: reuse forced_unlock_total + forced_fail_closed_total
+//   AC5/AC6: extend this suite + linter; no invent / docs/design
+
+int run_test_hold_budget_inbody_force_release() {
+    std::println("=== Issue #3194: hold-budget inbody force-release (I1 residual) ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // ac3194_1_same_fiber_force_release
+    {
+        std::println("\n--- AC1: same-fiber force-release past inbody bound ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3194 AC1: reject_enabled under production");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> ran{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        std::atomic<int> polled{-1};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3194 AC1: fiber current");
+                aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                polled.store(aura::serve::aura_hold_budget_poll_inbody_window(),
+                             std::memory_order_relaxed);
+                held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                                 std::memory_order_relaxed);
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                                  std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3194 AC1: fiber body ran");
+        CHECK(polled.load() == 1, "3194 AC1: poll exceeded bound");
+        CHECK(ok_flag.load() == 0, "3194 AC1: success flag forced false");
+        CHECK(held_after.load() == 0, "3194 AC1: workspace hold cleared");
+        CHECK(depth_after.load() == 0, "3194 AC1: depth slot == 0");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() >= 1,
+              "3194 AC1: forced_unlock_total");
+        CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() >= 1,
+              "3194 AC1: forced_fail_closed_total");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ac3194_2_cross_fiber_no_preemptive_release
+    {
+        std::println("\n--- AC2: cross-fiber pending-cancel only ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto pos = emb.find("aura_evaluator_force_release_outermost_holder");
+        CHECK(pos != std::string::npos, "3194 AC2: helper present");
+        const auto win = emb.substr(pos, 1600);
+        CHECK(win.find("cur->id() == fiber_id") != std::string::npos, "3194 AC2: same-fiber test");
+        CHECK(win.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+              "3194 AC2: cross-fiber pending-cancel");
+        CHECK(win.find("force_release_hold_budget_inbody") != std::string::npos,
+              "3194 AC2: same-fiber reuses #3118 force-release via public wrapper");
+        CHECK(emb.find("force_release_hold_after_cancel_") != std::string::npos,
+              "3194 AC2: #3118 helper still present");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        const auto poll_win = fc.substr(poll_pos, 7000);
+        CHECK(poll_win.find("workspace_mtx_") == std::string::npos,
+              "3194 AC2: poll does not touch workspace_mtx_ (helper owns release)");
+    }
+
+    // ac3194_3_soft_observe_only
+    {
+        std::println("\n--- AC3: Soft observe-only ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3194 AC3: Soft reject_enabled false");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_cancel_armed_fiber.store(1, std::memory_order_release);
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        (void)aura::serve::aura_hold_budget_poll_inbody_window();
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3194 AC3: no force-release under Soft");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(emb.find("if (!mutation_hold_budget_reject_enabled())") != std::string::npos,
+              "3194 AC3: helper gates on reject_enabled");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ── AC4/AC5/AC6: counters + linter + no invent ──
+    {
+        std::println("\n--- AC4/AC6: reuse counters + linter ---");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        const auto t = read_file("tests/serve/test_hold_budget_synthetic_yield_injection.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_hold_budget_inbody_force_release_3194.py");
+        const auto build = read_file("build.py");
+        CHECK(mhb.find("kMutationHoldBudgetInbodyForceReleaseIssue") != std::string::npos,
+              "3194 AC4: issue stamp");
+        CHECK(mhb.find("g_3194_") == std::string::npos, "3194 AC4: no new g_3194_* counter");
+        CHECK(t.find("ac3194_1_same_fiber_force_release") != std::string::npos ||
+                  t.find("3194 AC1: same-fiber") != std::string::npos,
+              "3194 AC5: AC1 in this suite");
+        CHECK(t.find("ac3194_2_cross_fiber_no_preemptive_release") != std::string::npos ||
+                  t.find("3194 AC2: cross-fiber") != std::string::npos,
+              "3194 AC5: AC2 in this suite");
+        CHECK(t.find("ac3194_3_soft_observe_only") != std::string::npos ||
+                  t.find("3194 AC3: Soft") != std::string::npos,
+              "3194 AC5: AC3 in this suite");
+        CHECK(!lint.empty() && lint.find("3194") != std::string::npos, "3194 AC6: linter");
+        CHECK(build.find("check_hold_budget_inbody_force_release_3194") != std::string::npos,
+              "3194 AC6: build.py");
+        CHECK(read_file("docs/design/3194-hold-budget-inbody-force-release.md").empty(),
+              "3194 AC6: no docs/design/");
+        CHECK(read_file("tests/serve/test_issue_3194.cpp").empty(),
+              "3194 AC6: no invent test_issue_3194");
+        CHECK(read_file("tests/issues/test_issue_3194.cpp").empty(),
+              "3194 AC6: no tests/issues/test_issue_3194");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3194 hold-budget inbody force-release: {} passed, {} failed ===", passed,
+                 failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
     const int rc2 = run_test_hold_budget_inbody_escalate();
-    return rc1 != 0 ? rc1 : rc2;
+    const int rc3 = run_test_hold_budget_inbody_force_release();
+    return rc1 != 0 ? rc1 : (rc2 != 0 ? rc2 : rc3);
 }
 #endif
