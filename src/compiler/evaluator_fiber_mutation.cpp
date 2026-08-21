@@ -59,6 +59,8 @@ std::size_t aura_jit_walk_active_closures(std::uint64_t current_bridge_epoch);
 // reject_enabled() inside aura_evaluator_force_degrade_outermost_holder
 // below — same gate as #2701/#2720/#2724 reject_enabled).
 extern int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
+// Issue #3223: victim-worker inbody poll nudge (strong in fiber.cpp).
+extern int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcept;
 // Issue #2726: read-only diagnostic peek for tests + observability.
 // Returns 1 if the flag is currently set on the holder, 0 otherwise.
 extern int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
@@ -1443,6 +1445,9 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
         aura_fiber_request_hold_budget_cancel(fiber_id) != 0) {
         g_mutation_hold_budget_holder_degrade_cross_fiber_cancel_fired_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #3223: nudge the victim worker to run the same inbody
+        // poll / force-release as same-fiber. Does not unlock here.
+        (void)aura_fiber_request_urgent_inbody_poll(fiber_id);
     }
     // Issue #3048: revoke holder session grants at force-degrade so a
     // body that never reaches Guard dtor / safepoint cannot leave

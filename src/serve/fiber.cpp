@@ -254,6 +254,22 @@ extern "C" int aura_fiber_request_hold_budget_cancel(std::uint64_t fiber_id) noe
     return 1;
 }
 
+// Issue #3223: cross-fiber force_degrade nudge. Sets urgent inbody-poll
+// on the victim Fiber + injects synthetic MutationBoundary yield so the
+// holder's own check_gc_safepoint runs the same force-release path as
+// same-fiber (#3222). Does not unlock from this thread (unique_lock
+// owner is the holder). Soft callers never reach here (reject_enabled
+// gate on force_degrade).
+extern "C" int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    Fiber* f = find_fiber_by_id_locked_held(fiber_id);
+    if (!f)
+        return 0;
+    f->request_urgent_inbody_poll();
+    f->inject_synthetic_mutation_boundary_yield();
+    return 1;
+}
+
 // Issue #3071: stamp / clear cancel-arm next to the pending flag so the
 // scheduler watchdog can bound the remaining in-body non-poll window.
 // Do not unlock workspace_mtx_ here (topology stays consistent; AC2).
@@ -262,12 +278,24 @@ void Fiber::request_hold_budget_cancel() noexcept {
     aura::compiler::mutation_hold_budget_note_cancel_armed(id());
 }
 
+void Fiber::request_urgent_inbody_poll() noexcept {
+    urgent_inbody_poll_.store(true, std::memory_order_release);
+}
+
+void Fiber::clear_urgent_inbody_poll() noexcept {
+    urgent_inbody_poll_.store(false, std::memory_order_release);
+}
+
 bool Fiber::consume_hold_budget_cancel() noexcept {
     bool expected = true;
     if (!pending_hold_budget_cancel_.compare_exchange_strong(
             expected, false, std::memory_order_acq_rel, std::memory_order_acquire))
         return false;
-    aura::compiler::mutation_hold_budget_note_cancel_consumed(id());
+    // Issue #3223: keep the inbody arm live while urgent poll is set so
+    // a later same-fiber safepoint can still force-release past 2×SLO.
+    // Cleared when poll exceeds or the holder is gone.
+    if (!peek_urgent_inbody_poll())
+        aura::compiler::mutation_hold_budget_note_cancel_consumed(id());
     return true;
 }
 
@@ -793,12 +821,18 @@ void Fiber::check_gc_safepoint() {
     // Issue #3222: idle poll is always cross-fiber (pending-cancel
     // only). Same-fiber inbody poll from this edge force-releases
     // hold + depth past the bound so steal/GC are not starved until
-    // dtor. Soft: poll is metric-only. Poll first while the cancel-arm
-    // timestamp is still live; fail-closed consume clears the arm.
+    // dtor. Issue #3223: cross-fiber force_degrade sets urgent inbody
+    // poll so this edge still runs after an early consume. Soft:
+    // poll is metric-only. Poll first while the cancel-arm timestamp
+    // is still live.
     if (auto* cur = g_current_fiber) {
-        if (cur->peek_hold_budget_cancel()) {
-            (void)aura_hold_budget_poll_inbody_window();
+        if (cur->peek_hold_budget_cancel() || cur->peek_urgent_inbody_poll()) {
+            const int exceeded = aura_hold_budget_poll_inbody_window();
             (void)aura_evaluator_try_hold_budget_fail_closed_at_safepoint();
+            if (exceeded) {
+                cur->clear_urgent_inbody_poll();
+                aura::compiler::mutation_hold_budget_note_cancel_consumed(cur->id());
+            }
         }
         if (cur->is_force_safepoint_requested()) {
             cur->force_safepoint_requested_.store(false, std::memory_order_release);

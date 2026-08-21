@@ -458,6 +458,11 @@ inline constexpr int kMutationHoldBudgetInbodyForceReleaseIssue = 3194;
 // bound so a live body does not keep workspace_mtx_ until dtor.
 // Reuses forced_unlock_total + forced_fail_closed_total.
 inline constexpr int kMutationHoldBudgetInbodyForceUnlockIssue = 3222;
+// Issue #3223: cross-fiber force_degrade must nudge the victim worker
+// to run the same inbody poll / force-release as same-fiber (#3222).
+// Does not unlock from the foreign thread. Reuses cross-fiber fired /
+// consumed + forced_unlock_total — no new counters.
+inline constexpr int kMutationHoldBudgetCrossFiberUrgentInbodyPollIssue = 3223;
 // Issue #3073: production soak readiness gate (residual-zero ×
 // hold-after-cancel max). Wired sentinel only — no extra hot-path work.
 // Soak abort lives in the chaos harness; Agents read schema-3073.
