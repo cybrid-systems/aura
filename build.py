@@ -3510,6 +3510,22 @@ def cmd_lint():
             "Issue #3188 production facade minimal IR/shape linter failed — run python3 scripts/coverage/checks/check_production_facade_minimal_ir_shape_3188.py"
         )
         return r
+    # Issue #3219: production facade C-ABI joint dual-writes Evaluator/core
+    # (defuse_version_ + WorkspaceEpoch + stamp/expire) after facade
+    # success so is_bridge_stale locksteps with aura_is_jit_closure_fresh.
+    # Does not re-bump AOT table epoch (owner-scoped #2951). Soft/Off:
+    # facade returns false; helper never runs. Extends
+    # test_compiler_hot_update_facade; no docs/design / invent.
+    ecj3219_script = COVERAGE_CHECKS / "check_eval_core_joint_after_production_facade_3219.py"
+    if not ecj3219_script.exists():
+        fail(f"missing {ecj3219_script}")
+        return 1
+    r = run([sys.executable, str(ecj3219_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3219 Evaluator/core joint after production facade linter failed — run python3 scripts/coverage/checks/check_eval_core_joint_after_production_facade_3219.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into

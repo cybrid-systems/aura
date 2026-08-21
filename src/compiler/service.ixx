@@ -12736,6 +12736,50 @@ public:
         run_epoch_invariant_if_enabled();
     }
 
+    // Issue #3219: production facade owns C-ABI epochs
+    // (g_current_bridge_epoch / g_aot_defuse_version / g_aot_table_epoch).
+    // Dual-write Evaluator defuse_version_ + core WorkspaceEpoch +
+    // stamp/expire so is_bridge_stale / is_env_frame_stale observe the
+    // same generation as aura_is_jit_closure_fresh. Does NOT re-bump
+    // aura_aot_bump_func_table_epoch (preserves #2951 / #2841
+    // owner-scoped; facade already noted hard_owner_scoped). Soft
+    // never reaches this (hard_invalidate_via_facade returns false).
+    // Caller already holds mutate_mtx_ (acquire_if_needed is a no-op).
+    void stamp_eval_core_joint_after_production_facade_(const std::string& name) {
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedUniqueLock;
+        OrderedUniqueLock<std::shared_mutex> mutate_guard =
+            OrderedUniqueLock<std::shared_mutex>::acquire_if_needed(mutate_mtx_, Level::Mutate);
+        sync_lock_order_metrics_();
+        metrics_.unified_invalidation_protocol_total.fetch_add(1, std::memory_order_relaxed);
+        std::atomic_thread_fence(std::memory_order_release);
+        bump_bridge_epoch();
+        evaluator_.bump_defuse_version_for_test();
+        metrics_.dep_graph_defuse_version_bumps.fetch_add(1, std::memory_order_relaxed);
+        on_typed_mutation_epoch_bump();
+        if (name.empty()) {
+            std::vector<std::string> names;
+            names.reserve(ir_cache_bridge_.size() + ir_cache_v2_.size());
+            for (const auto& [n, _] : ir_cache_bridge_)
+                names.push_back(n);
+            for (const auto& [n, _] : ir_cache_v2_) {
+                if (ir_cache_bridge_.find(n) == ir_cache_bridge_.end())
+                    names.push_back(n);
+            }
+            if (names.empty()) {
+                notify_jit_fn_trackers_batch_deopt_("__typed_mutate__", bridge_epoch());
+            } else {
+                for (const auto& n : names)
+                    invalidate_bridge_for(n);
+            }
+        } else {
+            invalidate_bridge_for(name);
+        }
+        notify_walk_active_closures_(bridge_epoch());
+        (void)expire_stale_live_closures_(bridge_epoch());
+        run_epoch_invariant_if_enabled();
+    }
+
     // Issue #2304 / #2366 / #2501 / #2541: post-bump epoch invariant walk.
     //
     // Mode source: process-level aura_epoch_invariant_mode() (env +

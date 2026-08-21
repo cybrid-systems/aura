@@ -173,6 +173,10 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // re-promote (#2895). The decide_and_reemit body never re-emits
     // when force-JIT bits are idle (early-exit at the ABI level).
     decide_and_reemit(aura_get_aot_defuse_version(), reason);
+    // Issue #3219: C-ABI joint (bridge/defuse/table) lives here.
+    // Evaluator/core dual-write is CompilerService::
+    // stamp_eval_core_joint_after_production_facade_ after this
+    // returns true (same mutate_mtx_). Soft never reaches it.
     return true;
 }
 
