@@ -633,9 +633,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // concurrent lookup cannot serve pre-abort IR as clean.
         if (abort_ir_cache_begin_force_fn_)
             abort_ir_cache_begin_force_fn_();
-        // Issue #3193: publish abort authority before topology restore so
-        // concurrent densify/steal rehydrate waits for dual_clear + persist
-        // clear + proof invalidate (one face). Soft: observe-only.
+        // Issue #3193 / Issue #3232: publish abort authority before topology
+        // restore so concurrent densify/steal rehydrate waits for dual_clear
+        // + persist clear + proof invalidate (one face). Nested hold is a
+        // count — inner end does not drop the outer face. Soft: observe-only.
         typed_audit::AbortAuthorityHold abort_authority;
         BoundaryRollbackStats stats;
         stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
@@ -1408,7 +1409,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // Issue #3117: publish abort-force fence before restore.
                             if (abort_ir_cache_begin_force_fn_)
                                 abort_ir_cache_begin_force_fn_();
-                            // Issue #3193: abort authority hold (one face).
+                            // Issue #3193 / Issue #3232: abort authority hold (one face).
                             typed_audit::AbortAuthorityHold abort_authority;
                             BoundaryRollbackStats stats;
                             stats.field_records_rolled =
@@ -1554,7 +1555,7 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // Issue #3117: publish abort-force fence before restore.
                     if (abort_ir_cache_begin_force_fn_)
                         abort_ir_cache_begin_force_fn_();
-                    // Issue #3193: abort authority hold (one face).
+                    // Issue #3193 / Issue #3232: abort authority hold (one face).
                     typed_audit::AbortAuthorityHold abort_authority;
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(

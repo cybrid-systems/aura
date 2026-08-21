@@ -1984,7 +1984,11 @@ inline void clear_type_linear_commit_proof_on_abort() noexcept {
 // CoercionMap / Occurrence persist / TypeLinearCommitProof face.
 // Soft: observe-only (no in_flight, no gen bump). Quiet (no abort):
 // helper not constructed — zero extra.
+// Issue #3232: in_flight is a nested count (not 0/1). Inner abort end
+// must not drop the face while an outer/concurrent abort is still
+// restoring dual topology. Last end publishes 0.
 inline constexpr int kNestedAbortAuthorityFaceIssue = 3193;
+inline constexpr int kNestedAbortAuthorityFaceResidualIssue = 3232;
 inline std::atomic<std::uint32_t> g_abort_authority_in_flight{0};
 inline std::atomic<std::uint64_t> g_abort_authority_hold_total{0};
 inline std::atomic<std::uint64_t> g_abort_authority_hold_observe_total{0};
@@ -2012,13 +2016,17 @@ inline void reset_abort_authority_hold_for_test() noexcept {
         g_abort_authority_hold_observe_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
-    g_abort_authority_in_flight.store(1, std::memory_order_release);
+    g_abort_authority_in_flight.fetch_add(1, std::memory_order_release);
     g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
     g_abort_authority_hold_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
 inline void end_abort_authority_hold() noexcept {
-    g_abort_authority_in_flight.store(0, std::memory_order_release);
+    // Issue #3232: nested/concurrent — last end drops the face.
+    std::uint32_t cur = g_abort_authority_in_flight.load(std::memory_order_relaxed);
+    while (cur > 0 && !g_abort_authority_in_flight.compare_exchange_weak(
+                          cur, cur - 1, std::memory_order_release, std::memory_order_relaxed)) {
+    }
 }
 
 struct AbortAuthorityHold {

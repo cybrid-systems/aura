@@ -2486,6 +2486,9 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
             steal_rebind_report_2854.had_rebind && !steal_rebind_report_2854.rebind_ok;
         // Issue #2910: rehydrate if live table empty under production persist,
         // then freeze CS goal truth (prefer non-empty live_goal_count on green).
+        // Issue #3232: rehydrate consults abort_authority_blocks_rehydrate
+        // (nested AbortAuthorityHold) — steal cannot mix persist onto an
+        // in-flight dual-topology abort.
         typed_audit::ProofGoalTruth steal_goal_truth_2910{};
         std::size_t steal_reh_n = 0;
         bool steal_persist_on = false;

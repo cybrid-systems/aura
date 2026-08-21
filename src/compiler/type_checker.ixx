@@ -2608,6 +2608,9 @@ export struct TypeChecker {
         // so commit_readiness hard-rejects (no half-green empty priority
         // roots). Prefer CS truth for TypeLinearCommitProof after
         // successful rehydrate (#2842 / #2910 densify stamp order).
+        // Issue #3232: rehydrate consults abort_authority_blocks_rehydrate
+        // (nested AbortAuthorityHold) so densify cannot restore persist
+        // onto a dual-topology abort still in flight.
         if (goals_dropped > 0 && solve_delta_cs_.occurrence_goals_size() == 0) {
             const auto n_reh = solve_delta_cs_.rehydrate_occurrence_from_persist(
                 /*preferred_mid=*/0);
