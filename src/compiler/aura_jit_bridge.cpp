@@ -2869,6 +2869,12 @@ extern "C" int aura_jit_linear_move_drop_elision_ok(void) {
     return aura::compiler::typed_audit::linear_move_drop_elision_ok() ? 1 : 0;
 }
 
+// Issue #3224: production IR/JIT typed-entry commit_readiness gate.
+// Thin wrapper; reuses g_linear_fast_path_elide_blocked_production_total.
+extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
+    return aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok() ? 1 : 0;
+}
+
 // Issue #972: prefer stderr with fixed prefix so --serve / agent log
 // scrapers can filter (structured logger not available in this TU).
 static void aot_log(const char* fmt, ...) {

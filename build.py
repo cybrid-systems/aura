@@ -3572,6 +3572,20 @@ def cmd_lint():
             "Issue #3223 cross-fiber urgent inbody poll linter failed — run python3 scripts/coverage/checks/check_cross_fiber_urgent_inbody_poll_3223.py"
         )
         return r
+    # Issue #3224: production IR/JIT entry (beyond Move/Drop) refuses
+    # under commit_readiness=false when active_mutation. Reuses
+    # commit_readiness + elide_blocked_production_total. Extends
+    # test_occurrence_goal_persist_rehydrate; no docs/design / invent.
+    ir3224_script = COVERAGE_CHECKS / "check_ir_typed_entry_commit_readiness_3224.py"
+    if not ir3224_script.exists():
+        fail(f"missing {ir3224_script}")
+        return 1
+    r = run([sys.executable, str(ir3224_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3224 IR typed-entry commit_readiness linter failed — run python3 scripts/coverage/checks/check_ir_typed_entry_commit_readiness_3224.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into

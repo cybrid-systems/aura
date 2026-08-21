@@ -1827,6 +1827,30 @@ enum class LinearFastPathExitAction : std::uint8_t {
     }
     return true;
 }
+
+// Issue #3224: production IR/JIT entry under active mutation must refuse
+// when commit_readiness.would_allow_commit is false (Borrow/MutBorrow/
+// CastOp/Apply half-green after Move/Drop-only #3130/#3186). Soft/Off:
+// true with no extra loads beyond production_defaults_active. Quiet
+// (depth==0): one depth load, no commit_readiness. Reuses
+// g_linear_fast_path_elide_blocked_production_total — no new counter.
+inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
+[[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return true;
+    std::size_t depth = 0;
+    if (g_linear_ir_fastpath_boundary_depth_override >= 0)
+        depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
+    else
+        depth = aura_evaluator_mutation_boundary_depth();
+    if (depth == 0)
+        return true;
+    const auto cr = commit_readiness(commit_readiness_live_policy());
+    if (cr.would_allow_commit)
+        return true;
+    g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
 inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
 // Issue #3030: abort / force-rollback must drop the last TypeLinearCommitProof

@@ -367,6 +367,9 @@ struct LLVMBuilder {
     // in the same critical section as the elision decision. Thin wrapper
     // around typed_mutation_audit::linear_move_drop_elision_ok.
     llvm::Function* fn_linear_move_drop_elision_ok = nullptr;
+    // Issue #3224: production IR/JIT entry under active mutation +
+    // !would_allow_commit deopts (Borrow/MutBorrow/Apply half-green).
+    llvm::Function* fn_ir_typed_entry_commit_readiness_ok = nullptr;
     // Issue #1537: Apply-prologue dual-epoch helpers.
     llvm::Function* fn_get_current_bridge_epoch = nullptr;
     llvm::Function* fn_is_fn_epoch_stale = nullptr;
@@ -483,6 +486,10 @@ struct LLVMBuilder {
         fn_linear_move_drop_elision_ok = llvm::Function::Create(
             llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
             "aura_jit_linear_move_drop_elision_ok", mod);
+        // Issue #3224: i32 aura_jit_ir_typed_entry_commit_readiness_ok(void)
+        fn_ir_typed_entry_commit_readiness_ok = llvm::Function::Create(
+            llvm::FunctionType::get(i32_ty, false), llvm::Function::ExternalLinkage,
+            "aura_jit_ir_typed_entry_commit_readiness_ok", mod);
 
         // Issue #1540: i32 aura_jit_linear_post_mutate_enforce(i32 env_id)
         fn_linear_post_mutate_enforce = llvm::Function::Create(
@@ -725,6 +732,15 @@ struct LLVMBuilder {
                                 llvm::ArrayRef<llvm::Value*>{});
             auto* not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32);
             auto* any_unsafe = irb->CreateOr(is_unsafe, not_elision_ok);
+            // Issue #3224: production IR entry under active mutation +
+            // !would_allow_commit also deopts (beyond Move/Drop elision).
+            if (fn_ir_typed_entry_commit_readiness_ok) {
+                auto* entry_ok_i =
+                    irb->CreateCall(llvm::FunctionCallee(fn_ir_typed_entry_commit_readiness_ok),
+                                    llvm::ArrayRef<llvm::Value*>{});
+                auto* entry_blocked = irb->CreateICmpEQ(entry_ok_i, zero32);
+                any_unsafe = irb->CreateOr(any_unsafe, entry_blocked);
+            }
             auto* entry_bb = irb->GetInsertBlock();
             auto* parent = entry_bb->getParent();
             auto* bb_deopt = llvm::BasicBlock::Create(ctx, "lin_probe_deopt", parent);
@@ -2900,6 +2916,9 @@ struct AuraJIT::Impl {
         // linear_safety_probe. Production-only consultation of the
         // commit_readiness face (predicate short-circuits under Soft/Off).
         reg("aura_jit_linear_move_drop_elision_ok", (void*)aura_jit_linear_move_drop_elision_ok);
+        // Issue #3224: production IR/JIT typed-entry commit_readiness gate.
+        reg("aura_jit_ir_typed_entry_commit_readiness_ok",
+            (void*)aura_jit_ir_typed_entry_commit_readiness_ok);
         reg("aura_jit_linear_post_mutate_enforce", (void*)aura_jit_linear_post_mutate_enforce);
         reg("aura_jit_get_current_bridge_epoch", (void*)aura_jit_get_current_bridge_epoch);
         reg("aura_jit_is_fn_epoch_stale", (void*)aura_jit_is_fn_epoch_stale);
@@ -3133,6 +3152,15 @@ struct AuraJIT::Impl {
             }
             auto* unsafe_i = builder.irb->CreateOr(stale_i, lin_i);
             auto* is_unsafe = builder.irb->CreateICmpNE(unsafe_i, zero32);
+            // Issue #3224: Apply prologue also deopts when production +
+            // active mutation + !commit_readiness.would_allow_commit.
+            if (builder.fn_ir_typed_entry_commit_readiness_ok) {
+                auto* entry_ok_i = builder.irb->CreateCall(
+                    llvm::FunctionCallee(builder.fn_ir_typed_entry_commit_readiness_ok),
+                    llvm::ArrayRef<llvm::Value*>{});
+                auto* entry_blocked = builder.irb->CreateICmpEQ(entry_ok_i, zero32);
+                is_unsafe = builder.irb->CreateOr(is_unsafe, entry_blocked);
+            }
             builder.irb->CreateCondBr(is_unsafe, bb_deopt, bb_cont);
             // Deopt path: return interpreter-fallback sentinel.
             builder.irb->SetInsertPoint(bb_deopt);
