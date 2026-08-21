@@ -2130,6 +2130,19 @@ def cmd_lint():
             "Issue #3230 query-stable restamp-lag hard-reject linter failed — run python3 scripts/coverage/checks/check_query_stable_restamp_lag_hard_reject_3230.py"
         )
         return r
+    # Issue #3231: production QueryResult forces schema-2; reject layout-only.
+    # Soft / no :as-query-result keeps schema-1. Reuses #3103 counters.
+    # Extends test_query_result_full_provenance + test_query_epoch_contract.
+    qrl3231_script = COVERAGE_CHECKS / "check_query_result_layout_only_reject_3231.py"
+    if not qrl3231_script.exists():
+        fail(f"missing {qrl3231_script}")
+        return 1
+    r = run([sys.executable, str(qrl3231_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3231 QueryResult layout-only reject linter failed — run python3 scripts/coverage/checks/check_query_result_layout_only_reject_3231.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

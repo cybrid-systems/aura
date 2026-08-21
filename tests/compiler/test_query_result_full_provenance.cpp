@@ -45,35 +45,10 @@ import aura.compiler.value;
 
 namespace {
 
-using aura::ast::FlatAST;
-using aura::ast::NodeId;
-using aura::compiler::apply_coercion_map;
-using aura::compiler::clear_coercion_commit_readiness_on_abort;
-using aura::compiler::coerced_nodes_tracker_enter_boundary;
-using aura::compiler::coerced_nodes_tracker_exit_boundary;
-using aura::compiler::coerced_nodes_tracker_push;
-using aura::compiler::coerced_nodes_tracker_take;
-using aura::compiler::CoercionEntry;
-using aura::compiler::CoercionMap;
 using aura::compiler::CompilerService;
-using aura::compiler::dead_coercion_decision_invalidate_gen;
-using aura::compiler::dead_coercion_decision_invalidate_total;
-using aura::compiler::g_coercion_commit_readiness_cleared_on_abort_total;
-using aura::compiler::g_coercion_commit_readiness_cleared_on_abort_wired;
-using aura::compiler::g_coercion_map_abort_forced_dirty_total;
-using aura::compiler::g_coercion_map_abort_rewind_observe_total;
-using aura::compiler::g_coercion_map_abort_rewind_total;
-using aura::compiler::g_coercion_map_abort_soft_observe_total;
-using aura::compiler::g_coercion_map_apply_tracker_push_total;
-using aura::compiler::reset_coercion_commit_readiness_cleared_on_abort_for_test;
-using aura::compiler::reset_dead_coercion_decision_invalidate_for_test;
-using aura::compiler::truncate_type_cone_to_size;
 using aura::compiler::typed_audit::AuditStrategy;
-using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::set_strategy;
-using aura::compiler::value::as_int;
-using aura::compiler::value::EvalValue;
-using aura::compiler::value::make_int;
+using aura::compiler::types::is_hash;
 
 constexpr std::uint64_t kQueryResultFullProvenanceIssue = 3103;
 
@@ -317,10 +292,38 @@ void test_ac8_schema2_validator_stale_on_mutate() {
                 !qr_schema1.matches[0].has_full_provenance());
 }
 
-} // namespace
+// Issue #3231: reserved schema-2 marker; layout-only stays schema-1.
+void test_ac3231_schema2_marker_and_source() {
+    std::print("AC3231 -- production schema-2 marker + finish-path source-cite\n");
+    using aura::core::kQueryResultLayoutOnlyErrorKind;
+    using aura::core::kQueryResultLayoutOnlyRejectIssue;
+    using aura::core::kQueryResultMatchSchema2;
+    expect_eq_i64("issue constant", 3231, kQueryResultLayoutOnlyRejectIssue);
+    expect_true("error kind",
+                std::string_view(kQueryResultLayoutOnlyErrorKind) == "query-result-layout-only");
+    aura::core::QueryResultMatch m{};
+    expect_true("reserved=0 is schema-1", !m.has_full_provenance());
+    m.reserved = kQueryResultMatchSchema2;
+    expect_true("reserved schema-2 marker flips has_full_provenance", m.has_full_provenance());
+}
+
+void test_ac3231_production_as_query_result() {
+    std::print("AC3231 -- production :as-query-result is schema-2 hash, not layout-only\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::is_hash;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    expect_true("set-code", cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value());
+    expect_true("eval", cs.eval("(eval-current)").has_value());
+    auto qr = cs.eval("(query :find \"f\" :as-query-result)");
+    expect_true(":as-query-result returns", qr.has_value());
+    expect_true("production QueryResult is hash (not layout-only merr)", is_hash(*qr));
+    apply_dev_audit_defaults();
+}
 
 int main() {
-    std::print("Issue #3103 + #3137 -- QueryResult full-provenance path (schema-2)\n");
+    std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
@@ -330,6 +333,8 @@ int main() {
     test_ac6_query_result_is_fresh_with_refs_signature();
     test_ac7_schema2_validator_fresh();
     test_ac8_schema2_validator_stale_on_mutate();
-    std::print("All #3103 + #3137 AC tests PASSED\n");
+    test_ac3231_schema2_marker_and_source();
+    test_ac3231_production_as_query_result();
+    std::print("All #3103 + #3137 + #3231 AC tests PASSED\n");
     return 0;
 }

@@ -120,6 +120,9 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
         qr.matches[i].mutation_id_at_capture =
             static_cast<std::uint32_t>(aura::core::current_mutation_epoch());
         qr.matches[i].boundary_pinned = 0;
+        // Issue #3231: schema-2 marker even if wrap/tenant/fiber/cow/mid
+        // are still 0 (single-tenant never-wrapped production).
+        qr.matches[i].reserved = aura::core::kQueryResultMatchSchema2;
     }
     aura::core::note_query_result_full_provenance();
     (void)flat;
@@ -138,12 +141,39 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
         return aura::core::QueryResultFreshness::StaleByEpoch;
     if (qr.match_count == 0)
         return aura::core::QueryResultFreshness::Fresh;
-    if (!qr.matches[0].has_full_provenance())
+    const bool hard = aura::compiler::typed_audit::production_defaults_active();
+    if (!qr.matches[0].has_full_provenance()) {
+        // Issue #3231: production never treats layout-only as fresh.
+        if (hard)
+            aura::core::note_query_result_full_provenance_stale();
         return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
+    }
     const auto live_mutation = aura::core::current_mutation_epoch();
     const auto live_cow = flat.workspace_cow_epoch();
     for (std::size_t i = 0; i < qr.match_count; ++i) {
         const auto& m = qr.matches[i];
+        // Issue #3231: production schema-2 fail-closed — do not skip when
+        // one side is 0 (layout-only leak). Soft keeps both-nonzero gate.
+        if (hard) {
+            if (current_tenant_id != 0 && m.tenant_id != current_tenant_id) {
+                aura::core::note_query_result_full_provenance_tenant_mismatch();
+                return aura::core::QueryResultFreshness::InvalidTenant;
+            }
+            if (current_fiber_id != 0 && m.fiber_id != current_fiber_id) {
+                aura::core::note_query_result_full_provenance_fiber_mismatch();
+                return aura::core::QueryResultFreshness::InvalidFiber;
+            }
+            if (live_cow != 0 && m.cow_epoch_at_capture != 0 &&
+                m.cow_epoch_at_capture != live_cow) {
+                aura::core::note_query_result_full_provenance_cow_mismatch();
+                return aura::core::QueryResultFreshness::InvalidCowLayer;
+            }
+            if (live_mutation != 0 && m.mutation_id_at_capture != 0 &&
+                static_cast<std::uint64_t>(m.mutation_id_at_capture) != live_mutation) {
+                return aura::core::QueryResultFreshness::InvalidMutation;
+            }
+            continue;
+        }
         if (current_tenant_id != 0 && m.tenant_id != 0 && m.tenant_id != current_tenant_id) {
             aura::core::note_query_result_full_provenance_tenant_mismatch();
             return aura::core::QueryResultFreshness::InvalidTenant;
@@ -316,6 +346,20 @@ void register_workspace_query_primitives(
                     return mev("restamp-lag",
                                "budget-exceeded: :as-query-result: restamp budget exceeded; "
                                "generation torn for export (Issue #3198 / #3121)");
+                // Issue #3231: production must not export schema-1 layout-only.
+                bool all_full = qr.match_count > 0;
+                for (std::uint16_t mi = 0; mi < qr.match_count; ++mi) {
+                    if (!qr.matches[mi].has_full_provenance()) {
+                        all_full = false;
+                        break;
+                    }
+                }
+                if (!all_full) {
+                    aura::core::note_query_result_full_provenance_stale();
+                    return mev("query-result-layout-only",
+                               "production QueryResult requires schema-2 full provenance "
+                               "(Issue #3231 / #3103)");
+                }
                 if (qr.matches[0].has_full_provenance()) {
                     // Expose schema-2 fields as hash keys. The first match
                     // carries the canonical wrap_epoch / tenant_id for the
