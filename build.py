@@ -2061,6 +2061,20 @@ def cmd_lint():
             "Issue #3191 macro hygiene default-deny linter failed — run python3 scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py"
         )
         return r
+    # Issue #3218: SV prims hygiene deny is merr("hygiene") not bool false.
+    # Reuses reject_structural_macro_hygiene; get_allow_macro_mutate() still
+    # unlocks. Soft/Off: helper short-circuits on non-macro. Extends
+    # test_hygiene_mutate_closed_loop; no docs/design / invent.
+    svh3218_script = COVERAGE_CHECKS / "check_sv_hygiene_merr_surface_3218.py"
+    if not svh3218_script.exists():
+        fail(f"missing {svh3218_script}")
+        return 1
+    r = run([sys.executable, str(svh3218_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3218 SV hygiene merr surface linter failed — run python3 scripts/coverage/checks/check_sv_hygiene_merr_surface_3218.py"
+        )
+        return r
     # Issue #3192: force all structural mutate:* paths through mutate_dispatch_try_acquire
     # (I2 residual from 2026-08-19 multi-fiber concurrent mutation safety review).
     # Closes the gap where mutate:set-body bypassed the SSOT acquire via TransactionGuard.

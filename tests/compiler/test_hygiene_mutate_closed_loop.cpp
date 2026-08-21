@@ -768,13 +768,25 @@ static std::int64_t href_gen(CompilerService& cs, std::string_view key) {
 }
 
 static bool setup_dense_ws(CompilerService& cs) {
-    return cs.eval("(set-code \""
-                   "(define (f x) (+ x 1)) (define (g x) (+ x 2)) "
-                   "(define (h x) (+ x 3)) (define (i x) (+ x 4)) "
-                   "(define (j x) (+ x 5)) (define (k x) (+ x 6)) "
-                   "(define base 10) (+ base 1) (+ base 2) (+ base 3)\")")
-               .has_value() &&
-           cs.eval("(eval-current)").has_value();
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::typed_audit::production_defaults_active;
+    // Production densify fail-close can refuse to attach workspace_flat
+    // during eval-current. Load under dev, then restore the caller's regime.
+    const bool prod = production_defaults_active();
+    if (prod)
+        apply_dev_audit_defaults();
+    const bool ok = cs.eval("(set-code \""
+                            "(define (f x) (+ x 1)) (define (g x) (+ x 2)) "
+                            "(define (h x) (+ x 3)) (define (i x) (+ x 4)) "
+                            "(define (j x) (+ x 5)) (define (k x) (+ x 6)) "
+                            "(define base 10) (+ base 1) (+ base 2) (+ base 3)\")")
+                        .has_value() &&
+                    cs.eval("(eval-current)").has_value() &&
+                    cs.evaluator().workspace_flat() != nullptr;
+    if (prod)
+        apply_production_audit_defaults();
+    return ok;
 }
 
 static aura::ast::NodeId first_lagging(aura::ast::FlatAST& ws) {
@@ -794,11 +806,19 @@ static void ac3000_1_production_reject_or_post_mutate() {
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     aura::core::provenance::reset_provenance_enforcement_for_test();
     apply_production_audit_defaults();
-    set_restamp_budget_nodes_for_process(1);
     CompilerService cs;
     CHECK(setup_dense_ws(cs), "AC1: dense workspace");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "AC1: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        aura::core::provenance::reset_provenance_enforcement_for_test();
+        return;
+    }
+    // Budget constrains the mutate restamp, not workspace load (eval-current
+    // under production + budget=1 can fail-close the workspace pointer).
+    set_restamp_budget_nodes_for_process(1);
     auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
     CHECK(renamed.has_value(), "AC1: mutate ran");
     if (!ws->restamp_last_budget_exceeded()) {
@@ -1181,6 +1201,12 @@ static void ac3121_1_production_structured_lag() {
     CHECK(setup_dense_ws(cs), "3121 AC1: dense workspace");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "3121 AC1: workspace");
+    if (!ws) {
+        apply_dev_audit_defaults();
+        clear_restamp_budget_nodes_override_for_test();
+        aura::core::provenance::reset_provenance_enforcement_for_test();
+        return;
+    }
     auto renamed = cs.eval("(mutate:rename-symbol \"f\" \"ff\")");
     CHECK(renamed.has_value(), "3121 AC1: mutate ran");
     if (!ws->restamp_last_budget_exceeded()) {
@@ -1770,10 +1796,8 @@ static void ac3191_1_default_reject() {
                                  lit));
     CHECK(r.has_value(), "3191 AC1: batch returns");
     CHECK(ws->get(lit).int_value == old_val, "3191 AC1: value unchanged after reject");
-    // hygiene violation attempt counter bumped.
-    auto hv = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
-                                  "\"hygiene-violation-attempt-total\")"));
-    CHECK(hv && is_int(*hv) && as_int(*hv) >= 1, "3191 AC1: hygiene violation counter bumped");
+    CHECK(cs.evaluator().get_hygiene_violation_attempts() >= 1,
+          "3191 AC1: hygiene violation counter bumped");
 }
 
 static void ac3191_2_sv_default_reject() {
@@ -1787,18 +1811,17 @@ static void ac3191_2_sv_default_reject() {
     CHECK(lit != aura::ast::NULL_NODE, "3191 AC2: LiteralInt");
     CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
           "3191 AC2: stamp MacroIntroduced");
-    // sv-add-coverpoint on MacroIntroduced → reject (single atomic load gate).
+    // sv-add-coverpoint on MacroIntroduced → reject. Issue #3218: same
+    // merr("hygiene") face as structural prims (was bool false dual-track).
     auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp1\")", lit));
-    CHECK(sac.has_value() && is_bool(*sac) && !as_bool(*sac),
-          "3191 AC2: sv-add-coverpoint rejects");
+    CHECK(sac.has_value() && merr_kind_3027(cs, *sac) == "hygiene",
+          "3191 AC2: sv-add-coverpoint rejects with hygiene merr");
     // sv-weaken-property on MacroIntroduced → reject.
     auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
-    CHECK(swp.has_value() && is_bool(*swp) && !as_bool(*swp),
-          "3191 AC2: sv-weaken-property rejects");
-    // Hygiene violation counter bumped twice.
-    auto hv = cs.eval(std::format("(hash-ref (engine:metrics \"query:hygiene-checkpoint-stats\") "
-                                  "\"hygiene-violation-attempt-total\")"));
-    CHECK(hv && is_int(*hv) && as_int(*hv) >= 2, "3191 AC2: both sv-* rejects counted");
+    CHECK(swp.has_value() && merr_kind_3027(cs, *swp) == "hygiene",
+          "3191 AC2: sv-weaken-property rejects with hygiene merr");
+    CHECK(cs.evaluator().get_hygiene_violation_attempts() >= 2,
+          "3191 AC2: both sv-* rejects counted");
 }
 
 static void ac3191_3_global_allow_unlocks() {
@@ -1930,6 +1953,114 @@ static void ac3191_6_source_and_linter() {
           "3191 AC6: no tests/issues/test_issue_3191");
     CHECK(read_file("tests/compiler/test_issue_3191.cpp").empty(),
           "3191 AC6: no tests/compiler/test_issue_3191");
+}
+
+// ── Issue #3218: SV prims dual-track bool false → merr("hygiene") ──
+// After #3191 closed MacroIntroduced default-deny on sv-add-coverpoint /
+// sv-weaken-property, the reject still returned make_bool(false) while
+// structural prims return merr("hygiene", "cannot … without :allow-macro? #t").
+// Both SV prims now share reject_structural_macro_hygiene. Global
+// get_allow_macro_mutate() still unlocks. Soft/Off: helper short-circuits
+// on non-macro. No :allow-macro? parse on these prims (non-goal). No
+// tests/issues/test_issue_3218.cpp per #81967; no docs/design/3218-* per #1655.
+
+static void ac3218_1_sv_merr_hygiene() {
+    std::println("\n--- 3218 AC1: sv-* MacroIntroduced default-deny is merr hygiene ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3218 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3218 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3218 AC1: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3218 AC1: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3218 AC1: stamp MacroIntroduced");
+    CHECK(ws->is_macro_introduced(lit), "3218 AC1: marker set");
+    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp3218\")", lit));
+    CHECK(sac.has_value() && merr_kind_3027(cs, *sac) == "hygiene",
+          "3218 AC1: sv-add-coverpoint merr kind hygiene");
+    CHECK(!(sac.has_value() && is_bool(*sac)), "3218 AC1: not bool-false dual-track");
+    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
+    CHECK(swp.has_value() && merr_kind_3027(cs, *swp) == "hygiene",
+          "3218 AC1: sv-weaken-property merr kind hygiene");
+}
+
+static void ac3218_2_allow_still_succeeds() {
+    std::println("\n--- 3218 AC2: get_allow_macro_mutate() still unlocks SV prims ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3218 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3218 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3218 AC2: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3218 AC2: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3218 AC2: stamp MacroIntroduced");
+    cs.eval("(hygiene:set-allow-macro-mutate! #t)");
+    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp3218a\")", lit));
+    CHECK(sac.has_value() && is_bool(*sac) && as_bool(*sac),
+          "3218 AC2: sv-add-coverpoint permits under global allow");
+    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
+    CHECK(swp.has_value() && is_bool(*swp) && as_bool(*swp),
+          "3218 AC2: sv-weaken-property permits under global allow");
+    cs.eval("(hygiene:set-allow-macro-mutate! #f)");
+}
+
+static void ac3218_3_counters_and_soft() {
+    std::println("\n--- 3218 AC3/AC4: counters preserved; Soft non-macro still #t ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3218 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3218 AC3: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3218 AC3: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3218 AC3: LiteralInt");
+    CHECK(!ws->is_macro_introduced(lit), "3218 AC4: not MacroIntroduced");
+    auto sac_ok = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp_soft3218\")", lit));
+    CHECK(sac_ok.has_value() && is_bool(*sac_ok) && as_bool(*sac_ok),
+          "3218 AC4: non-macro sv-add-coverpoint still #t");
+    auto swp_ok = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b0\")", lit));
+    CHECK(swp_ok.has_value() && is_bool(*swp_ok) && as_bool(*swp_ok),
+          "3218 AC4: non-macro sv-weaken-property still #t");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
+          "3218 AC3: stamp MacroIntroduced");
+    const auto before = cs.evaluator().get_hygiene_violation_attempts();
+    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp_deny3218\")", lit));
+    CHECK(sac.has_value() && merr_kind_3027(cs, *sac) == "hygiene",
+          "3218 AC3: deny still hygiene merr");
+    CHECK(cs.evaluator().get_hygiene_violation_attempts() >= before + 1,
+          "3218 AC3: record_hygiene_violation_attempt still bumps");
+}
+
+static void ac3218_5_source_and_linter() {
+    std::println("\n--- 3218 AC5: source-cite + linter + no docs/design / invent ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_sv_hygiene_merr_surface_3218.py");
+    const auto sac_pos = mut.find("add_mutate(\"mutate:sv-add-coverpoint\"");
+    CHECK(sac_pos != std::string::npos, "3218 AC5: sv-add-coverpoint registered");
+    const auto sac_win = mut.substr(sac_pos, 3500);
+    CHECK(sac_win.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3218 AC5: sv-add-coverpoint uses reject_structural_macro_hygiene");
+    CHECK(sac_win.find("\"sv-add-coverpoint\"") != std::string::npos,
+          "3218 AC5: prim name passed to helper");
+    CHECK(sac_win.find("Issue #3218") != std::string::npos, "3218 AC5: coverpoint cites #3218");
+    const auto swp_pos = mut.find("add_mutate(\"mutate:sv-weaken-property\"");
+    CHECK(swp_pos != std::string::npos, "3218 AC5: sv-weaken-property registered");
+    const auto swp_win = mut.substr(swp_pos, 3500);
+    CHECK(swp_win.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3218 AC5: sv-weaken-property uses reject_structural_macro_hygiene");
+    CHECK(swp_win.find("\"sv-weaken-property\"") != std::string::npos,
+          "3218 AC5: weaken prim name passed to helper");
+    CHECK(swp_win.find("Issue #3218") != std::string::npos, "3218 AC5: weaken cites #3218");
+    CHECK(!lint.empty() && lint.find("3218") != std::string::npos, "3218 AC5: linter");
+    CHECK(build.find("check_sv_hygiene_merr_surface_3218") != std::string::npos,
+          "3218 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3218-sv-hygiene-merr.md").empty(),
+          "3218 AC5: no docs/design/3218-* per #1655");
+    CHECK(read_file("tests/issues/test_issue_3218.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3218.cpp").empty(),
+          "3218 AC5: no test_issue_3218.cpp per #81967");
 }
 
 // ── Issue #3192: force all structural mutate:* paths through mutate_dispatch_try_acquire
@@ -2669,6 +2800,11 @@ int main() {
     ac2_default_fail_closed();
     std::println("\n=== Issue #3215: Agent-stable hygiene-macro-introduced reason ===");
     ac3215_macro_introduced_reason_string();
+    std::println("\n=== Issue #3218: SV prims hygiene deny is merr(\"hygiene\") ===");
+    ac3218_1_sv_merr_hygiene();
+    ac3218_2_allow_still_succeeds();
+    ac3218_3_counters_and_soft();
+    ac3218_5_source_and_linter();
     ac3_allowed_propagate();
     ac4_closed_loop();
     ac5_query_schema();

@@ -6962,7 +6962,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   - Returns #t on success, #f on bad args.
     // Issue #1704: MutationBoundaryGuard + live-node check (was raw
     // unlocked workspace_flat access, no Guard — sibling of #1683).
-    add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str](const auto& a) -> EvalValue {
+    add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str, mev](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
         auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
@@ -6991,16 +6991,16 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return make_bool(false);
         }
-        // Issue #3191: macro hygiene default-deny — sv-add-coverpoint cannot
-        // touch MacroIntroduced nodes without global allow_macro_mutate.
-        // Closes the post-#3131 scalar residual on the SV verification surface.
-        // Sibling reject_structural_macro_hygiene used for scalar prims;
-        // SV mutate returns make_bool(false) on reject, parity with the live-node
-        // gate above. Soft/Off zero extra cost on non-macro (single atomic load).
-        if (ws->is_macro_introduced(cg_id) && !ev.get_allow_macro_mutate()) {
-            ev.record_hygiene_violation_attempt();
+        // Issue #3191: sv-add-coverpoint cannot touch MacroIntroduced
+        // without global allow_macro_mutate. Issue #3218: reject via
+        // reject_structural_macro_hygiene (merr "hygiene") so Agent replay
+        // matches structural prims. Soft/Off: helper short-circuits on
+        // non-macro (one is_macro_introduced load). No :allow-macro? parse
+        // on this prim (non-goal); get_allow_macro_mutate() still unlocks.
+        if (auto err = reject_structural_macro_hygiene(ev, *ws, cg_id, ev.get_allow_macro_mutate(),
+                                                       "sv-add-coverpoint", mev)) {
             ok = false;
-            return make_bool(false);
+            return *err;
         }
         // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
         StableNodeRef cref = ws->make_ref_layout(cg_id);
@@ -7046,7 +7046,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // adds a mutation record, returns #t / #f.
     // Issue #1704 / #1705: same Guard + live-node contract as
     // sv-add-coverpoint (this issue locks the weaken-property sibling).
-    add_mutate("mutate:sv-weaken-property", [&ev, safe_str](const auto& a) -> EvalValue {
+    add_mutate("mutate:sv-weaken-property", [&ev, safe_str, mev](const auto& a) -> EvalValue {
         bool ok = true;
         // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
         auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
@@ -7072,13 +7072,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ok = false;
             return make_bool(false);
         }
-        // Issue #3191: macro hygiene default-deny — sv-weaken-property cannot
-        // touch MacroIntroduced nodes without global allow_macro_mutate.
-        // Sibling of mutatte:sv-add-coverpoint gate above; same flow.
-        if (ws->is_macro_introduced(pid) && !ev.get_allow_macro_mutate()) {
-            ev.record_hygiene_violation_attempt();
+        // Issue #3191: sv-weaken-property cannot touch MacroIntroduced
+        // without global allow_macro_mutate. Issue #3218: same
+        // reject_structural_macro_hygiene merr("hygiene") face as
+        // sv-add-coverpoint. Soft/Off: helper short-circuits on non-macro.
+        if (auto err = reject_structural_macro_hygiene(ev, *ws, pid, ev.get_allow_macro_mutate(),
+                                                       "sv-weaken-property", mev)) {
             ok = false;
-            return make_bool(false);
+            return *err;
         }
         // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
         StableNodeRef pref = ws->make_ref_layout(pid);
