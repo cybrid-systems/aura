@@ -23,9 +23,11 @@
 
 #include "test_harness.hpp"
 #include "compiler/hot_update_registry.hh"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <cstdint>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <print>
@@ -33,14 +35,20 @@
 #include <thread>
 
 import std;
+import aura.compiler.evaluator;
+import aura.compiler.service;
 
 extern "C" int aura_production_defaults_active_probe() noexcept;
 extern "C" std::uint64_t aura_aot_func_table_epoch(void);
 
 namespace {
 
+using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::hot_update_registry;
 using aura::compiler::HotUpdateRegistry;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -350,8 +358,6 @@ static void ac3150_facade_owns_full_joint_epoch_and_dirty() {
     }
 }
 
-}
-
 // ── Issue #3188: production facade minimal IR/shape step (residual of #3150) ──
 // After #3150 closed the joint epoch + AOT dirty + reemit loop, the
 // production facade (hard_invalidate_via_facade) still skipped
@@ -387,9 +393,9 @@ static void ac3188_production_facade_minimal_ir_shape() {
     // minimal IR/shape step for the mutated define.
     {
         const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
-        REQUIRE(md_pos != std::string::npos);
-        const auto md_end = svc.find("\n    }\n", md_pos);
-        const auto md_end2 = (md_end == std::string::npos) ? md_pos + 8000 : md_end;
+        CHECK(md_pos != std::string::npos, "ac3188: mark_define_dirty present");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_end2 = (md_end == std::string::npos) ? md_pos + 12000 : md_end;
         const auto md_win = svc.substr(md_pos, md_end2 - md_pos);
         CHECK(md_win.find("Issue #3188 AC1: residual of #3150") != std::string::npos,
               "ac3188 AC1: mark_define_dirty cites Issue #3188 AC1");
@@ -409,9 +415,9 @@ static void ac3188_production_facade_minimal_ir_shape() {
     // step after facade success.
     {
         const auto if_pos = svc.find("void CompilerService::invalidate_function");
-        REQUIRE(if_pos != std::string::npos);
-        const auto if_end = svc.find("\n    }\n", if_pos);
-        const auto if_end2 = (if_end == std::string::npos) ? if_pos + 12000 : if_end;
+        CHECK(if_pos != std::string::npos, "ac3188: invalidate_function present");
+        const auto if_end = svc.find("\nvoid CompilerService::", if_pos + 1);
+        const auto if_end2 = (if_end == std::string::npos) ? if_pos + 16000 : if_end;
         const auto if_win = svc.substr(if_pos, if_end2 - if_pos);
         CHECK(if_win.find("Issue #3188 AC1: residual of #3150") != std::string::npos,
               "ac3188 AC2: invalidate_function cites Issue #3188 AC1");
@@ -431,9 +437,9 @@ static void ac3188_production_facade_minimal_ir_shape() {
     // is preserved.
     {
         const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
-        REQUIRE(md_pos != std::string::npos);
-        const auto md_end = svc.find("\n    }\n", md_pos);
-        const auto md_end2 = (md_end == std::string::npos) ? md_pos + 8000 : md_end;
+        CHECK(md_pos != std::string::npos, "ac3188: mark_define_dirty present");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_end2 = (md_end == std::string::npos) ? md_pos + 12000 : md_end;
         const auto md_win = svc.substr(md_pos, md_end2 - md_pos);
         const auto facade_call = md_win.find("hard_invalidate_via_facade(");
         const auto ir_shape_step = md_win.find("Issue #3188 AC1: residual of #3150");
@@ -490,6 +496,144 @@ static void ac3188_production_facade_minimal_ir_shape() {
     }
 }
 
+// ── Issue #3219: production facade C-ABI joint must dual-write
+// Evaluator/core domains. Residual of #3150 / #3129: facade advances
+// g_current_bridge_epoch / g_aot_defuse_version / g_aot_table_epoch
+// then early-returns, skipping atomic_bump_epochs_and_stamp_bridge.
+// is_bridge_stale / is_env_frame_stale could observe the old domain
+// while aura_is_jit_closure_fresh already flipped.
+//
+// AC1: under production, mark_define_dirty / invalidate_function
+//      advance Evaluator defuse_version_ + core bridge in lockstep
+//      with C-ABI epochs; is_bridge_stale(old, current) and
+//      aura_is_jit_closure_fresh both flip
+// AC2: Soft/Off: facade returns false; helper is inside the
+//      facade-success branch only (zero extra on Soft)
+// AC3: helper does not re-bump aura_aot_bump_func_table_epoch
+//      (owner-scoped #2951 / #2841 preserved)
+// AC4: existing dual-track counters + #3112 / #3129 / #3150 / #3188
+//      cites preserved; no new query:*
+// AC5: this suite extended; linter wired; no test_issue_3219.cpp /
+//      docs/design/3219-*
+
+static void ac3219_eval_core_joint_after_production_facade() {
+    std::println("\n--- #3219: Evaluator/core joint after production facade ---");
+
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto build = read_file("build.py");
+
+    // AC2/AC3/AC4 source-cite.
+    CHECK(ixx.find("stamp_eval_core_joint_after_production_facade_") != std::string::npos,
+          "ac3219 AC1: helper declared");
+    CHECK(ixx.find("Issue #3219") != std::string::npos, "ac3219 AC1: service.ixx cites #3219");
+    CHECK(ixx.find("evaluator_.bump_defuse_version_for_test()") != std::string::npos,
+          "ac3219 AC1: helper bumps Evaluator defuse_version_");
+    CHECK(ixx.find("bump_bridge_epoch()") != std::string::npos,
+          "ac3219 AC1: helper bumps core bridge");
+    {
+        const auto hpos = ixx.find("void stamp_eval_core_joint_after_production_facade_");
+        CHECK(hpos != std::string::npos, "ac3219 AC3: helper definition");
+        const auto hwin = (hpos == std::string::npos) ? std::string{} : ixx.substr(hpos, 2500);
+        CHECK(hwin.find("aura_aot_bump_func_table_epoch") == std::string::npos,
+              "ac3219 AC3: helper does not re-bump AOT table epoch (owner-scoped)");
+        CHECK(hwin.find("expire_stale_live_closures_") != std::string::npos,
+              "ac3219 AC1: helper expires live closures");
+        CHECK(hwin.find("notify_walk_active_closures_") != std::string::npos,
+              "ac3219 AC1: helper walks active closures");
+    }
+    CHECK(svc.find("stamp_eval_core_joint_after_production_facade_(name)") != std::string::npos,
+          "ac3219 AC1: service_dirty calls helper after facade");
+    CHECK(hur.find("Issue #3219") != std::string::npos,
+          "ac3219 AC4: facade cites #3219 C-ABI vs Evaluator/core split");
+    CHECK(svc.find("query:eval-core-joint") == std::string::npos &&
+              hur.find("query:eval-core-joint") == std::string::npos,
+          "ac3219 AC4: no new query:* name");
+
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        CHECK(md_pos != std::string::npos, "ac3219 AC2: mark_define_dirty present");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_win =
+            svc.substr(md_pos, (md_end == std::string::npos ? 8000 : md_end - md_pos));
+        const auto facade_call = md_win.find("hard_invalidate_via_facade(");
+        const auto helper_call =
+            md_win.find("stamp_eval_core_joint_after_production_facade_(name)");
+        const auto soft_fallback = md_win.find("gc_coord::Scope gc_coord_scope");
+        CHECK(facade_call != std::string::npos, "ac3219 AC2: facade call in mark_define_dirty");
+        CHECK(helper_call != std::string::npos, "ac3219 AC2: helper in mark_define_dirty");
+        CHECK(helper_call > facade_call,
+              "ac3219 AC2: helper AFTER facade success (not on Soft path)");
+        CHECK(soft_fallback != std::string::npos, "ac3219 AC2: Soft path body preserved");
+        CHECK(helper_call < soft_fallback, "ac3219 AC2: helper before Soft fallback (zero extra)");
+    }
+    {
+        const auto if_pos = svc.find("void CompilerService::invalidate_function");
+        CHECK(if_pos != std::string::npos, "ac3219 AC2: invalidate_function present");
+        const auto if_end = svc.find("\nvoid CompilerService::", if_pos + 1);
+        const auto if_win =
+            svc.substr(if_pos, (if_end == std::string::npos ? 12000 : if_end - if_pos));
+        CHECK(if_win.find("stamp_eval_core_joint_after_production_facade_(name)") !=
+                  std::string::npos,
+              "ac3219 AC2: invalidate_function calls helper after facade");
+    }
+
+    CHECK(build.find("check_eval_core_joint_after_production_facade_3219") != std::string::npos,
+          "ac3219 AC5: build.py wires linter");
+    CHECK(read_file("tests/issues/test_issue_3219.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3219.cpp").empty(),
+          "ac3219 AC5: no test_issue_3219.cpp per #81967");
+    CHECK(read_file("docs/design/3219-eval-core-joint.md").empty(),
+          "ac3219 AC5: no docs/design/3219-* per #1655");
+
+    // AC1 runtime: production mark_define_dirty / invalidate_function
+    // advance Evaluator + core in lockstep with C-ABI; stale checks flip.
+    apply_production_audit_defaults();
+    CHECK(aura_production_defaults_active_probe() != 0,
+          "ac3219 AC1: production_defaults_active for runtime joint");
+    {
+        CompilerService cs;
+        const auto d0 = cs.evaluator().defuse_version();
+        const auto b0 = cs.bridge_epoch();
+        const auto c_bridge0 = aura_get_current_bridge_epoch();
+        const auto c_defuse0 = aura_get_aot_defuse_version();
+        const auto aot0 = aura_aot_func_table_epoch();
+        cs.public_mark_define_dirty("ac3219_md");
+        const auto d1 = cs.evaluator().defuse_version();
+        const auto b1 = cs.bridge_epoch();
+        const auto c_bridge1 = aura_get_current_bridge_epoch();
+        const auto c_defuse1 = aura_get_aot_defuse_version();
+        const auto aot1 = aura_aot_func_table_epoch();
+        CHECK(d1 > d0, "ac3219 AC1: mark_define_dirty advances Evaluator defuse_version_");
+        CHECK(b1 > b0, "ac3219 AC1: mark_define_dirty advances core bridge_epoch");
+        CHECK(c_bridge1 > c_bridge0, "ac3219 AC1: C g_current_bridge_epoch advances");
+        CHECK(c_defuse1 > c_defuse0, "ac3219 AC1: C g_aot_defuse_version advances");
+        CHECK(aot1 > aot0, "ac3219 AC1: g_aot_table_epoch advances");
+        CHECK((b1 - b0) == (d1 - d0), "ac3219 AC1: core bridge and Evaluator defuse lockstep");
+        CHECK(Evaluator::is_bridge_stale(b0, b1),
+              "ac3219 AC1: is_bridge_stale(old, current) flips after mark_define_dirty");
+        CHECK(!aura_is_jit_closure_fresh(c_bridge0, c_defuse0),
+              "ac3219 AC1: aura_is_jit_closure_fresh flips for captured pre-mutate epochs");
+        cs.public_invalidate_function("ac3219_inv");
+        CHECK(cs.evaluator().defuse_version() > d1,
+              "ac3219 AC1: invalidate_function advances Evaluator defuse_version_");
+        CHECK(cs.bridge_epoch() > b1, "ac3219 AC1: invalidate_function advances core bridge");
+    }
+    apply_dev_audit_defaults();
+
+    // AC2 runtime: Soft/Off facade returns false (helper not taken).
+    {
+        const bool taken = hot_update_registry().hard_invalidate_via_facade(
+            "ac3219_soft", HotUpdateRegistry::ReemitReason::ResidualForceHeal);
+        const int probe = aura_production_defaults_active_probe();
+        if (probe == 0)
+            CHECK(!taken, "ac3219 AC2: facade returns false under Soft/Off");
+        else
+            CHECK(taken, "ac3219 AC2: facade still taken under production");
+    }
+}
+
 } // namespace
 
 int run_test_issue_3112() {
@@ -519,6 +663,11 @@ int run_test_issue_3112() {
     // Soft / Off byte-identical (facade returns false → Soft path body
     // runs as before). Source-cite + sibling #3112/#3129/#3150 preserved.
     ac3188_production_facade_minimal_ir_shape();
+
+    // Issue #3219: production facade C-ABI joint must dual-write
+    // Evaluator/core so is_bridge_stale / defuse_version_ lockstep with
+    // g_aot_table_epoch / g_aot_defuse_version. Soft/Off unchanged.
+    ac3219_eval_core_joint_after_production_facade();
 
     std::print("[test_issue_3112] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;

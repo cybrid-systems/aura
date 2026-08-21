@@ -298,6 +298,12 @@ void CompilerService::mark_define_dirty(const std::string& name) {
             // (distinct from "entered forwarding"). Direct path below is the
             // Soft / Off fallback only — skipped here.
             HotUpdateRegistry::g_dual_track_bypass_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3219: dual-write Evaluator/core joint after C-ABI
+            // facade bumps so is_bridge_stale / defuse_version_ lockstep
+            // with g_aot_table_epoch / g_aot_defuse_version. Does not
+            // re-bump AOT table epoch (owner-scoped #2951). Soft/Off
+            // never reach this (facade returns false).
+            stamp_eval_core_joint_after_production_facade_(name);
             // Issue #3188 AC1: residual of #3150 — facade owns joint epoch
             // + AOT dirty + reemit, but `notify_dirty_define` is listener
             // fan-out only (does NOT mark ir_cache_v2_ body-dirty or walk
@@ -810,6 +816,10 @@ void CompilerService::invalidate_function(const std::string& name) {
             // (distinct from "entered forwarding"). Direct path below is the
             // Soft / Off fallback only — skipped here.
             HotUpdateRegistry::g_dual_track_bypass_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3219: same Evaluator/core dual-write as
+            // mark_define_dirty after facade success (C-ABI already
+            // advanced). Does not re-bump AOT table epoch.
+            stamp_eval_core_joint_after_production_facade_(name);
             // Issue #3188 AC1: residual of #3150 — same minimal IR/shape
             // step as mark_define_dirty. Facade owns joint epoch + AOT
             // dirty + reemit; we still need IR cache body-dirty + shape
