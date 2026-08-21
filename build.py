@@ -2222,6 +2222,19 @@ def cmd_lint():
             "Issue #3237 type-export Full-audit gate linter failed — run python3 scripts/coverage/checks/check_type_export_full_audit_gate_3237.py"
         )
         return r
+    # Issue #3238: densify/escape under live mutation forces
+    # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
+    # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
+    lfp3238_script = COVERAGE_CHECKS / "check_linear_fast_path_live_mutation_densify_3238.py"
+    if not lfp3238_script.exists():
+        fail(f"missing {lfp3238_script}")
+        return 1
+    r = run([sys.executable, str(lfp3238_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3238 live-mutation densify linear-fast-path linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_live_mutation_densify_3238.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

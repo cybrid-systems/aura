@@ -43,6 +43,7 @@ namespace aura::compiler {
 // evaluator_fiber_mutation.cpp / typed_mutation_audit_hooks.cpp.
 extern "C" std::size_t aura_evaluator_mutation_boundary_depth();
 extern "C" int aura_escape_move_gate_active() noexcept;
+extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 // Issue #3170: TypeChecker-using bodies live in evaluator_mutation_boundary.cpp
 // (module TU, C linkage). This header stays TypeChecker-free so
 // contract_handler / value_tags / shape_profiler compile.
@@ -1721,6 +1722,36 @@ inline void reset_linear_fast_path_dirty_revalidate_for_test() noexcept {
     g_linear_fast_path_elide_blocked_production_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3238: densify_pending / escape / depth!=0 while a mutation is
+// live must force !linear_fast_path_ok (reuse invalidate_gen — same
+// face as #3227/#3171) and dirty-root revalidate immediately, not wait
+// for Guard exit (#3006). Soft observe. Quiet: depth==0 and process
+// held==0 → one TLS depth load (override) or depth + held, no extra.
+inline constexpr int kLinearFastPathLiveMutationDensifyIssue = 3238;
+[[nodiscard]] inline bool linear_fast_path_live_mutation_active() noexcept {
+    if (g_linear_ir_fastpath_boundary_depth_override >= 0)
+        return g_linear_ir_fastpath_boundary_depth_override > 0;
+    if (aura_evaluator_mutation_boundary_depth() > 0)
+        return true;
+    return aura_process_mutation_boundary_held_count() > 0;
+}
+
+// Production densify-entry / steal-densify under live mutation: drop the
+// fast-path face then ask the caller to dirty-root revalidate. Soft:
+// observe if live. Quiet (!live): false, no invalidate.
+[[nodiscard]] inline bool note_densify_entry_under_live_mutation() noexcept {
+    if (!linear_fast_path_live_mutation_active())
+        return false;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_linear_fast_path_force_revalidate_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    (void)invalidate_fast_path_before_steal_densify_restamp();
+    g_linear_fast_path_dirty_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+
 // Purpose: single pure eligibility for Linear IR fast-path + boundary revalidate
 // Pre: none (relaxed loads only)
 // Post: true iff proof fresh, linear_ok, outermost, no escape, no densify-pending
@@ -1809,6 +1840,27 @@ enum class LinearFastPathExitAction : std::uint8_t {
             g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
         return false;
+    }
+    // Issue #3238: re-sample densify_pending + depth after ok so a
+    // concurrent densify entry cannot elide on a stale true. Quiet skip:
+    // two extra loads (depth + pending). Escape stays in linear_fast_path_ok
+    // (mutex). Same blocked counters as #3006 — no new query key.
+    {
+        std::size_t depth = 0;
+        if (g_linear_ir_fastpath_boundary_depth_override >= 0)
+            depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
+        else
+            depth = aura_evaluator_mutation_boundary_depth();
+        const auto pending =
+            g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
+                std::memory_order_relaxed);
+        if (depth > 0 || pending > 0) {
+            g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+            if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+                g_linear_fast_path_elide_blocked_production_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            return false;
+        }
     }
     // Issue #3099: residual close — re-sample invalidate_gen after ok
     // returns true. linear_fast_path_ok() already checks gen (acquire pairs

@@ -1250,6 +1250,109 @@ static void ac3171_hermetic_clear_and_invalidate() {
     clear_type_linear_commit_proof_for_test();
 }
 
+// ── Issue #3238: densify/escape under live mutation forces !ok + dirty-root ──
+static void ac3238_1_live_densify_production() {
+    std::println("\n--- #3238 AC1: Production densify under live mutation ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    reset_linear_fast_path_dirty_revalidate_for_test();
+    reset_linear_fast_path_force_revalidate_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    stamp_type_linear_commit_proof(32381);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(kLinearFastPathLiveMutationDensifyIssue == 3238, "3238 AC1: issue stamp");
+    CHECK(linear_fast_path_ok(), "3238 AC1: fresh ok before live densify");
+
+    g_linear_ir_fastpath_boundary_depth_override = 2;
+    CHECK(!linear_fast_path_ok(), "3238 AC1: depth!=0 → !ok");
+    CHECK(linear_fast_path_live_mutation_active(), "3238 AC1: live mutation");
+    CHECK(note_densify_entry_under_live_mutation(),
+          "ac3238_1_live_densify_production: dirty-root required");
+    CHECK(!linear_fast_path_ok(), "3238 AC1: still !ok after densify entry");
+    CHECK(!linear_ir_fastpath_try_skip(), "3238 AC1: no elision grant");
+    CHECK(linear_fast_path_dirty_revalidate_total_v_read() > 0,
+          "3238 AC1: dirty-revalidate counter");
+    CHECK(last_proof_would_allow_commit_v_read() == 0, "3238 AC1: would_allow dropped");
+
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_rehydrate_miss_invalidate_for_test();
+    clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3238_2_soft_quiet() {
+    std::println("\n--- #3238 AC2: Soft observe; quiet zero extra ---");
+    using namespace aura::compiler::typed_audit;
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_fast_path_dirty_revalidate_for_test();
+    reset_linear_fast_path_force_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+
+    CHECK(!linear_fast_path_live_mutation_active(), "3238 AC2: quiet not live");
+    const auto obs0 = linear_fast_path_force_revalidate_observe_total_v_read();
+    const auto dirty0 = linear_fast_path_dirty_revalidate_total_v_read();
+    CHECK(!note_densify_entry_under_live_mutation(), "ac3238_2_soft_quiet: quiet false");
+    CHECK(linear_fast_path_force_revalidate_observe_total_v_read() == obs0,
+          "3238 AC2: quiet no observe");
+    CHECK(linear_fast_path_dirty_revalidate_total_v_read() == dirty0, "3238 AC2: quiet no dirty");
+
+    g_linear_ir_fastpath_boundary_depth_override = 2;
+    CHECK(linear_fast_path_live_mutation_active(), "3238 AC2: live under Soft");
+    CHECK(!note_densify_entry_under_live_mutation(), "3238 AC2: Soft no dirty-root");
+    CHECK(linear_fast_path_force_revalidate_observe_total_v_read() > obs0,
+          "3238 AC2: Soft observe");
+    CHECK(linear_fast_path_dirty_revalidate_total_v_read() == dirty0,
+          "3238 AC2: Soft no dirty bump");
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3238_3_lineage() {
+    std::println("\n--- #3238 AC3: lineage #2964/#3006/#3224/#3227 ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(aud.find("linear_fast_path_ok") != std::string::npos, "3238 AC3: #2964 predicate");
+    CHECK(aud.find("kLinearFastPathDirtyRevalidateIssue") != std::string::npos,
+          "3238 AC3: #3006 retained");
+    CHECK(aud.find("kIrTypedEntryCommitReadinessIssue = 3224") != std::string::npos,
+          "3238 AC3: #3224 retained");
+    CHECK(aud.find("invalidate_fast_path_before_steal_densify_restamp") != std::string::npos,
+          "3238 AC3: #3227/#3171 gen face");
+    CHECK(mb.find("enforce_linear_boundary_consistency") != std::string::npos,
+          "3238 AC3: dirty-root walk");
+    CHECK(mb.find("Issue #3238") != std::string::npos, "3238 AC3: densify entry cite");
+}
+
+static void ac3238_4_source_linter() {
+    std::println("\n--- #3238 AC4: source-cite + linter + no invent ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto build = read_file("build.py");
+    CHECK(aud.find("kLinearFastPathLiveMutationDensifyIssue = 3238") != std::string::npos,
+          "ac3238_4_source_linter: stamp");
+    CHECK(build.find("check_linear_fast_path_live_mutation_densify_3238") != std::string::npos,
+          "3238 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3238.cpp").empty(), "3238 AC4: no invent");
+    CHECK(read_file("docs/design/3238-linear-fast-path-live-densify.md").empty(),
+          "3238 AC4: no docs/design");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1306,6 +1409,11 @@ int run_test_escape_move_elision_gate() {
     ac3085_hermetic_lowering_block();
     std::println("\n=== Issue #3171: steal/densify restamp complete-clear ===");
     ac3171_hermetic_clear_and_invalidate();
+    std::println("\n=== Issue #3238: densify under live mutation forces !ok ===");
+    ac3238_1_live_densify_production();
+    ac3238_2_soft_quiet();
+    ac3238_3_lineage();
+    ac3238_4_source_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

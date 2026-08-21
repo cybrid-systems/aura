@@ -3659,6 +3659,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // under production / when !gc_deferred_for_evaluator.
         std::uint32_t panic_depth_baseline = 0;
         if (aura::ast::moving_compact_enabled()) {
+            // Issue #3238: densify while a mutation is still live (this
+            // fiber depth or process-held count) must drop linear_fast_path
+            // and dirty-root revalidate before compact relocates. Soft
+            // observe. Quiet (depth==0, held==0): helper is two loads.
+            if (typed_audit::note_densify_entry_under_live_mutation()) {
+                (void)ev_->enforce_linear_boundary_consistency(
+                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+            }
             // Issue #2497: snapshot densify-ownership-scan fail baseline before
             // compact runs (covers compact callbacks + pairing + injected fails
             // across the entire Moving densify window).
@@ -5446,6 +5454,12 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
     // as densify entry. Skip when Moving still disabled (pref/env off) or no
     // arena_group — Soft / AURA_ARENA_MOVING_COMPACT=0 stay zero densify work.
     if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled()) {
+        // Issue #3238: recovery densify under a live Guard must drop
+        // linear_fast_path and dirty-root revalidate before relocate.
+        if (typed_audit::note_densify_entry_under_live_mutation()) {
+            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
+                                                      /*mark_all_linear=*/false);
+        }
         // Issue #3185 AC1: same surface as Phase-5 densify entry. Consult
         // last LifetimeConsistencyProof before declaring the recovery
         // densify a success. Production/Full only (Soft/Off zero-cost per
