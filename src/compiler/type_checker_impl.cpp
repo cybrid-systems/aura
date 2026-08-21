@@ -1804,11 +1804,35 @@ bool ConstraintSystem::consistent_unify(TypeId t1, TypeId t2) {
 
     // Ground type consistency: any two ground/base types are CONSISTENT
     // (they may need runtime coercion, but the type system allows it).
-    // Issue #2992: do NOT flip this boolean — program continues. Agent
-    // feedback (Warning/TypeError) is emitted by
-    // InferenceEngine::maybe_report_ground_inconsistency after a
-    // successful unify at check/call sites.
+    // Issue #3202: Production + Strict hard-reject Int~String (and similar
+    // primitive pairs except Int↔Float) so Agents get early TypeError /
+    // no CastOp. Quiet Balanced/Permissive: check unify_gradual_mode_
+    // first — zero extra production_defaults_active load.
     if (!reg_.is_var(t1) && !reg_.is_var(t2) && !f1 && !f2) {
+        if (unify_gradual_mode_ == GradualPermissiveness::Strict &&
+            aura::compiler::typed_audit::production_defaults_active()) {
+            const auto a = reg_.tag_of(t1);
+            const auto b = reg_.tag_of(t2);
+            auto is_prim = [](TypeTag t) {
+                return t == TypeTag::INT || t == TypeTag::BOOL || t == TypeTag::STRING ||
+                       t == TypeTag::FLOAT || t == TypeTag::VOID;
+            };
+            const bool is_intentional_numeric_coercion =
+                (a == TypeTag::INT && b == TypeTag::FLOAT) ||
+                (a == TypeTag::FLOAT && b == TypeTag::INT);
+            if (is_prim(a) && is_prim(b) && a != b && !is_intentional_numeric_coercion) {
+                if (metrics_) {
+                    auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                    m->gradual_ground_incompatible_error_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                }
+                return false; // hard TypeError — early Agent feedback
+            }
+        }
+        // Issue #2992: do NOT flip this boolean — program continues. Agent
+        // feedback (Warning/TypeError) is emitted by
+        // InferenceEngine::maybe_report_ground_inconsistency after a
+        // successful unify at check/call sites.
         return true;
     }
 
@@ -3257,6 +3281,8 @@ InferenceEngine::InferenceEngine(TypeRegistry& reg, DiagnosticCollector& diag)
     , cs_(reg)
     , env_(reg) {
     init_primitive_env();
+    // Issue #3202: env-default Strict must reach ConstraintSystem unify.
+    cs_.set_unify_gradual_mode(effective_gradual_permissiveness());
     // Bind declared type sigs (from inject_type_sigs) to the env.
     // We use the explicit name → TypeId map (declared_sigs_) set by
     // TypeChecker::infer_flat, instead of scanning the registry for
@@ -3304,7 +3330,12 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     // not silent "Notes" that pass through has_errors() == false. We
     // only allow numeric narrowing (Float → Int) because that's a real
     // number-narrows-to-integer operation, not a stringification.
-    if (strict_) {
+    // Issue #3202: Production + effective Strict must also reject
+    // Int~String here — otherwise unify returning false still emits
+    // CastOp via the is_coercible branch. Quiet Balanced: effective
+    // mode is not Strict, so production_defaults_active is not loaded.
+    if (effective_gradual_permissiveness() == GradualPermissiveness::Strict &&
+        (strict_ || aura::compiler::typed_audit::production_defaults_active())) {
         auto from_tag = reg_.tag_of(from);
         auto to_tag = reg_.tag_of(to);
         // Float → Int is the only cross-type coercion allowed in strict mode
@@ -3398,9 +3429,11 @@ bool InferenceEngine::is_coercible(TypeId from, TypeId to) {
     return false;
 }
 
-// Issue #2992: Agent-facing diagnostic after a successful
-// consistent_unify of two concrete primitive grounds. Unify stays
-// true (program continues). Dynamic ~ T and Int ↔ Float stay quiet.
+// Issue #2992 / #3202: Agent-facing diagnostic after a successful
+// consistent_unify of two concrete primitive grounds. Soft / balanced
+// unify stays true (program continues). Production+Strict hard-rejects
+// in consistent_unify (boolean false — no CastOp). Dynamic ~ T and
+// Int ↔ Float stay quiet.
 void InferenceEngine::maybe_report_ground_inconsistency(TypeId inferred, TypeId expected) {
     const auto mode = effective_gradual_permissiveness();
     if (mode == GradualPermissiveness::Permissive)

@@ -136,16 +136,20 @@ export inline constexpr std::size_t kTypeDepBucketCap = 256;
 
 // Issue #2992: non-strict ground-type Agent feedback.
 //
-// `consistent_unify` still treats two concrete grounds as consistent
-// (program continues; no EDSL benchmark regression). The knob only
-// controls the diagnostic:
+// Soft / balanced / permissive: `consistent_unify` still treats two
+// concrete grounds as consistent (program continues; no EDSL
+// benchmark regression). The knob controls the diagnostic:
 //   permissive — legacy silent ground consistency
 //   balanced   — default; Warning on Int~String and similar pairs
 //   strict     — TypeError on those pairs (set_strict(true) also wins)
 //
+// Issue #3202: Production + Strict additionally returns false from
+// consistent_unify (hard-reject; no CastOp). Soft Strict stays true.
+//
 // Int ↔ Float stays silent. Dynamic ~ T stays fully permissive.
 // Env: AURA_GRADUAL_PERMISSIVENESS=permissive|balanced|strict
 // EDSL: (type:set-gradual-permissiveness ...) + compile:bidirectional-stats
+export inline constexpr int kProductionStrictGroundUnifyIssue = 3202;
 export enum class GradualPermissiveness : std::uint8_t {
     Permissive = 0,
     Balanced = 1,
@@ -717,6 +721,10 @@ private:
     // Issue #466: when true, consistent_unify records constraints
     // via add_delta for incremental solve_delta replay.
     bool delta_record_mode_ = false;
+    // Issue #3202: effective GradualPermissiveness for the unify boolean.
+    // Strict + production_defaults → hard-reject Int~String. Default
+    // Balanced: quiet path skips production_defaults_active().
+    GradualPermissiveness unify_gradual_mode_ = GradualPermissiveness::Balanced;
 
 public:
     explicit ConstraintSystem(aura::core::TypeRegistry& reg);
@@ -774,6 +782,11 @@ public:
     void* metrics_ = nullptr;
 
     void set_metrics(void* m) { metrics_ = m; }
+    // Issue #3202: Production + Strict hard-reject on ground unify.
+    void set_unify_gradual_mode(GradualPermissiveness p) noexcept { unify_gradual_mode_ = p; }
+    [[nodiscard]] GradualPermissiveness unify_gradual_mode() const noexcept {
+        return unify_gradual_mode_;
+    }
     // Issue #2993: Full-tier only. Conflict/timeout/blame/degrade
     // still use metrics_ != nullptr.
     [[nodiscard]] bool metrics_full() const noexcept {
@@ -1591,8 +1604,11 @@ export class InferenceEngine {
 
 public:
     // Issue #79: set strict mode. Called by TypeChecker::infer_flat
-    // before delegating to the engine.
-    void set_strict(bool s) { strict_ = s; }
+    // before delegating to the engine. Issue #3202: also syncs CS unify mode.
+    void set_strict(bool s) {
+        strict_ = s;
+        cs_.set_unify_gradual_mode(effective_gradual_permissiveness());
+    }
 
     // Issue #103: set permissive mode. Default is true. Set to
     // false to opt into the old behavior (error on constraint
@@ -1602,8 +1618,10 @@ public:
 
     // Issue #2992: AURA_GRADUAL_PERMISSIVENESS knob (permissive|
     // balanced|strict). Default Balanced. set_strict(true) wins.
+    // Issue #3202: also syncs CS unify mode for Production hard-reject.
     void set_gradual_permissiveness(GradualPermissiveness p) noexcept {
         gradual_permissiveness_ = p;
+        cs_.set_unify_gradual_mode(effective_gradual_permissiveness());
     }
     [[nodiscard]] GradualPermissiveness gradual_permissiveness() const noexcept {
         return gradual_permissiveness_;
@@ -2917,13 +2935,19 @@ export struct TypeChecker {
     // Default is `false` for backward compatibility with existing
     // callers (EDSL, tests). `CompilerService::typecheck()` opts in
     // because that's what users mean by "typecheck".
-    void set_strict(bool s) { strict_ = s; }
+    void set_strict(bool s) {
+        strict_ = s;
+        solve_delta_cs_.set_unify_gradual_mode(s ? GradualPermissiveness::Strict
+                                                 : gradual_permissiveness_);
+    }
     bool is_strict() const { return strict_; }
 
     // Issue #2992: ground-type diagnostic knob. Forwarded to the
     // per-call InferenceEngine. set_strict(true) still wins.
+    // Issue #3202: also syncs long-lived CS unify mode.
     void set_gradual_permissiveness(GradualPermissiveness p) noexcept {
         gradual_permissiveness_ = p;
+        solve_delta_cs_.set_unify_gradual_mode(strict_ ? GradualPermissiveness::Strict : p);
     }
     [[nodiscard]] GradualPermissiveness gradual_permissiveness() const noexcept {
         return gradual_permissiveness_;
@@ -2932,6 +2956,9 @@ export struct TypeChecker {
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg)
         , solve_delta_cs_(reg) {
+        // Issue #3202: env-default Strict must reach the long-lived CS.
+        solve_delta_cs_.set_unify_gradual_mode(strict_ ? GradualPermissiveness::Strict
+                                                       : gradual_permissiveness_);
         // Issue #2750: wire occurrence hard-face full-solve recover into
         // commit_readiness (production face hit → one full solve attempt).
         aura::compiler::typed_audit::install_occurrence_full_solve_recover(
