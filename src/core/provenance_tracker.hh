@@ -41,6 +41,9 @@ inline constexpr int kEdslValidateOrRefreshIssue = 2186;
 // when already valid; AURA_STABLE_REF_EXPORT_HARD_REJECT=1 fails closed
 // with null ref on unrefreshable.
 inline constexpr int kStableRefExportValidateIssue = 2404;
+// Issue #3204: production defaults arm the #2404 hard-reject without
+// requiring AURA_STABLE_REF_EXPORT_HARD_REJECT=1. Soft/Off stay getenv-only.
+inline constexpr int kStableRefExportProductionHardRejectIssue = 3204;
 
 // Policy for ensure_valid_or_refresh (AC).
 enum class AutoRefreshPolicy : std::uint8_t {
@@ -269,16 +272,28 @@ inline std::atomic<std::uint32_t>& g_query_stable_ref_restamp_torn_wired_atomic(
     return g_provenance_enforcement().query_stable_ref_restamp_torn_wired;
 }
 
-// Issue #2404: production hard-reject of unrefreshable Agent exports.
-// Env AURA_STABLE_REF_EXPORT_HARD_REJECT=1|true|on → null out failed exports.
+// Issue #2404 / #3204: production hard-reject of unrefreshable Agent
+// exports (and tenant_id==0 while isolation is active). Env
+// AURA_STABLE_REF_EXPORT_HARD_REJECT always wins when set.
+// Unset: pref armed by apply_production_security_defaults (!sandbox=off).
+// Soft/Off: pref false — zero extra beyond one acquire load.
+inline std::atomic<bool>& g_stable_ref_export_hard_reject_pref() noexcept {
+    static std::atomic<bool> v{false};
+    return v;
+}
+inline void set_stable_ref_export_hard_reject(bool on) noexcept {
+    g_stable_ref_export_hard_reject_pref().store(on, std::memory_order_release);
+}
 [[nodiscard]] inline bool stable_ref_export_hard_reject() noexcept {
-    static const bool hard = [] {
-        if (const char* e = std::getenv("AURA_STABLE_REF_EXPORT_HARD_REJECT")) {
-            return e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y';
-        }
-        return false;
-    }();
-    return hard;
+    if (const char* e = std::getenv("AURA_STABLE_REF_EXPORT_HARD_REJECT"); e && *e) {
+        const std::string_view v(e);
+        if (v == "0" || v == "false" || v == "off" || v == "no")
+            return false;
+        if (v == "1" || v == "true" || v == "on" || v == "yes")
+            return true;
+        return e[0] == '1' || e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y';
+    }
+    return g_stable_ref_export_hard_reject_pref().load(std::memory_order_acquire);
 }
 
 // Issue #2125: process-wide isolation capture principal for FlatAST

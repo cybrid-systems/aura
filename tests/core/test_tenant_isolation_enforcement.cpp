@@ -6,6 +6,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "core/workspace_isolation.hh"
@@ -16,6 +17,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -113,6 +115,7 @@ void reset_all() {
     // Soft / unit path: hard-close off so Soft global-fallback tests stay green.
     aura::core::provenance::set_hard_capture_tenant(false);
     aura::core::provenance::set_isolation_capture_tenant(0);
+    aura::core::provenance::set_stable_ref_export_hard_reject(false);
 }
 
 // #3090: Restricted/Strict refuse grants when prov.mutation_id==0.
@@ -2642,6 +2645,155 @@ int main() {
                       std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
             }
         }
+    }
+
+    // ── #3204: production Agent export hard-reject tenant_id=0 ──
+    {
+        std::println("\n--- #3204 AC1: production defaults arm hard-reject without env ---");
+        reset_all();
+        CHECK(aura::core::provenance::kStableRefExportProductionHardRejectIssue == 3204,
+              "3204 AC1: issue stamp");
+        ::unsetenv("AURA_STABLE_REF_EXPORT_HARD_REJECT");
+        CHECK(!aura::core::provenance::stable_ref_export_hard_reject(), "3204 AC1: Soft pref off");
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::compiler::security::apply_production_security_defaults();
+        CHECK(aura::core::provenance::stable_ref_export_hard_reject(),
+              "ac3204_1_production_hard_reject: Restricted arms hard-reject");
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::compiler::security::apply_production_security_defaults();
+        CHECK(!aura::core::provenance::stable_ref_export_hard_reject(),
+              "3204 AC1: sandbox=off leaves Soft");
+        ::unsetenv("AURA_SANDBOX");
+        reset_all();
+    }
+    {
+        std::println("\n--- #3204 AC2: layout-only handoff stamps or denies; never tenant 0 ---");
+        reset_all();
+        aura::core::provenance::set_stable_ref_export_hard_reject(true);
+        aura::core::provenance::set_hard_capture_tenant(true);
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (h x) (+ x 1))\")").has_value(), "3204 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3204 AC2: eval");
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3204 AC2: workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3204 AC2: live node");
+        auto layout = ws->make_ref_layout(id);
+        CHECK(layout.tenant_id == 0, "3204 AC2: layout-only tenant 0");
+        const auto stale0 =
+            aura::core::provenance::g_provenance_enforcement()
+                .stable_ref_export_stale_reject_total.load(std::memory_order_relaxed);
+        auto out = ev.handoff_ref(layout);
+        if (out) {
+            CHECK(out->tenant_id == 7, "ac3204_2_handoff_never_tenant_zero: stamped 7");
+            CHECK(out->tenant_id != 0, "3204 AC2: never tenant_id==0");
+            ev.set_capability_tenant_id(9);
+            CHECK(!ev.check_workspace_isolation(9, out->tenant_id, 0, "test:3204-x"),
+                  "3204 AC2: wrong principal IsolationDeny");
+        } else {
+            CHECK(aura::core::provenance::g_provenance_enforcement()
+                          .stable_ref_export_stale_reject_total.load(std::memory_order_relaxed) >
+                      stale0,
+                  "3204 AC2: deny bumps stale-reject");
+        }
+        reset_all();
+    }
+    {
+        std::println("\n--- #3204 AC3: Soft layout-only stays zero-cost contract ---");
+        reset_all();
+        ::setenv("AURA_SANDBOX", "off", 1);
+        aura::compiler::security::apply_production_security_defaults();
+        CHECK(!aura::core::provenance::stable_ref_export_hard_reject(),
+              "ac3204_3_soft_quiet: Soft hard-reject off");
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (s x) x)\")").has_value(), "3204 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3204 AC3: eval");
+        auto& ev = cs.evaluator();
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3204 AC3: workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3204 AC3: live");
+        auto layout = ws->make_ref_layout(id);
+        CHECK(layout.tenant_id == 0, "3204 AC3: layout-only tenant 0");
+        const auto stamp0 =
+            aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto stale0 =
+            aura::core::provenance::g_provenance_enforcement()
+                .stable_ref_export_stale_reject_total.load(std::memory_order_relaxed);
+        auto out = ev.handoff_ref(layout);
+        const auto stamp1 =
+            aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().load(
+                std::memory_order_relaxed);
+        const auto stale1 =
+            aura::core::provenance::g_provenance_enforcement()
+                .stable_ref_export_stale_reject_total.load(std::memory_order_relaxed);
+        CHECK(stamp1 == stamp0, "3204 AC3: Soft no extra stamp");
+        CHECK(stale1 == stale0, "3204 AC3: Soft no extra stale-reject");
+        if (out)
+            CHECK(out->tenant_id == 0, "3204 AC3: Soft keeps layout-only tenant 0");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(sec.find("Issue #3204") != std::string::npos, "3204 AC3: finalize cites #3204");
+        CHECK(sec.find("stamp_stable_ref") != std::string::npos, "3204 AC3: stamp authority");
+        CHECK(read_file("src/compiler/security_defaults.hh").find("Issue #3204") !=
+                  std::string::npos,
+              "3204 AC3: production defaults cite #3204");
+        ::unsetenv("AURA_SANDBOX");
+        reset_all();
+    }
+    {
+        std::println("\n--- #3204 AC4: concurrent export + principal switch ---");
+        reset_all();
+        aura::core::provenance::set_stable_ref_export_hard_reject(true);
+        aura::core::provenance::set_hard_capture_tenant(true);
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define (c x) x)\")").has_value(), "3204 AC4: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3204 AC4: eval");
+        auto& ev = cs.evaluator();
+        ev.set_capability_tenant_id(7);
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3204 AC4: workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3204 AC4: live");
+        std::atomic<int> leaked{0};
+        std::atomic<int> ok_n{0};
+        std::thread exporter([&] {
+            for (int i = 0; i < 64; ++i) {
+                auto layout = ws->make_ref_layout(id);
+                auto out = ev.handoff_ref(layout);
+                if (out) {
+                    if (out->tenant_id == 0)
+                        leaked.fetch_add(1, std::memory_order_relaxed);
+                    else
+                        ok_n.fetch_add(1, std::memory_order_relaxed);
+                }
+            }
+        });
+        std::thread switcher([&] {
+            for (int i = 0; i < 64; ++i)
+                ev.set_capability_tenant_id((i & 1) ? 7 : 9);
+        });
+        exporter.join();
+        switcher.join();
+        CHECK(leaked.load(std::memory_order_relaxed) == 0,
+              "ac3204_4_concurrent: no tenant_id==0 leak");
+        (void)ok_n;
+        reset_all();
+    }
+    {
+        std::println("\n--- #3204 AC5: source-cite + linter + no invent ---");
+        const auto prov = read_file("src/core/provenance_tracker.hh");
+        const auto build = read_file("build.py");
+        CHECK(prov.find("kStableRefExportProductionHardRejectIssue = 3204") != std::string::npos,
+              "ac3204_5_source_linter: stamp");
+        CHECK(build.find("check_stable_ref_export_production_hard_reject_3204") !=
+                  std::string::npos,
+              "3204 AC5: build.py");
+        CHECK(read_file("tests/core/test_issue_3204.cpp").empty(), "3204 AC5: no invent");
+        CHECK(read_file("docs/design/3204-stable-ref-export-hard-reject.md").empty(),
+              "3204 AC5: no docs/design");
     }
 
     reset_all();

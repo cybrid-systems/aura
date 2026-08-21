@@ -1512,9 +1512,11 @@ ast::FlatAST::StableNodeRef Evaluator::export_ref_safe(ast::NodeId id, std::uint
 // classify export metrics (valid soft / refresh / stale-reject).
 ast::FlatAST::StableNodeRef
 Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept {
+    using aura::core::provenance::hard_capture_tenant_active;
     using aura::core::provenance::record_stable_ref_export_refresh;
     using aura::core::provenance::record_stable_ref_export_stale_reject;
     using aura::core::provenance::record_stable_ref_export_valid;
+    using aura::core::provenance::record_stable_ref_tenant_stamp_zero_rejected;
     using aura::core::provenance::stable_ref_export_hard_reject;
 
     auto* ws = workspace_flat_;
@@ -1523,6 +1525,19 @@ Evaluator::finalize_agent_export(ast::FlatAST::StableNodeRef ref) noexcept {
         if (stable_ref_export_hard_reject())
             return {};
         return ref;
+    }
+    // Issue #3204: production layout-only / mailbox re-export must pass
+    // Evaluator stamp (sole production authority #2759) before Agent
+    // delivery. Quiet: tenant already non-zero → skip. Soft/Off: no
+    // stamp (existing tenant_id==0 contract; zero extra beyond one
+    // acquire/env read when tenant_id==0).
+    if (ref.tenant_id == 0 && stable_ref_export_hard_reject()) {
+        stamp_stable_ref(ref);
+        if (ref.tenant_id == 0 && (capability_tenant_id_ != 0 || hard_capture_tenant_active())) {
+            record_stable_ref_export_stale_reject();
+            record_stable_ref_tenant_stamp_zero_rejected();
+            return {};
+        }
     }
     // AC3: already-valid → no restamp work beyond lock-free validate in
     // ensure_valid_or_refresh / validate_or_refresh (refresh_if_stale early-outs).

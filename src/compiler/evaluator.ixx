@@ -6670,7 +6670,9 @@ public:
     // so tenant + fiber stamp is guaranteed AND validate_or_refresh runs
     // before return (Agent export contract). Soft: already-valid is
     // metric-only; unrefreshable bumps export-stale-reject (and nulls ref
-    // when AURA_STABLE_REF_EXPORT_HARD_REJECT=1).
+    // when AURA_STABLE_REF_EXPORT_HARD_REJECT=1). Issue #3204: production
+    // defaults arm that hard-reject without the env; tenant_id==0 under
+    // isolation is also nulled.
     [[nodiscard]] ast::FlatAST::StableNodeRef export_ref(ast::NodeId id) const noexcept;
     [[nodiscard]] ast::FlatAST::StableNodeRef
     export_ref_safe(ast::NodeId id, std::uint32_t workspace_id = 0,

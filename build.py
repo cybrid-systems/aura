@@ -2235,6 +2235,19 @@ def cmd_lint():
             "Issue #3238 live-mutation densify linear-fast-path linter failed — run python3 scripts/coverage/checks/check_linear_fast_path_live_mutation_densify_3238.py"
         )
         return r
+    # Issue #3204: production Agent export hard-reject tenant_id=0 /
+    # unrefreshable without AURA_STABLE_REF_EXPORT_HARD_REJECT=1.
+    # Soft/Off unchanged. Extends test_tenant_isolation_enforcement.
+    sre3204_script = COVERAGE_CHECKS / "check_stable_ref_export_production_hard_reject_3204.py"
+    if not sre3204_script.exists():
+        fail(f"missing {sre3204_script}")
+        return 1
+    r = run([sys.executable, str(sre3204_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3204 stable-ref export production hard-reject linter failed — run python3 scripts/coverage/checks/check_stable_ref_export_production_hard_reject_3204.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;
