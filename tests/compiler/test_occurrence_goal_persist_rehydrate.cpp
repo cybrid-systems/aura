@@ -2162,6 +2162,121 @@ static void ac3224_ir_typed_entry_commit_readiness() {
     }
 }
 
+// ── Issue #3225: persist seqlock so concurrent outermost write × densify/steal
+// rehydrate cannot freeze a mixed fingerprint.
+//   AC1: production in-flight (odd seq) rehydrate is miss → empty, no green
+//   AC2: last_proof_goal_fingerprint / live_goal_count stay unmixed
+//   AC3: Soft / quiet zero extra (no seq consult)
+//   AC4: this suite + linter; no invent / docs/design
+
+static void ac3225_occurrence_persist_seqlock() {
+    std::println("\n--- #3225: occurrence persist seqlock vs concurrent rehydrate ---");
+
+    {
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        CHECK(tma.find("kOccurrencePersistSeqIssue") != std::string::npos, "3225 AC1: stamp");
+        CHECK(tma.find("g_occurrence_persist_seq") != std::string::npos, "3225 AC1: seq");
+        CHECK(tma.find("occurrence_persist_seq_begin_write") != std::string::npos,
+              "3225 AC1: begin write");
+        CHECK(impl.find("occurrence_persist_seq_begin_write") != std::string::npos,
+              "3225 AC1: append seqlock");
+        CHECK(impl.find("g0 & 1ull") != std::string::npos ||
+                  impl.find("(g0 & 1") != std::string::npos,
+              "3225 AC1: odd seq is in-flight");
+        CHECK(impl.find("g0 != g1") != std::string::npos, "3225 AC1: mid-copy gen change");
+        CHECK(impl.find("Issue #3225") != std::string::npos, "3225 AC1: rehydrate cite");
+        const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(mb.find("Issue #3225") != std::string::npos, "3225 AC1: persist helper cite");
+    }
+
+    {
+        unsetenv("AURA_OCCURRENCE_PERSIST");
+        apply_production_audit_defaults();
+        typed_audit::reset_occurrence_persist_seq_for_test();
+        clear_occurrence_empty_after_fence_for_test();
+        typed_audit::reset_rehydrate_miss_invalidate_for_test();
+        UnitCs u;
+        u.cs.set_current_epoch(5);
+        auto v = u.cs.fresh_var();
+        u.cs.note_occurrence_goal(v, u.reg.int_type(), 7, 70, /*epoch=*/5);
+        CHECK(u.cs.append_occurrence_snapshot(70) == 1, "3225 AC1: persist wrote");
+        CHECK((typed_audit::occurrence_persist_seq_v_read() & 1ull) == 0,
+              "3225 AC1: seq even after write");
+        u.cs.set_current_epoch(6);
+        CHECK(u.cs.prune_occurrence_goals(6) == 1, "3225 AC1: prune");
+        CHECK(u.cs.occurrence_goals_size() == 0, "3225 AC1: live empty");
+        const auto fp0 = typed_audit::last_proof_goal_fingerprint_v_read();
+        const auto bind0 =
+            typed_audit::g_rehydrate_success_bind_total.load(std::memory_order_relaxed);
+        typed_audit::bump_occurrence_persist_seq_for_test(); // odd: write in flight
+        const auto miss0 = u.m.occurrence_persist_rehydrate_miss_total.load();
+        const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
+        CHECK(rh == 0, "3225 AC1: in-flight seq → miss");
+        CHECK(u.cs.occurrence_goals_size() == 0, "3225 AC1: live stays empty");
+        CHECK(u.m.occurrence_persist_rehydrate_miss_total.load() > miss0, "3225 AC1: miss total");
+        CHECK(typed_audit::last_proof_goal_fingerprint_v_read() == fp0,
+              "3225 AC2: fingerprint not mixed");
+        CHECK(typed_audit::g_rehydrate_success_bind_total.load(std::memory_order_relaxed) == bind0,
+              "3225 AC2: no success bind of torn snapshot");
+        typed_audit::bump_occurrence_persist_seq_for_test(); // even again
+        const auto rh2 = u.cs.rehydrate_occurrence_from_persist(0);
+        CHECK(rh2 >= 1, "3225 AC1: stable seq restores single snapshot");
+        CHECK(u.cs.occurrence_goals_size() == 1, "3225 AC1: one authoritative snapshot");
+        apply_dev_audit_defaults();
+        typed_audit::reset_occurrence_persist_seq_for_test();
+        typed_audit::reset_rehydrate_miss_invalidate_for_test();
+        clear_occurrence_empty_after_fence_for_test();
+    }
+
+    {
+        unsetenv("AURA_OCCURRENCE_PERSIST");
+        apply_dev_audit_defaults();
+        typed_audit::reset_occurrence_persist_seq_for_test();
+        const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+        CHECK(impl.find("occurrence_persist_seq_hard()") != std::string::npos ||
+                  impl.find("occurrence_persist_seq_begin_write") != std::string::npos,
+              "3225 AC3: seq gated");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("if (occurrence_persist_seq_hard())") != std::string::npos,
+              "3225 AC3: Soft skips seq bump");
+        setenv("AURA_OCCURRENCE_PERSIST", "1", 1);
+        UnitCs u;
+        u.cs.set_current_epoch(1);
+        auto v = u.cs.fresh_var();
+        u.cs.note_occurrence_goal(v, u.reg.int_type(), 1, 1, 1);
+        CHECK(u.cs.append_occurrence_snapshot(1) == 1, "3225 AC3: Soft+env persist still writes");
+        CHECK(typed_audit::occurrence_persist_seq_v_read() == 0,
+              "3225 AC3: Soft does not bump seq");
+        u.cs.occurrence_goals_size(); // keep live
+        // Force-empty live and odd seq: Soft must still rehydrate (no seq consult).
+        u.cs.set_current_epoch(2);
+        (void)u.cs.prune_occurrence_goals(2);
+        typed_audit::bump_occurrence_persist_seq_for_test();
+        const auto rh = u.cs.rehydrate_occurrence_from_persist(0);
+        CHECK(rh >= 1, "3225 AC3: Soft ignores odd seq");
+        unsetenv("AURA_OCCURRENCE_PERSIST");
+        typed_audit::reset_occurrence_persist_seq_for_test();
+        apply_dev_audit_defaults();
+    }
+
+    {
+        const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+        const auto lint = read_file("scripts/coverage/checks/check_occurrence_persist_seq_3225.py");
+        const auto build = read_file("build.py");
+        CHECK(t.find("ac3225_occurrence_persist_seqlock") != std::string::npos, "3225 AC4: suite");
+        CHECK(!lint.empty() && lint.find("3225") != std::string::npos, "3225 AC4: linter");
+        CHECK(build.find("check_occurrence_persist_seq_3225") != std::string::npos,
+              "3225 AC4: build.py");
+        CHECK(read_file("docs/design/3225-occurrence-persist-seq.md").empty(),
+              "3225 AC4: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3225.cpp").empty(), "3225 AC4: no invent");
+        CHECK(read_file("tests/issues/test_issue_3225.cpp").empty(), "3225 AC4: no tests/issues");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("g_3225_") == std::string::npos, "3225 AC4: no g_3225_* counter");
+    }
+}
+
 // ── Issue #3085: densify/steal miss blocks lowering elision via gen ──
 // AC1 miss advances gen; lowering block sees it before next lower
 // AC2 linear_fast_path_ok false until green rebind
@@ -2557,6 +2672,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     // runtime bridge + linear_safety_probe OR).
     ac3186_jit_linear_move_drop_elision_probe();
     ac3224_ir_typed_entry_commit_readiness();
+    ac3225_occurrence_persist_seqlock();
     // Issue #3170: outermost-success occurrence persist fingerprint guard
     // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -
     // 半解不得出厂).

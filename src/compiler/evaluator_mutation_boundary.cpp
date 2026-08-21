@@ -237,6 +237,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         return; // skip persist + proof + health + grant
     }
     // (1) Persist live goals into the long-lived side buffer when enabled.
+    // Issue #3225: append seqlocks the persist log (production) so a
+    // concurrent densify/steal rehydrate cannot freeze a torn fingerprint.
     const auto written = tc->maybe_persist_occurrence_snapshot(mutation_id);
     // (2) Issue #2938: note commit-snapshot write (production/Full + non-empty).
     if (written > 0) {

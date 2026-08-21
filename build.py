@@ -3586,6 +3586,20 @@ def cmd_lint():
             "Issue #3224 IR typed-entry commit_readiness linter failed — run python3 scripts/coverage/checks/check_ir_typed_entry_commit_readiness_3224.py"
         )
         return r
+    # Issue #3225: occurrence persist seqlock so concurrent outermost
+    # write × densify/steal rehydrate cannot freeze a mixed fingerprint.
+    # Soft/quiet skip seq. Reuses miss + empty-after-fence. Extends
+    # test_occurrence_goal_persist_rehydrate; no docs/design / invent.
+    ops3225_script = COVERAGE_CHECKS / "check_occurrence_persist_seq_3225.py"
+    if not ops3225_script.exists():
+        fail(f"missing {ops3225_script}")
+        return 1
+    r = run([sys.executable, str(ops3225_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3225 occurrence persist seqlock linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_seq_3225.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into
