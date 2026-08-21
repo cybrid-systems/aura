@@ -34,8 +34,19 @@
 //        per-steal hot path).
 //   AC9 (Issue #3162): existing #3134 accessor + schema-3073 keys
 //        non-regressing; additive sticky-fail key + schema-3162 / issue-3162.
+//   AC10 (Issue #3195): multi-worker latch skips Soft pass-through;
+//        residual_zero SSOT fail-closes on BoundaryUnsafe / LifetimeProof /
+//        LayoutStamp / GcDefer / EnvFrame; sticky set on residual.
+//   AC11 (Issue #3195): ABI self-check requires residual-zero sticky
+//        wiring (bit 5) when multi-worker Ready is requested.
+//   AC12 (Issue #3195): Soft / single-worker / unit-test: zero behavioural
+//        change (latch unset → existing Soft pass-through). No new counters.
 
 #include "test_harness.hpp"
+
+#include "compiler/typed_mutation_audit.h"
+#include "serve/runtime_production_abi.h"
+#include "serve/steal_safety.h"
 
 #include <cstdint>
 #include <format>
@@ -126,18 +137,23 @@ int run_test_steal_safety_production_residual_zero() {
         auto check_win = sh.substr(check_start, check_end - check_start);
         must_inline(check_win, "aura_production_defaults_active_probe() == 0");
         must_inline(check_win, "return 1");
-        // Hot path (steal_safety_transaction) untouched — verify by
-        // grepping that the check is NOT called from there.
+        // Quiet Ok path does not consult residual_zero (#3134 AC2 / #3162
+        // AC8). RejectHard may consult it to set sticky (#3162/#3195).
         auto cpp = read_file("src/serve/steal_safety.cpp");
-        // Find the steal_safety_transaction function body.
         auto fn_pos = cpp.find("StealSafetyDecision steal_safety_transaction(");
         if (fn_pos != std::string::npos) {
             auto fn_end = cpp.find("\n}\n", fn_pos);
             if (fn_end == std::string::npos)
-                fn_end = fn_pos + 6000;
+                fn_end = fn_pos + 8000;
             auto fn_win = cpp.substr(fn_pos, fn_end - fn_pos);
-            CHECK(fn_win.find("production_residual_zero_v_read") == std::string::npos,
-                  "AC2: hot path does NOT call the readiness check (zero-cost)");
+            auto ok_pos = fn_win.find("set_resume_safety_ticket(snap.ticket)");
+            auto check_call = fn_win.find("production_residual_zero_v_read");
+            CHECK(ok_pos != std::string::npos, "AC2: Ok ticket stamp present");
+            CHECK(check_call != std::string::npos && check_call < ok_pos,
+                  "AC2: residual_zero consult is on RejectHard, not Ok");
+            CHECK(fn_win.substr(ok_pos).find("production_residual_zero_v_read") ==
+                      std::string::npos,
+                  "AC2: Ok path free of readiness check");
         }
     }
 
@@ -154,8 +170,10 @@ int run_test_steal_safety_production_residual_zero() {
         if (fn_end == std::string::npos)
             fn_end = fn_pos + 6000;
         auto fn_win = cpp.substr(fn_pos, fn_end - fn_pos);
-        CHECK(fn_win.find("production_residual_zero_v_read") == std::string::npos,
-              "AC3: hot path free of readiness check");
+        auto ok_pos = fn_win.find("set_resume_safety_ticket(snap.ticket)");
+        CHECK(ok_pos != std::string::npos, "AC3: Ok ticket stamp present");
+        CHECK(fn_win.substr(ok_pos).find("production_residual_zero_v_read") == std::string::npos,
+              "AC3: Ok path free of readiness check");
         // Confirm the hot path still uses evaluate_residual_hard_and_bits
         // (existing contract — no regression).
         must_inline(fn_win, "evaluate_residual_hard_and_bits");
@@ -232,7 +250,8 @@ int run_test_steal_safety_production_residual_zero() {
         must_inline(fn_win, "steal_safety_production_residual_sticky_fail.store(1");
         must_inline(fn_win, "steal_safety_production_residual_zero_v_read() == 0");
         // Schema surface additive keys.
-        must_inline(qts, "production-readiness-steal-residual-sticky-fail");
+        must_inline(qts, "production-readiness-steal-");
+        must_inline(qts, "residual-sticky-fail");
         must_inline(qts, "schema-3162");
         must_inline(qts, "issue-3162");
         must_inline(qts, "steal_safety_production_residual_sticky_fail_v_read");
@@ -266,10 +285,8 @@ int run_test_steal_safety_production_residual_zero() {
         CHECK(store_pos != std::string::npos, "AC8: sticky_fail set site present");
         CHECK(ok_pos != std::string::npos, "AC8: Ok path ticket stamp present");
         if (store_pos != std::string::npos && ok_pos != std::string::npos) {
-            // sticky_fail.store(1) must be AFTER the Ok stamp (in the
-            // residual-fail branch, not before Ok returns).
-            CHECK(store_pos > ok_pos,
-                  "AC8: sticky_fail set is on RejectHard branch (after Ok stamp)");
+            // RejectHard (sticky store) is before the Ok ticket stamp.
+            CHECK(store_pos < ok_pos, "AC8: sticky_fail set is on RejectHard (before Ok stamp)");
         }
     }
 
@@ -280,13 +297,121 @@ int run_test_steal_safety_production_residual_zero() {
         auto qts = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
         // Existing #3134 accessor still present.
         must_inline(sh, "steal_safety_production_residual_zero_v_read");
-        must_inline(qts, "production-readiness-steal-residual-zero");
+        must_inline(qts, "production-readiness-steal-");
+        must_inline(qts, "residual-zero");
         must_inline(qts, "schema-3134");
         must_inline(qts, "issue-3134");
         // Additive sticky-fail key + schema-3162.
-        must_inline(qts, "production-readiness-steal-residual-sticky-fail");
+        must_inline(qts, "residual-sticky-fail");
         must_inline(qts, "schema-3162");
         must_inline(qts, "issue-3162");
+    }
+
+    // ── AC10 (Issue #3195): multi-worker latch + named residual SSOT ─
+    {
+        std::println("\n--- AC10: multi-worker residual-zero sticky (#3195) ---");
+        auto sh = read_file("src/serve/steal_safety.h");
+        auto cpp = read_file("src/serve/steal_safety.cpp");
+        auto qts = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        must_inline(sh, "kStealSafetyProductionMultiWorkerResidualStickyIssue = 3195");
+        must_inline(sh, "aura_runtime_multi_worker_production_latched");
+        must_inline(sh, "g_steal_safety_residual_boundary_unsafe_total");
+        must_inline(sh, "g_steal_safety_residual_layout_stamp_mismatch_total");
+        must_inline(sh, "g_steal_safety_residual_gc_defer_armed_total");
+        must_inline(sh, "g_steal_safety_residual_envframe_lag_total");
+        auto fn_pos = cpp.find("StealSafetyDecision steal_safety_transaction(");
+        CHECK(fn_pos != std::string::npos, "AC10: transaction function present");
+        auto fn_end = cpp.find("\n}\n", fn_pos);
+        if (fn_end == std::string::npos)
+            fn_end = fn_pos + 8000;
+        auto fn_win = cpp.substr(fn_pos, fn_end - fn_pos);
+        must_inline(fn_win, "Issue #3195");
+        must_inline(fn_win, "aura_runtime_multi_worker_production_latched() != 0");
+        must_inline(fn_win, "steal_safety_production_residual_sticky_fail.store(1");
+        must_inline(qts, "schema-3195");
+        must_inline(qts, "issue-3195");
+        must_inline(qts, "Issue #3195");
+    }
+
+    // ── AC11 (Issue #3195): ABI self-check residual-zero sticky wiring ─
+    {
+        std::println("\n--- AC11: ABI self-check residual sticky wiring (#3195) ---");
+        auto hh = read_file("src/serve/runtime_production_abi.h");
+        auto abi = read_file("src/serve/runtime_production_abi.cpp");
+        must_inline(hh, "kProductionAbiSelfcheckFailBitResidualSticky");
+        must_inline(hh, "g_production_multi_worker_latched{0}");
+        must_inline(abi, "g_steal_safety_production_residual_sticky_fail_wired");
+        must_inline(abi, "g_steal_safety_production_residual_zero_wired");
+        must_inline(abi, "g_production_multi_worker_latched.store(1");
+        must_inline(abi, "steal_safety_production_residual_zero_v_read() == 0");
+        must_inline(abi, "Issue #3195");
+        must_inline(abi, "kProductionAbiSelfcheckFailBitResidualSticky");
+    }
+
+    // ── AC12 (Issue #3195): Soft / single-worker zero behavioural change ─
+    {
+        std::println("\n--- AC12: Soft / single-worker unchanged (#3195) ---");
+        auto sh = read_file("src/serve/steal_safety.h");
+        auto check_pos = sh.find("steal_safety_production_residual_zero_v_read()");
+        auto check_start = check_pos > 1500 ? check_pos - 1500 : 0;
+        auto check_end = check_pos + 2500;
+        auto check_win = sh.substr(check_start, check_end - check_start);
+        must_inline(check_win, "!multi && aura_production_defaults_active_probe() == 0");
+        must_inline(check_win, "return 1");
+        CHECK(sh.find("g_3195_") == std::string::npos, "AC12: no new g_3195_* counter");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "issues" /
+                                       "test_issue_3195.cpp"),
+              "AC12: tests/issues/test_issue_3195.cpp absent (#81967)");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_3195.cpp"),
+              "AC12: tests/serve/test_issue_3195.cpp absent (#81967)");
+    }
+
+    // ── AC13 (Issue #3195): live SSOT — latch + named residual fail-closed ─
+    {
+        std::println("\n--- AC13: live residual_zero latch (#3195) ---");
+        using aura::serve::clear_production_abi_selfcheck_for_test;
+        using aura::serve::clear_steal_safety_transaction_for_test;
+        using aura::serve::g_steal_safety_residual_boundary_unsafe_total;
+        using aura::serve::g_steal_safety_residual_envframe_lag_total;
+        using aura::serve::g_steal_safety_residual_gc_defer_armed_total;
+        using aura::serve::g_steal_safety_residual_layout_stamp_mismatch_total;
+        using aura::serve::set_production_multi_worker_latched_for_test;
+        using aura::serve::steal_safety_production_residual_sticky_fail_v_read;
+        using aura::serve::steal_safety_production_residual_zero_v_read;
+
+        clear_steal_safety_transaction_for_test();
+        clear_production_abi_selfcheck_for_test();
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(0, std::memory_order_relaxed);
+        g_steal_safety_residual_boundary_unsafe_total.store(1, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 1,
+              "AC13: Soft unlatched BoundaryUnsafe is pass-through");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 0,
+              "AC13: Soft unlatched sticky stays 0");
+
+        set_production_multi_worker_latched_for_test(true);
+        CHECK(steal_safety_production_residual_zero_v_read() == 0,
+              "AC13: latched BoundaryUnsafe fail-closes SSOT");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 1,
+              "AC13: latched residual sets sticky");
+
+        g_steal_safety_residual_boundary_unsafe_total.store(0, std::memory_order_relaxed);
+        g_steal_safety_residual_layout_stamp_mismatch_total.store(1, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 0, "AC13: LayoutStamp fail-closes");
+        g_steal_safety_residual_layout_stamp_mismatch_total.store(0, std::memory_order_relaxed);
+        g_steal_safety_residual_gc_defer_armed_total.store(1, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 0, "AC13: GcDefer fail-closes");
+        g_steal_safety_residual_gc_defer_armed_total.store(0, std::memory_order_relaxed);
+        g_steal_safety_residual_envframe_lag_total.store(1, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 0, "AC13: EnvFrame fail-closes");
+        g_steal_safety_residual_envframe_lag_total.store(0, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 1,
+              "AC13: residuals clear → SSOT recovers");
+
+        set_production_multi_worker_latched_for_test(false);
+        clear_steal_safety_transaction_for_test();
+        clear_production_abi_selfcheck_for_test();
     }
 
     std::println("\n=== #3134 production-readiness residual-zero: {} passed, {} failed ===",

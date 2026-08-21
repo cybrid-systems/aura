@@ -1,6 +1,7 @@
 // runtime_production_abi.cpp — Issue #2955 production ABI self-check.
 
 #include "serve/runtime_production_abi.h"
+#include "serve/steal_safety.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -98,14 +99,39 @@ bool aura_runtime_require_production_multi_worker() noexcept {
     if (aura_abi_strong_mutation_depth_from_ptr_v() == 0)
         fail_bits |= 1ull << 3;
 
+    // Issue #3195: residual-zero sticky wiring must be present. Header
+    // sentinels are 1 unless a mis-link / test store(0) wiped them.
+    if (g_steal_safety_production_residual_sticky_fail_wired.load(std::memory_order_relaxed) == 0 ||
+        g_steal_safety_production_residual_zero_wired.load(std::memory_order_relaxed) == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitResidualSticky;
+
     if (fail_bits != 0) {
         g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
         g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
+        std::fprintf(
+            stderr,
+            "FATAL: production multi-worker Ready self-check failed (#3098 + #2955 + #3195) "
+            "fail_bits=0x%llx — multi-worker requires strong ABI + "
+            "production_defaults_active + residual-zero sticky wiring. Soft "
+            "(AURA_SANDBOX=off) / !production_defaults_active under multi-worker "
+            "is refused.\n",
+            static_cast<unsigned long long>(fail_bits));
+        std::fflush(stderr);
+        std::abort();
+    }
+
+    // Latch before residual_zero consult so a later Soft flip cannot
+    // pass-through (I3/I6). steal_safety_production_residual_zero_v_read
+    // remains SSOT for readiness.
+    g_production_multi_worker_latched.store(1, std::memory_order_relaxed);
+
+    if (steal_safety_production_residual_zero_v_read() == 0) {
+        fail_bits |= kProductionAbiSelfcheckFailBitResidualSticky;
+        g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
+        g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
         std::fprintf(stderr,
-                     "FATAL: production multi-worker Ready self-check failed (#3098 + #2955) "
-                     "fail_bits=0x%llx — multi-worker requires strong ABI + "
-                     "production_defaults_active. Soft (AURA_SANDBOX=off) / "
-                     "!production_defaults_active under multi-worker is refused.\n",
+                     "FATAL: production multi-worker Ready residual-zero sticky failed (#3195) "
+                     "fail_bits=0x%llx — named residuals must be 0 at multi-worker Ready.\n",
                      static_cast<unsigned long long>(fail_bits));
         std::fflush(stderr);
         std::abort();
@@ -124,4 +150,9 @@ extern "C" int aura_runtime_require_production_abi_c(void) noexcept {
 // Issue #3098: C-linkage accessor for multi-worker Ready self-check.
 extern "C" int aura_runtime_require_production_multi_worker_c(void) noexcept {
     return aura::serve::aura_runtime_require_production_multi_worker() ? 1 : 0;
+}
+
+extern "C" int aura_runtime_multi_worker_production_latched(void) noexcept {
+    return aura::serve::g_production_multi_worker_latched.load(std::memory_order_relaxed) != 0 ? 1
+                                                                                               : 0;
 }

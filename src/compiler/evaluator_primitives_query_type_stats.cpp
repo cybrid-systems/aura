@@ -1646,6 +1646,11 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                             insert_kv("issue-3134", 3134);
                             insert_kv("schema-3162", 3162);
                             insert_kv("issue-3162", 3162);
+                            // Issue #3195: multi-worker residual-zero sticky
+                            // (I3/I6). Additive issue stamps only — residual
+                            // SSOT + sticky counters reused (no new metric).
+                            insert_kv("schema-3195", 3195);
+                            insert_kv("issue-3195", 3195);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail
