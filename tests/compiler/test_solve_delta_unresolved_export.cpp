@@ -2383,6 +2383,102 @@ static void ac3081_5_source_and_linter() {
           "3081 AC5: no docs/design/");
 }
 
+// ── Issue #3203: Soft TIMEOUT/CONFLICT must never grant query:type authority ──
+static void ac3203_1_grant_cannot_override_timeout() {
+    std::println("\n--- #3203 AC1: Soft TIMEOUT + persist grant still not-authoritative ---");
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3203 AC1: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    // Simulate Soft TIMEOUT copy then outermost persist grant.
+    svc.evaluator().copy_infer_type_export_authority(false);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(!svc.evaluator().type_export_authoritative(),
+          "ac3203_1_grant_cannot_override_timeout: grant cannot stamp over TIMEOUT");
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "ac3203_1: type_export_is_authoritative false");
+    auto git = svc.eval("(get-inferred-type 0)");
+    CHECK(git.has_value(), "3203 AC1: get-inferred-type returned");
+    auto qto = svc.eval("(query-type-of \"f\")");
+    CHECK(qto.has_value(), "3203 AC1: query-type-of returned");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(prim.find("not-authoritative") != std::string::npos, "3203 AC1: query surface");
+}
+
+static void ac3203_2_production_timeout_unchanged() {
+    std::println("\n--- #3203 AC2: Production TIMEOUT fail-closed unchanged ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(impl.find("delta_timeout_fail_closed_total") != std::string::npos,
+          "ac3203_2_production_timeout_unchanged: #3003 fail-closed retained");
+    CHECK(impl.find("delta_timeout_reject_total") != std::string::npos,
+          "3203 AC2: #2277 reject retained");
+    CHECK(tc.find("production_defaults_active()") != std::string::npos &&
+              tc.find("clear_type_export_authority") != std::string::npos,
+          "3203 AC2: production still clears authority");
+}
+
+static void ac3203_3_solved_still_grants() {
+    std::println("\n--- #3203 AC3: outermost SOLVED still grants ---");
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3203 AC3: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().copy_infer_type_export_authority(true);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "ac3203_3_solved_still_grants: SOLVED grant remains authoritative");
+}
+
+static void ac3203_4_quiet_solved_zero_cost() {
+    std::println("\n--- #3203 AC4: quiet SOLVED skips production_defaults ---");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    CHECK(ev.find("if (!last_type_solve_solved_)") != std::string::npos,
+          "ac3203_4_quiet_solved_zero_cost: solve-solved check first");
+    CHECK(ixx.find("if (last_delta_solve_status_ != SolveResult::SOLVED)") != std::string::npos,
+          "3203 AC4: TC helper compares solve first");
+    // Helper bodies must not load production_defaults (quiet SOLVED).
+    const auto helper = ev.find("bool type_export_is_authoritative() const noexcept");
+    CHECK(helper != std::string::npos, "3203 AC4: Evaluator helper present");
+    const auto body_end = ev.find("}", helper);
+    CHECK(body_end != std::string::npos, "3203 AC4: helper body");
+    const auto slice = ev.substr(helper, body_end - helper);
+    CHECK(slice.find("production_defaults_active") == std::string::npos,
+          "3203 AC4: no production_defaults load on quiet path");
+}
+
+static void ac3203_5_source_and_linter() {
+    std::println("\n--- #3203 AC5: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_soft_timeout_export_uniform_gate_3203.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kSoftTimeoutExportUniformGateIssue = 3203") != std::string::npos,
+          "ac3203_5_source_and_linter: stamp");
+    CHECK(ev.find("type_export_is_authoritative") != std::string::npos,
+          "3203 AC5: Evaluator helper");
+    CHECK(ixx.find("type_export_is_authoritative") != std::string::npos, "3203 AC5: TC helper");
+    CHECK(impl.find("last_occurrence_vars_.clear()") != std::string::npos,
+          "3203 AC5: occurrence TypeIds cleared on non-authoritative");
+    CHECK(mb.find("Issue #3203") != std::string::npos, "3203 AC5: persist grant cites #3203");
+    CHECK(t.find("ac3203_1_grant_cannot_override_timeout") != std::string::npos, "3203 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3203") != std::string::npos, "3203 AC5: linter");
+    CHECK(build.find("check_soft_timeout_export_uniform_gate_3203") != std::string::npos,
+          "3203 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3203.cpp").empty(), "3203 AC5: no invent");
+    CHECK(read_file("docs/design/3203-soft-timeout-uniform-gate.md").empty(),
+          "3203 AC5: no docs/design/");
+}
+
 // ── #3108: commit_readiness recover must re-gate on solve_status==SOLVED ─
 //
 // Closes the half-green residual of #2750 / #2909 / #2962 / #2911 /
@@ -2551,6 +2647,12 @@ int run_test_solve_delta_unresolved_export() {
     ac3081_3_production_unchanged();
     ac3081_4_solved_zero_cost();
     ac3081_5_source_and_linter();
+    std::println("\n=== Issue #3203: Soft TIMEOUT never grants query:type authority ===");
+    ac3203_1_grant_cannot_override_timeout();
+    ac3203_2_production_timeout_unchanged();
+    ac3203_3_solved_still_grants();
+    ac3203_4_quiet_solved_zero_cost();
+    ac3203_5_source_and_linter();
     std::println("\n=== Issue #3108: commit_readiness recover re-gate ===");
     ac3108_1_recover_regate_wired();
     ac3108_2_production_rejects_via_existing_path();

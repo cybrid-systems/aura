@@ -444,6 +444,9 @@ export enum class SolveResult : std::uint8_t {
 inline constexpr int kDeltaTimeoutFailClosedIssue = 3003;
 // Issue #3081: Soft + allow_timeout_commit TIMEOUT is never query:type authority.
 inline constexpr int kSoftTimeoutExportNonAuthoritativeIssue = 3081;
+// Issue #3203: uniform enforcement — Soft TIMEOUT/CONFLICT must not grant
+// durable query:type / occurrence TypeId even if persist later stamps grant.
+inline constexpr int kSoftTimeoutExportUniformGateIssue = 3203;
 
 // Issue #3005: ADT variant / match-pattern mutate must put exhaustiveness
 // goals into the dirty cone / solve_delta dep-closure. Production / Full
@@ -2091,8 +2094,15 @@ public:
     // last_type_export_authoritative is sticky-false within a
     // preserve_cs multi-node partial (AND of per-node results).
     [[nodiscard]] SolveResult last_solve_status() const noexcept { return last_solve_status_; }
-    [[nodiscard]] bool last_type_export_authoritative() const noexcept {
+    // Issue #3203: never grant on TIMEOUT/CONFLICT even if the flag was stamped.
+    // Quiet SOLVED: one compare then the flag (no production_defaults load).
+    [[nodiscard]] bool type_export_is_authoritative() const noexcept {
+        if (last_solve_status_ != SolveResult::SOLVED)
+            return false;
         return last_type_export_authoritative_;
+    }
+    [[nodiscard]] bool last_type_export_authoritative() const noexcept {
+        return type_export_is_authoritative();
     }
     void set_incremental_delta_mode(bool record, bool use_delta_solve) noexcept {
         incremental_delta_record_ = record;
@@ -2715,6 +2725,11 @@ export struct TypeChecker {
     // Issue #2180: occurrence TypeIds + live-CS flag from last
     // infer_flat_partial (threaded into composite_txn_commit).
     [[nodiscard]] const std::vector<aura::core::TypeId>& last_occurrence_vars() const noexcept {
+        // Issue #3203: no live refined TypeId from a half-solved CS.
+        if (!type_export_is_authoritative()) {
+            static const std::vector<aura::core::TypeId> kEmpty;
+            return kEmpty;
+        }
         return last_occurrence_vars_;
     }
     [[nodiscard]] bool last_partial_cs_live() const noexcept { return last_partial_cs_live_; }
@@ -2726,8 +2741,15 @@ export struct TypeChecker {
     [[nodiscard]] SolveResult last_delta_solve_status() const noexcept {
         return last_delta_solve_status_;
     }
-    [[nodiscard]] bool last_type_export_authoritative() const noexcept {
+    // Issue #3203: Soft TIMEOUT/CONFLICT never exports durable TypeIds.
+    // Quiet SOLVED: compare last_delta_solve_status_ first (no extra atomic).
+    [[nodiscard]] bool type_export_is_authoritative() const noexcept {
+        if (last_delta_solve_status_ != SolveResult::SOLVED)
+            return false;
         return last_type_export_authoritative_;
+    }
+    [[nodiscard]] bool last_type_export_authoritative() const noexcept {
+        return type_export_is_authoritative();
     }
     void clear_last_type_export_authoritative() noexcept {
         last_type_export_authoritative_ = false;

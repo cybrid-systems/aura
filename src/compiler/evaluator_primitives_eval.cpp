@@ -1055,6 +1055,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
         }
         auto node = static_cast<aura::ast::NodeId>(as_int(a[0]));
         auto& flat = *ev.workspace_flat_;
+        // Issue #3203: do not leak a half-solved TypeId via annotation hints.
+        if (!ev.type_export_authoritative()) {
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(ev.type_export_inflight() ? "in-flight"
+                                                                : "not-authoritative");
+            return make_string(sidx);
+        }
         if (node >= flat.size()) {
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back("out-of-range");

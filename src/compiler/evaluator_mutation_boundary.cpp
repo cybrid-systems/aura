@@ -293,6 +293,8 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // is the sole moment persist + linear proof + health are durable.
     // Issue #3082: nested/mid Guards never call this helper — they
     // stamp inflight and leave grant to this outermost success path.
+    // Issue #3203: grant_type_export_authority refuses if last infer
+    // was TIMEOUT/CONFLICT (persist must not override a half-solved face).
     ev->grant_type_export_authority();
 }
 
