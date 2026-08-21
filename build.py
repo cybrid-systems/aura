@@ -4087,6 +4087,25 @@ def cmd_lint():
             "Issue #3148 handoff join-via-token linter failed — run python3 scripts/coverage/checks/check_handoff_join_via_token_3148.py"
         )
         return r
+    # Issue #3216: three identity planes + observation-only HandoffToken.
+    # Production join / scope-resolve / directory hashes expose
+    # identity-plane (name-table | scope-handle | directory) and
+    # join-via-token exposes handoff-token-present so Agents distinguish
+    # name-table miss vs scope no handle vs handoff source still-running.
+    # Soft skips intern. No orch:resolve-via-token (SlimSurface). No
+    # process-global table. Tests extend test_join_drain_reclaim +
+    # test_orch_scope + existing HardDeny in test_agent_scope (#81967);
+    # no docs/design/ (#1655).
+    ip3216_script = COVERAGE_CHECKS / "check_identity_plane_handoff_boundary_3216.py"
+    if not ip3216_script.exists():
+        fail(f"missing {ip3216_script}")
+        return 1
+    r = run([sys.executable, str(ip3216_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3216 identity-plane handoff-boundary linter failed — run python3 scripts/coverage/checks/check_identity_plane_handoff_boundary_3216.py"
+        )
+        return r
     # Issue #3111: production mailbox post-steal re-validate of held_ref
     # messages. Close the Fiber steal × held_ref / handoff_completed
     # consistency residual. Soft / sandbox=off: counter bumps only (may

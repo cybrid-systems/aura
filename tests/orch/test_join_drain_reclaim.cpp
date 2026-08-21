@@ -44,6 +44,7 @@
 
 #include "orch/agent_spawn.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
 #include "serve/fiber.h"
 #include "serve/scheduler.h"
 
@@ -65,11 +66,21 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
+using aura::orch::AgentHandle;
 using aura::orch::cancel_and_drain_fiber;
 using aura::orch::g_orch_module_stats;
+using aura::orch::join_agent;
+using aura::orch::JoinPolicy;
+using aura::orch::wait_reclaimed_body;
 using aura::serve::Fiber;
+using aura::serve::FiberState;
+using aura::serve::JoinStatus;
 using aura::serve::SchedRunner;
 using aura::serve::Scheduler;
 
@@ -2253,8 +2264,14 @@ int run_test_join_drain_reclaim() {
     // #3110: on Timeout, retain must_wait_reclaimed=true so the host still
     // knows the body is running and reservation/mailbox are still held
     // (#2661 no-early-free). Ok path clears (#3110 AC1 — host sees cleanup
-    // completed). Explicit JoinPolicy{.wait_reclaimed_ms = N} unchanged.
+    // completed). Explicit JoinPolicy wait_reclaimed_ms unchanged.
     {
+        using aura::orch::AgentHandle;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::wait_reclaimed_body;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
         std::println(
             "\n--- #3146 AC1: production auto-wait Timeout retains must_wait_reclaimed ---");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
@@ -2319,8 +2336,7 @@ int run_test_join_drain_reclaim() {
 
     // ── #3146 AC3: explicit JoinPolicy{.wait_reclaimed_ms = N} path unchanged.
     {
-        std::println(
-            "\n--- #3146 AC3: explicit JoinPolicy{.wait_reclaimed_ms = N} path unchanged ---");
+        std::println("\n--- #3146 AC3: explicit JoinPolicy wait_reclaimed_ms path unchanged ---");
         aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
         auto fiber_owned = std::make_unique<Fiber>([] {});
         fiber_owned->mark_reclaimed();
@@ -2504,7 +2520,9 @@ int run_test_join_drain_reclaim() {
         using aura::orch::join_via_handoff;
         using aura::orch::JoinViaTokenPolicy;
         using aura::orch::JoinViaTokenResult;
+        using aura::serve::FiberState;
         aura::serve::Scheduler sched(1);
+        SchedRunner runner(sched);
 
         // ── #3148 AC2: importer can observe still-running / Reclaimed /
         // wait-timeout for source-owned body without holding the source
@@ -2519,10 +2537,15 @@ int run_test_join_drain_reclaim() {
             // observe still-running or hit Timeout on a small deadline.
             CompilerService cs1;
             auto& ev1 = cs1.evaluator();
+            std::atomic<bool> stop_3148{false};
             AgentSpec spec_src;
             spec_src.name = "src-3148-ac2";
-            spec_src.body = [] {
-                while (true) { /* idle */
+            spec_src.body = [&] {
+                while (!stop_3148.load(std::memory_order_acquire)) {
+                    if (aura::serve::g_current_fiber &&
+                        aura::serve::g_current_fiber->is_cancel_requested())
+                        return;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
                 }
             };
             auto src_handle = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_src));
@@ -2570,9 +2593,10 @@ int run_test_join_drain_reclaim() {
                   "3148 AC3: source reservation unchanged after importer observe");
             CHECK(src_handle.fiber != nullptr && src_handle.fiber->id() == src_fiber_id,
                   "3148 AC3: source fiber identity preserved");
-            // Cleanup so the body doesn't leak. Force the body to exit.
-            src_handle.fiber->set_state(FiberState::Done);
-            src_handle.fiber->note_body_exit_if_reclaimed();
+            stop_3148.store(true, std::memory_order_release);
+            if (src_handle.fiber)
+                src_handle.fiber->request_cancel();
+            (void)join_agent(src_handle, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
         }
 
         // ── #3148 AC4: Soft / Off / unused handoff — zero extra atomic.
@@ -2772,6 +2796,192 @@ int run_test_join_drain_reclaim() {
             CHECK(prim3148.find("orch:join-via-token") != std::string::npos,
                   "3148 AC1: orch:join-via-token prim added to stash-consuming prims");
         }
+    }
+
+    // ── #3216: three identity planes + observation-only HandoffToken.
+    // Production hashes distinguish name-table miss vs scope-handle miss
+    // vs handoff source still-running. Soft skips intern. No new orch:*
+    // prim, no process-global table, no docs/design/3216-* (#1655).
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::orch::agent_export_handoff;
+        using aura::orch::join_via_handoff;
+        using aura::orch::JoinViaTokenPolicy;
+        using aura::serve::FiberState;
+
+        auto restore_sandbox = [](const std::string& prev) {
+            if (prev.empty())
+                ::unsetenv("AURA_SANDBOX");
+            else
+                ::setenv("AURA_SANDBOX", prev.c_str(), 1);
+        };
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        const std::string prev_sb_s = prev_sb ? prev_sb : "";
+
+        std::println("\n--- #3216 AC2: production join miss identity-plane=name-table ---");
+        {
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            CompilerService cs;
+            auto plane = cs.eval(
+                R"((let ((r (orch:agent-join "no-such-ac3216")))
+                     (if (string=? (hash-ref r "identity-plane") "name-table") 1 0)))");
+            CHECK(plane && is_int(*plane) && as_int(*plane) == 1,
+                  "ac3216_1: join miss identity-plane=name-table");
+            auto st = cs.eval(
+                R"((let ((r (orch:agent-join "no-such-ac3216")))
+                     (if (string=? (hash-ref r "status") "invalid") 1 0)))");
+            CHECK(st && is_int(*st) && as_int(*st) == 1, "ac3216_1: join miss status=invalid");
+            auto schema = cs.eval(
+                R"((let ((r (orch:agent-join "no-such-ac3216"))) (hash-ref r "schema-3216")))");
+            CHECK(schema && is_int(*schema) && as_int(*schema) == 3216,
+                  "ac3216_1: join miss schema-3216");
+            CHECK(href(cs, "schema-3216") == 3216, "ac3216_1: query:orch-module-stats schema-3216");
+            CHECK(href(cs, "identity-plane-wired") == 1,
+                  "ac3216_1: query:orch-module-stats identity-plane-wired");
+        }
+
+        std::println("\n--- #3216 AC2: production join-via-token handoff-token-present ---");
+        {
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            CompilerService cs;
+            auto missing = cs.eval(
+                R"((let ((r (orch:join-via-token "no-such-token-ac3216")))
+                     (list (if (hash-has-key? r "handoff-token-present") 1 0)
+                           (if (hash-ref r "handoff-token-present") 1 0)
+                           (if (hash-ref r "still-running") 1 0))))");
+            CHECK(missing.has_value(), "ac3216_2: join-via-token missing token returns");
+            auto present_key = cs.eval(
+                R"((let ((r (orch:join-via-token "no-such-token-ac3216")))
+                     (if (hash-has-key? r "handoff-token-present") 1 0)))");
+            CHECK(present_key && is_int(*present_key) && as_int(*present_key) == 1,
+                  "ac3216_2: missing token still exposes handoff-token-present");
+            auto present_val = cs.eval(
+                R"((let ((r (orch:join-via-token "no-such-token-ac3216")))
+                     (if (hash-ref r "handoff-token-present") 1 0)))");
+            CHECK(present_val && is_int(*present_val) && as_int(*present_val) == 0,
+                  "ac3216_2: missing token handoff-token-present=#f");
+
+            auto spawn_ok = cs.eval(R"((let ((r (orch:spawn-agent "ac3216-src")))
+                                         (if (hash-ref r "ok") 1 0)))");
+            CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1,
+                  "ac3216_2: spawn-agent ac3216-src ok");
+            auto tok_present = cs.eval(R"(
+              (let ((tok (orch:agent-export-via-token "ac3216-src")))
+                (let ((r (orch:join-via-token tok :timeout-ms 50)))
+                  (if (hash-ref r "handoff-token-present") 1 0)))
+            )");
+            CHECK(tok_present && is_int(*tok_present) && as_int(*tok_present) == 1,
+                  "ac3216_2: staged token handoff-token-present=#t");
+            auto tok_schema = cs.eval(R"(
+              (let ((tok (orch:agent-export-via-token "ac3216-src")))
+                (let ((r (orch:join-via-token tok :timeout-ms 50)))
+                  (hash-ref r "schema-3216")))
+            )");
+            CHECK(tok_schema && is_int(*tok_schema) && as_int(*tok_schema) == 3216,
+                  "ac3216_2: join-via-token schema-3216");
+        }
+
+        std::println("\n--- #3216 AC2: C++ join_via_handoff still-running ---");
+        {
+            aura::serve::Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> stop_body{false};
+            aura::orch::AgentSpec spec_src;
+            spec_src.name = "src-3216-idle";
+            spec_src.body = [&] {
+                while (!stop_body.load(std::memory_order_acquire)) {
+                    if (aura::serve::g_current_fiber &&
+                        aura::serve::g_current_fiber->is_cancel_requested())
+                        return;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+                }
+            };
+            auto src_handle = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_src));
+            CHECK(src_handle.ok, "ac3216_3: src spawn ok");
+            auto tok = agent_export_handoff(src_handle);
+            JoinViaTokenPolicy jp;
+            jp.timeout_ms = 50;
+            auto res = join_via_handoff(tok, jp);
+            CHECK(res.status == aura::serve::JoinStatus::Timeout,
+                  "ac3216_3: join_via_handoff Timeout on idle body");
+            CHECK(res.still_running, "ac3216_3: handoff source still-running");
+            stop_body.store(true, std::memory_order_release);
+            if (src_handle.fiber)
+                src_handle.fiber->request_cancel();
+            (void)aura::orch::join_agent(src_handle,
+                                         JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+        }
+
+        std::println("\n--- #3216 AC3: Soft path zero extra intern ---");
+        {
+            ::setenv("AURA_SANDBOX", "off", 1);
+            apply_dev_audit_defaults();
+            CompilerService cs;
+            auto join_soft = cs.eval(
+                R"((hash-has-key? (orch:agent-join "no-such-ac3216-soft") "identity-plane"))");
+            CHECK(join_soft && is_bool(*join_soft) && !as_bool(*join_soft),
+                  "ac3216_4: Soft join miss has no identity-plane key");
+            auto jvt_soft = cs.eval(
+                R"((hash-has-key? (orch:join-via-token "no-tok-soft") "handoff-token-present"))");
+            CHECK(jvt_soft && is_bool(*jvt_soft) && !as_bool(*jvt_soft),
+                  "ac3216_4: Soft join-via-token has no handoff-token-present key");
+            CHECK(href(cs, "schema-3216") == 3216,
+                  "ac3216_4: module-stats schema-3216 still present (facade)");
+        }
+
+        std::println("\n--- #3216 AC1/AC4: source-cite + no invent + no docs/design ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto scope = read_file("src/orch/agent_scope.h");
+            const auto names = read_file("src/compiler/agent_name_table.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto readme = read_file("src/orch/README.md");
+            const auto build = read_file("build.py");
+            CHECK(spawn.find("kIdentityPlaneHandoffBoundaryIssue = 3216") != std::string::npos,
+                  "ac3216: agent_spawn.h issue constant");
+            CHECK(spawn.find("observation-only") != std::string::npos,
+                  "ac3216: HandoffToken observation-only");
+            CHECK(scope.find("name-table") != std::string::npos &&
+                      scope.find("scope-handle") != std::string::npos &&
+                      scope.find("directory") != std::string::npos,
+                  "ac3216: agent_scope.h documents three planes");
+            CHECK(names.find("name-table plane") != std::string::npos,
+                  "ac3216: agent_name_table.h cites name-table plane");
+            CHECK(prim.find("add_identity_plane") != std::string::npos,
+                  "ac3216: add_identity_plane helper");
+            CHECK(prim.find("add_handoff_token_present") != std::string::npos,
+                  "ac3216: add_handoff_token_present helper");
+            CHECK(prim.find("identity-plane") != std::string::npos, "ac3216: identity-plane key");
+            CHECK(prim.find("handoff-token-present") != std::string::npos,
+                  "ac3216: handoff-token-present key");
+            CHECK(prim.find("orch:resolve-via-token") == std::string::npos,
+                  "ac3216: no orch:resolve-via-token (SlimSurface)");
+            CHECK(readme.find("Identity planes and HandoffToken boundary (Issue #3216)") !=
+                      std::string::npos,
+                  "ac3216: README identity-plane section");
+            CHECK(build.find("check_identity_plane_handoff_boundary_3216") != std::string::npos,
+                  "ac3216: build.py wires linter");
+            std::ifstream invent("tests/orch/test_issue_3216.cpp");
+            if (!invent.good())
+                invent.open("../tests/orch/test_issue_3216.cpp");
+            CHECK(!invent.good(), "ac3216: no tests/orch/test_issue_3216.cpp (#81967)");
+            const std::filesystem::path docs_design_3216 = "docs/design";
+            std::error_code ec_3216;
+            if (std::filesystem::is_directory(docs_design_3216, ec_3216)) {
+                for (const auto& entry :
+                     std::filesystem::directory_iterator(docs_design_3216, ec_3216)) {
+                    const auto name = entry.path().filename().string();
+                    CHECK(name.find("3216-") == std::string::npos,
+                          std::string("ac3216: no docs/design/") + name + " (#1655)");
+                }
+            }
+        }
+
+        restore_sandbox(prev_sb_s);
+        apply_dev_audit_defaults();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,

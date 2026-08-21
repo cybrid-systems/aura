@@ -86,6 +86,15 @@ inline constexpr int kJoinDrainTimeoutIssue = 2153;
 inline constexpr int kJoinDrainReclaimStillRunningIssue = 2397;
 // Issue #2158: per-Evaluator agent apply mutex (replace process-static orch_eval_mu).
 inline constexpr int kAgentApplyPerEvalMutexIssue = 2158;
+// Issue #3216: three session-local identity planes + observation-only
+// HandoffToken. Planes are name-table (per-Evaluator bookkeeping),
+// scope-handle (AgentScope::handles_ supervision), and directory
+// (directory_snapshot / orch:agent-directory read-only projection).
+// HandoffToken / join_via_handoff is NOT a fourth plane — it is a
+// read-only observer that closes the lifecycle gap without moving
+// ownership. Production hashes expose identity-plane +
+// handoff-token-present; Soft skips intern (zero extra).
+inline constexpr int kIdentityPlaneHandoffBoundaryIssue = 3216;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Issue #2159: fiber-native keepalive helper (replace detached std::thread).
@@ -1430,14 +1439,20 @@ struct AgentHandle {
 
 // Issue #3089: portable cross-Evaluator handoff state. Captures only the
 // shared / observed bits needed to route to a body fiber owned by another
-// Evaluator. Does NOT introduce a global AgentRegistry — the proxy handle
-// is registered in the destination Evaluator's local AgentNameTable (per
-// #1966 / #2226 contract) and the source's Scope remains the owner of the
-// body fiber. Existing send/recv/BP/Reclaimed contracts are preserved via
-// shared mailbox + liveness + coop (shared_ptr) and observed fiber state
-// (raw pointer, source-owned). Reservation stays with the source — the
-// proxy's release_reservation_if_any() is a no-op (reserved_memory_bytes
-// == 0) so dtor cleanup is idempotent (#2009 invariant).
+// Evaluator. Does NOT introduce a process-global name table — the proxy
+// handle is registered in the destination Evaluator's local AgentNameTable
+// (per #1966 / #2226 contract) and the source's Scope remains the owner of
+// the body fiber. Existing send/recv/BP/Reclaimed contracts are preserved
+// via shared mailbox + liveness + coop (shared_ptr) and observed fiber
+// state (raw pointer, source-owned). Reservation stays with the source —
+// the proxy's release_reservation_if_any() is a no-op
+// (reserved_memory_bytes == 0) so dtor cleanup is idempotent (#2009).
+// Issue #3216: HandoffToken is observation-only — not a fourth identity
+// plane. join_via_handoff / orch:join-via-token never take ownership,
+// never release the source reservation, and never become a
+// session-spanning workflow primitive. The three identity planes stay
+// name-table | scope-handle | directory (see
+// kIdentityPlaneHandoffBoundaryIssue).
 struct HandoffToken {
     std::shared_ptr<serve::mf_mailbox::MultiFiberMailbox> mailbox;
     serve::Fiber* fiber = nullptr; // observed, source-owned
