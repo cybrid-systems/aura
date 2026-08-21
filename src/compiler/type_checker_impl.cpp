@@ -10781,7 +10781,23 @@ std::size_t force_adt_exhaust_undermark_into_cone(FlatAST& flat, const StringPoo
         }
     }
     if (!forced.empty()) {
-        const std::span<const dirty::NodeId> sites{forced.data(), forced.size()};
+        // Issue #3236: match node + all arms into the type∪IR cone so
+        // residual CastOp on an arm cannot sit outside the exhaustiveness
+        // recheck. Empty children → sites == match nodes (same as #3045).
+        std::vector<dirty::NodeId> sites;
+        sites.reserve(forced.size() * 4);
+        for (auto raw : forced) {
+            sites.push_back(raw);
+            const auto nid = static_cast<NodeId>(raw);
+            if (nid == aura::ast::NULL_NODE || nid >= flat.size())
+                continue;
+            auto kids = flat.children(nid);
+            for (std::size_t i = 0; i < kids.size(); ++i) {
+                auto k = kids[i];
+                if (k != aura::ast::NULL_NODE)
+                    sites.push_back(static_cast<dirty::NodeId>(k));
+            }
+        }
         (void)dirty::force_adt_exhaust_sites_into_cone(sites);
     }
     return n;

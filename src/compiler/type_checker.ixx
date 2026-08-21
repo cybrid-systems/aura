@@ -467,6 +467,11 @@ inline constexpr int kAdtExhaustUndermarkConeIssue = 3045;
 // residual under-mark (#3005); Soft observe-only; empty types → 0.
 export inline constexpr int kAdtExhaustCompleteSeedIssue = 3083;
 
+// Issue #3236: residual of #3045/#3083 — match node + all arms enter
+// type∪IR cone; Production/Full recheck exhaustiveness before
+// TypeLinearCommitProof / commit_readiness. Soft observe; quiet no ADT.
+export inline constexpr int kAdtExhaustCommitRecheckIssue = 3236;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
