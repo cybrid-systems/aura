@@ -4106,6 +4106,21 @@ def cmd_lint():
             "Issue #3216 identity-plane handoff-boundary linter failed — run python3 scripts/coverage/checks/check_identity_plane_handoff_boundary_3216.py"
         )
         return r
+    # Issue #3217: deny path restores before trail/SE stamp. Unified
+    # order across composite / nested / lockless-child / linear-synth /
+    # densify force / AOT fail. Production mid=0 never invents Success.
+    # Soft: observe-only. Extends test_hard_gate_full_strict (#81967);
+    # no docs/design/ (#1655). No new query:* name.
+    drs3217_script = COVERAGE_CHECKS / "check_deny_restore_then_stamp_3217.py"
+    if not drs3217_script.exists():
+        fail(f"missing {drs3217_script}")
+        return 1
+    r = run([sys.executable, str(drs3217_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3217 deny restore-then-stamp linter failed — run python3 scripts/coverage/checks/check_deny_restore_then_stamp_3217.py"
+        )
+        return r
     # Issue #3111: production mailbox post-steal re-validate of held_ref
     # messages. Close the Fiber steal × held_ref / handoff_completed
     # consistency residual. Soft / sandbox=off: counter bumps only (may

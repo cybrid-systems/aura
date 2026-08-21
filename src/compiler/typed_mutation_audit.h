@@ -76,6 +76,13 @@ inline constexpr int kTypedTrailWrapMissIssue = 3113;
 // last mid + SE + typed outcome + commit readiness + playbook + densify
 // + posture. Not an auto-executor (playbook stays observe-only).
 inline constexpr int kEvolutionAuditDecisionIssue = 3114;
+// Issue #3217: deny-path stamp order (all abort variants).
+//   1. structural restore / dual-topology abort
+//   2. coercion / occurrence / proof clear (abort path)
+//   3. THEN record_boundary_outcome / capture_* / SE emit
+// Forbidden: Success stamp then rollback; SE deny before restore completes.
+// Soft: observe-only (no extra I/O). Production mid=0: never invent Success.
+inline constexpr int kDenyRestoreThenStampIssue = 3217;
 // Force audit when dirty scope is large (Sampled strategy still hits).
 inline constexpr std::uint64_t kAuditForceNodesChanged = 8;
 // Issue #2053: under production defaults, force critical kinds even if Sampled.
@@ -3062,8 +3069,19 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
     // Sampled/Full gate still need a trail row — empty-Guard rollback
     // and synthetic captures use mid=0 as "no caller mid". Generate a
     // last-resort id so contextual_total / trail_writes stay honest.
-    if (mutation_id == 0)
+    // Issue #3217 AC4: production / Full refuse mid=0 — never invent a
+    // Success row (mid-fallback-refused SE is the joinable evidence).
+    // Soft still generates a last-resort id (observe-only, no new I/O).
+    if (mutation_id == 0) {
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full) {
+            if (outcome == AuditOutcome::Success)
+                return;
+            capture_audit_event_forced(0, name, kind, before_epoch, after_epoch, outcome,
+                                       target_node, nodes_changed, fiber_id, affected_ref_count);
+            return;
+        }
         mutation_id = next_audit_mutation_id();
+    }
     capture_audit_event_forced(mutation_id, name, kind, before_epoch, after_epoch, outcome,
                                target_node, nodes_changed, fiber_id, affected_ref_count);
 }
@@ -3092,6 +3110,9 @@ inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::st
 
 // Issue #1882: AOT hot-update boundary audit. Sampled on success (should_audit);
 // failures always enter the trail (AI self-evolution must not drop reject/rollback).
+// Issue #3217: fail stamps Error only after the reload has refused the
+// swap (epoch not advanced / staging not committed). Success is the last
+// write after commit — never Success-then-rollback.
 inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch,
                                         std::uint64_t after_epoch,
                                         std::string_view reason = "aot-hotupdate") noexcept {
@@ -3170,9 +3191,27 @@ inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view 
                                     bool success, std::uint32_t target_node = 0,
                                     std::uint32_t nodes_changed = 0,
                                     std::int64_t fiber_id = 0) noexcept {
+    // Issue #3217 AC4: production refuse mid=0 never stamps fake Success.
+    if (success && mutation_id == 0 &&
+        (production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
     capture_audit_event(mutation_id, op, classify_kind(op), before_epoch, after_epoch,
                         success ? AuditOutcome::Success : AuditOutcome::Rollback, target_node,
                         nodes_changed, fiber_id, nodes_changed > 0 ? 1u : 0u);
+}
+
+// Issue #3217: deny stamp after restore+clear. Callers MUST complete
+// structural restore and coercion/occurrence/proof clear first.
+// Soft: same trail write as record_boundary_outcome(success=false);
+// no extra I/O. Production mid=0 drops (SE mid-fallback-refused).
+inline void record_boundary_deny_after_restore(std::uint64_t mutation_id, std::string_view op,
+                                               std::uint64_t before_epoch,
+                                               std::uint64_t after_epoch,
+                                               std::uint32_t target_node = 0,
+                                               std::uint32_t nodes_changed = 0,
+                                               std::int64_t fiber_id = 0) noexcept {
+    record_boundary_outcome(mutation_id, op, before_epoch, after_epoch, /*success=*/false,
+                            target_node, nodes_changed, fiber_id);
 }
 
 // Issue #1614: record result of type + linear + provenance invariant suite.

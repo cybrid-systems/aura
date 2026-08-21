@@ -7507,6 +7507,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                  std::memory_order_relaxed)));
                 insert_kv("schema-2145", 2145);
                 insert_kv("issue-2145", 2145);
+                // Issue #3217: deny-restore-then-stamp order (reuse hard-gate
+                // counters; no new query:* name).
+                insert_kv("schema-3217", aura::compiler::typed_audit::kDenyRestoreThenStampIssue);
+                insert_kv("issue-3217", aura::compiler::typed_audit::kDenyRestoreThenStampIssue);
+                insert_kv("deny-restore-then-stamp-wired", 1);
             }
             // Issue #2027: composite / nested txn + partial recover counters
             {

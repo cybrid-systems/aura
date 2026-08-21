@@ -27,13 +27,21 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::AuditOutcome;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::CompositeTxnCommitResult;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+using aura::compiler::typed_audit::kDenyRestoreThenStampIssue;
 using aura::compiler::typed_audit::kTypedMutationAuditPassPhase;
+using aura::compiler::typed_audit::record_boundary_deny_after_restore;
+using aura::compiler::typed_audit::record_boundary_outcome;
 using aura::compiler::typed_audit::requires_invariant_hard_gate;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::set_strategy;
+using aura::compiler::typed_audit::trail_latest;
+using aura::compiler::typed_audit::TypedMutationAuditEvent;
 using aura::compiler::types::as_int;
 using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_bool;
@@ -234,6 +242,93 @@ static void ac6_schema_source() {
 
 } // namespace
 
+static void ac3217_deny_restore_then_stamp() {
+    std::println("\n--- #3217: deny restore then stamp ---");
+    CHECK(kDenyRestoreThenStampIssue == 3217, "ac3217: issue stamp");
+
+    auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto jit = read_file("src/compiler/aura_jit_bridge.cpp");
+    auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    auto build = read_file("build.py");
+    CHECK(aud.find("kDenyRestoreThenStampIssue = 3217") != std::string::npos,
+          "ac3217_1: audit header issue constant");
+    CHECK(aud.find("record_boundary_deny_after_restore") != std::string::npos,
+          "ac3217_1: deny-after-restore helper");
+    CHECK(bound.find("Issue #3217 deny-path stamp order") != std::string::npos,
+          "ac3217_1: boundary documents 1 restore / 2 clear / 3 stamp");
+    CHECK(bound.find("record_boundary_deny_after_restore") != std::string::npos,
+          "ac3217_2: outermost / composite / linear-synth / rollback use helper");
+    CHECK(bound.find("clear_type_linear_commit_proof_on_abort") != std::string::npos,
+          "ac3217_2: linear/densify abort clears proof before stamp");
+    CHECK(jit.find("never Success-then-rollback") != std::string::npos,
+          "ac3217_2: AOT fail stamps Error after swap refused");
+    CHECK(mut.find("schema-3217") != std::string::npos, "ac3217_3: schema-3217 on trail query");
+    CHECK(mut.find("deny-restore-then-stamp-wired") != std::string::npos,
+          "ac3217_3: wired sentinel");
+    CHECK(aud.find("query:deny-restore") == std::string::npos,
+          "ac3217_3: no new query:* name (SlimSurface)");
+
+    reset_for_test();
+    set_strategy(AuditStrategy::Full);
+    set_mode(SandboxMode::Off);
+    CompilerService cs;
+    seed(cs);
+    cs.evaluator().inject_cross_batch_linear_escape_for_test();
+    const auto rb0 = load_u64(g_typed_mutation_audit_counters.rollbacks);
+    const auto err0 = load_u64(g_typed_mutation_audit_counters.errors);
+    (void)cs.eval("(mutate:rebind \"x\" \"99\" \"issue-3217-deny\")");
+    auto after = cs.eval("x");
+    if (after.has_value() && is_int(*after))
+        CHECK(as_int(*after) == 1, "ac3217_2: workspace matches enter checkpoint after deny");
+    CHECK(load_u64(g_typed_mutation_audit_counters.rollbacks) > rb0 ||
+              load_u64(g_typed_mutation_audit_counters.errors) > err0 ||
+              !cs.evaluator().last_mutate_error().empty(),
+          "ac3217_2: trail Error/Rollback or deny reason after force-rollback");
+    TypedMutationAuditEvent ev{};
+    if (trail_latest(ev) && ev.outcome == AuditOutcome::Success) {
+        CHECK(std::string_view(ev.name).find("rollback") == std::string_view::npos,
+              "ac3217_6: no Success record whose name is rollback");
+    } else {
+        CHECK(true, "ac3217_6: latest trail is not Success+rolled-back");
+    }
+
+    reset_for_test();
+    apply_production_audit_defaults();
+    const auto writes0 = load_u64(g_typed_mutation_audit_counters.trail_writes);
+    record_boundary_outcome(0, "structural", 1, 1, /*success=*/true);
+    CHECK(load_u64(g_typed_mutation_audit_counters.trail_writes) == writes0,
+          "ac3217_4: production mid=0 does not stamp fake Success");
+    record_boundary_deny_after_restore(0, "rollback", 1, 1);
+    CHECK(load_u64(g_typed_mutation_audit_counters.trail_writes) == writes0,
+          "ac3217_4: production mid=0 deny drops (SE mid-fallback-refused)");
+    apply_dev_audit_defaults();
+
+    reset_for_test();
+    set_strategy(AuditStrategy::Off);
+    const auto writes_soft = load_u64(g_typed_mutation_audit_counters.trail_writes);
+    record_boundary_deny_after_restore(42, "rollback", 1, 1);
+    CHECK(load_u64(g_typed_mutation_audit_counters.trail_writes) == writes_soft,
+          "ac3217_5: Soft/Off deny helper does not force extra trail I/O");
+
+    CHECK(build.find("check_deny_restore_then_stamp_3217") != std::string::npos,
+          "ac3217_6: build.py wires linter");
+    std::ifstream invent("tests/compiler/test_issue_3217.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_3217.cpp");
+    CHECK(!invent.good(), "ac3217_6: no tests/compiler/test_issue_3217.cpp (#81967)");
+    CHECK(read_file("docs/design/3217-deny-restore-then-stamp.md").empty(),
+          "ac3217_6: no docs/design/3217-* (#1655)");
+
+    reset_for_test();
+    set_strategy(AuditStrategy::Full);
+    CompilerService cs2;
+    seed(cs2);
+    CHECK(trail_href(cs2, "schema-3217") == 3217, "ac3217_3: query schema-3217");
+    CHECK(trail_href(cs2, "deny-restore-then-stamp-wired") == 1, "ac3217_3: wired == 1");
+    CHECK(trail_href(cs2, "schema-2145") == 2145, "ac3217_3: schema-2145 preserved");
+}
+
 int run_test_hard_gate_full_strict() {
     std::println("=== Issue #2145: Full/Strict hard-gate ===");
     ac1_full_inject_rollback();
@@ -242,7 +337,8 @@ int run_test_hard_gate_full_strict() {
     ac4_off_unchanged();
     ac5_composite_escape();
     ac6_schema_source();
-    std::println("\n=== #2145 results: {} passed, {} failed ===", g_passed, g_failed);
+    ac3217_deny_restore_then_stamp();
+    std::println("\n=== #2145/#3217 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
