@@ -43,6 +43,7 @@
 #include "orch/sched_runner_test_helper.h"
 
 #include "orch/agent_spawn.h"
+#include "orch/agent_scope.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/sandbox.hh"
 #include "serve/fiber.h"
@@ -2981,6 +2982,119 @@ int run_test_join_drain_reclaim() {
         }
 
         restore_sandbox(prev_sb_s);
+        apply_dev_audit_defaults();
+    }
+
+    // ── Issue #3220: production Timeout after auto-wait — name-table /
+    // directory still surface the handle while reservation is held.
+    // Additive lifecycle=reclaimed-pending on directory_snapshot /
+    // orch:scope-resolve. Join hash already has must-wait-reclaimed;
+    // wait-reclaimed-timeout is the Timeout alias. #2661 no-early-free.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentScope;
+        using aura::orch::AgentSpec;
+        apply_production_audit_defaults();
+        set_mode(SandboxMode::Strict);
+
+        std::println("\n--- #3220 AC1: join hash + directory lifecycle=reclaimed-pending ---");
+        {
+            const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "ac3220-pending";
+            spec.body = [] {};
+            auto& h = scope.spawn(spec);
+            CHECK(h.ok && h.fiber != nullptr, "3220 AC1: spawn ok");
+            h.fiber->mark_reclaimed();
+            h.reserved_memory_bytes = 8192;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            const auto jr = join_agent(h, policy);
+            CHECK(jr.status == JoinStatus::Reclaimed, "3220 AC1: join Reclaimed");
+            CHECK(h.must_wait_reclaimed, "3220 AC1: must_wait_reclaimed after Timeout");
+            CHECK(h.wait_reclaimed_timeout, "3220 AC1: wait_reclaimed_timeout");
+            CHECK(h.reserved_memory_bytes == 8192, "3220 AC1: reservation held (#2661)");
+            CHECK(h.reclaimed_deferred_cleanup, "3220 AC1: deferred cleanup still set");
+            const auto risk1 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            CHECK(risk1 > risk0, "3220 AC1: host_forget_reclaimed_risk_total bumped");
+            auto snap = scope.directory_snapshot();
+            CHECK(!snap.entries.empty(), "3220 AC1: directory still lists the name");
+            CHECK(snap.entries[0].lifecycle == "reclaimed-pending",
+                  "3220 AC1: directory lifecycle=reclaimed-pending");
+            h.fiber->set_state(FiberState::Done);
+            h.fiber->note_body_exit_if_reclaimed();
+        }
+
+        std::println("\n--- #3220 AC2: Soft directory lifecycle stays empty ---");
+        {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "ac3220-soft";
+            spec.body = [] {};
+            auto& h = scope.spawn(spec);
+            CHECK(h.ok && h.fiber != nullptr, "3220 AC2: spawn ok");
+            h.fiber->mark_reclaimed();
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(!h.must_wait_reclaimed, "3220 AC2: Soft no must_wait_reclaimed");
+            auto snap = scope.directory_snapshot();
+            if (!snap.entries.empty())
+                CHECK(snap.entries[0].lifecycle.empty(),
+                      "3220 AC2: Soft directory lifecycle empty (zero intern)");
+            if (h.fiber) {
+                h.fiber->set_state(FiberState::Done);
+                h.fiber->note_body_exit_if_reclaimed();
+            }
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+        }
+
+        std::println("\n--- #3220 AC3/AC4: source-cite + no invent / no docs/design ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto scopeh = read_file("src/orch/agent_scope.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto build = read_file("build.py");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(spawn.find("kReclaimedPendingLifecycleIssue = 3220") != std::string::npos,
+                  "3220 AC4: issue constant");
+            CHECK(spawn.find("host_forget_reclaimed_risk_total") != std::string::npos,
+                  "3220 AC4: host-forget counter");
+            CHECK(scopeh.find("reclaimed-pending") != std::string::npos,
+                  "3220 AC4: directory lifecycle token");
+            CHECK(prim.find("wait-reclaimed-timeout") != std::string::npos,
+                  "3220 AC4: join hash wait-reclaimed-timeout");
+            CHECK(prim.find("add_reclaimed_pending_lifecycle") != std::string::npos,
+                  "3220 AC4: Aura intern helper");
+            CHECK(prim.find("orch:scope-resolve") != std::string::npos,
+                  "3220 AC4: scope-resolve still present");
+            CHECK(prim.find("query:reclaimed-pending") == std::string::npos,
+                  "3220 AC4: no new query:*");
+            CHECK(spawn.find("complete_agent_join_cleanup") != std::string::npos,
+                  "3220 AC3: #2661 cleanup helper preserved");
+            CHECK(readme.find("lifecycle=reclaimed-pending") != std::string::npos,
+                  "3220 AC4: README host-hold contract");
+            CHECK(build.find("check_reclaimed_pending_lifecycle_3220") != std::string::npos,
+                  "3220 AC4: build.py wires linter");
+            CHECK(read_file("tests/orch/test_issue_3220.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3220.cpp").empty(),
+                  "3220 AC4: no test_issue_3220.cpp per #81967");
+            CHECK(read_file("docs/design/3220-reclaimed-pending.md").empty(),
+                  "3220 AC4: no docs/design/3220-* per #1655");
+        }
+
+        set_mode(SandboxMode::Off);
         apply_dev_audit_defaults();
     }
 

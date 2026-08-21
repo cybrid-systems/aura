@@ -95,6 +95,10 @@ inline constexpr int kAgentApplyPerEvalMutexIssue = 2158;
 // ownership. Production hashes expose identity-plane +
 // handoff-token-present; Soft skips intern (zero extra).
 inline constexpr int kIdentityPlaneHandoffBoundaryIssue = 3216;
+// Issue #3220: production auto-wait Timeout still holds reservation /
+// name-table until ~AgentHandle. directory / scope-resolve mark
+// lifecycle=reclaimed-pending so Agents do not reuse the name.
+inline constexpr int kReclaimedPendingLifecycleIssue = 3220;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Issue #2159: fiber-native keepalive helper (replace detached std::thread).
@@ -803,6 +807,10 @@ struct OrchModuleStats {
     // end per #2906 / AC6.
     std::atomic<std::uint64_t> handoff_join_via_token_total{0};
     std::atomic<std::uint64_t> handoff_join_via_token_timeout_total{0};
+    // Issue #3220: production auto-wait Timeout while the handle is
+    // still live (must_wait_reclaimed, no second wait). Additive at
+    // struct end (#2906). Soft never bumps (auto-wait gated).
+    std::atomic<std::uint64_t> host_forget_reclaimed_risk_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -2742,6 +2750,11 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
         // visible signal). Ok path clears the flag (#3110 AC1 — host
         // sees cleanup completed).
         h.must_wait_reclaimed = (wr3110.status == serve::JoinStatus::Timeout);
+        // Issue #3220: host still holds the handle after Timeout; name-
+        // table / directory can still surface it until ~AgentHandle.
+        if (h.must_wait_reclaimed)
+            g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                1, std::memory_order_relaxed);
     }
     if (jr.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
         auto wr = wait_reclaimed_body(h, policy.wait_reclaimed_ms);
@@ -2859,6 +2872,10 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
             // flag (#3110 AC1 — host sees cleanup completed). Mirrors the
             // single-handle join_agent fix.
             a.must_wait_reclaimed = (wr3110.status == serve::JoinStatus::Timeout);
+            // Issue #3220: same host-forget risk as join_agent Timeout.
+            if (a.must_wait_reclaimed)
+                g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                    1, std::memory_order_relaxed);
         }
         if (local.status == serve::JoinStatus::Reclaimed && policy.wait_reclaimed_ms.has_value()) {
             auto wr = wait_reclaimed_body(a, policy.wait_reclaimed_ms);

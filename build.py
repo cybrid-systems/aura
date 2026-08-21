@@ -4096,6 +4096,20 @@ def cmd_lint():
             "Issue #3146 join drain reclaim Timeout-retention linter failed — run python3 scripts/coverage/checks/check_join_drain_reclaim_3146.py"
         )
         return r
+    # Issue #3220: production auto-wait Timeout still holds reservation /
+    # name-table; directory_snapshot / orch:scope-resolve mark
+    # lifecycle=reclaimed-pending. Soft skips intern. Extends
+    # test_join_drain_reclaim; no docs/design / invent / AgentRegistry.
+    rpl3220_script = COVERAGE_CHECKS / "check_reclaimed_pending_lifecycle_3220.py"
+    if not rpl3220_script.exists():
+        fail(f"missing {rpl3220_script}")
+        return 1
+    r = run([sys.executable, str(rpl3220_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3220 reclaimed-pending lifecycle linter failed — run python3 scripts/coverage/checks/check_reclaimed_pending_lifecycle_3220.py"
+        )
+        return r
     # Issue #3148: cross-Evaluator lifecycle close via HandoffToken
     # (join_via_handoff C++ helper + orch:join-via-token Aura prim).
     # Closes the gap left by #3089 (proxy has no join/wait_reclaimed
