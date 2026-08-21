@@ -1963,8 +1963,12 @@ static void ac3190_5_existing_surfaces_preserved() {
     CHECK(href(svc, "schema-2913") == 2913, "3190 AC5: schema-2913 preserved");
     // #2994 surface (locality residual budget).
     CHECK(href(svc, "schema-2994") == 2994, "3190 AC5: schema-2994 preserved");
-    // #3169 surface (clear partial).
-    CHECK(href(svc, "schema-3169") == 3169, "3190 AC5: schema-3169 preserved");
+    // #3169 surface (clear partial) — no new public query key (#3169 AC);
+    // reuse #3003 fail-closed schema + source-cite the clear helper.
+    CHECK(href(svc, "schema-3003") == 3003, "3190 AC5: schema-3003 fail-closed preserved");
+    const auto impl3169 = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl3169.find("clear_partial_goals_and_unresolved") != std::string::npos,
+          "3190 AC5: #3169 clear_partial helper preserved");
 }
 
 static void ac3190_6_source_and_linter() {
@@ -2536,9 +2540,10 @@ static void ac3108_3_soft_observe_only() {
     const auto h = read_file("src/compiler/typed_mutation_audit.h");
     CHECK(h.find("if (recovered && in.solve_status != 0)") != std::string::npos,
           "3108 AC3: re-gate triggers on non-SOLVED only");
-    // last_type_export_authoritative clear (#3081) must remain
-    CHECK(h.find("last_type_export_authoritative") != std::string::npos ||
-              h.find("g_last_type_export_authoritative") != std::string::npos,
+    // last_type_export_authoritative clear (#3081 / #3203) lives on TypeChecker.
+    const auto tix = read_file("src/compiler/type_checker.ixx");
+    CHECK(tix.find("last_type_export_authoritative") != std::string::npos ||
+              tix.find("type_export_is_authoritative") != std::string::npos,
           "3108 AC3: #3081 Soft TIMEOUT authority clear preserved");
 }
 
