@@ -65,6 +65,8 @@
 
 #include "compiler/aura_jit_bridge.h" // Issue #2093: AotReloadFail enum
 
+extern "C" int aura_production_defaults_active_probe() noexcept;
+
 namespace aura::compiler {
 
 // Sentinel epoch passed to epoch listeners when a deopt storm trips (#2014).
@@ -75,6 +77,27 @@ inline constexpr int kHotUpdateDecideAndReemitIssue = 3059;
 // Issue #3221: production mark_define_dirty / invalidate_function pass
 // Cascade (not ResidualForceHeal) into the facade.
 inline constexpr int kHotUpdateCascadeReasonIssue = 3221;
+// Issue #3229: hashed-name success coverage is 6-bit (fnv1a & 63). A
+// bounded define-id side set makes residual / remount / re-promote
+// define-correct under collisions. Soft never writes it.
+inline constexpr int kRelowerSuccessDefineCollisionIssue = 3229;
+inline constexpr std::size_t kRelowerSuccessDefineCap = 64;
+
+// Define-id for the #3229 side set: prefer stable_func_id, else 32-bit
+// FNV of the name (never 0). Separates defines that collide on 6 bits.
+[[nodiscard]] inline std::uint32_t relower_success_define_id(const std::string& name) noexcept {
+    if (name.empty())
+        return 0;
+    const auto sid = aura_lookup_stable_func_id(name.c_str());
+    if (sid != 0)
+        return sid;
+    std::uint32_t h = 2166136261u;
+    for (unsigned char c : name) {
+        h ^= c;
+        h *= 16777619u;
+    }
+    return h == 0 ? 1u : h;
+}
 
 class HotUpdateRegistry {
 public:
@@ -165,6 +188,60 @@ public:
         if (region_bit == 0)
             return;
         last_reemit_success_region_mask_.fetch_or(region_bit, std::memory_order_relaxed);
+    }
+    // Issue #3229: record the restamped define so a peer that collides
+    // on fnv1a&63 is not treated as covered. id==0 / Soft skip. Cap
+    // overflow is fail-closed (unrecorded id stays residual).
+    void note_relower_success_define(std::uint32_t id) noexcept {
+        if (id == 0)
+            return;
+        if (aura_production_defaults_active_probe() == 0)
+            return; // Soft / Off: zero extra
+        const auto n = relower_success_define_count_.load(std::memory_order_relaxed);
+        const auto lim =
+            n < kRelowerSuccessDefineCap ? n : static_cast<std::uint32_t>(kRelowerSuccessDefineCap);
+        for (std::uint32_t i = 0; i < lim; ++i) {
+            if (relower_success_define_ids_[i].load(std::memory_order_relaxed) == id)
+                return;
+        }
+        const auto slot = relower_success_define_count_.fetch_add(1, std::memory_order_relaxed);
+        if (slot >= kRelowerSuccessDefineCap)
+            return;
+        relower_success_define_ids_[slot].store(id, std::memory_order_relaxed);
+        relower_success_define_active_.store(1, std::memory_order_relaxed);
+    }
+    [[nodiscard]] bool relower_success_covers_define(std::uint32_t id) const noexcept {
+        if (id == 0)
+            return false;
+        const auto n = relower_success_define_count_.load(std::memory_order_relaxed);
+        const auto lim =
+            n < kRelowerSuccessDefineCap ? n : static_cast<std::uint32_t>(kRelowerSuccessDefineCap);
+        for (std::uint32_t i = 0; i < lim; ++i) {
+            if (relower_success_define_ids_[i].load(std::memory_order_relaxed) == id)
+                return true;
+        }
+        return false;
+    }
+    [[nodiscard]] bool relower_success_define_active() const noexcept {
+        return relower_success_define_active_.load(std::memory_order_relaxed) != 0;
+    }
+    // Per-define residual: force_region && !this define's success.
+    // When the side set is idle (Soft / pipeline coverage), fall back
+    // to residual_force_mask() & region_bit (#3136).
+    [[nodiscard]] bool residual_force_for_define(std::uint32_t id,
+                                                 std::uint64_t region_bit) const noexcept {
+        if (region_bit == 0)
+            return false;
+        const auto force = force_jit_regions_mask_.load(std::memory_order_relaxed);
+        if ((force & region_bit) == 0)
+            return false;
+        if (relower_success_define_active_.load(std::memory_order_relaxed) != 0)
+            return !relower_success_covers_define(id);
+        return (residual_force_mask() & region_bit) != 0;
+    }
+    void clear_relower_success_defines() noexcept {
+        relower_success_define_count_.store(0, std::memory_order_relaxed);
+        relower_success_define_active_.store(0, std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t residual_force_stale_observe_total() const noexcept;
     // Issue #3096: production-only bounded auto-heal when residual force
@@ -814,6 +891,10 @@ private:
     //     use this mask instead of the full demoted mask (sticky until
     //     wholesale clear / reset — Agent / test injection).
     std::atomic<std::uint64_t> last_reemit_success_region_mask_{0};
+    // Issue #3229: bounded define-id side set for hashed-name coverage.
+    std::atomic<std::uint32_t> relower_success_define_ids_[kRelowerSuccessDefineCap]{};
+    std::atomic<std::uint32_t> relower_success_define_count_{0};
+    std::atomic<std::uint8_t> relower_success_define_active_{0};
     // Issue #3221: last ReemitReason passed to decide_and_reemit.
     std::atomic<std::uint8_t> last_reemit_reason_{0};
     // Issue #3026: observe-only residual-force stale watchdog (no auto-heal).
@@ -1303,6 +1384,9 @@ extern "C" std::uint64_t aura_hot_update_last_reemit_success_region_mask(void);
 // Issue #3026: residual force mask + stale-observe (no auto-reemit).
 extern "C" std::uint64_t aura_hot_update_residual_force_mask(void);
 extern "C" std::uint64_t aura_hot_update_residual_force_stale_observe_total(void);
+// Issue #3229: hashed-name define-id side set (C ABI for remount).
+extern "C" int aura_hot_update_relower_success_define_active(void);
+extern "C" int aura_hot_update_relower_success_covers_define(std::uint32_t id);
 // Issue #3096: production-only bounded auto-heal lifetime counter
 // (refine #3026). 0 under Soft / Off (zero-cost contract).
 extern "C" std::uint64_t aura_hot_update_residual_force_auto_heal_total(void);

@@ -1408,6 +1408,8 @@ static void ac3026_5_source_and_linter() {
         read_file("scripts/coverage/checks/check_residual_force_agent_actionable_3026.py");
     CHECK(hh.find("Issue #3026") != std::string::npos, "3026 AC5: header cites #3026");
     CHECK(hh.find("residual_force_mask") != std::string::npos, "3026 AC5: residual helper");
+    CHECK(hh.find("residual_force_for_define") != std::string::npos,
+          "3229: per-define residual beside #3026 mask");
     CHECK(hh.find("observe_residual_force_stale") != std::string::npos, "3026 AC5: observe API");
     CHECK(hh.find("playbook_hint_min_dirty_reemit") != std::string::npos,
           "3026 AC5: playbook hint");

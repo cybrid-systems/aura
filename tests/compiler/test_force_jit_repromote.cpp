@@ -584,6 +584,10 @@ static void ac2949_production_only_covered_default() {
         CHECK(cpp.find("aura_sync_remount_covered_named_live_closures") != std::string::npos,
               "2978: pipeline wires covered-named remount");
         CHECK(cpp.find("Issue #2978") != std::string::npos, "2978: registry cites #2978");
+        // Issue #3229: hashed-name 6-bit coverage does not re-promote a
+        // colliding peer (define-id side set stays active).
+        CHECK(cpp.find("relower_success_define_active_") != std::string::npos,
+              "3229: re-promote skips hashed-name collision");
     }
 
     // Restore soft for subsequent suites.

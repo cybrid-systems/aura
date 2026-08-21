@@ -203,9 +203,13 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                 // process-stable). Service.ixx sites use fnv1a_64 — distinct
                 // bit for same name is fine; coverage mask still shrinks
                 // residual_force_mask correctly (union covers it).
-                if (aura_production_defaults_active_probe() != 0)
+                if (aura_production_defaults_active_probe() != 0) {
                     hot_update_registry().note_relower_success_coverage(
                         1ULL << (std::hash<std::string_view>{}(name) & 63));
+                    // Issue #3229: define-id side set (6-bit collision).
+                    hot_update_registry().note_relower_success_define(
+                        relower_success_define_id(name));
+                }
             }
             for (const auto& d : dependents) {
                 if (d.empty() || d == name)
@@ -215,9 +219,13 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                     metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                     // Issue #3136: success-path bitmap coherence — dependent
                     // restamp (cascade-reemit path, see root comment above).
-                    if (aura_production_defaults_active_probe() != 0)
+                    if (aura_production_defaults_active_probe() != 0) {
                         hot_update_registry().note_relower_success_coverage(
                             1ULL << (std::hash<std::string_view>{}(d) & 63));
+                        // Issue #3229: define-id side set (6-bit collision).
+                        hot_update_registry().note_relower_success_define(
+                            relower_success_define_id(d));
+                    }
                 }
             }
         }
