@@ -122,6 +122,13 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
 
+// Issue #3194: TLS outermost Guard so same-fiber inbody poll can
+// reuse #3118 force_release_hold_after_cancel_ (unlock + depth 0)
+// without a process-wide Guard pointer (cross-fiber unique_lock
+// unlock is UB). Nested / inert never publish.
+static thread_local aura::compiler::Evaluator::MutationBoundaryGuard* g_tls_outermost_guard =
+    nullptr;
+
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk
 // (gated by mode=Soft + production_defaults_active + steady_ms rate limit;
 // cheap on the quiet path, runs the existing #2541 soft walk when due).
@@ -2449,6 +2456,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             aura::serve::g_current_fiber->set_evaluator_id(static_cast<void*>(ev_));
         }
     }
+    // Issue #3194: publish TLS so same-fiber inbody poll can force-release.
+    if (is_outermost_ && !inert_)
+        g_tls_outermost_guard = this;
 }
 
 // Issue #3118: production hold-budget cancel force-unlock + depth clear
@@ -2478,8 +2488,35 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     cancel_force_released_ = true;
 }
 
+// Issue #3194: same-fiber inbody-window force-release. Reuses #3118
+// force_release_hold_after_cancel_ (unlock + depth 0). Cross-fiber
+// only re-arms pending-cancel (AC2 — unique_lock is not unlocked from
+// another thread). Soft / !reject_enabled: no-op. Counters: reuse
+// forced_unlock_total + forced_fail_closed_total (AC4).
+extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fiber_id) noexcept {
+    using namespace aura::compiler;
+    if (!mutation_hold_budget_reject_enabled())
+        return;
+    auto* cur = aura::serve::g_current_fiber;
+    const bool same = cur != nullptr && cur->id() == fiber_id;
+    if (!same) {
+        if (fiber_id != 0)
+            (void)aura_fiber_request_hold_budget_cancel(fiber_id);
+        return;
+    }
+    if (auto* g = g_tls_outermost_guard) {
+        g->force_release_hold_budget_inbody();
+        g_mutation_hold_budget_forced_unlock_total.fetch_add(1, std::memory_order_relaxed);
+        g_mutation_hold_budget_forced_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    if (auto* ev = Evaluator::get_query_evaluator())
+        ev->mark_outermost_mutation_failed();
+}
+
 // ── destructor ───────────────────────────────────────────────────────────
 Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
+    if (g_tls_outermost_guard == this)
+        g_tls_outermost_guard = nullptr;
     if (!ev_ || inert_) {
         // Issue #2222: if somehow pushed without full enter, still pop.
         if (linear_enforce_strict_pushed_) {
@@ -4562,6 +4599,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;
+    if (is_outermost_ && !inert_)
+        g_tls_outermost_guard = this;
 }
 
 Evaluator::MutationBoundaryGuard&
