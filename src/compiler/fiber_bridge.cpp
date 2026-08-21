@@ -94,6 +94,9 @@ extern "C" __attribute__((weak)) int aura_hold_budget_poll_inbody_window(void) n
 // Issue #3194: weak no-op when Evaluator not linked.
 extern "C" __attribute__((weak)) void
 aura_evaluator_force_release_outermost_holder(std::uint64_t) noexcept {}
+// Issue #3222: sketch-named alias; weak no-op when Evaluator not linked.
+extern "C" __attribute__((weak)) void
+aura_evaluator_force_unlock_outermost_holder(std::uint64_t) noexcept {}
 extern "C" __attribute__((weak)) int aura_hold_budget_cancel_armed(void) noexcept {
     return 0;
 }

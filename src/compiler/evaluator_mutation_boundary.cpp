@@ -2512,11 +2512,12 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     cancel_force_released_ = true;
 }
 
-// Issue #3194: same-fiber inbody-window force-release. Reuses #3118
-// force_release_hold_after_cancel_ (unlock + depth 0). Cross-fiber
+// Issue #3194 / #3222: same-fiber inbody-window force-release. Reuses
+// #3118 force_release_hold_after_cancel_ (unlock + depth 0). Cross-fiber
 // only re-arms pending-cancel (AC2 — unique_lock is not unlocked from
 // another thread). Soft / !reject_enabled: no-op. Counters: reuse
-// forced_unlock_total + forced_fail_closed_total (AC4).
+// forced_unlock_total + forced_fail_closed_total (AC4). One-shot: do
+// not re-count if the Guard already force-released.
 extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fiber_id) noexcept {
     using namespace aura::compiler;
     if (!mutation_hold_budget_reject_enabled())
@@ -2529,12 +2530,24 @@ extern "C" void aura_evaluator_force_release_outermost_holder(std::uint64_t fibe
         return;
     }
     if (auto* g = g_tls_outermost_guard) {
+        bool newly = false;
+        if (auto* ev = Evaluator::get_query_evaluator())
+            newly = ev->mutation_boundary_held();
         g->force_release_hold_budget_inbody();
-        g_mutation_hold_budget_forced_unlock_total.fetch_add(1, std::memory_order_relaxed);
-        g_mutation_hold_budget_forced_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+        if (newly) {
+            g_mutation_hold_budget_forced_unlock_total.fetch_add(1, std::memory_order_relaxed);
+            g_mutation_hold_budget_forced_fail_closed_total.fetch_add(1, std::memory_order_relaxed);
+        }
     }
     if (auto* ev = Evaluator::get_query_evaluator())
         ev->mark_outermost_mutation_failed();
+}
+
+// Issue #3222: sketch-named alias. Poll in fiber.cpp cannot spell
+// "unlock" (#3160 AC12 source-cite); check_gc_safepoint polls the
+// inbody window on the holder so this path runs same-fiber.
+extern "C" void aura_evaluator_force_unlock_outermost_holder(std::uint64_t fiber_id) noexcept {
+    aura_evaluator_force_release_outermost_holder(fiber_id);
 }
 
 // ── destructor ───────────────────────────────────────────────────────────

@@ -14832,7 +14832,7 @@ public:
         // Impl: evaluator_mutation_boundary.cpp
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept;
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept;
-        // Issue #3194: same-fiber inbody poll force-release (reuse #3118).
+        // Issue #3194 / #3222: same-fiber inbody poll force-release (reuse #3118).
         void force_release_hold_budget_inbody() noexcept {
             mark_failed();
             force_release_hold_after_cancel_();

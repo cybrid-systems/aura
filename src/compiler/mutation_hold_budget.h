@@ -452,6 +452,12 @@ inline constexpr int kMutationHoldBudgetInbodyWindowIssue = 3071;
 // cross-fiber pending-cancel only. Soft: helper no-ops. Reuses
 // forced_unlock_total + forced_fail_closed_total — no new counters.
 inline constexpr int kMutationHoldBudgetInbodyForceReleaseIssue = 3194;
+// Issue #3222: I1 residual of #3194 — scheduler idle poll is always
+// cross-fiber (pending-cancel only). Same-fiber inbody poll from
+// Fiber::check_gc_safepoint force-releases hold + depth past the
+// bound so a live body does not keep workspace_mtx_ until dtor.
+// Reuses forced_unlock_total + forced_fail_closed_total.
+inline constexpr int kMutationHoldBudgetInbodyForceUnlockIssue = 3222;
 // Issue #3073: production soak readiness gate (residual-zero ×
 // hold-after-cancel max). Wired sentinel only — no extra hot-path work.
 // Soak abort lives in the chaos harness; Agents read schema-3073.

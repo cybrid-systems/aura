@@ -3541,6 +3541,22 @@ def cmd_lint():
             "Issue #3221 cascade reason not ResidualForceHeal linter failed — run python3 scripts/coverage/checks/check_cascade_reason_not_residual_force_heal_3221.py"
         )
         return r
+    # Issue #3222: non-yield outermost body hold-budget force-unlock (I1
+    # residual of #3194). Same-fiber check_gc_safepoint polls the inbody
+    # window so a live holder force-releases hold + depth past 2×SLO.
+    # Cross-fiber pending-cancel only. Soft observe-only. Reuses
+    # forced_unlock_total + forced_fail_closed_total. Extends
+    # test_hold_budget_synthetic_yield_injection; no docs/design / invent.
+    hb3222_script = COVERAGE_CHECKS / "check_hold_budget_inbody_force_unlock_3222.py"
+    if not hb3222_script.exists():
+        fail(f"missing {hb3222_script}")
+        return 1
+    r = run([sys.executable, str(hb3222_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3222 hold-budget inbody force-unlock linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_unlock_3222.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into
