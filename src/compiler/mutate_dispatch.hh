@@ -72,6 +72,17 @@ inline MutateDispatchMetrics& g_mutate_dispatch_metrics() noexcept {
 // one relaxed add on the already-rare mutate entry.
 inline constexpr int kMutateDispatchSoleGuardIssue = 3074;
 inline std::atomic<std::uint32_t> g_mutate_dispatch_sole_guard_wired{1};
+// Issue #3197: per-invocation Guard token. Distinguishes nested
+// try_acquire (outermost wrap counter does not bump) from never-
+// acquired naked bodies. Soft observe still uses the wrap compare.
+inline constexpr int kNakedMutatePrimMetaIssue = 3197;
+inline thread_local std::uint64_t g_mutate_guard_acquire_gen{0};
+inline void note_mutate_guard_acquire_token() noexcept {
+    g_mutate_guard_acquire_gen += 1;
+}
+[[nodiscard]] inline std::uint64_t mutate_guard_acquire_token() noexcept {
+    return g_mutate_guard_acquire_gen;
+}
 
 inline void mutate_dispatch_note(MutateKind kind, MutateDispatchResult result) noexcept {
     auto& m = g_mutate_dispatch_metrics();
@@ -116,8 +127,10 @@ mutate_dispatch_try_acquire(Evaluator& ev, std::uint64_t pending_count, bool* su
                                                             fine_rollback);
     if (!gr)
         mutate_dispatch_note(kind, MutateDispatchResult::Rejected);
-    else
+    else {
         mutate_dispatch_note(kind, MutateDispatchResult::Applied);
+        note_mutate_guard_acquire_token();
+    }
     return gr;
 }
 

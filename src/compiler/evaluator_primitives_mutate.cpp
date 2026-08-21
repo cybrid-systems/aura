@@ -941,24 +941,32 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
                     wraps_before =
                         m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
+                // Issue #3197: nested try_acquire does not bump the
+                // outermost wrap counter — snapshot the acquire token.
+                const auto token_before = aura::compiler::mutate_guard_acquire_token();
                 auto result = fn(a);
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     const auto wraps_after =
                         m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
-                    if (wraps_after == wraps_before) {
+                    const auto token_after = aura::compiler::mutate_guard_acquire_token();
+                    // wraps_after == wraps_before is the outermost-naked
+                    // compare (#2986 AC5). Issue #3197: nested acquire
+                    // does not bump wraps — also accept the Guard token.
+                    const bool acquired =
+                        !(wraps_after == wraps_before) || token_after != token_before;
+                    if (!acquired) {
                         m->naked_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
-                        // Issue #2986: production + non-exempt naked body → hard
-                        // fail-closed (counter + optional outermost mark-failed).
-                        // Happy Guard path does not load production_defaults.
+                        // Issue #2986 / #3197: production + requires_guard
+                        // naked body → hard fail-closed. Happy Guard path
+                        // does not load production_defaults.
                         if (!guard_exempt &&
                             aura::compiler::typed_audit::production_defaults_active()) {
                             m->naked_mutate_fail_closed_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
                             ev.mark_outermost_mutation_failed();
-                            return mev(
-                                "naked-mutate",
-                                std::string(op) +
-                                    " skipped MutationBoundaryGuard under production (#2986)");
+                            return mev("naked-mutate", std::string(op) +
+                                                           " skipped MutationBoundaryGuard under "
+                                                           "production (#2986/#3197)");
                         }
                     } else {
                         m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);
@@ -977,6 +985,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         meta.category = "security-gated";
         meta.doc = "mutate:* via add_mutate (#2052/#2057 AURA_SIDE_EFFECT_PRIM)";
         meta.guard_exempt = guard_exempt;
+        // Issue #3197: registration-time PrimMeta contract.
+        meta.requires_mutation_guard = !guard_exempt;
         if (guard_exempt)
             meta.doc = "GUARD_EXEMPT: metadata/policy mutate:* (#2986)";
         ev.primitives().set_meta_for_name(*op_name, std::move(meta));

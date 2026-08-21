@@ -2060,6 +2060,19 @@ def cmd_lint():
             "Issue #3192 mutate dispatch sole entry linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_entry_3192.py"
         )
         return r
+    # Issue #3197: PrimMeta.requires_mutation_guard at add_mutate
+    # registration + acquire token so nested Guard is not naked.
+    # Extends test_mutation_guard_try_acquire_unit; no docs/design / invent.
+    nmpm3197_script = COVERAGE_CHECKS / "check_naked_mutate_prim_meta_3197.py"
+    if not nmpm3197_script.exists():
+        fail(f"missing {nmpm3197_script}")
+        return 1
+    r = run([sys.executable, str(nmpm3197_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3197 naked-mutate PrimMeta linter failed — run python3 scripts/coverage/checks/check_naked_mutate_prim_meta_3197.py"
+        )
+        return r
     # Issue #3193: nested abort + concurrent densify/steal keep CoercionMap /
     # Occurrence persist / TypeLinearCommitProof on one authoritative face.
     # Reuses invalidate_gen (no second proof model). Soft observe-only.

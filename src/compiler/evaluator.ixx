@@ -170,6 +170,9 @@ export struct PrimMeta {
     // Issue #2986: metadata-only / policy mutate:* may skip MutationBoundaryGuard
     // when paired with a `// GUARD_EXEMPT: ` comment. Structural mutates stay 0.
     bool guard_exempt = false;
+    // Issue #3197: registration-time contract — non-exempt mutate:* must
+    // acquire a Guard. add_mutate stamps true iff !guard_exempt.
+    bool requires_mutation_guard = false;
     std::string doc;
     std::string category; // eda | sva | verification | general | deprecated | rendering
     std::string schema;   // e.g. "(int string) -> bool"

@@ -23,6 +23,8 @@
 #ifndef AURA_COMPILER_MUTATION_GUARD_HELPERS_HH
 #define AURA_COMPILER_MUTATION_GUARD_HELPERS_HH
 
+#include "compiler/mutate_dispatch.hh"
+
 namespace aura::compiler {
 
 // Issue #3122: Agent-visible kind when Guard abort runs dual topology
@@ -56,6 +58,7 @@ types::EvalValue run_under_mutation_guard(Evaluator& ev, F&& body,
         }
         return on_fail;
     }
+    note_mutate_guard_acquire_token();
     if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
         m->compile_primitive_guard_captures_total.fetch_add(1, std::memory_order_relaxed);
     try {
