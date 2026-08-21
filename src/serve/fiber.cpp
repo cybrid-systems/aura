@@ -549,6 +549,12 @@ extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noe
     return 0;
 }
 
+// Issue #3195: weak no-op (single-worker / light-link). Strong def in
+// runtime_production_abi.cpp returns 1 after multi-worker Ready.
+extern "C" __attribute__((weak)) int aura_runtime_multi_worker_production_latched() noexcept {
+    return 0;
+}
+
 // Issue #2372: production Soft lock + test override.
 // production_locked: set by apply_production_security_defaults when
 // sandbox != off — Soft env is ignored under the lock.

@@ -31,6 +31,14 @@ inline std::atomic<std::uint64_t> g_production_abi_selfcheck_last_fail_bits{0};
 // sandbox=off / !production_defaults_active. Reuses the existing
 // last_fail_bits bit-mask surface (no new subsystem).
 inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitDefaults = 1ull << 4;
+// Issue #3195: bit 5 set when multi-worker Ready is missing residual-zero
+// sticky wiring, or residual_zero SSOT is already 0 at Ready. Reuses the
+// existing last_fail_bits mask (no new metric counter).
+inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitResidualSticky = 1ull << 5;
+// Issue #3195: set when aura_runtime_require_production_multi_worker
+// succeeds. residual_zero / sticky-fail consult this so a later Soft
+// flip cannot wipe readiness (I3/I6). Not a metric — process latch.
+inline std::atomic<std::uint32_t> g_production_multi_worker_latched{0};
 
 [[nodiscard]] inline std::uint64_t production_abi_selfcheck_ok_total_v_read() noexcept {
     return g_production_abi_selfcheck_ok_total.load(std::memory_order_relaxed);
@@ -62,7 +70,10 @@ bool aura_runtime_require_production_abi() noexcept;
 // worker variant above, multi-worker NEVER returns true without abort
 // when Soft (sandbox=off) / !production_defaults_active / any strong
 // marker missing. Reuses the existing last_fail_bits bit-mask (bits
-// 0-3 = ABI markers, bit 4 = defaults missing). When all good: returns
+// 0-3 = ABI markers, bit 4 = defaults missing).
+// Issue #3195: also requires residual-zero sticky wiring (bit 5) and
+// latches multi-worker so steal_safety_production_residual_zero_v_read
+// stays fail-closed if Soft is later flipped. When all good: returns
 // true + bumps ok_total. Caller is responsible for ensuring this is
 // only invoked when multi-worker / Agent denseness is requested (not
 // single-worker tests / light-link).
@@ -73,6 +84,13 @@ inline void clear_production_abi_selfcheck_for_test() noexcept {
     g_production_abi_selfcheck_ok_total.store(0, std::memory_order_relaxed);
     g_production_abi_selfcheck_fail_total.store(0, std::memory_order_relaxed);
     g_production_abi_selfcheck_last_fail_bits.store(0, std::memory_order_relaxed);
+    g_production_multi_worker_latched.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3195: test seam — set/clear the multi-worker latch without
+// going through abort-capable Ready. Production never calls this.
+inline void set_production_multi_worker_latched_for_test(bool on) noexcept {
+    g_production_multi_worker_latched.store(on ? 1u : 0u, std::memory_order_relaxed);
 }
 
 } // namespace aura::serve
@@ -88,3 +106,5 @@ extern "C" int aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept;
 extern "C" int aura_runtime_require_production_abi_c(void) noexcept;
 // Issue #3098: C-linkage accessor for multi-worker Ready self-check.
 extern "C" int aura_runtime_require_production_multi_worker_c(void) noexcept;
+// Issue #3195: 1 iff multi-worker production Ready latched this process.
+extern "C" int aura_runtime_multi_worker_production_latched(void) noexcept;

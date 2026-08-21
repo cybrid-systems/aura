@@ -7,6 +7,7 @@
 #include "core/gc_hooks.h"
 #include "serve/fiber.h"
 #include "serve/runtime_production_abi.h"
+#include "serve/steal_safety.h"
 #include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
@@ -271,6 +272,7 @@ int run_test_steal_complete_strong_entry() {
             // multi_worker returns true + ok_total +1 + last_fail_bits = 0.
             {
                 std::println("\n--- #3098 AC2: production multi-worker ok path ---");
+                aura::serve::clear_steal_safety_transaction_for_test();
                 clear_production_abi_selfcheck_for_test();
                 unsetenv("AURA_SANDBOX");
                 aura::compiler::typed_audit::g_typed_mutation_audit_counters
@@ -334,9 +336,82 @@ int run_test_steal_complete_strong_entry() {
                       "3098 AC5: no invent test file (extend #81967 lineage)");
             }
         }
+
+        // ── Issue #3195: multi-worker residual-zero sticky + Soft misconfig ──
+        {
+            std::println("\n=== Issue #3195: multi-worker residual-zero sticky ===");
+            using aura::serve::clear_production_abi_selfcheck_for_test;
+            using aura::serve::clear_steal_safety_transaction_for_test;
+            using aura::serve::g_steal_safety_residual_boundary_unsafe_total;
+            using aura::serve::steal_safety_production_residual_sticky_fail_v_read;
+            using aura::serve::steal_safety_production_residual_zero_v_read;
+
+            // AC2: Soft / single-worker (latch unset): residual is metric-only.
+            {
+                std::println("\n--- #3195 AC2: Soft / unlatched pass-through ---");
+                clear_steal_safety_transaction_for_test();
+                clear_production_abi_selfcheck_for_test();
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(0, std::memory_order_relaxed);
+                g_steal_safety_residual_boundary_unsafe_total.store(1, std::memory_order_relaxed);
+                CHECK(steal_safety_production_residual_zero_v_read() == 1,
+                      "3195 AC2: Soft unlatched residual_zero pass-through");
+                CHECK(steal_safety_production_residual_sticky_fail_v_read() == 0,
+                      "3195 AC2: Soft unlatched sticky stays 0");
+                g_steal_safety_residual_boundary_unsafe_total.store(0, std::memory_order_relaxed);
+            }
+
+            // AC1: latched multi-worker + named residual → SSOT 0 + sticky 1,
+            // even after production_defaults is flipped Soft (I3/I6).
+            {
+                std::println("\n--- #3195 AC1: latched residual fail-closed ---");
+                clear_steal_safety_transaction_for_test();
+                clear_production_abi_selfcheck_for_test();
+                unsetenv("AURA_SANDBOX");
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(1, std::memory_order_relaxed);
+                CHECK(aura::serve::aura_runtime_require_production_multi_worker(),
+                      "3195 AC1: multi-worker Ready ok (clean residual)");
+                CHECK(aura::serve::g_production_multi_worker_latched.load(
+                          std::memory_order_relaxed) == 1,
+                      "3195 AC1: Ready latches multi-worker");
+                g_steal_safety_residual_boundary_unsafe_total.store(1, std::memory_order_relaxed);
+                CHECK(steal_safety_production_residual_zero_v_read() == 0,
+                      "3195 AC1: BoundaryUnsafe fail-closes residual_zero");
+                CHECK(steal_safety_production_residual_sticky_fail_v_read() == 1,
+                      "3195 AC1: sticky set on residual under latch");
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(0, std::memory_order_relaxed);
+                CHECK(steal_safety_production_residual_zero_v_read() == 0,
+                      "3195 AC1: Soft-misconfig still fail-closed");
+                CHECK(steal_safety_production_residual_sticky_fail_v_read() == 1,
+                      "3195 AC1: sticky survives Soft flip");
+                aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                    .production_defaults_active.store(0, std::memory_order_relaxed);
+                clear_steal_safety_transaction_for_test();
+                clear_production_abi_selfcheck_for_test();
+            }
+
+            // AC3/AC4 source-cite: bit 5 + no new counters.
+            {
+                std::println("\n--- #3195 AC3/AC4 source-cite ---");
+                const auto hh = read_file("src/serve/runtime_production_abi.h");
+                const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
+                CHECK(aura::serve::kProductionAbiSelfcheckFailBitResidualSticky == (1ull << 5),
+                      "3195 AC3: bit 5 reserved for residual sticky");
+                CHECK(hh.find("kProductionAbiSelfcheckFailBitResidualSticky") != std::string::npos,
+                      "3195 AC3: header bit 5");
+                CHECK(cpp.find("g_steal_safety_production_residual_sticky_fail_wired") !=
+                          std::string::npos,
+                      "3195 AC3: Ready requires sticky wired");
+                CHECK(cpp.find("#3195") != std::string::npos, "3195 AC3: cpp cites #3195");
+                CHECK(read_file("tests/serve/test_issue_3195.cpp").empty(),
+                      "3195 AC5: no invent test file");
+            }
+        }
     }
 
-    std::println("\n=== #2377 + #2955 + #3098 results: {} passed, {} failed ===", g_passed,
+    std::println("\n=== #2377 + #2955 + #3098 + #3195 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed == 0 ? 0 : 1;
 }

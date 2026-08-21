@@ -336,6 +336,13 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             if (steal_safety_production_residual_zero_v_read() == 0) {
                 g_steal_safety_production_residual_sticky_fail.store(1, std::memory_order_relaxed);
             }
+            // Issue #3195: latched multi-worker forces sticky on residual
+            // even if Soft later flips production_defaults (I3/I6). Reuses
+            // the existing sticky bit (no new counter). Quiet Ok path does
+            // not enter this branch.
+            if (aura_runtime_multi_worker_production_latched() != 0) {
+                g_steal_safety_production_residual_sticky_fail.store(1, std::memory_order_relaxed);
+            }
             return StealSafetyDecision::RejectHard;
         }
 

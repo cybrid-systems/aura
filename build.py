@@ -2087,6 +2087,20 @@ def cmd_lint():
             "Issue #3194 hold-budget inbody force-release linter failed — run python3 scripts/coverage/checks/check_hold_budget_inbody_force_release_3194.py"
         )
         return r
+    # Issue #3195: production multi-worker residual-zero sticky + Soft
+    # misconfig hard-fail (I3/I6). Reuses sticky + residual counters.
+    # Extends test_steal_safety_production_residual_zero +
+    # test_steal_complete_strong_entry; no docs/design / invent.
+    mwrs3195_script = COVERAGE_CHECKS / "check_production_multi_worker_residual_sticky_3195.py"
+    if not mwrs3195_script.exists():
+        fail(f"missing {mwrs3195_script}")
+        return 1
+    r = run([sys.executable, str(mwrs3195_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3195 production multi-worker residual-zero sticky linter failed — run python3 scripts/coverage/checks/check_production_multi_worker_residual_sticky_3195.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

@@ -145,11 +145,18 @@ inline constexpr int kStealSafetyResidualRearmResampleIssue = 3038;
 inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail{0};
 inline std::atomic<std::uint32_t> g_steal_safety_production_residual_sticky_fail_wired{1};
 inline constexpr int kStealSafetyProductionResidualStickyFailIssue = 3162;
+// Issue #3195: multi-worker production residual-zero sticky (I3/I6).
+// Latch is in runtime_production_abi.h; this stamp is the source-cite
+// face. No new residual counter.
+inline constexpr int kStealSafetyProductionMultiWorkerResidualStickyIssue = 3195;
 
 // Forward-declare the production probe (defined weak in fiber.cpp;
 // full definition in runtime_production_abi.cpp). Avoids pulling
 // fiber.h into the steal_safety.h header surface.
 extern "C" int aura_production_defaults_active_probe() noexcept;
+// Issue #3195: 1 after aura_runtime_require_production_multi_worker.
+// Weak 0 in fiber.cpp (single-worker / light-link).
+extern "C" int aura_runtime_multi_worker_production_latched() noexcept;
 
 // Issue #3134: production-readiness residual-zero wired sentinel (moved
 // here from its original L132–133 position so the #3134 coverage linter's
@@ -174,20 +181,39 @@ inline constexpr int kStealSafetyProductionResidualZeroIssue = 3134;
 // relaxed store on the residual-0 path (rare; sticky_fail is set means
 // residual was non-zero, so clearing only fires when residual drops).
 [[nodiscard]] inline std::uint32_t steal_safety_production_residual_zero_v_read() noexcept {
-    if (aura_production_defaults_active_probe() == 0) {
-        // Soft / sandbox=off: clear sticky-fail (counters observe-only;
-        // any previously-set sticky fail from production window is wiped).
+    const bool multi = aura_runtime_multi_worker_production_latched() != 0;
+    if (!multi && aura_production_defaults_active_probe() == 0) {
+        // Soft / sandbox=off / single-worker: clear sticky-fail (counters
+        // observe-only; any previously-set sticky fail from production
+        // window is wiped). Issue #3195: latched multi-worker skips this
+        // pass-through so Soft-misconfig cannot wipe readiness.
         g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
         return 1;
     }
-    const bool zero =
+    bool zero =
         (g_steal_safety_residual_rearm_race_total.load(std::memory_order_relaxed) == 0 &&
          g_steal_safety_residual_lifetime_proof_reject_total.load(std::memory_order_relaxed) == 0);
+    // Issue #3195: under multi-worker latch, ALL named residuals (AC1:
+    // BoundaryUnsafe / LifetimeProof / LayoutStamp / GcDefer / EnvFrame)
+    // fail-close the SSOT. LifetimeProof is already in `zero` above.
+    if (multi) {
+        zero = zero &&
+               g_steal_safety_residual_boundary_unsafe_total.load(std::memory_order_relaxed) == 0 &&
+               g_steal_safety_residual_layout_stamp_mismatch_total.load(
+                   std::memory_order_relaxed) == 0 &&
+               g_steal_safety_residual_gc_defer_armed_total.load(std::memory_order_relaxed) == 0 &&
+               g_steal_safety_residual_envframe_lag_total.load(std::memory_order_relaxed) == 0;
+    }
     if (zero) {
         // Residual returned to 0 — clear sticky fail so readiness
         // recovers without requiring an external reset.
         g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
         return 1u;
+    }
+    if (multi) {
+        // Issue #3195: any non-zero residual under latched multi-worker
+        // sets sticky (Soft-misconfig cannot stay metric-only).
+        g_steal_safety_production_residual_sticky_fail.store(1, std::memory_order_relaxed);
     }
     return 0u;
 }
@@ -260,7 +286,8 @@ steal_safety_residual_lifetime_proof_reject_total_v_read() noexcept {
 // Schema-3073 Agents read this to fail closed until residual returns to
 // 0 (sticky readiness).
 [[nodiscard]] inline std::uint32_t steal_safety_production_residual_sticky_fail_v_read() noexcept {
-    if (aura_production_defaults_active_probe() == 0)
+    if (aura_runtime_multi_worker_production_latched() == 0 &&
+        aura_production_defaults_active_probe() == 0)
         return 0;
     return g_steal_safety_production_residual_sticky_fail.load(std::memory_order_relaxed);
 }
