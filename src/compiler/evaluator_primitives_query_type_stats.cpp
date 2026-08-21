@@ -621,6 +621,10 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           aura::compiler::typed_audit::kNestedAbortAuthorityFaceIssue);
                 insert_kv("issue-3193",
                           aura::compiler::typed_audit::kNestedAbortAuthorityFaceIssue);
+                insert_kv("schema-3232",
+                          aura::compiler::typed_audit::kNestedAbortAuthorityFaceResidualIssue);
+                insert_kv("issue-3232",
+                          aura::compiler::typed_audit::kNestedAbortAuthorityFaceResidualIssue);
             }
             // Issue #2278: epoch-scoped OccurrenceGoal table
             // metrics.

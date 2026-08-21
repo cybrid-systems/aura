@@ -34,6 +34,10 @@
 //   #3193 AC2: no mixed green proof + residual persist during hold
 //   #3193 AC3: Soft observe-only; quiet (no abort) zero extra
 //   #3193 AC4: source-cite + linter; no docs/design / invent
+//   #3232 AC1: nested AbortAuthorityHold keeps in_flight until last end
+//   #3232 AC2: Soft nested observe-only; quiet no-abort zero extra
+//   #3232 AC3: dual_restore + rehydrate sites source-cite AbortAuthorityHold
+//   #3232 AC4: #3193 ACs preserved; no invent / docs/design
 
 #include "test_harness.hpp"
 
@@ -656,6 +660,127 @@ static void ac3193_4_source_and_linter() {
           "3193 AC4: no invent test_issue_3193");
     CHECK(read_file("tests/issues/test_issue_3193.cpp").empty(),
           "3193 AC4: no tests/issues/test_issue_3193");
+}
+
+// ── Issue #3232: nested AbortAuthorityHold must not drop the face ──
+
+static void ac3232_1_nested_hold_keeps_block() {
+    std::println("\n--- #3232 AC1: nested hold keeps rehydrate blocked until last end ---");
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    apply_production_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    CHECK(typed_audit::kNestedAbortAuthorityFaceResidualIssue == 3232, "3232 AC1: issue constant");
+
+    UnitCs u;
+    u.cs.set_current_epoch(5);
+    auto v = u.cs.fresh_var();
+    u.cs.note_occurrence_goal(v, u.reg.int_type(), 11, 100, /*epoch=*/5);
+    CHECK(u.cs.append_occurrence_snapshot(100) == 1, "3232 AC1: persist");
+    CHECK(u.cs.prune_occurrence_goals(6) == 1, "3232 AC1: live empty");
+    CHECK(u.cs.occurrence_persist_log_size() == 1, "3232 AC1: persist intact");
+
+    const auto hold0 = typed_audit::abort_authority_hold_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    {
+        typed_audit::AbortAuthorityHold outer;
+        CHECK(typed_audit::abort_authority_blocks_rehydrate(), "3232 AC1: outer in_flight");
+        CHECK(typed_audit::abort_authority_hold_total_v_read() == hold0 + 1,
+              "3232 AC1: outer total");
+        {
+            typed_audit::AbortAuthorityHold inner;
+            CHECK(typed_audit::abort_authority_blocks_rehydrate(), "3232 AC1: nested in_flight");
+            CHECK(typed_audit::abort_authority_hold_total_v_read() == hold0 + 2,
+                  "3232 AC1: nested total");
+            CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0 + 2,
+                  "3232 AC1: nested gen bump");
+            CHECK(u.cs.rehydrate_occurrence_from_persist(100) == 0,
+                  "3232 AC1: rehydrate blocked nested");
+        }
+        CHECK(typed_audit::abort_authority_blocks_rehydrate(),
+              "3232 AC1: inner end does not drop outer face");
+        CHECK(u.cs.rehydrate_occurrence_from_persist(100) == 0,
+              "3232 AC1: still blocked after inner end");
+        CHECK(u.cs.occurrence_persist_log_size() >= 1, "3232 AC1: persist not yet cleared");
+        typed_audit::clear_type_linear_commit_proof_on_abort();
+        CHECK(u.cs.clear_occurrence_persist_snapshot() >= 1, "3232 AC1: persist clear under hold");
+    }
+    CHECK(!typed_audit::abort_authority_blocks_rehydrate(), "3232 AC1: last end drops face");
+    CHECK(u.cs.rehydrate_occurrence_from_persist(100) == 0, "3232 AC1: post-window rehydrate 0");
+
+    apply_dev_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3232_2_soft_nested_observe_quiet() {
+    std::println("\n--- #3232 AC2: Soft nested observe-only; quiet no-abort zero extra ---");
+    apply_dev_audit_defaults();
+    typed_audit::reset_abort_authority_hold_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    const auto hard0 = typed_audit::abort_authority_hold_total_v_read();
+    const auto obs0 = typed_audit::abort_authority_hold_observe_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    {
+        typed_audit::AbortAuthorityHold outer;
+        typed_audit::AbortAuthorityHold inner;
+        CHECK(!typed_audit::abort_authority_blocks_rehydrate(), "3232 AC2: Soft no in_flight");
+        CHECK(typed_audit::abort_authority_hold_total_v_read() == hard0, "3232 AC2: no hard");
+        CHECK(typed_audit::abort_authority_hold_observe_total_v_read() == obs0 + 2,
+              "3232 AC2: nested observe");
+        CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0, "3232 AC2: no gen bump");
+    }
+    CHECK(!typed_audit::abort_authority_blocks_rehydrate(), "3232 AC2: still clear");
+    typed_audit::reset_abort_authority_hold_for_test();
+}
+
+static void ac3232_3_source_cite_dual_restore_rehydrate() {
+    std::println("\n--- #3232 AC3+AC4: dual_restore + rehydrate under AbortAuthorityHold ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto qs = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_nested_abort_authority_face_3232.py");
+    CHECK(tma.find("kNestedAbortAuthorityFaceResidualIssue") != std::string::npos,
+          "3232 AC3: stamp");
+    CHECK(tma.find("fetch_add(1, std::memory_order_release)") != std::string::npos,
+          "3232 AC3: nested in_flight count");
+    CHECK(tma.find("compare_exchange_weak") != std::string::npos, "3232 AC3: nested last-end");
+    CHECK(mb.find("Issue #3232") != std::string::npos, "3232 AC3: abort sites cite");
+    std::size_t dual = 0;
+    for (auto p = mb.find("abort_restore_dual_topology("); p != std::string::npos;
+         p = mb.find("abort_restore_dual_topology(", p + 1)) {
+        ++dual;
+        const auto hold = mb.rfind("AbortAuthorityHold abort_authority", p);
+        CHECK(hold != std::string::npos && hold < p, "3232 AC3: hold before dual_restore");
+    }
+    CHECK(dual == 3, "3232 AC3: three dual_restore sites");
+    CHECK(impl.find("abort_authority_blocks_rehydrate") != std::string::npos,
+          "3232 AC3: rehydrate consult");
+    CHECK(impl.find("Issue #3232") != std::string::npos, "3232 AC3: rehydrate cite");
+    CHECK(ixx.find("Issue #3232") != std::string::npos, "3232 AC3: densify cite");
+    CHECK(steal.find("Issue #3232") != std::string::npos, "3232 AC3: steal cite");
+    CHECK(qs.find("schema-3232") != std::string::npos, "3232 AC4: schema-3232");
+    CHECK(qs.find("schema-3193") != std::string::npos, "3232 AC4: 3193 preserved");
+    CHECK(!lint.empty() && lint.find("3232") != std::string::npos, "3232 AC4: linter");
+    CHECK(build.find("check_nested_abort_authority_face_3232") != std::string::npos,
+          "3232 AC4: build.py");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3232 AC4: warm");
+    CHECK(href(svc, "schema-3232") == 3232, "3232 AC4: schema-3232 live");
+    CHECK(href(svc, "issue-3232") == 3232, "3232 AC4: issue-3232");
+    CHECK(href(svc, "schema-3193") == 3193, "3232 AC4: schema-3193 preserved");
+    CHECK(href(svc, "abort-authority-hold-wired") == 1, "3232 AC4: reuse hold wired");
+    CHECK(read_file("docs/design/3232-nested-abort-authority-face.md").empty(),
+          "3232 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3232.cpp").empty(), "3232 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3232.cpp").empty(), "3232 AC4: no tests/issues");
 }
 
 
@@ -2687,6 +2812,10 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3193_2_no_mixed_green_residual();
     ac3193_3_soft_observe_quiet_zero();
     ac3193_4_source_and_linter();
+    std::println("\n=== #3232 nested AbortAuthorityHold residual ===");
+    ac3232_1_nested_hold_keeps_block();
+    ac3232_2_soft_nested_observe_quiet();
+    ac3232_3_source_cite_dual_restore_rehydrate();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

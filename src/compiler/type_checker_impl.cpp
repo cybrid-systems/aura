@@ -692,9 +692,10 @@ std::size_t
 ConstraintSystem::rehydrate_occurrence_from_persist(std::uint64_t preferred_mid) noexcept {
     if (!occurrence_persist_enabled())
         return 0; // AC2
-    // Issue #3193: nested abort / force-rollback hold. Concurrent
+    // Issue #3193 / Issue #3232: nested abort / force-rollback hold. Concurrent
     // densify/steal must not mix persist into live CS while CoercionMap /
-    // persist / TypeLinearCommitProof are being cleared. Soft never arms
+    // persist / TypeLinearCommitProof are being cleared. Nested in_flight
+    // count keeps the block until the last abort end. Soft never arms
     // the hold (in_flight==0 → one acquire load, no skip).
     if (aura::compiler::typed_audit::abort_authority_blocks_rehydrate())
         return 0;

@@ -2143,6 +2143,20 @@ def cmd_lint():
             "Issue #3231 QueryResult layout-only reject linter failed — run python3 scripts/coverage/checks/check_query_result_layout_only_reject_3231.py"
         )
         return r
+    # Issue #3232: nested AbortAuthorityHold is a count — inner end must
+    # not drop the face while outer/concurrent abort is still restoring.
+    # Soft observe; quiet no-abort zero extra. Reuses #3193 counters.
+    # Extends test_occurrence_goal_persist_rehydrate; no docs/design / invent.
+    naaf3232_script = COVERAGE_CHECKS / "check_nested_abort_authority_face_3232.py"
+    if not naaf3232_script.exists():
+        fail(f"missing {naaf3232_script}")
+        return 1
+    r = run([sys.executable, str(naaf3232_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3232 nested abort authority face residual linter failed — run python3 scripts/coverage/checks/check_nested_abort_authority_face_3232.py"
+        )
+        return r
     # Issue #3199: on_arena_compact must not unique_lock_all_shards_
     # (I residual after #2937 sharding). Per-shard unique only.
     # Extends test_shape_profiler_concurrency + compact isolation;

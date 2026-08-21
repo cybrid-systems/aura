@@ -713,6 +713,10 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                               std::memory_order_relaxed)));
             insert_kv("schema-3193", aura::compiler::typed_audit::kNestedAbortAuthorityFaceIssue);
             insert_kv("issue-3193", aura::compiler::typed_audit::kNestedAbortAuthorityFaceIssue);
+            insert_kv("schema-3232",
+                      aura::compiler::typed_audit::kNestedAbortAuthorityFaceResidualIssue);
+            insert_kv("issue-3232",
+                      aura::compiler::typed_audit::kNestedAbortAuthorityFaceResidualIssue);
             // Lineage preserved (detailed queries remain authoritative)
             insert_kv("schema-2613", 2613);
             insert_kv("schema-2697", 2697);
