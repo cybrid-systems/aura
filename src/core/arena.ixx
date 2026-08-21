@@ -601,7 +601,7 @@ export inline std::atomic<std::uint64_t> g_intermediate_create_value_only_total{
 inline constexpr int kIntermediateCreateValueOnlyIssue = 3093;
 
 // Issue #3156: uncovered-under-required counter (residual #3017 / #3093).
-// Bumped when a small-pool intermediate create hits required_active +
+// Bumped when a densify-tracked intermediate create hits required_active +
 // slot==null + reason==null path under note_intermediate_create_with_cover_
 // (or maybe_note_allocate_intermediate_ via the same helper). NOT safe
 // cover — caller has neither slot rewrite, pin, nor EXEMPT declaration.
@@ -610,9 +610,15 @@ inline constexpr int kIntermediateCreateValueOnlyIssue = 3093;
 // (block + sticky-off) per #3017. Production invariant:
 // g_intermediate_create_value_only_total_v_read() == 0 in production soak
 // (Soft / Off / render-hotpath still observability-only, single atomic load).
+// Issue #3214: the bump is no longer small-pool-only — pmr fallback and
+// size > kMaxSmallSize allocate paths join the same uncovered metric.
 export inline std::atomic<std::uint64_t> g_intermediate_create_uncovered_under_required_total{0};
 
 inline constexpr int kIntermediateCreateUncoveredUnderRequiredIssue = 3156;
+// Issue #3214: densify-tracked allocate (all sizes / pmr fallback, not
+// only small-pool owns) must join the same cover triad. Soft is the
+// existing required-active load. Reuses with_cover_ inventory.
+inline constexpr int kDensifyTrackedAllocateCoverIssue = 3214;
 
 [[nodiscard]] inline std::uint64_t intermediate_create_with_cover_total_v_read() noexcept {
     return g_intermediate_create_with_cover_total.load(std::memory_order_relaxed);
@@ -2598,8 +2604,8 @@ public:
     }
 
     // Issue #3053: try_allocate / allocate_checked / create share
-    // allocate_raw_impl. Only small-pool pointers can relocate; Soft
-    // / unset / render is a single required-active load (AC3).
+    // allocate_raw_impl. Soft / unset / render is a single
+    // required-active load (AC3).
     // Issue #3156: under production required, route through
     // note_intermediate_create_with_cover_(ptr, nullptr, nullptr) instead
     // of the legacy note_intermediate_create_auto_wire_ (value-only).
@@ -2610,6 +2616,10 @@ public:
     // Issue #3180: optional slot/reason pass-through so hot-path callers
     // can declare cover at the allocate site. Default nullptr/nullptr
     // preserves legacy behavior (uncovered metric bump under required).
+    // Issue #3214: small-pool identity (kMaxSmallSize / owns) remains
+    // the densify-relocate set, but pmr fallback and size > kMaxSmallSize
+    // still note — required + uncovered cannot bypass inventory /
+    // last_object_remap_ cover triad. Reuses with_cover_ inventory.
     void maybe_note_allocate_intermediate_(void* ptr, std::size_t size, void** slot = nullptr,
                                            const char* reason = nullptr) noexcept {
         if (!ptr)
@@ -2618,8 +2628,11 @@ public:
             return;
         if (aura::core::arena_policy::in_render_hotpath())
             return;
-        if (size > SmallObjectPool::kMaxSmallSize || !small_pool_.owns(ptr))
+        if (size <= SmallObjectPool::kMaxSmallSize && small_pool_.owns(ptr)) {
+            note_intermediate_create_with_cover_(ptr, slot, reason);
             return;
+        }
+        // Issue #3214: non-small / pmr-fallback densify-tracked allocate.
         note_intermediate_create_with_cover_(ptr, slot, reason);
     }
 
@@ -2792,6 +2805,10 @@ public:
         void* ptr = resource_.allocate(size, alignment);
         contract_assert(ptr != nullptr); // Issue #1519
         stats_.used += size;
+        // Issue #3214: pmr / large / small-pool-fallback allocate joins
+        // the same cover triad as the small-pool hit path (maybe_note
+        // is a single required-active load on Soft / Off).
+        maybe_note_allocate_intermediate_(ptr, size, cover_slot, cover_reason);
         maybe_auto_compact_on_alloc();
         return ptr;
     }

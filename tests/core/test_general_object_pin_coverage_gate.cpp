@@ -578,6 +578,21 @@ static void ac3053_coverage_gate_cite() {
           "3053 AC4: inventory floor not hand-bumped");
 }
 
+static void ac3214_coverage_gate_cite() {
+    std::println("\n--- #3214: densify-tracked allocate cover cites all sizes/paths ---");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(lp.find("kDensifyTrackedAllocateCoverIssue = 3214") != std::string::npos, "3214: stamp");
+    CHECK(arena.find("kDensifyTrackedAllocateCoverIssue = 3214") != std::string::npos,
+          "3214: arena stamp");
+    CHECK(arena.find("maybe_note_allocate_intermediate_") != std::string::npos,
+          "3214: allocate note helper");
+    CHECK(arena.find("non-small / pmr-fallback densify-tracked allocate") != std::string::npos,
+          "3214: non-small branch");
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "3214 AC: inventory floor not hand-bumped");
+}
+
 int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2496: GeneralObjectPin adoption coverage gate ===");
     std::println("=== Issue #2597: production default AURA_GENERAL_OBJECT_PIN=required "
@@ -589,6 +604,8 @@ int run_test_general_object_pin_coverage_gate() {
     std::println("=== Issue #2840: densify fail-closed on required pin breach "
                  "(extends #2496 test file per #81967) ===");
     std::println("=== Issue #3053: allocate residual cites pin/slot/EXEMPT triad "
+                 "(extends #2496 test file per #81967) ===");
+    std::println("=== Issue #3214: densify-tracked allocate cover on all sizes/paths "
                  "(extends #2496 test file per #81967) ===");
     // contiguous form for check_general_object_pin_auto_wire_2597.py:
     // production default AURA_GENERAL_OBJECT_PIN=required (extends #2496 test file per #81967)
@@ -623,6 +640,7 @@ int run_test_general_object_pin_coverage_gate() {
     // additive ran_total counter (extends suite per #81967).
     ac2892_1_ran_counter_cite();
     ac3053_coverage_gate_cite();
+    ac3214_coverage_gate_cite();
     ac3055_coverage_gate_cite();
     ac3057_coverage_gate_cite();
     // Issue #3093: cover-aware intermediate create (slot / pin / EXEMPT

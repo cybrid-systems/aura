@@ -1810,6 +1810,96 @@ static void ac3053_5_source_cite_no_invent() {
           "AC4: inventory floor unchanged");
 }
 
+// ── Issue #3214: required-regime cover triad on all densify-tracked
+// allocate paths (not only small-pool). Residual of #2971/#3093/#3156/#3180.
+// maybe_note / allocate_raw_impl pmr fallback previously skipped size >
+// kMaxSmallSize and !owns(ptr), so large / non-create / pool-exhausted
+// intermediates never entered intermediate_creates_ and could bypass
+// the pre-move pin contract.
+static constexpr std::size_t kAc3214NonsmallBytes = 128;
+
+static void ac3214_1_nonsmall_allocate_blocks() {
+    std::println("\n--- #3214 AC1: non-small allocate under required + no cover blocks Moving ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    const auto block0 =
+        aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
+    ASTArena arena(64 * 1024);
+    void* raw = arena.try_allocate(kAc3214NonsmallBytes);
+    CHECK(raw != nullptr, "AC1: try_allocate(128) succeeded");
+    auto checked = arena.allocate_checked(kAc3214NonsmallBytes);
+    CHECK(checked.has_value() && *checked != nullptr, "AC1: allocate_checked(128) succeeded");
+    CHECK(arena.intermediate_create_auto_wire_count() >= 2,
+          "AC1: non-small allocate paths inventoried under required");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "AC1: no address movement");
+    CHECK(!r.pin_contract_held, "AC1: pin_contract_held=false");
+    CHECK(r.moving_blocked_precondition, "AC1: pre-move block");
+    CHECK(r.moving_incomplete_remap, "AC1: incomplete-remap marked");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC1: sticky densify-off");
+    CHECK(aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read() >=
+              block0 + 1,
+          "AC1: pre-move block counter");
+}
+
+static void ac3214_2_nonsmall_slot_cover_allows() {
+    std::println("\n--- #3214 AC2: slot-covered non-small allocate is not an unpinned block ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    ASTArena arena(64 * 1024);
+    void* extra = arena.try_allocate(kAc3214NonsmallBytes);
+    CHECK(extra, "AC2: non-small allocate");
+    arena.register_external_root_slot_for_densify(&extra);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.pin_contract_held, "AC2: slotted non-small does not fail pin contract");
+    CHECK(!r.moving_blocked_precondition, "AC2: not a pre-move unpinned block");
+}
+
+static void ac3214_3_soft_nonsmall_zero_cost() {
+    std::println("\n--- #3214 AC3: Soft non-small allocate is a single required-active load ---");
+    RequiredPinGuard off(0);
+    ASTArena arena(64 * 1024);
+    void* raw = arena.try_allocate(kAc3214NonsmallBytes);
+    CHECK(raw, "AC3: Soft non-small allocate ok");
+    CHECK(arena.intermediate_create_auto_wire_count() == 0, "AC3: no inventory on Soft");
+}
+
+static void ac3214_4_source_cite_no_invent() {
+    std::println("\n--- #3214 AC4: source-cite + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto cover = read_file("tests/core/test_arena_required_cover_no_value_only.cpp");
+    const auto gate = read_file("tests/core/test_general_object_pin_coverage_gate.cpp");
+    const auto build = read_file("build.py");
+    CHECK(lp.find("kDensifyTrackedAllocateCoverIssue = 3214") != std::string::npos,
+          "AC4: lifetime_pin stamp");
+    CHECK(arena.find("kDensifyTrackedAllocateCoverIssue = 3214") != std::string::npos,
+          "AC4: arena stamp");
+    CHECK(arena.find("Issue #3214") != std::string::npos, "AC4: arena cites #3214");
+    CHECK(arena.find("non-small / pmr-fallback densify-tracked allocate") != std::string::npos,
+          "AC4: maybe_note non-small branch");
+    CHECK(t.find("ac3214_1_nonsmall_allocate_blocks") != std::string::npos, "AC4: AC1 test");
+    CHECK(cover.find("ac3214_") != std::string::npos, "AC4: required-cover suite cites #3214");
+    CHECK(gate.find("3214") != std::string::npos, "AC4: coverage-gate suite cites #3214");
+    CHECK(build.find("check_production_all_densify_allocate_cover_3214") != std::string::npos,
+          "AC4: build.py wires linter");
+    CHECK(read_file("docs/design/3214-densify-allocate-cover.md").empty(),
+          "AC4: no docs/design/3214-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3214.cpp").empty(),
+          "AC4: no test_issue_3214.cpp per #81967");
+    CHECK(lp.find("kGeneralObjectPinAdoptSiteCount = 7") != std::string::npos,
+          "AC4: inventory floor unchanged");
+}
+
 // ── Issue #3055: post-Moving last_object_remap_ residual ──
 static void ac3055_1_slot_covered_no_canary_holds() {
     std::println("\n--- #3055 AC1: slot-covered move, no residual canary ---");
@@ -2226,6 +2316,8 @@ int run_test_moving_densify_fail_closed() {
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3053: allocate / pool+flat residual on required pin cover "
                  "(extends #2495 test file per #81967) ===");
+    std::println("=== Issue #3214: densify-tracked allocate cover on all sizes/paths "
+                 "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3055: post-Moving last_object_remap_ residual "
                  "(extends #2495 test file per #81967) ===");
     std::println("=== Issue #3057: FFI opaque slot cover residual of #3022 "
@@ -2311,6 +2403,11 @@ int run_test_moving_densify_fail_closed() {
     ac3053_3_soft_allocate_zero_cost();
     ac3053_4_mutate_densify_allocate_soak();
     ac3053_5_source_cite_no_invent();
+    // Issue #3214: all densify-tracked allocate sizes/paths (extends this suite).
+    ac3214_1_nonsmall_allocate_blocks();
+    ac3214_2_nonsmall_slot_cover_allows();
+    ac3214_3_soft_nonsmall_zero_cost();
+    ac3214_4_source_cite_no_invent();
     // Issue #3055: post-Moving last_object_remap_ residual (extends this suite).
     ac3055_1_slot_covered_no_canary_holds();
     ac3055_2_unregistered_canary_fail_closed();
