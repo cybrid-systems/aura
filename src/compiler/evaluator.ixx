@@ -174,7 +174,7 @@ export struct PrimMeta {
     // acquire a Guard. add_mutate stamps true iff !guard_exempt.
     bool requires_mutation_guard = false;
     std::string doc;
-    std::string category; // eda | sva | verification | general | deprecated | rendering
+    std::string category; // general | deprecated | rendering (#3239: eda/sva/verification retired)
     std::string schema;   // e.g. "(int string) -> bool"
 };
 

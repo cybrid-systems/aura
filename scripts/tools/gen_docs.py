@@ -54,8 +54,6 @@ _DEPRECATED_CORE_ALIASES: frozenset[str] = frozenset(
         "mutate:move-node",
         "mutate:extract-function",
         "mutate:atomic-batch",
-        "mutate:sv-add-coverpoint",
-        "mutate:sv-weaken-property",
     }
 )
 

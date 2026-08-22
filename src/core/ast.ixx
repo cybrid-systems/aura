@@ -1751,9 +1751,9 @@ public:
     std::pmr::vector<std::uint8_t> ppa_dirty_;
     // Issue #437: per-node verification dirty bitmask (orthogonal to
     // DirtyReason which is full at 8 bits). Bit definitions:
-    //   0x01 = Assertion (assertion failed / SVA property violated)
+    //   0x01 = Assertion (assertion failed)
     //   0x02 = Coverage (coverage hole detected)
-    //   0x04 = SVA (SVA property / sequence affected)
+    //   0x04 retired (#3239) — was SVA property/sequence dirty
     //   0x08 = FormalCounterexample (formal proof counterexample)
     // OR'd with kGeneralDirty on dirty_ when set so legacy
     // is_dirty() callers still see "this node needs work".
@@ -2385,7 +2385,6 @@ public:
     // (query:verify-dirty-stats) primitive.
     mutable std::atomic<std::uint64_t> verify_assertion_dirty_total_{0};
     mutable std::atomic<std::uint64_t> verify_coverage_dirty_total_{0};
-    mutable std::atomic<std::uint64_t> verify_sva_dirty_total_{0};
     mutable std::atomic<std::uint64_t> verify_formal_cex_dirty_total_{0};
     // Issue #469: verification_dirty_ observability counters.
     // Bumped by apply_verification_dirty_bits. Stats-only
@@ -2393,11 +2392,8 @@ public:
     // (query:verification-loop-stats) primitive.
     mutable std::atomic<std::uint64_t> verification_coverage_feedback_total_{0};
     mutable std::atomic<std::uint64_t> verification_assert_failure_total_{0};
-    // Issue #469: structured-mutate success/failure counters
-    // (used by (query:verification-loop-stats) to compute
-    // mutate_success_rate).
-    mutable std::atomic<std::uint64_t> sv_mutate_attempts_total_{0};
-    mutable std::atomic<std::uint64_t> sv_mutate_success_total_{0};
+    // Issue #3239: sv_mutate_attempts/success counters retired with
+    // mutate:sv-add-coverpoint / mutate:sv-weaken-property.
     mutable std::atomic<std::uint64_t> verify_loop_cycles_total_{0};
     // Issue #290: macro_dirty_ observability counters. Bumped
     // by apply_macro_dirty_bits. Stats-only (relaxed-ordering).
@@ -2432,9 +2428,6 @@ public:
     [[nodiscard]] std::uint64_t verify_coverage_dirty_total() const noexcept {
         return verify_coverage_dirty_total_.load(std::memory_order_acquire);
     }
-    [[nodiscard]] std::uint64_t verify_sva_dirty_total() const noexcept {
-        return verify_sva_dirty_total_.load(std::memory_order_acquire);
-    }
     [[nodiscard]] std::uint64_t verify_formal_cex_dirty_total() const noexcept {
         return verify_formal_cex_dirty_total_.load(std::memory_order_acquire);
     }
@@ -2445,7 +2438,6 @@ public:
     struct VerifyDirtyTotalsSnapshot {
         std::uint64_t assertion = 0;
         std::uint64_t coverage = 0;
-        std::uint64_t sva = 0;
         std::uint64_t formal_cex = 0;
     };
     [[nodiscard]] VerifyDirtyTotalsSnapshot snapshot_verify_dirty_totals() const noexcept {
@@ -2453,11 +2445,9 @@ public:
         for (int attempt = 0; attempt < 16; ++attempt) {
             s.assertion = verify_assertion_dirty_total_.load(std::memory_order_acquire);
             s.coverage = verify_coverage_dirty_total_.load(std::memory_order_acquire);
-            s.sva = verify_sva_dirty_total_.load(std::memory_order_acquire);
             s.formal_cex = verify_formal_cex_dirty_total_.load(std::memory_order_acquire);
             if (verify_assertion_dirty_total_.load(std::memory_order_acquire) == s.assertion &&
                 verify_coverage_dirty_total_.load(std::memory_order_acquire) == s.coverage &&
-                verify_sva_dirty_total_.load(std::memory_order_acquire) == s.sva &&
                 verify_formal_cex_dirty_total_.load(std::memory_order_acquire) == s.formal_cex) {
                 return s;
             }
@@ -2471,10 +2461,6 @@ public:
     [[nodiscard]] std::uint64_t verification_assert_failure_total() const noexcept {
         return verification_assert_failure_total_.load(std::memory_order_relaxed);
     }
-    // Issue #469: structured-mutate stat accessors.
-    [[nodiscard]] std::uint64_t sv_mutate_attempts_total() const noexcept {
-        return sv_mutate_attempts_total_.load(std::memory_order_relaxed);
-    }
     // Issue #290: macro_dirty_ stat accessors.
     [[nodiscard]] std::uint64_t macro_expansion_dirty_total() const noexcept {
         return macro_expansion_dirty_total_.load(std::memory_order_relaxed);
@@ -2482,20 +2468,8 @@ public:
     [[nodiscard]] std::uint64_t macro_self_modify_dirty_total() const noexcept {
         return macro_self_modify_dirty_total_.load(std::memory_order_relaxed);
     }
-    [[nodiscard]] std::uint64_t sv_mutate_success_total() const noexcept {
-        return sv_mutate_success_total_.load(std::memory_order_relaxed);
-    }
     [[nodiscard]] std::uint64_t verify_loop_cycles_total() const noexcept {
         return verify_loop_cycles_total_.load(std::memory_order_relaxed);
-    }
-    // Issue #469: bump helpers for the structured-mutate
-    // counters (called from the (mutate:sv-add-coverpoint) /
-    // (mutate:sv-weaken-property) primitives).
-    void bump_sv_mutate_attempt() noexcept {
-        sv_mutate_attempts_total_.fetch_add(1, std::memory_order_relaxed);
-    }
-    void bump_sv_mutate_success() noexcept {
-        sv_mutate_success_total_.fetch_add(1, std::memory_order_relaxed);
     }
     void bump_verify_loop_cycle() noexcept {
         verify_loop_cycles_total_.fetch_add(1, std::memory_order_relaxed);
@@ -3202,8 +3176,6 @@ public:
         , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
         , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
         , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
-        , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
-        , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
         , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
         , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
         , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
@@ -3271,8 +3243,6 @@ public:
                 other.verification_coverage_feedback_total_.load());
             verification_assert_failure_total_.store(
                 other.verification_assert_failure_total_.load());
-            sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
-            sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
             macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
             macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
@@ -3401,8 +3371,6 @@ public:
         , stale_ref_auto_refresh_count_(other.stale_ref_auto_refresh_count_.load())
         , verification_coverage_feedback_total_(other.verification_coverage_feedback_total_.load())
         , verification_assert_failure_total_(other.verification_assert_failure_total_.load())
-        , sv_mutate_attempts_total_(other.sv_mutate_attempts_total_.load())
-        , sv_mutate_success_total_(other.sv_mutate_success_total_.load())
         , verify_loop_cycles_total_(other.verify_loop_cycles_total_.load())
         , macro_expansion_dirty_total_(other.macro_expansion_dirty_total_.load())
         , macro_self_modify_dirty_total_(other.macro_self_modify_dirty_total_.load())
@@ -3472,8 +3440,6 @@ public:
                 other.verification_coverage_feedback_total_.load());
             verification_assert_failure_total_.store(
                 other.verification_assert_failure_total_.load());
-            sv_mutate_attempts_total_.store(other.sv_mutate_attempts_total_.load());
-            sv_mutate_success_total_.store(other.sv_mutate_success_total_.load());
             verify_loop_cycles_total_.store(other.verify_loop_cycles_total_.load());
             macro_expansion_dirty_total_.store(other.macro_expansion_dirty_total_.load());
             macro_self_modify_dirty_total_.store(other.macro_self_modify_dirty_total_.load());
@@ -6479,9 +6445,9 @@ public:
     // orthogonal verify_dirty_ column. Setting any verify bit also
     // ORs kGeneralDirty on dirty_ for backward-compat.
     enum VerifyDirtyReason : std::uint8_t {
-        kAssertionDirty = 0x01,            // assertion failed
-        kCoverageDirty = 0x02,             // coverage hole detected
-        kSvaDirty = 0x04,                  // SVA property/sequence affected
+        kAssertionDirty = 0x01, // assertion failed
+        kCoverageDirty = 0x02,  // coverage hole detected
+        // 0x04 retired (#3239) — was SVA property/sequence dirty
         kFormalCounterexampleDirty = 0x08, // formal proof counterexample
     };
 

@@ -636,8 +636,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
             const std::uint64_t eda_feedback = ws ? ws->verification_coverage_feedback_total() +
                                                         ws->verification_assert_failure_total()
                                                   : 0;
-            const std::uint64_t eda_sv =
-                ws ? ws->sv_mutate_attempts_total() + ws->sv_mutate_success_total() : 0;
+            const std::uint64_t eda_sv = 0; // Issue #3239: sv_mutate_* retired
             const std::uint64_t checkpoint =
                 ev->get_panic_checkpoint_save_count() + ev->get_panic_checkpoint_commit_count();
             const std::uint64_t gen_wrap = ws ? ws->generation_wrap_count() : 0;
@@ -720,7 +719,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 ev->get_schema_validation_pass_count() + ev->get_mutation_impact_count();
             const std::uint64_t eda_verify =
                 (ws ? ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
-                          ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total()
+                          ws->verify_formal_cex_dirty_total()
                     : 0) +
                 ev->get_verify_tool_calls_total();
             return make_int(static_cast<std::int64_t>(runtime_fiber + runtime_gc + edsl_workspace +
@@ -766,7 +765,7 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                 (m ? m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed) : 0);
             const std::uint64_t eda_batch =
                 (ws ? ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
-                          ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total()
+                          ws->verify_formal_cex_dirty_total()
                     : 0) +
                 (m ? m->atomic_batch_commits.load(std::memory_order_relaxed) : 0);
             const std::uint64_t stdlib_hotpath =
@@ -1837,8 +1836,8 @@ void register_query_lifecycle_primitives(PrimRegistrar add, std::pmr::vector<Pai
                     }
                 }
             }
-            const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
-            const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+            const std::uint64_t sv_attempts = 0; // Issue #3239: retired
+            const std::uint64_t sv_success = 0;
             const std::uint64_t structured_hits =
                 m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t tag_hits = ws ? ws->tag_arity_index_hits() : 0;

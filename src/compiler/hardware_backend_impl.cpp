@@ -37,7 +37,7 @@ bool is_sv_structural_node(const aura::ast::FlatAST& flat, const aura::ast::Node
         tag == aura::ast::NodeTag::Assert || tag == aura::ast::NodeTag::Covergroup ||
         tag == aura::ast::NodeTag::Coverpoint)
         return true;
-    return (flat.verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0;
+    return false; // Issue #3239: kSvaDirty retired
 }
 
 std::uint8_t sv_structural_dirty_reasons(const aura::ast::FlatAST& flat,
@@ -50,8 +50,6 @@ std::uint8_t sv_structural_dirty_reasons(const aura::ast::FlatAST& flat,
         mask = static_cast<std::uint8_t>(mask | SvStructuralDirtyReason::kSvInterfaceDirty);
     if (tag == aura::ast::NodeTag::Modport)
         mask = static_cast<std::uint8_t>(mask | SvStructuralDirtyReason::kSvModportDirty);
-    if ((flat.verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0)
-        mask = static_cast<std::uint8_t>(mask | SvStructuralDirtyReason::kSvSvaFeedbackDirty);
     if (flat.verification_dirty(id) != 0)
         mask = static_cast<std::uint8_t>(mask | SvStructuralDirtyReason::kSvSvaFeedbackDirty);
     return mask;

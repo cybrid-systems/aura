@@ -70,8 +70,6 @@ static std::uint64_t parse_and_mark(aura::compiler::Evaluator& ev, const std::st
                     const auto reason = is_coverage ? aura::ast::FlatAST::kCoverageFeedbackDirty
                                                     : aura::ast::FlatAST::kAssertFailureDirty;
                     ws->apply_verification_dirty_bits(nid, reason);
-                    if (aura::compiler::hardware::should_invoke_sv_closedloop_hook(*ws, nid))
-                        ws->apply_verify_dirty_bits(nid, aura::ast::FlatAST::kSvaDirty);
                     ws->mark_dirty_upward(nid, aura::ast::FlatAST::kGeneralDirty,
                                           ws->ppa_dirty_reasons(nid));
                     ev.bump_verify_tool_dirty_propagation();

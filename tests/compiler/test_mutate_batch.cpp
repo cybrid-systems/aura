@@ -1258,118 +1258,28 @@ static void run_1699_splice() {
     CHECK(p0.has_value(), "pad0 still evaluates");
 }
 
-// ── Issue #1704/#1705 — sv Guard ──
+// ── Issue #3239: SV mutate prims retired (was #1704/#1705 Guard) ──
 static void run_1704_sv_guard() {
-    std::println("\n--- Issue #1704/#1705: sv Guard ---");
-
-    // AC1: sv-add-coverpoint
-    {
-        std::println("\n--- AC1 (#1704): sv-add-coverpoint Guard path ---");
-        CompilerService cs;
-        CHECK(eval_ok(cs, "(set-code \"(define (f x) x)\")"), "set-code");
-        auto* flat = cs.evaluator().workspace_flat();
-        CHECK(flat != nullptr, "flat");
-        NodeId target = NULL_NODE;
-        for (NodeId id = 0; id < flat->size(); ++id) {
-            if (flat->is_live_node(id)) {
-                target = id;
-                break;
-            }
-        }
-        CHECK(target != NULL_NODE, "found live target");
-        const auto log_before = flat->mutation_count();
-
-        auto r = cs.eval(std::string("(mutate:sv-add-coverpoint ") + std::to_string(target) +
-                         " \"cp0\")");
-        CHECK(r && is_bool(*r) && as_bool(*r), "sv-add-coverpoint #t");
-        CHECK(flat->mutation_count() > log_before, "mutation log grew");
-        MutationRecord rec{};
-        CHECK(find_last_op(*flat, "sv-add-coverpoint", &rec), "log has sv-add-coverpoint");
-        CHECK(rec.target_node == target, "log target is covergroup id");
-    }
-
-    // AC2: sv-weaken-property
-    {
-        std::println("\n--- AC2 (#1704): sv-weaken-property Guard path ---");
-        CompilerService cs;
-        CHECK(eval_ok(cs, "(set-code \"(define (g x) 1)\")"), "set-code g");
-        auto* flat = cs.evaluator().workspace_flat();
-        CHECK(flat != nullptr, "flat ac2");
-        NodeId target = NULL_NODE;
-        for (NodeId id = 0; id < flat->size(); ++id) {
-            if (flat->is_live_node(id)) {
-                target = id;
-                break;
-            }
-        }
-        CHECK(target != NULL_NODE, "found live target ac2");
-        auto r = cs.eval(std::string("(mutate:sv-weaken-property ") + std::to_string(target) +
-                         " \"rst_n\")");
-        CHECK(r && is_bool(*r) && as_bool(*r), "sv-weaken-property #t");
-        MutationRecord rec{};
-        CHECK(find_last_op(*flat, "sv-weaken-property", &rec), "log has sv-weaken-property");
-        CHECK(rec.target_node == target, "log target is property id");
-    }
-
-    // AC3: bad id fails
-    {
-        std::println("\n--- AC3 (#1704): out-of-range fails ---");
-        CompilerService cs;
-        CHECK(eval_ok(cs, "(set-code \"(define (h x) 0)\")"), "set-code h");
-        auto* flat = cs.evaluator().workspace_flat();
-        auto huge = static_cast<std::int64_t>(flat->size() + 9999);
-        auto r1 =
-            cs.eval(std::string("(mutate:sv-add-coverpoint ") + std::to_string(huge) + " \"cp\")");
-        CHECK(r1 && is_bool(*r1) && !as_bool(*r1), "sv-add-coverpoint #f on bad id");
-        auto r2 =
-            cs.eval(std::string("(mutate:sv-weaken-property ") + std::to_string(huge) + " \"x\")");
-        CHECK(r2 && is_bool(*r2) && !as_bool(*r2), "sv-weaken-property #f on bad id");
-    }
-
-    // AC4: source audit
-    {
-        std::println("\n--- AC4 (#1704): source has #1704 Guard ---");
-        const char* candidates[] = {
-            "src/compiler/evaluator_primitives_mutate.cpp",
-            "../src/compiler/evaluator_primitives_mutate.cpp",
-        };
-        std::string src;
-        for (const char* p : candidates) {
-            auto s = read_file(p);
-            if (!s.empty()) {
-                src = std::move(s);
-                break;
-            }
-        }
-        CHECK(!src.empty(), "read mutate.cpp");
-        if (!src.empty()) {
-            CHECK(src.find("Issue #1704") != std::string::npos, "cites #1704");
-            CHECK(src.find("Issue #1705") != std::string::npos ||
-                      src.find("#1705") != std::string::npos,
-                  "cites #1705 on weaken sibling");
-            auto p1 = src.find("mutate:sv-add-coverpoint");
-            auto p2 = src.find("mutate:sv-weaken-property");
-            CHECK(p1 != std::string::npos && p2 != std::string::npos, "both prims present");
-            if (p1 != std::string::npos) {
-                auto win = src.substr(p1, 3500);
-                CHECK(win.find("MutationBoundaryGuard") != std::string::npos,
-                      "sv-add-coverpoint has Guard");
-                CHECK(win.find("is_live_node") != std::string::npos,
-                      "sv-add-coverpoint is_live_node");
-                CHECK(win.find("run_or_rollback") != std::string::npos,
-                      "sv-add-coverpoint run_or_rollback");
-            }
-            if (p2 != std::string::npos) {
-                auto win = src.substr(p2, 3500);
-                CHECK(win.find("MutationBoundaryGuard") != std::string::npos,
-                      "sv-weaken-property has Guard");
-                CHECK(win.find("is_live_node") != std::string::npos,
-                      "sv-weaken-property is_live_node");
-                CHECK(win.find("run_or_rollback") != std::string::npos,
-                      "sv-weaken-property run_or_rollback");
-            }
+    std::println("\n--- Issue #3239: SV mutate prims retired ---");
+    const char* candidates[] = {
+        "src/compiler/evaluator_primitives_mutate.cpp",
+        "../src/compiler/evaluator_primitives_mutate.cpp",
+    };
+    std::string src;
+    for (const char* p : candidates) {
+        auto s = read_file(p);
+        if (!s.empty()) {
+            src = std::move(s);
+            break;
         }
     }
+    CHECK(!src.empty(), "read mutate.cpp");
+    CHECK(src.find("add_mutate(\"mutate:sv-add-coverpoint\"") == std::string::npos,
+          "3239: mutate:sv-add-coverpoint not registered");
+    CHECK(src.find("add_mutate(\"mutate:sv-weaken-property\"") == std::string::npos,
+          "3239: mutate:sv-weaken-property not registered");
+    CHECK(src.find("maybe_sv_hardware_closedloop") == std::string::npos,
+          "3239: maybe_sv_hardware_closedloop gone");
 }
 
 // ── Issue #1700 — wrap stale parent ──

@@ -174,7 +174,8 @@ int run_test_verification_dirty_bits_lock() {
                 for (int i = 0; i < 200; ++i) {
                     flat.apply_verification_dirty_bits(
                         id, static_cast<std::uint8_t>(FlatAST::kCoverageFeedbackDirty));
-                    flat.apply_verify_dirty_bits(id, static_cast<std::uint8_t>(FlatAST::kSvaDirty));
+                    flat.apply_verify_dirty_bits(
+                        id, static_cast<std::uint8_t>(FlatAST::kFormalCounterexampleDirty));
                 }
             });
         }
@@ -183,9 +184,10 @@ int run_test_verification_dirty_bits_lock() {
             th.join();
         CHECK((flat.verification_dirty(id) & FlatAST::kCoverageFeedbackDirty) != 0,
               "AC3: verification coverage bit held");
-        CHECK((flat.verify_dirty(id) & FlatAST::kSvaDirty) != 0, "AC3: verify SVA bit held");
+        CHECK((flat.verify_dirty(id) & FlatAST::kFormalCounterexampleDirty) != 0,
+              "AC3: verify formal-cex bit held");
         CHECK(flat.verification_coverage_feedback_total() == 1, "AC3: feedback once");
-        CHECK(flat.verify_sva_dirty_total() == 1, "AC3: sva once");
+        CHECK(flat.verify_formal_cex_dirty_total() == 1, "AC3: formal-cex once");
     }
 
     // Source-cite (FlatAST decomp step 3: body in ast_impl.cpp)

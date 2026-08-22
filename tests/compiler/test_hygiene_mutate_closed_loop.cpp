@@ -1768,14 +1768,9 @@ static void ac3115_5_source_and_linter() {
 }
 
 // ── Issue #3191: post-#3131 default-deny residual on lockless tweak-literal
-//                  + SV mutate:sv-add-coverpoint / sv-weaken-property
-// Production contract: no MacroIntroduced path escapes the default-deny
-// (soft observe-only). Three gates close the residual: tweak-literal
-// (lockless batch table), sv-add-coverpoint, sv-weaken-property.
-// Global (hygiene:set-allow-macro-mutate! #t) still unlocks all three.
-// Soft/Off: zero extra cost on non-macro target (single atomic load).
-// Tests: extend existing hygiene_mutate_closed_loop suite; no new
-// tests/issues/test_issue_3191.cpp per #81967.
+// Issue #3239 retired the SV mutate prims; this residual is now
+// tweak-literal only. Global allow still unlocks. Soft/Off: zero extra
+// cost on non-macro target. Tests: extend this suite; no invent.
 
 static void ac3191_1_default_reject() {
     std::println("\n--- 3191 AC1: tweak-literal default-deny MacroIntroduced ---");
@@ -1801,27 +1796,12 @@ static void ac3191_1_default_reject() {
 }
 
 static void ac3191_2_sv_default_reject() {
-    std::println("\n--- 3191 AC2: sv-add-coverpoint / sv-weaken-property default-deny ---");
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3191 AC2: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3191 AC2: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3191 AC2: workspace");
-    auto lit = first_lit_int(ws);
-    CHECK(lit != aura::ast::NULL_NODE, "3191 AC2: LiteralInt");
-    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
-          "3191 AC2: stamp MacroIntroduced");
-    // sv-add-coverpoint on MacroIntroduced → reject. Issue #3218: same
-    // merr("hygiene") face as structural prims (was bool false dual-track).
-    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp1\")", lit));
-    CHECK(sac.has_value() && merr_kind_3027(cs, *sac) == "hygiene",
-          "3191 AC2: sv-add-coverpoint rejects with hygiene merr");
-    // sv-weaken-property on MacroIntroduced → reject.
-    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
-    CHECK(swp.has_value() && merr_kind_3027(cs, *swp) == "hygiene",
-          "3191 AC2: sv-weaken-property rejects with hygiene merr");
-    CHECK(cs.evaluator().get_hygiene_violation_attempts() >= 2,
-          "3191 AC2: both sv-* rejects counted");
+    std::println("\n--- 3191 AC2: SV mutate prims retired (#3239) ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("add_mutate(\"mutate:sv-add-coverpoint\"") == std::string::npos,
+          "3191 AC2: mutate:sv-add-coverpoint not registered");
+    CHECK(mut.find("add_mutate(\"mutate:sv-weaken-property\"") == std::string::npos,
+          "3191 AC2: mutate:sv-weaken-property not registered");
 }
 
 static void ac3191_3_global_allow_unlocks() {
@@ -1844,13 +1824,6 @@ static void ac3191_3_global_allow_unlocks() {
                                  lit));
     CHECK(r.has_value(), "3191 AC3: batch returns");
     CHECK(ws->get(lit).int_value == old_val + 1, "3191 AC3: value committed under global allow");
-    // sv-add-coverpoint / sv-weaken-property now succeed.
-    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp2\")", lit));
-    CHECK(sac.has_value() && is_bool(*sac) && as_bool(*sac),
-          "3191 AC3: sv-add-coverpoint permits under global allow");
-    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
-    CHECK(swp.has_value() && is_bool(*swp) && as_bool(*swp),
-          "3191 AC3: sv-weaken-property permits under global allow");
     // Reset for downstream tests.
     cs.eval("(hygiene:set-allow-macro-mutate! #f)");
 }
@@ -1872,13 +1845,6 @@ static void ac3191_4_soft_non_macro_zero_cost() {
                                  lit));
     CHECK(r.has_value(), "3191 AC4: batch returns");
     CHECK(ws->get(lit).int_value == old_val + 5, "3191 AC4: non-macro tweak-literal commits");
-    // sv-add-coverpoint / sv-weaken-property on non-macro → success.
-    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp_soft\")", lit));
-    CHECK(sac.has_value() && is_bool(*sac) && as_bool(*sac),
-          "3191 AC4: non-macro sv-add-coverpoint ok");
-    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b0\")", lit));
-    CHECK(swp.has_value() && is_bool(*swp) && as_bool(*swp),
-          "3191 AC4: non-macro sv-weaken-property ok");
 }
 
 static void ac3191_5_existing_surfaces_preserved() {
@@ -1913,11 +1879,10 @@ static void ac3191_6_source_and_linter() {
     CHECK(flat.find("Issue #3191") != std::string::npos, "3191 AC6: eval_flat cites #3191");
     CHECK(flat.find("cannot tweak-literal MacroIntroduced") != std::string::npos,
           "3191 AC6: tweak-literal MacroIntroduced reject message");
-    CHECK(mut.find("Issue #3191") != std::string::npos, "3191 AC6: mutate_primitives cites #3191");
-    CHECK(mut.find("sv-add-coverpoint cannot touch MacroIntroduced") != std::string::npos,
-          "3191 AC6: sv-add-coverpoint gate");
-    CHECK(mut.find("sv-weaken-property cannot touch MacroIntroduced") != std::string::npos,
-          "3191 AC6: sv-weaken-property gate");
+    CHECK(mut.find("add_mutate(\"mutate:sv-add-coverpoint\"") == std::string::npos,
+          "3191 AC6: SV coverpoint prim retired");
+    CHECK(mut.find("add_mutate(\"mutate:sv-weaken-property\"") == std::string::npos,
+          "3191 AC6: SV weaken prim retired");
     // global allow parity — same flag as #3115 / #3027.
     CHECK(mut.find("ev.get_allow_macro_mutate()") != std::string::npos,
           "3191 AC6: uses get_allow_macro_mutate()");
@@ -2126,112 +2091,62 @@ static void ac3213_6_linter_no_docs() {
           "3213 AC6: no tests/compiler/test_issue_3213");
 }
 
-// ── Issue #3218: SV prims dual-track bool false → merr("hygiene") ──
-// After #3191 closed MacroIntroduced default-deny on sv-add-coverpoint /
-// sv-weaken-property, the reject still returned make_bool(false) while
-// structural prims return merr("hygiene", "cannot … without :allow-macro? #t").
-// Both SV prims now share reject_structural_macro_hygiene. Global
-// get_allow_macro_mutate() still unlocks. Soft/Off: helper short-circuits
-// on non-macro. No :allow-macro? parse on these prims (non-goal). No
-// tests/issues/test_issue_3218.cpp per #81967; no docs/design/3218-* per #1655.
+// ── Issue #3239: residual EDA/SV mutate surface retired ──
+// mutate:sv-add-coverpoint / mutate:sv-weaken-property, kSvaDirty,
+// sv_mutate_* counters, and maybe_sv_hardware_closedloop are gone.
+// #3218 hygiene special-case for those prims is deleted with them.
+// Tests: extend this suite; no tests/issues/test_issue_3239.cpp per #81967;
+// no docs/design/3239-* per #1655.
 
-static void ac3218_1_sv_merr_hygiene() {
-    std::println("\n--- 3218 AC1: sv-* MacroIntroduced default-deny is merr hygiene ---");
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3218 AC1: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3218 AC1: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3218 AC1: workspace");
-    auto lit = first_lit_int(ws);
-    CHECK(lit != aura::ast::NULL_NODE, "3218 AC1: LiteralInt");
-    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
-          "3218 AC1: stamp MacroIntroduced");
-    CHECK(ws->is_macro_introduced(lit), "3218 AC1: marker set");
-    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp3218\")", lit));
-    CHECK(sac.has_value() && merr_kind_3027(cs, *sac) == "hygiene",
-          "3218 AC1: sv-add-coverpoint merr kind hygiene");
-    CHECK(!(sac.has_value() && is_bool(*sac)), "3218 AC1: not bool-false dual-track");
-    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
-    CHECK(swp.has_value() && merr_kind_3027(cs, *swp) == "hygiene",
-          "3218 AC1: sv-weaken-property merr kind hygiene");
-}
-
-static void ac3218_2_allow_still_succeeds() {
-    std::println("\n--- 3218 AC2: get_allow_macro_mutate() still unlocks SV prims ---");
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3218 AC2: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3218 AC2: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3218 AC2: workspace");
-    auto lit = first_lit_int(ws);
-    CHECK(lit != aura::ast::NULL_NODE, "3218 AC2: LiteralInt");
-    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
-          "3218 AC2: stamp MacroIntroduced");
-    cs.eval("(hygiene:set-allow-macro-mutate! #t)");
-    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp3218a\")", lit));
-    CHECK(sac.has_value() && is_bool(*sac) && as_bool(*sac),
-          "3218 AC2: sv-add-coverpoint permits under global allow");
-    auto swp = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b1\")", lit));
-    CHECK(swp.has_value() && is_bool(*swp) && as_bool(*swp),
-          "3218 AC2: sv-weaken-property permits under global allow");
-    cs.eval("(hygiene:set-allow-macro-mutate! #f)");
-}
-
-static void ac3218_3_counters_and_soft() {
-    std::println("\n--- 3218 AC3/AC4: counters preserved; Soft non-macro still #t ---");
-    CompilerService cs;
-    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3218 AC3: set-code");
-    CHECK(cs.eval("(eval-current)").has_value(), "3218 AC3: eval");
-    auto* ws = cs.evaluator().workspace_flat();
-    CHECK(ws != nullptr, "3218 AC3: workspace");
-    auto lit = first_lit_int(ws);
-    CHECK(lit != aura::ast::NULL_NODE, "3218 AC3: LiteralInt");
-    CHECK(!ws->is_macro_introduced(lit), "3218 AC4: not MacroIntroduced");
-    auto sac_ok = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp_soft3218\")", lit));
-    CHECK(sac_ok.has_value() && is_bool(*sac_ok) && as_bool(*sac_ok),
-          "3218 AC4: non-macro sv-add-coverpoint still #t");
-    auto swp_ok = cs.eval(std::format("(mutate:sv-weaken-property {} \"disable-iff 1'b0\")", lit));
-    CHECK(swp_ok.has_value() && is_bool(*swp_ok) && as_bool(*swp_ok),
-          "3218 AC4: non-macro sv-weaken-property still #t");
-    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", lit)).has_value(),
-          "3218 AC3: stamp MacroIntroduced");
-    const auto before = cs.evaluator().get_hygiene_violation_attempts();
-    auto sac = cs.eval(std::format("(mutate:sv-add-coverpoint {} \"cp_deny3218\")", lit));
-    CHECK(sac.has_value() && merr_kind_3027(cs, *sac) == "hygiene",
-          "3218 AC3: deny still hygiene merr");
-    CHECK(cs.evaluator().get_hygiene_violation_attempts() >= before + 1,
-          "3218 AC3: record_hygiene_violation_attempt still bumps");
-}
-
-static void ac3218_5_source_and_linter() {
-    std::println("\n--- 3218 AC5: source-cite + linter + no docs/design / invent ---");
+static void ac3239_1_sv_prims_gone() {
+    std::println("\n--- 3239 AC1: SV mutate prims not registered ---");
     const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto gendocs = read_file("scripts/tools/gen_docs.py");
+    CHECK(mut.find("add_mutate(\"mutate:sv-add-coverpoint\"") == std::string::npos,
+          "3239 AC1: mutate:sv-add-coverpoint not registered");
+    CHECK(mut.find("add_mutate(\"mutate:sv-weaken-property\"") == std::string::npos,
+          "3239 AC1: mutate:sv-weaken-property not registered");
+    CHECK(gendocs.find("mutate:sv-add-coverpoint") == std::string::npos,
+          "3239 AC1: coverpoint not in gen_docs.py");
+    CHECK(gendocs.find("mutate:sv-weaken-property") == std::string::npos,
+          "3239 AC1: weaken not in gen_docs.py");
+}
+
+static void ac3239_2_no_kSva_no_sv_mutate_no_closedloop() {
+    std::println("\n--- 3239 AC2: kSvaDirty / sv_mutate_* / closedloop gone ---");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(ast.find("kSvaDirty") == std::string::npos, "3239 AC2: kSvaDirty gone");
+    CHECK(ast.find("sv_mutate_attempts_total_") == std::string::npos,
+          "3239 AC2: sv_mutate_attempts_total_ gone");
+    CHECK(ast.find("sv_mutate_success_total_") == std::string::npos,
+          "3239 AC2: sv_mutate_success_total_ gone");
+    CHECK(mut.find("maybe_sv_hardware_closedloop") == std::string::npos,
+          "3239 AC2: maybe_sv_hardware_closedloop gone");
+}
+
+static void ac3239_3_hygiene_linters_rewritten() {
+    std::println("\n--- 3239 AC3: 3218 linter deleted; 3191 rewritten ---");
+    CHECK(read_file("scripts/coverage/checks/check_sv_hygiene_merr_surface_3218.py").empty(),
+          "3239 AC3: 3218 linter deleted");
+    const auto l3191 =
+        read_file("scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py");
+    CHECK(!l3191.empty(), "3239 AC3: 3191 linter still present (tweak-literal)");
+    CHECK(l3191.find("sv-add-coverpoint cannot") == std::string::npos,
+          "3239 AC3: 3191 no longer requires SV prim gates");
+}
+
+static void ac3239_6_linter_no_docs() {
+    std::println("\n--- 3239 AC6: linter + no invent / docs ---");
     const auto build = read_file("build.py");
-    const auto lint = read_file("scripts/coverage/checks/check_sv_hygiene_merr_surface_3218.py");
-    const auto sac_pos = mut.find("add_mutate(\"mutate:sv-add-coverpoint\"");
-    CHECK(sac_pos != std::string::npos, "3218 AC5: sv-add-coverpoint registered");
-    const auto sac_win = mut.substr(sac_pos, 3500);
-    CHECK(sac_win.find("reject_structural_macro_hygiene") != std::string::npos,
-          "3218 AC5: sv-add-coverpoint uses reject_structural_macro_hygiene");
-    CHECK(sac_win.find("\"sv-add-coverpoint\"") != std::string::npos,
-          "3218 AC5: prim name passed to helper");
-    CHECK(sac_win.find("Issue #3218") != std::string::npos, "3218 AC5: coverpoint cites #3218");
-    const auto swp_pos = mut.find("add_mutate(\"mutate:sv-weaken-property\"");
-    CHECK(swp_pos != std::string::npos, "3218 AC5: sv-weaken-property registered");
-    const auto swp_win = mut.substr(swp_pos, 3500);
-    CHECK(swp_win.find("reject_structural_macro_hygiene") != std::string::npos,
-          "3218 AC5: sv-weaken-property uses reject_structural_macro_hygiene");
-    CHECK(swp_win.find("\"sv-weaken-property\"") != std::string::npos,
-          "3218 AC5: weaken prim name passed to helper");
-    CHECK(swp_win.find("Issue #3218") != std::string::npos, "3218 AC5: weaken cites #3218");
-    CHECK(!lint.empty() && lint.find("3218") != std::string::npos, "3218 AC5: linter");
-    CHECK(build.find("check_sv_hygiene_merr_surface_3218") != std::string::npos,
-          "3218 AC5: build.py wires linter");
-    CHECK(read_file("docs/design/3218-sv-hygiene-merr.md").empty(),
-          "3218 AC5: no docs/design/3218-* per #1655");
-    CHECK(read_file("tests/issues/test_issue_3218.cpp").empty() &&
-              read_file("tests/compiler/test_issue_3218.cpp").empty(),
-          "3218 AC5: no test_issue_3218.cpp per #81967");
+    const auto lint = read_file("scripts/coverage/checks/check_sv_eda_surface_retired_3239.py");
+    CHECK(!lint.empty() && lint.find("Issue #3239") != std::string::npos, "3239 AC6: linter");
+    CHECK(build.find("check_sv_eda_surface_retired_3239") != std::string::npos,
+          "3239 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3239-retire-sv-eda.md").empty(), "3239 AC6: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3239.cpp").empty() &&
+              read_file("tests/compiler/test_issue_3239.cpp").empty(),
+          "3239 AC6: no invent test");
 }
 
 // ── Issue #3192: force all structural mutate:* paths through mutate_dispatch_try_acquire
@@ -3116,11 +3031,11 @@ int main() {
     ac2_default_fail_closed();
     std::println("\n=== Issue #3215: Agent-stable hygiene-macro-introduced reason ===");
     ac3215_macro_introduced_reason_string();
-    std::println("\n=== Issue #3218: SV prims hygiene deny is merr(\"hygiene\") ===");
-    ac3218_1_sv_merr_hygiene();
-    ac3218_2_allow_still_succeeds();
-    ac3218_3_counters_and_soft();
-    ac3218_5_source_and_linter();
+    std::println("\n=== Issue #3239: residual EDA/SV mutate surface retired ===");
+    ac3239_1_sv_prims_gone();
+    ac3239_2_no_kSva_no_sv_mutate_no_closedloop();
+    ac3239_3_hygiene_linters_rewritten();
+    ac3239_6_linter_no_docs();
     ac3_allowed_propagate();
     ac4_closed_loop();
     ac5_query_schema();

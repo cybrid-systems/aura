@@ -70,8 +70,10 @@ int run_test_soa_column_atomic() {
         CHECK(flat.last_seen_epoch(id) == 0, "AC3: epoch 0");
         CHECK(flat.is_occurrence_stale(id) == 0, "AC3: occ fresh");
 
-        flat.apply_verify_dirty_bits(id, static_cast<std::uint8_t>(FlatAST::kSvaDirty));
-        CHECK((flat.verify_dirty(id) & FlatAST::kSvaDirty) != 0, "AC3: sva bit set");
+        flat.apply_verify_dirty_bits(
+            id, static_cast<std::uint8_t>(FlatAST::kFormalCounterexampleDirty));
+        CHECK((flat.verify_dirty(id) & FlatAST::kFormalCounterexampleDirty) != 0,
+              "AC3: formal-cex bit set");
 
         flat.apply_verification_dirty_bits(
             id, static_cast<std::uint8_t>(FlatAST::kCoverageFeedbackDirty));
@@ -194,7 +196,7 @@ int run_test_soa_column_atomic() {
                         const auto id = ids[static_cast<std::size_t>(i % kN)];
                         flat.apply_verify_dirty_bits(
                             id, static_cast<std::uint8_t>(FlatAST::kAssertionDirty |
-                                                          FlatAST::kSvaDirty));
+                                                          FlatAST::kFormalCounterexampleDirty));
                         flat.apply_verification_dirty_bits(
                             id, static_cast<std::uint8_t>(FlatAST::kCoverageFeedbackDirty |
                                                           FlatAST::kAssertFailureDirty));

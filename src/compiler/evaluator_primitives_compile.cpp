@@ -3161,7 +3161,7 @@ void CompilePrims::register_compile_p30(PrimRegistrar add, Evaluator& ev) {
             if (!ws)
                 return make_int(0);
             auto sum = ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
-                       ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total();
+                       ws->verify_formal_cex_dirty_total();
             return make_int(static_cast<std::int64_t>(sum));
         });
 }

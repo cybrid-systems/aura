@@ -2045,12 +2045,10 @@ def cmd_lint():
             "Issue #3190 residual drain outermost stamp linter failed — run python3 scripts/coverage/checks/check_residual_drain_outermost_stamp_3190.py"
         )
         return r
-    # Issue #3191: post-#3131 default-deny residual on lockless tweak-literal
-    # + mutate:sv-add-coverpoint / mutate:sv-weaken-property. Three gates close
-    # the residual where #3027 / #3115 scalar prims already have the hygiene
-    # reject helper. Global (hygiene:set-allow-macro-mutate! #t) still unlocks
-    # all three. Soft/Off: zero extra cost on non-macro (single atomic load).
-    # Extends test_hygiene_mutate_closed_loop; no docs/design / invent.
+    # Issue #3191: post-#3131 default-deny residual on lockless tweak-literal.
+    # Issue #3239 retired the SV mutate prims; this linter now covers
+    # tweak-literal only. Global allow still unlocks. Soft/Off: zero extra
+    # on non-macro. Extends test_hygiene_mutate_closed_loop; no docs/design.
     mhd3191_script = COVERAGE_CHECKS / "check_macro_hygiene_default_deny_3191.py"
     if not mhd3191_script.exists():
         fail(f"missing {mhd3191_script}")
@@ -2077,18 +2075,17 @@ def cmd_lint():
             "Issue #3213 atomic-batch :allow-macro? linter failed — run python3 scripts/coverage/checks/check_atomic_batch_allow_macro_3213.py"
         )
         return r
-    # Issue #3218: SV prims hygiene deny is merr("hygiene") not bool false.
-    # Reuses reject_structural_macro_hygiene; get_allow_macro_mutate() still
-    # unlocks. Soft/Off: helper short-circuits on non-macro. Extends
+    # Issue #3239: residual EDA/SV mutate surface retired (prims, kSvaDirty,
+    # sv_mutate_* counters, maybe_sv_hardware_closedloop). Extends
     # test_hygiene_mutate_closed_loop; no docs/design / invent.
-    svh3218_script = COVERAGE_CHECKS / "check_sv_hygiene_merr_surface_3218.py"
-    if not svh3218_script.exists():
-        fail(f"missing {svh3218_script}")
+    ser3239_script = COVERAGE_CHECKS / "check_sv_eda_surface_retired_3239.py"
+    if not ser3239_script.exists():
+        fail(f"missing {ser3239_script}")
         return 1
-    r = run([sys.executable, str(svh3218_script)], cwd=ROOT)
+    r = run([sys.executable, str(ser3239_script)], cwd=ROOT)
     if r != 0:
         fail(
-            "Issue #3218 SV hygiene merr surface linter failed — run python3 scripts/coverage/checks/check_sv_hygiene_merr_surface_3218.py"
+            "Issue #3239 SV/EDA surface retired linter failed — run python3 scripts/coverage/checks/check_sv_eda_surface_retired_3239.py"
         )
         return r
     # Issue #3192: force all structural mutate:* paths through mutate_dispatch_try_acquire
