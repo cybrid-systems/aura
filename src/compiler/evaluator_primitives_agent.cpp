@@ -3898,6 +3898,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
+            std::optional<aura::orch::AgentFailurePolicy> fail_pol;
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
@@ -3911,9 +3912,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                            types::is_int(val)) {
                     policy.wait_reclaimed_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                } else if ((k == "on-join-fail" || k == "on_join_fail") && types::is_string(val)) {
+                    // Issue #3208: explicit keyword → honor even ReportOnly.
+                    const auto s = heap_str_from(ev.string_heap_, val);
+                    aura::orch::AgentFailurePolicy p;
+                    if (s == "cancel")
+                        p.on_join_fail = aura::orch::AgentFailureAction::Cancel;
+                    else if (s == "restart" || s == "restart-n")
+                        p.on_join_fail = aura::orch::AgentFailureAction::RestartN;
+                    else if (s == "throttle")
+                        p.on_join_fail = aura::orch::AgentFailureAction::Throttle;
+                    else
+                        p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
+                    fail_pol = p;
                 }
             }
-            const auto jr = scope->join_all(policy);
+            const auto jr = scope->join_all(policy, fail_pol);
             // Issue #3051: per-handle auto short-wait on the language
             // surface only (C++ join_all does not inject). Must run
             // before drop so handles_ are still live.
@@ -3941,6 +3955,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 if (hp.reserved_memory_bytes != 0)
                     ++reservation_held_n;
             }
+            // Issue #3208: capture before drop (empty join drops the slot).
+            const auto join_fail_effective = scope->last_on_join_fail_effective();
+            const auto join_fail_taken = scope->last_join_fail_action_taken();
             // ~AgentScope semantics: after join_all, scope holds no live
             // handles (drop the per-Evaluator storage slot so the next
             // scope-spawn creates a fresh scope with empty handles_).
@@ -3966,6 +3983,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             const auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(st);
+            const auto fail_eff_idx = ev.string_heap_.size();
+            ev.string_heap_.push_back(aura::orch::on_join_fail_action_name(join_fail_effective));
             aura::orch::g_orch_module_stats.scope_join_all_total.fetch_add(
                 1, std::memory_order_relaxed);
             std::vector<std::pair<std::string, EvalValue>> kv = {
@@ -3991,6 +4010,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-3051", make_int(3051)},
                 {"issue-3051", make_int(3051)},
                 {"join-auto-wait-reclaimed-wired", make_int(1)},
+                // Issue #3208: production default on_join_fail Cancel when
+                // :on-join-fail omitted. Soft / explicit report-only stay
+                // report-only. last_* captured before drop.
+                {"on-join-fail-effective", make_string(fail_eff_idx)},
+                {"join-fail-action-taken", make_int(static_cast<std::int64_t>(join_fail_taken))},
+                {"schema-3208", make_int(aura::orch::kJoinFailProductionDefaultIssue)},
+                {"issue-3208", make_int(aura::orch::kJoinFailProductionDefaultIssue)},
+                {"join-fail-production-default-wired", make_int(1)},
             };
             return build_orch_hash(kv);
         });
@@ -5513,6 +5540,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3052", 3052);
             insert_kv("issue-3052", 3052);
             insert_kv("join-fail-policy-wired", 1);
+            // Issue #3208: production default Cancel (unset policy). Additive.
+            insert_kv("agent-join-fail-action-cancel-total",
+                      static_cast<std::int64_t>(
+                          os.agent_join_fail_action_cancel_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3208", aura::orch::kJoinFailProductionDefaultIssue);
+            insert_kv("issue-3208", aura::orch::kJoinFailProductionDefaultIssue);
+            insert_kv("join-fail-production-default-wired", 1);
             // Issue #2887: BP-storm producer degrade under AgentScope::watch_all
             // (on_backpressure). Additive — #2228/#2535 admit reject keys
             // and #2229 restart keys preserved (AC5).

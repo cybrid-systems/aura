@@ -819,6 +819,11 @@ struct OrchModuleStats {
     // Appended at struct end (#2906).
     std::atomic<std::uint64_t> workflow_residual_cancel_total{0};
     std::atomic<std::uint64_t> workflow_residual_join_drain_total{0};
+    // Issue #3208: production default on_join_fail Cancel path (unset
+    // policy only). Soft / explicit ReportOnly stay 0. Additive at
+    // struct end (#2906); agent_join_fail_total still counts the
+    // Timeout/Cancelled observation.
+    std::atomic<std::uint64_t> agent_join_fail_action_cancel_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -3428,6 +3433,19 @@ enum class AgentFailureAction : std::uint8_t {
     Throttle = 3,
 };
 
+[[nodiscard]] inline const char* on_join_fail_action_name(AgentFailureAction a) noexcept {
+    switch (a) {
+        case AgentFailureAction::Cancel:
+            return "cancel";
+        case AgentFailureAction::RestartN:
+            return "restart-n";
+        case AgentFailureAction::Throttle:
+            return "throttle";
+        default:
+            return "report-only";
+    }
+}
+
 struct AgentFailurePolicy {
     // Response to a single stall observed in watch_all. Default
     // Cancel matches the existing StallPolicy::Cancel behaviour
@@ -3435,10 +3453,13 @@ struct AgentFailurePolicy {
     // same out-of-the-box semantics.
     AgentFailureAction on_stall = AgentFailureAction::Cancel;
     // Response to a non-Ok join (Timeout / Cancelled) on the
-    // scope level. Default ReportOnly (AC3 / #2229). Issue #3052
-    // wires this from AgentScope::join_all: RestartN re-spawns
-    // under stored specs_ (same cap as on_stall); Reclaimed +
-    // still-running / deferred is never restart fuel (#2661).
+    // scope level. Default ReportOnly (AC3 / #2229 / #3052).
+    // Issue #3208: the *struct* default stays ReportOnly. When
+    // join_all is called without an explicit AgentFailurePolicy,
+    // production injects Cancel (env AURA_JOIN_FAIL_ACTION can
+    // force report/cancel). Explicit ReportOnly is unchanged.
+    // RestartN re-spawns under stored specs_; Reclaimed +
+    // still-running / deferred is never restart/cancel fuel (#2661).
     AgentFailureAction on_join_fail = AgentFailureAction::ReportOnly;
     // Issue #2887: response when scope-local (or process) mailbox BP
     // recent ≥ bp_threshold during watch_all. Default ReportOnly —
@@ -3590,6 +3611,10 @@ inline constexpr int kWorkflowRunIssue = 2974;
 // Issue #3206: residual preference can cancel / join-drain under production
 // when explicitly set. Soft / Report stay observe-only.
 inline constexpr int kWorkflowResidualActionIssue = 3206;
+// Issue #3208: production default on_join_fail is Cancel when the
+// caller left AgentFailurePolicy unset. Soft / explicit ReportOnly
+// stay ReportOnly (zero extra action).
+inline constexpr int kJoinFailProductionDefaultIssue = 3208;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.

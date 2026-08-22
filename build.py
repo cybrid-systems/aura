@@ -3258,6 +3258,19 @@ def cmd_lint():
             "Issue #3052 join_all on_join_fail linter failed — run python3 scripts/coverage/checks/check_join_fail_policy_3052.py"
         )
         return r
+    # Issue #3208: production default on_join_fail Cancel when unset.
+    # Soft / explicit ReportOnly unchanged. Extends
+    # test_agent_failure_policy.cpp (#81967); no docs/design/ (#1655).
+    jfp3208_script = COVERAGE_CHECKS / "check_join_fail_production_default_3208.py"
+    if not jfp3208_script.exists():
+        fail(f"missing {jfp3208_script}")
+        return 1
+    r = run([sys.executable, str(jfp3208_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3208 production join_fail default linter failed — run python3 scripts/coverage/checks/check_join_fail_production_default_3208.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.

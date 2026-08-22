@@ -1,0 +1,35 @@
+{
+  "issue": 3208,
+  "title": "Issue #3208: [P1][orch/scope] Production default on_join_fail remains ReportOnly after #3052",
+  "ok": "OK: Issue #3208 production default on_join_fail Cancel when unset — Soft/explicit ReportOnly unchanged; Reclaimed skip #2661; orch:scope-join-all hash on-join-fail-effective + join-fail-action-taken; additive agent_join_fail_action_cancel_total.",
+  "source_script": "scripts/coverage/checks/check_join_fail_production_default_3208.py",
+  "checks": [
+    {
+      "ac": "AC2-3208",
+      "path": "src/orch/agent_scope.h",
+      "contains": [
+        "resolve_on_join_fail",
+        "AURA_JOIN_FAIL_ACTION",
+        "request_cancel()"
+      ]
+    },
+    {
+      "ac": "AC4-3208",
+      "path": "src/compiler/evaluator_primitives_agent.cpp",
+      "contains": [
+        "on-join-fail-effective",
+        "join-fail-action-taken",
+        "schema-3208"
+      ]
+    },
+    {
+      "ac": "AC5-3208-test",
+      "path": "tests/orch/test_agent_failure_policy.cpp",
+      "contains": [
+        "ac3208_1_soft_explicit_report_only",
+        "ac3208_2_prod_unset_cancel",
+        "ac3208_3_reclaimed_skip"
+      ]
+    }
+  ]
+}

@@ -225,6 +225,29 @@ enum class AgentScopeConcurrentPolicy : std::uint8_t {
     return AgentScopeConcurrentPolicy::SoftMetric;
 }
 
+// Issue #3208: resolve effective on_join_fail.
+//   explicit policy  → honor on_join_fail (including ReportOnly)
+//   AURA_JOIN_FAIL_ACTION=report|0 → ReportOnly
+//   AURA_JOIN_FAIL_ACTION=cancel|1 → Cancel
+//   production_defaults_active + unset → Cancel
+//   Soft / Off + unset → ReportOnly (zero extra action)
+[[nodiscard]] inline AgentFailureAction
+resolve_on_join_fail(const AgentFailurePolicy* explicit_policy) noexcept {
+    if (explicit_policy)
+        return explicit_policy->on_join_fail;
+    const char* e = std::getenv("AURA_JOIN_FAIL_ACTION");
+    if (e != nullptr && e[0] != '\0') {
+        const std::string_view sv(e);
+        if (sv == "report" || sv == "report-only" || sv == "0" || sv == "off")
+            return AgentFailureAction::ReportOnly;
+        if (sv == "cancel" || sv == "1" || sv == "on")
+            return AgentFailureAction::Cancel;
+    }
+    if (aura::compiler::typed_audit::production_defaults_active())
+        return AgentFailureAction::Cancel;
+    return AgentFailureAction::ReportOnly;
+}
+
 // Issue #2399: true when concurrent enter hard-aborts (env=1 only).
 // Production hard-deny (#2946) is structured fail, not abort — use
 // resolve_agent_scope_concurrent_policy() for the full matrix.
@@ -452,7 +475,8 @@ public:
     // (Soft / JoinPolicy default stays #3012). Aura orch:scope-join-all
     // applies kProductionWaitReclaimedMsDefault per must_wait handle.
     // Issue #3052: optional AgentFailurePolicy.on_join_fail after the
-    // batch join (default ReportOnly — zero behaviour change).
+    // batch join. Issue #3208: omitting the policy (nullopt) injects
+    // Cancel under production; Soft / explicit ReportOnly stay ReportOnly.
     [[nodiscard]] serve::JoinResult join_all(std::optional<std::uint64_t> timeout_ms = {}) {
         return join_all(JoinPolicy{.primary_ms = timeout_ms, .drain_ms = kDefaultJoinDrainMs});
     }
@@ -460,8 +484,10 @@ public:
     // Issue #2153: full JoinPolicy (primary + drain_ms).
     // Issue #3052: fail.on_join_fail after per-handle local status
     // is stamped (RestartN / Throttle / Cancel / ReportOnly).
-    [[nodiscard]] serve::JoinResult join_all(JoinPolicy policy,
-                                             const AgentFailurePolicy& fail = {}) {
+    // Issue #3208: nullopt = unset (production default Cancel);
+    // passing AgentFailurePolicy honors on_join_fail even if ReportOnly.
+    [[nodiscard]] serve::JoinResult
+    join_all(JoinPolicy policy, std::optional<AgentFailurePolicy> fail = std::nullopt) {
         ScopeEnterGuard g(this, "join_all(policy)");
         if (handles_.empty()) {
             serve::JoinResult r;
@@ -477,8 +503,17 @@ public:
             return r;
         }
         auto jr = join_agents(std::span<AgentHandle>(handles_), policy);
-        apply_on_join_fail_unlocked_(fail);
+        apply_on_join_fail_unlocked_(fail ? &*fail : nullptr);
         return jr;
+    }
+
+    // Issue #3208: last join_all effective on_join_fail + count of
+    // handles that took a non-ReportOnly action (Cancel/RestartN/Throttle).
+    [[nodiscard]] AgentFailureAction last_on_join_fail_effective() const noexcept {
+        return last_on_join_fail_effective_;
+    }
+    [[nodiscard]] std::uint32_t last_join_fail_action_taken() const noexcept {
+        return last_join_fail_action_taken_;
     }
 
     // Best-effort cancel request on all live fibers. Bounded cost; does
@@ -1099,28 +1134,42 @@ private:
 
     // Issue #3052: honor AgentFailurePolicy::on_join_fail after
     // join_agents stamped last_join_status. Caller holds ScopeEnterGuard.
-    // Reclaimed + deferred / still-running is never restart fuel (#2661).
-    void apply_on_join_fail_unlocked_(const AgentFailurePolicy& policy) noexcept {
+    // Reclaimed + deferred / still-running is never restart/cancel fuel (#2661).
+    // Issue #3208: nullptr = unset → resolve_on_join_fail (production Cancel).
+    void apply_on_join_fail_unlocked_(const AgentFailurePolicy* explicit_policy) noexcept {
+        const auto action = resolve_on_join_fail(explicit_policy);
+        last_on_join_fail_effective_ = action;
+        last_join_fail_action_taken_ = 0;
+        AgentFailurePolicy policy{};
+        if (explicit_policy)
+            policy = *explicit_policy;
         const auto n = handles_.size();
         for (std::size_t i = 0; i < n; ++i) {
             auto& h = handles_[i];
             const bool reclaimed_live = h.reclaimed_deferred_cleanup ||
                                         (h.fiber && h.fiber->is_reclaimed() && !h.fiber->is_done());
             if (reclaimed_live)
-                continue; // AC2
+                continue; // AC2 / #2661
             const auto st = h.last_join_status;
             if (st != serve::JoinStatus::Timeout && st != serve::JoinStatus::Cancelled)
                 continue;
             g_orch_module_stats.agent_join_fail_total.fetch_add(1, std::memory_order_relaxed);
-            if (policy.on_join_fail == AgentFailureAction::ReportOnly)
+            if (action == AgentFailureAction::ReportOnly)
                 continue;
-            if (policy.on_join_fail == AgentFailureAction::Cancel)
-                continue; // already cancelled by drain
-            if (policy.on_join_fail == AgentFailureAction::Throttle) {
-                stop_keepalive_helper(h);
+            if (action == AgentFailureAction::Cancel) {
+                if (h.fiber && !h.fiber->is_done())
+                    h.fiber->request_cancel();
+                g_orch_module_stats.agent_join_fail_action_cancel_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                ++last_join_fail_action_taken_;
                 continue;
             }
-            if (policy.on_join_fail != AgentFailureAction::RestartN)
+            if (action == AgentFailureAction::Throttle) {
+                stop_keepalive_helper(h);
+                ++last_join_fail_action_taken_;
+                continue;
+            }
+            if (action != AgentFailureAction::RestartN)
                 continue;
             if (i >= restart_counts_.size() || i >= specs_.size())
                 continue;
@@ -1142,6 +1191,7 @@ private:
                 consecutive_stall_counts_[i] = 0;
             ++restart_counts_[i];
             g_orch_module_stats.agent_restart_total.fetch_add(1, std::memory_order_relaxed);
+            ++last_join_fail_action_taken_;
         }
     }
 
@@ -1175,6 +1225,9 @@ private:
     ScopeConcurrency mode_ = ScopeConcurrency::SingleOwner;
     // Issue #3015: session-local BP admit key (as:<seq>). Not a registry.
     std::string bp_scope_id_{};
+    // Issue #3208: last join_all resolve (unset vs explicit).
+    AgentFailureAction last_on_join_fail_effective_ = AgentFailureAction::ReportOnly;
+    std::uint32_t last_join_fail_action_taken_ = 0;
     // Taken only when mode_ == MutexGuarded. recursive so ~AgentScope
     // → cancel_all → join_all same-thread re-entry does not deadlock.
     mutable std::recursive_mutex api_mu_;
