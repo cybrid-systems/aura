@@ -58,6 +58,102 @@ static CompilerMetrics* metrics_of(CompilerService& cs) {
     return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
 }
 
+void ac3260_1_clone_does_not_bump_hygiene() {
+    std::println("\n--- #3260 AC1: clone is repin, not hygiene-prevented ---");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+    const auto h0 = aura_hygiene_violation_prevented_on_boundary_total();
+    const auto r0 = aura_macro_provenance_repin_on_steal_total();
+    const int r = aura_macro_provenance_repin_on_steal(
+        nullptr, static_cast<std::uint64_t>(SyntaxMarker::MacroIntroduced), /*was_violation=*/0);
+    CHECK(r >= 0, "3260 AC1: hook returns");
+    if (r >= 1) {
+        CHECK(aura_macro_provenance_repin_on_steal_total() > r0, "3260 AC1: repin advanced");
+        CHECK(aura_hygiene_violation_prevented_on_boundary_total() == h0,
+              "3260 AC1: clone does not bump hygiene");
+    } else {
+        CHECK(true, "3260 AC1: light stub leftover");
+    }
+}
+
+void ac3260_2_violation_and_accessor_mirror() {
+    std::println("\n--- #3260 AC2: was_violation + accessors mirror file-level ---");
+    const auto h0 = aura_hygiene_violation_prevented_on_boundary_total();
+    const auto r0 = aura_macro_provenance_repin_on_steal_total();
+    const int vr = aura_macro_provenance_repin_on_steal(
+        nullptr, static_cast<std::uint64_t>(SyntaxMarker::MacroIntroduced), /*was_violation=*/1);
+    if (vr >= 1) {
+        CHECK(aura_hygiene_violation_prevented_on_boundary_total() > h0,
+              "3260 AC2: was_violation bumps hygiene");
+        CHECK(aura_macro_provenance_repin_on_steal_total() > r0, "3260 AC2: repin still bumps");
+    } else {
+        CHECK(true, "3260 AC2: light stub leftover");
+    }
+    const auto h1 = aura_hygiene_violation_prevented_on_boundary_total();
+    const auto r1 = aura_macro_provenance_repin_on_steal_total();
+    aura_bump_hygiene_violation_prevented_on_boundary_total(1);
+    aura_bump_macro_provenance_repin_on_steal_total(1);
+    CHECK(aura_hygiene_violation_prevented_on_boundary_total() == h1 + 1,
+          "3260 AC2: hygiene accessor");
+    CHECK(aura_macro_provenance_repin_on_steal_total() == r1 + 1, "3260 AC2: repin accessor");
+}
+
+void ac3260_3_soft_clone_zero_extra_hygiene() {
+    std::println("\n--- #3260 AC3: clone path passes was_violation=0 ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    auto pos = me.find("Issue #1908 / #2810 / #3260");
+    CHECK(pos != std::string::npos, "3260 AC3: clone cites #3260");
+    auto win = me.substr(pos, 1400);
+    CHECK(win.find("was_violation=0") != std::string::npos ||
+              win.find("/*was_violation=*/0") != std::string::npos,
+          "3260 AC3: clone passes 0");
+    CHECK(win.find("aura_macro_provenance_repin_on_steal") != std::string::npos,
+          "3260 AC3: still one hook");
+}
+
+void ac3260_4_stub_not_hard_zero() {
+    std::println("\n--- #3260 AC4: stub process-wide atomics (not hard-zero) ---");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    CHECK(stub.find("g_1908_repin_stub_total") != std::string::npos, "3260 AC4: stub repin atomic");
+    CHECK(stub.find("g_1908_hygiene_stub_total") != std::string::npos,
+          "3260 AC4: stub hygiene atomic");
+    CHECK(stub.find("return 0; // file-level fallback lives in full bridge only") ==
+              std::string::npos,
+          "3260 AC4: stub total is not hard-zero");
+    const auto rt = read_file("src/compiler/runtime_bridge_stub.cpp");
+    CHECK(rt.find("aura_bump_macro_provenance_repin_on_steal_total") != std::string::npos,
+          "3260 AC4: runtime stub bump");
+}
+
+void ac3260_5_source_and_linter() {
+    std::println("\n--- #3260 AC5: source-cite + linter + no invent ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_macro_provenance_counter_unify_3260.py");
+    CHECK(hdr.find("aura_bump_hygiene_violation_prevented_on_boundary_total") != std::string::npos,
+          "3260 AC5: hygiene bump accessor");
+    CHECK(hdr.find("was_violation") != std::string::npos, "3260 AC5: hook param");
+    CHECK(bridge.find("if (was_violation)") != std::string::npos, "3260 AC5: gated hygiene");
+    CHECK(fiber.find("aura_bump_hygiene_violation_prevented_on_boundary_total(1)") !=
+              std::string::npos,
+          "3260 AC5: flush/steal/panic dual-write");
+    CHECK(fiber.find("aura_bump_macro_provenance_repin_on_steal_total(1)") != std::string::npos,
+          "3260 AC5: steal/panic dual-write repin");
+    CHECK(!lint.empty() && lint.find("Issue #3260") != std::string::npos, "3260 AC5: linter");
+    CHECK(build.find("check_macro_provenance_counter_unify_3260") != std::string::npos,
+          "3260 AC5: build.py");
+    {
+        std::ifstream f("tests/compiler/test_issue_3260.cpp");
+        CHECK(!f.good(), "3260 AC5: no test_issue_3260.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3260-macro-provenance-unify.md");
+        CHECK(!f.good(), "3260 AC5: no docs/design");
+    }
+}
+
 } // namespace
 
 int run_test_clone_provenance_per_evaluator() {
@@ -221,7 +317,8 @@ int run_test_clone_provenance_per_evaluator() {
         // Bridge must not crash on nullptr; returns 1 (file only) or 2 (TLS).
         const auto file0 = aura_macro_provenance_repin_on_steal_total();
         const int r = aura_macro_provenance_repin_on_steal(
-            nullptr, static_cast<std::uint64_t>(SyntaxMarker::MacroIntroduced));
+            nullptr, static_cast<std::uint64_t>(SyntaxMarker::MacroIntroduced),
+            /*was_violation=*/0);
         CHECK(r >= 1 || r == 0, "AC4: bridge returns non-negative");
         // Full bridge always bumps file-level; stub returns 0 without bump.
         if (r >= 1) {
@@ -231,6 +328,13 @@ int run_test_clone_provenance_per_evaluator() {
             CHECK(true, "AC4: light stub path (soft)");
         }
     }
+
+    std::println("\n=== Issue #3260: reconcile #1908 file-level vs per-eval counters ===");
+    ac3260_1_clone_does_not_bump_hygiene();
+    ac3260_2_violation_and_accessor_mirror();
+    ac3260_3_soft_clone_zero_extra_hygiene();
+    ac3260_4_stub_not_hard_zero();
+    ac3260_5_source_and_linter();
 
     std::println("\n=== #2810 clone provenance per-evaluator: {} passed, {} failed ===", g_passed,
                  g_failed);

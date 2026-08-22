@@ -29,7 +29,8 @@ extern "C" __attribute__((weak)) int aura_evaluator_try_save_macro_expand_checkp
 }
 extern "C" __attribute__((weak)) void aura_evaluator_commit_macro_expand_checkpoint(void) {}
 extern "C" std::uint64_t aura_fiber_current_id();
-extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker);
+extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker,
+                                                    int was_violation);
 // Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
 extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
 
@@ -2180,9 +2181,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // marker on each child node, so this is just the outer
         // wrapper node.
 
-        // Issue #1908 / #2810: force repin on MacroIntroduced clone.
+        // Issue #1908 / #2810 / #3260: force repin on MacroIntroduced clone.
         // Bridge contract (aura_jit_bridge.h / aura_macro_provenance_repin_on_steal):
         //   - always bumps file-level g_1908_repin_fallback_total
+        //   - was_violation=0 (clone is not a hygiene reject — #3260 Bug 1)
         //   - when ev_ptr non-null (or TLS resolves an Evaluator), dual-writes
         //     CompilerMetrics::macro_provenance_repin_on_steal_total
         // Pre-#2810 always passed nullptr → production compiler_metrics stayed 0
@@ -2192,7 +2194,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
             void* ev_ptr = aura_evaluator_resolve_current_for_macro();
             const int r = aura_macro_provenance_repin_on_steal(
-                ev_ptr, static_cast<std::uint64_t>(cloned_marker));
+                ev_ptr, static_cast<std::uint64_t>(cloned_marker), /*was_violation=*/0);
             // r == 2 → per-eval dual-write succeeded (bridge return contract #2810).
             if (r >= 2)
                 g_clone_macro_provenance_per_evaluator_total.fetch_add(1,

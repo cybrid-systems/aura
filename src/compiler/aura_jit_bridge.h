@@ -401,10 +401,13 @@ extern "C" void aura_test_call_stamp_rest_param_hygiene(void* target_flat, void*
 extern "C" std::uint64_t aura_macro_expand_targeted_restamp_total_v_read(void) noexcept;
 extern "C" std::uint64_t aura_macro_expand_full_restamp_total_v_read(void) noexcept;
 extern "C" void aura_test_reset_macro_expand_qq_restamp_totals_for_test(void) noexcept;
-// Issue #2810: clone_macro_body provenance repin dual-write to per-CompilerMetrics.
+// Issue #2810 / #3260: clone_macro_body provenance repin dual-write.
 //
-// Bridge hook contract for aura_macro_provenance_repin_on_steal(ev_ptr, marker):
-//   - Always bumps file-level fallback atomics (process-wide surface).
+// Bridge hook contract for
+// aura_macro_provenance_repin_on_steal(ev_ptr, marker, was_violation):
+//   - Always bumps file-level repin fallback (process-wide surface).
+//   - Bumps file-level hygiene_violation_prevented only when
+//     was_violation != 0 (Issue #3260 Bug 1 — clone is not a violation).
 //   - When ev_ptr != nullptr (Evaluator*), dual-writes that Evaluator's
 //     CompilerMetrics::macro_provenance_repin_on_steal_total.
 //   - When ev_ptr == nullptr, resolves yield-hook / query TLS / scheduler
@@ -413,11 +416,19 @@ extern "C" void aura_test_reset_macro_expand_qq_restamp_totals_for_test(void) no
 //     0 on stub/no-op (light link units).
 // clone_macro_body must pass the resolved Evaluator (via
 // aura_evaluator_resolve_current_for_macro) so production dashboards see
-// non-zero per-Evaluator clone rates (pre-#2810 always passed nullptr).
+// non-zero per-Evaluator clone rates (pre-#2810 always passed nullptr)
+// and was_violation=0 (clone is a repin candidate, not a hygiene reject).
+// Issue #3260: per-eval steal/flush/panic sites call the bump accessors
+// so file-level C-API totals mirror CompilerMetrics. Stub links keep
+// process-wide atomics (not a hard-zero that looks like "no clones").
 extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
 extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept;
-extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker);
+extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker,
+                                                    int was_violation);
 extern "C" std::uint64_t aura_macro_provenance_repin_on_steal_total(void);
+extern "C" std::uint64_t aura_hygiene_violation_prevented_on_boundary_total(void);
+extern "C" void aura_bump_macro_provenance_repin_on_steal_total(std::uint64_t n);
+extern "C" void aura_bump_hygiene_violation_prevented_on_boundary_total(std::uint64_t n);
 extern "C" std::uint64_t aura_clone_macro_provenance_per_evaluator_total_v_read(void) noexcept;
 extern "C" void aura_test_reset_clone_macro_provenance_per_evaluator_total_for_test(void) noexcept;
 

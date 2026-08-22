@@ -8543,17 +8543,18 @@ public:
             m->macro_expand_checkpoint_saves_total.fetch_add(1, std::memory_order_relaxed);
         }
     }
-    // Issue #1908: MutationBoundaryGuard + macro clone provenance hardening.
-    // Bump sites (per #1908 plan):
+    // Issue #1908 / #3260: MutationBoundaryGuard + macro clone provenance.
+    // Bump sites (per #1908 plan; #3260 dual-writes file-level C-API):
     //   - bump_macro_provenance_repin_on_steal_total: clone_macro_body
     //     MacroIntroduced path (via bridge hook
-    //     aura_macro_provenance_repin_on_steal) +
+    //     aura_macro_provenance_repin_on_steal, was_violation=0) +
     //     complete_post_resume_steal_refresh post probe +
     //     transfer_and_revalidate_panic_checkpoint post panic restamp.
     //   - bump_hygiene_violation_prevented_on_boundary_total: outermost
     //     flush_mutation_boundary exit post dirty/epoch bump +
     //     complete_post_resume_steal_refresh post probe +
     //     transfer_and_revalidate_panic_checkpoint post panic restamp.
+    //     Clone is NOT a hygiene reject (#3260 Bug 1).
     // Both counters track boundary-interaction signals: the boundary
     // did its job (repin / prevent violation) under concurrent fiber
     // steal + GC compact + macro clone (the #1908 AC contract).

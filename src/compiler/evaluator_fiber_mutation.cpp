@@ -68,6 +68,9 @@ extern int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
 // Issue #3048: holder session-mid lookup for cross-fiber force-degrade.
 extern std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept;
 extern void aura_fiber_clear_session_mid(std::uint64_t fiber_id) noexcept;
+// Issue #3260: file-level C-API mirrors of #1908 per-eval counters.
+extern void aura_bump_macro_provenance_repin_on_steal_total(std::uint64_t n);
+extern void aura_bump_hygiene_violation_prevented_on_boundary_total(std::uint64_t n);
 }
 
 namespace aura::compiler {
@@ -1701,10 +1704,12 @@ void Evaluator::flush_mutation_boundary() {
                 m->dirty_propagation_to_ir_count.fetch_add(1, std::memory_order_relaxed);
                 m->epoch_bump_for_macro.fetch_add(1, std::memory_order_relaxed);
 
-                // Issue #1908: outermost Guard exit enforced hygiene boundary
-                // (dirty/epoch bump prevents MacroIntroduced provenance drift
-                // from manifesting as a violation under concurrent steal).
+                // Issue #1908 / #3260: outermost Guard exit enforced hygiene
+                // boundary (dirty/epoch bump prevents MacroIntroduced
+                // provenance drift from manifesting as a violation under
+                // concurrent steal). Dual-write file-level C-API.
                 bump_hygiene_violation_prevented_on_boundary_total();
+                aura_bump_hygiene_violation_prevented_on_boundary_total(1);
             }
         }
         // Issue #1272: structured observability sample on flush.
@@ -2241,13 +2246,14 @@ bool Evaluator::transfer_and_revalidate_panic_checkpoint(void* fiber_void) noexc
     }
     bump_macro_hygiene_panic_restamp_from_workspace();
 
-    // Issue #1908: PanicCheckpoint transfer bound macro clone provenance
-    // (panic restamp above already walked MacroIntroduced nodes; bump the
-    //  boundary-interaction counters so the transfer is visible in
-    //  (query:macro-provenance-stats) + (#1908 AC "macro clone counters
-    //  bound to PanicCheckpoint transfer" satisfied).
+    // Issue #1908 / #3260: PanicCheckpoint transfer bound macro clone
+    // provenance (panic restamp above already walked MacroIntroduced
+    // nodes; bump the boundary-interaction counters so the transfer is
+    // visible in (query:macro-provenance-stats) + file-level C-API).
     bump_macro_provenance_repin_on_steal_total();
+    aura_bump_macro_provenance_repin_on_steal_total(1);
     bump_hygiene_violation_prevented_on_boundary_total();
+    aura_bump_hygiene_violation_prevented_on_boundary_total(1);
     // Ensure pending panic still defers GC reclaim until commit/restore.
     arm_gc_defer_for_pending_panic();
     return true;
@@ -2352,9 +2358,12 @@ void Evaluator::refresh_after_fiber_migration(void* fiber_void) noexcept {
     // 4a) Linear probe/repin (before pin restamp for ownership probes).
     probe_and_repin_linear_on_steal();
 
-    // Issue #1908: post-steal repin MacroIntroduced boundary counters.
+    // Issue #1908 / #3260: post-steal repin MacroIntroduced boundary
+    // counters. Dual-write file-level C-API so both surfaces match.
     bump_macro_provenance_repin_on_steal_total();
+    aura_bump_macro_provenance_repin_on_steal_total(1);
     bump_hygiene_violation_prevented_on_boundary_total();
+    aura_bump_hygiene_violation_prevented_on_boundary_total(1);
     (void)refreshed;
 
     // 3) Issue #3019: unified restamp after steal (node gen → stable → pin).

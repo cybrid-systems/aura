@@ -72,6 +72,7 @@ def main() -> int:
     must("macro_provenance_repin_on_steal_total", "AC3", test)
     must("g_clone_macro_provenance_per_evaluator_total", "AC3", test)
     must("clone_macro_body", "AC3", test)
+    must("ac3260_1_clone_does_not_bump_hygiene", "AC3 3260 residual", test)
     if not (ROOT / "tests" / "compiler" / "test_clone_provenance_per_evaluator.cpp").is_file():
         fails.append("AC3: missing test_clone_provenance_per_evaluator.cpp")
     if (ROOT / "tests" / "compiler" / "test_issue_2810.cpp").is_file():

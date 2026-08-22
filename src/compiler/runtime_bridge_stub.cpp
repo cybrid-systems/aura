@@ -22,6 +22,7 @@
 #include "aura_jit_bridge.h"
 #include "aura_jit.h"
 
+#include <atomic>
 #include <cstdint>
 #include <vector>
 
@@ -30,9 +31,35 @@ extern "C" __attribute__((weak)) void aura_cleanup_aot_state(void* /*eval*/) {}
 extern "C" __attribute__((weak)) void
 aura_set_long_mutation_scheduler_hook(aura_long_mutation_scheduler_hook_fn /*fn*/) {}
 
+// Issue #3260: process-wide stub atomics so fiber_mutation dual-write
+// resolves when the full JIT bridge is not DT_NEEDED. Strong defs in
+// aura_jit_bridge.cpp interpose these.
+static std::atomic<std::uint64_t> g_1908_repin_runtime_stub_total{0};
+static std::atomic<std::uint64_t> g_1908_hygiene_runtime_stub_total{0};
+extern "C" __attribute__((weak)) void
+aura_bump_macro_provenance_repin_on_steal_total(std::uint64_t n) {
+    if (n != 0)
+        g_1908_repin_runtime_stub_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_bump_hygiene_violation_prevented_on_boundary_total(std::uint64_t n) {
+    if (n != 0)
+        g_1908_hygiene_runtime_stub_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t aura_macro_provenance_repin_on_steal_total(void) {
+    return g_1908_repin_runtime_stub_total.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_hygiene_violation_prevented_on_boundary_total(void) {
+    return g_1908_hygiene_runtime_stub_total.load(std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) int
-aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_marker*/) {
-    return 0;
+aura_macro_provenance_repin_on_steal(void* /*ev_ptr*/, std::uint64_t /*cloned_marker*/,
+                                     int was_violation) {
+    aura_bump_macro_provenance_repin_on_steal_total(1);
+    if (was_violation)
+        aura_bump_hygiene_violation_prevented_on_boundary_total(1);
+    return 1;
 }
 
 // Issue #1368: aura_set_aot_metrics lives in runtime_ssot.cpp

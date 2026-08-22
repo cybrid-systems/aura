@@ -3444,6 +3444,19 @@ def cmd_lint():
             "Issue #3259 restamp hot-cone budget linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_budget_3259.py"
         )
         return r
+    # Issue #3260: reconcile #1908 file-level vs per-eval provenance
+    # counters. Extends test_clone_provenance_per_evaluator.cpp (#81967);
+    # no docs/design/ (#1655).
+    mpc_script = COVERAGE_CHECKS / "check_macro_provenance_counter_unify_3260.py"
+    if not mpc_script.exists():
+        fail(f"missing {mpc_script}")
+        return 1
+    r = run([sys.executable, str(mpc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3260 macro-provenance counter unify linter failed — run python3 scripts/coverage/checks/check_macro_provenance_counter_unify_3260.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10762,6 +10775,21 @@ def cmd_restamp_hot_cone_budget_3259_coverage():
         fail("restamp hot-cone budget (#3259) coverage contract rows failed")
         return 1
     ok("restamp hot-cone budget (#3259) coverage clean")
+    return 0
+
+
+def cmd_macro_provenance_counter_unify_3260_coverage():
+    """Issue #3260: reconcile #1908 file-level vs per-eval provenance counters."""
+    print(f"{B}=== macro-provenance counter unify (#3260) ==={N}")
+    script = COVERAGE_CHECKS / "check_macro_provenance_counter_unify_3260.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("macro-provenance counter unify (#3260) coverage contract rows failed")
+        return 1
+    ok("macro-provenance counter unify (#3260) coverage clean")
     return 0
 
 
@@ -19099,6 +19127,8 @@ def main():
         "abort-force-lookup-reject-3258-coverage": cmd_abort_force_lookup_reject_3258_coverage,
         "restamp-hot-cone-budget-3259": cmd_restamp_hot_cone_budget_3259_coverage,
         "restamp-hot-cone-budget-3259-coverage": cmd_restamp_hot_cone_budget_3259_coverage,
+        "macro-provenance-counter-unify-3260": cmd_macro_provenance_counter_unify_3260_coverage,
+        "macro-provenance-counter-unify-3260-coverage": cmd_macro_provenance_counter_unify_3260_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

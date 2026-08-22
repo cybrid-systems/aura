@@ -1266,19 +1266,41 @@ extern "C" __attribute__((weak)) void aura_1637_note_steal_restore_fallback(void
 extern "C" __attribute__((weak)) void aura_1637_note_compact_restore_fallback(void) {}
 extern "C" __attribute__((weak)) void aura_1637_note_hot_swap_restore_fallback(void) {}
 
-// Issue #2810: light-link dual-write path. Strong aura_jit_bridge.cpp overrides
-// this when the full bridge is linked. When only the light stub is linked,
-// still dual-write per-CompilerMetrics via the fiber-mutation trampoline
-// (strong when aura_test_objects is linked; weak no-op otherwise).
+// Issue #2810 / #3260: light-link dual-write path. Strong aura_jit_bridge.cpp
+// overrides this when the full bridge is linked. When only the light stub
+// is linked, still dual-write per-CompilerMetrics via the fiber-mutation
+// trampoline (strong when aura_test_objects is linked; weak no-op otherwise).
+// Issue #3260 Bug 3: process-wide atomics so stub-linked totals are not a
+// hard-zero indistinguishable from "no clones" (full bridge overrides).
+static std::atomic<std::uint64_t> g_1908_repin_stub_total{0};
+static std::atomic<std::uint64_t> g_1908_hygiene_stub_total{0};
 extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept;
+extern "C" __attribute__((weak)) void
+aura_bump_macro_provenance_repin_on_steal_total(std::uint64_t n) {
+    if (n != 0)
+        g_1908_repin_stub_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) void
+aura_bump_hygiene_violation_prevented_on_boundary_total(std::uint64_t n) {
+    if (n != 0)
+        g_1908_hygiene_stub_total.fetch_add(n, std::memory_order_relaxed);
+}
 extern "C" __attribute__((weak)) int
-aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t /*cloned_marker*/) {
-    // Light stub has no file-level fallback atomics; per-eval dual-write only.
-    // Return 2 when per-eval bumped (matches full-bridge contract), else 0.
-    return aura_evaluator_bump_macro_provenance_repin_on_steal(ev_ptr) ? 2 : 0;
+aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t /*cloned_marker*/,
+                                     int was_violation) {
+    aura_bump_macro_provenance_repin_on_steal_total(1);
+    if (was_violation)
+        aura_bump_hygiene_violation_prevented_on_boundary_total(1);
+    // Return 2 when per-eval bumped (matches full-bridge contract), else 1
+    // (file-level stub atomics always bump — Issue #3260 Bug 3).
+    return aura_evaluator_bump_macro_provenance_repin_on_steal(ev_ptr) ? 2 : 1;
 }
 extern "C" __attribute__((weak)) std::uint64_t aura_macro_provenance_repin_on_steal_total(void) {
-    return 0; // file-level fallback lives in full bridge only
+    return g_1908_repin_stub_total.load(std::memory_order_relaxed);
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_hygiene_violation_prevented_on_boundary_total(void) {
+    return g_1908_hygiene_stub_total.load(std::memory_order_relaxed);
 }
 // Issue #2810: weak no-ops when fiber-mutation TU not linked.
 // Strong definitions in evaluator_fiber_mutation.cpp override these.
