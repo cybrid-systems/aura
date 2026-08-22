@@ -16,6 +16,9 @@ Contract:
   AC5  extend test_jit_macro_deopt_hygiene; linter after #3262; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3264: dirty_propagation cascade graph atomic + dropped-roots counter.
+
 """
 
 from __future__ import annotations

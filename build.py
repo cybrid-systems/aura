@@ -3497,6 +3497,19 @@ def cmd_lint():
             "Issue #3263 quote-lambda marker-once linter failed — run python3 scripts/coverage/checks/check_quote_lambda_marker_once_3263.py"
         )
         return r
+    # Issue #3264: cascade dep-graph atomic + mutex + dropped-roots
+    # counter. Extends test_cascade_skip_metrics.cpp +
+    # test_dirty_propagation_cascade.cpp (#81967); no docs/design/ (#1655).
+    cda_script = COVERAGE_CHECKS / "check_cascade_dep_graph_atomic_3264.py"
+    if not cda_script.exists():
+        fail(f"missing {cda_script}")
+        return 1
+    r = run([sys.executable, str(cda_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3264 cascade dep-graph atomic linter failed — run python3 scripts/coverage/checks/check_cascade_dep_graph_atomic_3264.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10875,6 +10888,21 @@ def cmd_quote_lambda_marker_once_3263_coverage():
         fail("quote-lambda marker-once (#3263) coverage contract rows failed")
         return 1
     ok("quote-lambda marker-once (#3263) coverage clean")
+    return 0
+
+
+def cmd_cascade_dep_graph_atomic_3264_coverage():
+    """Issue #3264: cascade dep-graph atomic + mutex + dropped-roots counter."""
+    print(f"{B}=== cascade dep-graph atomic (#3264) ==={N}")
+    script = COVERAGE_CHECKS / "check_cascade_dep_graph_atomic_3264.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("cascade dep-graph atomic (#3264) coverage contract rows failed")
+        return 1
+    ok("cascade dep-graph atomic (#3264) coverage clean")
     return 0
 
 
@@ -19220,6 +19248,8 @@ def main():
         "gc-safepoint-restamp-lock-3262-coverage": cmd_gc_safepoint_restamp_lock_3262_coverage,
         "quote-lambda-marker-once-3263": cmd_quote_lambda_marker_once_3263_coverage,
         "quote-lambda-marker-once-3263-coverage": cmd_quote_lambda_marker_once_3263_coverage,
+        "cascade-dep-graph-atomic-3264": cmd_cascade_dep_graph_atomic_3264_coverage,
+        "cascade-dep-graph-atomic-3264-coverage": cmd_cascade_dep_graph_atomic_3264_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
