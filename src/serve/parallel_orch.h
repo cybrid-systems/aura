@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -173,6 +174,31 @@ count_distinct_nonzero_region_keys(std::span<const TaskSpec> tasks) noexcept {
     return "serialized";
 }
 
+// Issue #3243: production + !pure + ≥2 tasks + distinct_nonzero < 2.
+// Pure predicate — no side effects. Soft callers pass production=false.
+[[nodiscard]] inline bool region_key_missing_serialized(const IsolationDecision& d, bool pure_mode,
+                                                        std::size_t n_tasks,
+                                                        bool production) noexcept {
+    return production && !pure_mode && n_tasks >= 2 && d.distinct_nonzero_region_keys < 2;
+}
+
+// Issue #3243: optional host deny (default off). Read each call — only
+// on the production missing-keys path (Soft never getenv).
+[[nodiscard]] inline bool parallel_require_region_keys_env() noexcept {
+    const char* e = std::getenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    if (e == nullptr || e[0] == '\0')
+        return false;
+    if (e[0] == '0' && e[1] == '\0')
+        return false;
+    if (e[0] == '1' && e[1] == '\0')
+        return true;
+    if (e[0] == 't' || e[0] == 'T' || e[0] == 'y' || e[0] == 'Y')
+        return true;
+    if ((e[0] == 'o' || e[0] == 'O') && (e[1] == 'n' || e[1] == 'N'))
+        return true;
+    return false;
+}
+
 enum class BatchStatus : std::uint8_t {
     Ok = 0,            // all tasks succeeded
     Partial = 1,       // some errors, completed without fail-fast abort
@@ -231,7 +257,14 @@ struct ParallelOrchStats {
     // (region-concurrent eligible under #2724).
     std::atomic<std::uint64_t> region_concurrent_batches_total{0};
     std::atomic<std::uint64_t> region_keys_supplied_total{0};
+    // Issue #3243: production multi-task !pure batch admitted Serialized
+    // because distinct non-zero region_keys < 2 (all-zero / overlap / single).
+    // Soft / single-task / pure: never bumps (AC1). Struct end.
+    std::atomic<std::uint64_t> region_key_missing_serialized_total{0};
 };
+
+inline constexpr int kParallelRegionKeyMissingIssue = 3243;
+inline constexpr const char* kSerializedReasonMissingOrOverlapKeys = "missing-or-overlap-keys";
 
 inline ParallelOrchStats g_parallel_orch_stats{};
 

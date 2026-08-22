@@ -39,11 +39,13 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
 #include "serve/parallel_orch.h" // Issue #2923: decide_isolation SSOT
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <print>
 #include <string>
@@ -58,6 +60,7 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
+using aura::compiler::types::as_string_idx;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_string;
@@ -1258,6 +1261,196 @@ int run_test_parallel_intend_pure_contract() {
                 invent.open("../tests/orch/test_issue_2923.cpp");
             CHECK(!invent.good(), "2923 AC6: no test_issue_2923.cpp per #81967");
         }
+    }
+
+    // ── #3243: production missing region_keys stay Serialized + observable ──
+    {
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
+        using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+        using aura::compiler::typed_audit::clear_partial_cone_truncate_for_test;
+        using aura::compiler::typed_audit::g_refined_consistency_drift_face;
+        using aura::compiler::typed_audit::g_region_type_cross_talk_face;
+        using aura::compiler::typed_audit::reset_for_test;
+        using aura::serve::parallel_orch::g_parallel_orch_stats;
+        using aura::serve::parallel_orch::IsolationDecision;
+        using aura::serve::parallel_orch::kParallelRegionKeyMissingIssue;
+        using aura::serve::parallel_orch::region_key_missing_serialized;
+
+        auto href_iso = [](CompilerService& c, const char* snippet,
+                           const char* key) -> std::string {
+            auto r = c.eval(std::format("(let ((h {})) (hash-ref h \"{}\"))", snippet, key));
+            if (!r || !is_string(*r))
+                return {};
+            const auto idx = as_string_idx(*r);
+            const auto heap = c.evaluator().string_heap();
+            if (idx >= heap.size())
+                return {};
+            return std::string(heap[idx]);
+        };
+        auto href_int = [](CompilerService& c, const char* snippet,
+                           const char* key) -> std::int64_t {
+            auto r = c.eval(std::format("(let ((h {})) (hash-ref h \"{}\"))", snippet, key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        auto href_flag = [](CompilerService& c, const char* snippet,
+                            const char* key) -> std::int64_t {
+            auto r =
+                c.eval(std::format("(let ((h {})) (if (hash-ref h \"{}\") 1 0))", snippet, key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+
+        constexpr const char* kZeroKeys = R"(
+            (parallel-intend (vector (lambda () 1) (lambda () 2))
+                             :max-concurrency 2
+                             :collect-errors #t
+                             :timeout-ms 2000)
+        )";
+        constexpr const char* kTwoKeys = R"(
+            (parallel-intend (vector (lambda () 1) (lambda () 2))
+                             :max-concurrency 2
+                             :region-keys (vector 1 2)
+                             :collect-errors #t
+                             :timeout-ms 2000)
+        )";
+        constexpr const char* kPureZero = R"(
+            (parallel-intend (vector (lambda () 1) (lambda () 2))
+                             :pure #t
+                             :max-concurrency 2
+                             :collect-errors #t
+                             :timeout-ms 2000)
+        )";
+        constexpr const char* kSingle = R"(
+            (parallel-intend (vector (lambda () 1))
+                             :max-concurrency 1
+                             :collect-errors #t
+                             :timeout-ms 2000)
+        )";
+        constexpr const char* kOverlap = R"(
+            (parallel-intend (vector (lambda () 1) (lambda () 2))
+                             :max-concurrency 2
+                             :region-keys (vector 5 5)
+                             :collect-errors #t
+                             :timeout-ms 2000)
+        )";
+
+        std::println("\n--- #3243 AC1: Soft / single / pure — no missing-keys signal ---");
+        IsolationDecision d0;
+        d0.distinct_nonzero_region_keys = 0;
+        CHECK(!region_key_missing_serialized(d0, false, 2, false),
+              "3243 AC1: C++ Soft predicate false");
+        CHECK(!region_key_missing_serialized(d0, true, 2, true),
+              "3243 AC1: C++ pure predicate false");
+        CHECK(!region_key_missing_serialized(d0, false, 1, true),
+              "3243 AC1: C++ single-task predicate false");
+        IsolationDecision d2;
+        d2.distinct_nonzero_region_keys = 2;
+        CHECK(!region_key_missing_serialized(d2, false, 2, true),
+              "3243 AC3: C++ two distinct keys not missing");
+        CHECK(region_key_missing_serialized(d0, false, 2, true),
+              "3243 AC2: C++ production zero keys missing");
+
+        reset_for_test();
+        cs.evaluator().set_effect_sandbox_mode(0);
+        const auto miss0 = g_parallel_orch_stats.region_key_missing_serialized_total.load();
+        CHECK(href_iso(cs, kZeroKeys, "isolation-level") == "serialized",
+              "3243 AC1: Soft zero keys stay serialized");
+        CHECK(href_int(cs, kZeroKeys, "region-key-missing-serialized") == 0,
+              "ac3243_1_soft: Soft missing-keys flag=0");
+        CHECK(href_iso(cs, kZeroKeys, "serialized-reason").empty(),
+              "3243 AC1: Soft serialized-reason empty");
+        CHECK(href_int(cs, kPureZero, "region-key-missing-serialized") == 0,
+              "3243 AC1: Soft pure missing-keys=0");
+        CHECK(g_parallel_orch_stats.region_key_missing_serialized_total.load() == miss0,
+              "3243 AC1: Soft does not bump counter");
+
+        std::println("\n--- #3243 AC2: production + multi-task + all-0 keys ---");
+        // Fresh CS after clearing leftover occurrence faces so production
+        // commit_readiness does not invoke a stale full-solve recover hook.
+        reset_for_test();
+        clear_partial_cone_truncate_for_test();
+        clear_cone_outside_goal_drop_for_test();
+        clear_occurrence_empty_after_fence_for_test();
+        g_region_type_cross_talk_face.store(0, std::memory_order_relaxed);
+        g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+        apply_production_audit_defaults();
+        CompilerService pcs;
+        pcs.evaluator().set_effect_sandbox_mode(0);
+        const auto miss1 = g_parallel_orch_stats.region_key_missing_serialized_total.load();
+        CHECK(href_iso(pcs, kZeroKeys, "isolation-level") == "serialized",
+              "3243 AC2: production zero keys stay serialized (no false concurrent)");
+        CHECK(href_flag(pcs, kZeroKeys, "region-concurrent-eligible") == 0,
+              "3243 AC2: region-concurrent-eligible=0");
+        CHECK(href_iso(pcs, kZeroKeys, "serialized-reason") == "missing-or-overlap-keys",
+              "ac3243_2_prod_zero: serialized-reason missing-or-overlap-keys");
+        CHECK(href_int(pcs, kZeroKeys, "region-key-missing-serialized") == 1,
+              "3243 AC2: per-batch missing-keys=1");
+        CHECK(g_parallel_orch_stats.region_key_missing_serialized_total.load() > miss1,
+              "3243 AC2: counter bumped");
+        CHECK(href(pcs, "schema-3243") == 3243 || href(pcs, "issue-3243") == 3243,
+              "3243 AC2: orch-module-stats schema-3243");
+        CHECK(href_int(pcs, kOverlap, "region-key-missing-serialized") == 1,
+              "3243 AC2: overlap keys also missing-or-overlap");
+        CHECK(href_iso(pcs, kOverlap, "isolation-level") == "serialized",
+              "3243 AC2: overlap stays serialized");
+
+        std::println("\n--- #3243 AC3: ≥2 distinct keys still RegionConcurrent ---");
+        CHECK(href_iso(pcs, kTwoKeys, "isolation-level") == "region-concurrent",
+              "ac3243_3_keys: production + two keys → region-concurrent");
+        CHECK(href_flag(pcs, kTwoKeys, "region-concurrent-eligible") == 1, "3243 AC3: eligible=1");
+        CHECK(href_int(pcs, kTwoKeys, "region-key-missing-serialized") == 0,
+              "3243 AC3: missing-keys=0 with disjoint keys");
+        CHECK(href_iso(pcs, kTwoKeys, "serialized-reason").empty(),
+              "3243 AC3: serialized-reason empty when concurrent");
+
+        std::println("\n--- #3243 AC1/AC4: production pure + single-task zero extra ---");
+        const auto miss2 = g_parallel_orch_stats.region_key_missing_serialized_total.load();
+        CHECK(href_iso(pcs, kPureZero, "isolation-level") == "best-effort-pure",
+              "3243 AC1: production pure still best-effort-pure (force-lock cross)");
+        CHECK(href_int(pcs, kPureZero, "region-key-missing-serialized") == 0,
+              "3243 AC1: pure does not claim missing-keys");
+        CHECK(href_int(pcs, kSingle, "region-key-missing-serialized") == 0,
+              "3243 AC1: single-task missing-keys=0");
+        CHECK(g_parallel_orch_stats.region_key_missing_serialized_total.load() == miss2,
+              "3243 AC1: pure/single do not bump");
+
+        std::println("\n--- #3243 AC4: AURA_PARALLEL_REQUIRE_REGION_KEYS deny ---");
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        auto denied = pcs.eval(kZeroKeys);
+        CHECK(denied.has_value() && is_hash(*denied), "3243 AC4: env deny returns hash");
+        CHECK(href_iso(pcs, kZeroKeys, "status") == "invalid", "ac3243_4_env_deny: status=invalid");
+        CHECK(href_iso(pcs, kZeroKeys, "serialized-reason") == "missing-or-overlap-keys",
+              "3243 AC4: deny reason");
+        CHECK(href_iso(pcs, kTwoKeys, "isolation-level") == "region-concurrent",
+              "3243 AC4: env deny does not block supplied keys");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+
+        std::println("\n--- #3243 AC5: source-cite + linter + no invent ---");
+        CHECK(kParallelRegionKeyMissingIssue == 3243, "3243 stamp");
+        const auto poh = read_file("src/serve/parallel_orch.h");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto build = read_file("build.py");
+        CHECK(poh.find("region_key_missing_serialized_total") != std::string::npos,
+              "3243 AC5: counter at ParallelOrchStats end");
+        CHECK(agent.find("serialized-reason") != std::string::npos, "3243 AC5: hash key");
+        CHECK(poh.find("AURA_PARALLEL_REQUIRE_REGION_KEYS") != std::string::npos &&
+                  agent.find("parallel_require_region_keys_env") != std::string::npos,
+              "3243 AC5: env deny wired");
+        CHECK(build.find("check_parallel_region_key_missing_3243") != std::string::npos,
+              "3243 AC5: build.py wires linter");
+        CHECK(read_file("docs/design/3243-region-key-missing.md").empty(),
+              "3243 AC5: no docs/design per #1655");
+        std::ifstream invent("tests/orch/test_issue_3243.cpp");
+        if (!invent.good())
+            invent.open("../tests/orch/test_issue_3243.cpp");
+        CHECK(!invent.good(), "3243 AC5: no test_issue_3243.cpp per #81967");
+
+        reset_for_test();
+        cs.evaluator().set_effect_sandbox_mode(0);
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
