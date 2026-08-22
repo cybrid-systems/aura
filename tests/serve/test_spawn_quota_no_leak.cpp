@@ -12,6 +12,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/agent_name_table.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/resource_quota.hh"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
@@ -306,6 +307,7 @@ int run_test_spawn_quota_no_leak() {
         spec.body = [] {};
         auto h = spawn_agent_with_mailbox(sched, std::move(spec));
         CHECK(!h.ok && h.quota_exceeded, "reject");
+        CHECK(h.deny_class == aura::orch::AgentDenyClass::Quota, "3251: quota deny_class");
         CHECK(!h.quota_dimension.empty(), "AC5: quota_dimension set");
         CHECK(h.quota_limit > 0 || h.quota_dimension == "memory", "AC5: quota_limit");
         CHECK(h.retry_after_ms > 0, "AC5: retry_after_ms");
@@ -330,6 +332,16 @@ int run_test_spawn_quota_no_leak() {
         CHECK(ag.find("if (ok)") != std::string::npos, "put gated on ok");
         CHECK(ag.find("schema-2155") != std::string::npos, "Aura cites 2155");
         CHECK(ag.find("agent_names_->put") != std::string::npos, "put site exists");
+
+        // Issue #3251: production spawn-fail hash exposes deny-class=quota.
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        const auto dc =
+            cs.eval(R"((hash-ref (orch:spawn-agent "q3251" (lambda () 0)) "schema-3251"))");
+        CHECK(dc && is_int(*dc) && as_int(*dc) == 3251, "3251: production spawn hash schema-3251");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        const auto dc_soft =
+            cs.eval(R"((hash-ref (orch:spawn-agent "q3251s" (lambda () 0)) "schema-3251"))");
+        CHECK(!dc_soft || !is_int(*dc_soft), "3251: Soft spawn hash no deny-class intern");
 
         reset_quota();
     }

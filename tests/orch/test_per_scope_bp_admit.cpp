@@ -187,6 +187,8 @@ int run_test_per_scope_bp_admit() {
         CHECK(h.quota_exceeded, "AC4: override reject → quota_exceeded=true");
         CHECK(h.quota_dimension == "mailbox-bp",
               "AC4: override reject → quota_dimension=\"mailbox-bp\" (no-leak contract)");
+        CHECK(h.deny_class == aura::orch::AgentDenyClass::BpAdmit,
+              "3251: BP admit deny_class=bp-admit");
         CHECK(h.reserved_memory_bytes == 0,
               "AC4: override reject → reserved_memory_bytes=0 (no-leak #2155)");
         // Counter bumped (override_active).
