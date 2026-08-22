@@ -3926,6 +3926,19 @@ def cmd_lint():
             "Issue #3018 engine:metrics hash overflow linter failed — run python3 scripts/coverage/checks/check_engine_metrics_hash_overflow_3018.py"
         )
         return r
+    # Issue #3244: production hash overflow → security-posture + schedule
+    # observe (no hard admit deny). Extends test_engine_metrics_facade +
+    # test_security_schedule_gate (#81967); no docs/design/ (#1655).
+    mho3244_script = COVERAGE_CHECKS / "check_metrics_hash_overflow_posture_3244.py"
+    if not mho3244_script.exists():
+        fail(f"missing {mho3244_script}")
+        return 1
+    r = run([sys.executable, str(mho3244_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3244 metrics hash overflow posture linter failed — run python3 scripts/coverage/checks/check_metrics_hash_overflow_posture_3244.py"
+        )
+        return r
     # Issue #3019: unified restamp after boundary / abort / steal / densify.
     # Extends test_restamp_sla_observability (#81967); no docs/design/ (#1655).
     ur3019_script = COVERAGE_CHECKS / "check_unified_restamp_3019.py"

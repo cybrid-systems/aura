@@ -1996,8 +1996,11 @@ static EvalValue build_engine_metrics_hash(Evaluator& ev,
     if (overflowed) {
         g_engine_metrics_hash_overflow_total.fetch_add(1, std::memory_order_relaxed);
         engine_metrics_hash_force_overflow_sentinel(ht, ev);
+        (void)engine_metrics_hash_try_insert(ht, ev, "hash-overflow", make_int(1));
         (void)engine_metrics_hash_try_insert(ht, ev, "schema-3018", make_int(3018));
         (void)engine_metrics_hash_try_insert(ht, ev, "issue-3018", make_int(3018));
+        (void)engine_metrics_hash_try_insert(ht, ev, "schema-3244", make_int(3244));
+        (void)engine_metrics_hash_try_insert(ht, ev, "issue-3244", make_int(3244));
     }
     auto hidx = g_hash_tables.size();
     g_hash_tables.push_back(ht);

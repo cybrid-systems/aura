@@ -9,6 +9,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <fstream>
@@ -86,6 +88,55 @@ int main() {
         // Back-compat compiler snapshot
         CHECK(is_hash_expr(cs, "(hash-ref (engine:metrics) \"compiler\")"),
               "compiler nested hash present");
+    }
+
+    // ── Issue #3244: overflow → security-posture additive (Soft never arms) ──
+    // Before :prefix (light-linked catalog dump leftover).
+    {
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        aura_engine_metrics_reset_hash_overflow_for_test();
+        aura_query_hash_reset_overflow_for_test();
+        reset_for_test();
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")",
+                       "metrics-hash-overflow-breach") == 0,
+              "ac3244_2_soft: quiet posture breach=0");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")",
+                       "metrics-hash-overflow-wired") == 1,
+              "3244 AC1: posture wired sentinel");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-3244") == 3244,
+              "3244 AC5: schema-3244 additive");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534,
+              "3244 AC5: schema-2534 preserved");
+
+        aura_query_hash_set_force_cap(4);
+        CHECK(is_hash_expr(cs, "(engine:metrics \"query:security-posture\")"),
+              "3244 AC3: overflow posture still a hash");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") == 1,
+              "3244 AC3: #3018 overflow=1 retained");
+        const auto ho =
+            hash_int(cs, "(engine:metrics \"query:security-posture\")", "hash-overflow");
+        CHECK(ho == 1 ||
+                  hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") == 1,
+              "3244 AC3: hash-overflow sentinel additive (or overflow=1 when cap is tiny)");
+        aura_query_hash_set_force_cap(0); // restore cap; keep overflow_total
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")",
+                       "metrics-hash-overflow-breach") == 0,
+              "ac3244_2_soft: Soft same overflow path does not arm degraded");
+
+        apply_production_audit_defaults();
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")",
+                       "metrics-hash-overflow-breach") == 1,
+              "ac3244_1_prod: production + overflow → metrics-hash-overflow-breach=1");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")",
+                       "metrics-hash-overflow-total") > 0,
+              "3244 AC1: overflow total surfaced");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "issue-3244") == 3244,
+              "3244 AC5: issue-3244");
+        aura_engine_metrics_reset_hash_overflow_for_test();
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        reset_for_test();
     }
 
     // ── AC2: :prefix ──

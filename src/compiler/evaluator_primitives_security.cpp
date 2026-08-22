@@ -293,7 +293,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const auto allow = c.last_would_allow.load(std::memory_order_relaxed);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                // #3244: 25 prior keys + 5 overflow observe keys; 32 overflowed.
+                auto* ht = FlatHashTable::create(64);
                 if (!ht)
                     return make_void();
                 auto meta = ht->metadata();
@@ -388,6 +389,21 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                                     aura::orch::kSecurityScheduleMailboxHoldSloIssue))},
                 {"issue-2947", make_int(static_cast<std::int64_t>(
                                    aura::orch::kSecurityScheduleMailboxHoldSloIssue))},
+                // Issue #3244: hash overflow observe (would_allow stays true).
+                {"metrics-hash-overflow-breach",
+                 make_int(
+                     reason == static_cast<std::int64_t>(aura::orch::SecurityScheduleForceReason::
+                                                             metrics_hash_overflow_breach)
+                         ? 1
+                         : 0)},
+                {"observe-metrics-hash-overflow-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.observe_metrics_hash_overflow_total.load(std::memory_order_relaxed)))},
+                {"security-schedule-metrics-hash-overflow-wired", make_int(1)},
+                {"schema-3244", make_int(static_cast<std::int64_t>(
+                                    aura::orch::kSecurityScheduleMetricsHashOverflowIssue))},
+                {"issue-3244", make_int(static_cast<std::int64_t>(
+                                   aura::orch::kSecurityScheduleMetricsHashOverflowIssue))},
             };
             return build_hash(kv);
         });
@@ -5074,7 +5090,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3040: +4 keys (schema/issue/wired/total).
             // Issue #3056: +4 keys (breach/wired/schema/issue).
             // Issue #3113: +5 keys (wrap-risk/wrap-total/window/schema/issue).
-            constexpr std::size_t kSecurityPosturePlannedKeys = 72;
+            constexpr std::size_t kSecurityPosturePlannedKeys = 80;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -5233,6 +5249,24 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                           static_cast<std::int64_t>(kTypedMutationAuditTrailSize));
                 insert_kv("schema-3113", kTypedTrailWrapMissIssue);
                 insert_kv("issue-3113", kTypedTrailWrapMissIssue);
+            }
+            // Issue #3244: production hash overflow → posture degraded.
+            // Additive. Overflow counters stay on the #3018/#3020 C ABI.
+            // Soft / no-overflow: breach=0 (zero extra beyond two loads
+            // only when production_defaults_active).
+            {
+                using ::aura::compiler::typed_audit::production_defaults_active;
+                using ::aura::orch::kSecurityScheduleMetricsHashOverflowIssue;
+                const bool prod = production_defaults_active();
+                const auto ov =
+                    static_cast<std::int64_t>(::aura_engine_metrics_hash_overflow_total()) +
+                    static_cast<std::int64_t>(::aura_query_hash_overflow_total());
+                const bool breach = prod && ov > 0;
+                insert_kv("metrics-hash-overflow-breach", breach ? 1 : 0);
+                insert_kv("metrics-hash-overflow-total", ov);
+                insert_kv("metrics-hash-overflow-wired", 1);
+                insert_kv("schema-3244", kSecurityScheduleMetricsHashOverflowIssue);
+                insert_kv("issue-3244", kSecurityScheduleMetricsHashOverflowIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
