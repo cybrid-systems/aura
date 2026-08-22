@@ -8551,7 +8551,8 @@ public:
     //     complete_post_resume_steal_refresh post probe +
     //     transfer_and_revalidate_panic_checkpoint post panic restamp.
     //   - bump_hygiene_violation_prevented_on_boundary_total: outermost
-    //     flush_mutation_boundary exit post dirty/epoch bump +
+    //     flush_mutation_boundary exit (#3261: whenever outermost_active,
+    //     not gated on dirty-fn / metrics wiring) +
     //     complete_post_resume_steal_refresh post probe +
     //     transfer_and_revalidate_panic_checkpoint post panic restamp.
     //     Clone is NOT a hygiene reject (#3260 Bug 1).
@@ -15105,6 +15106,9 @@ public:
     //
     // No-op when not in a mutation boundary (safe to call from
     // Fiber::yield unconditionally).
+    // Issue #3261: outermost_active samples stack.size() once (TLS /
+    // per-fiber; not a cross-thread atomic). Hygiene prevent bump is
+    // not gated on mark_all_defines_dirty_fn_.
     void flush_mutation_boundary();
 
     // Issue #236: helpers used by mutate:atomic-batch to apply

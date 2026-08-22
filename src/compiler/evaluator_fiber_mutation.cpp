@@ -1684,13 +1684,18 @@ void Evaluator::flush_mutation_boundary() {
     // (2) Release barrier on defuse_version_ so other threads see
     // the current version on their next acquire.
     defuse_version_.fetch_add(0, std::memory_order_release);
-    // Issue #1268: outermost-only panic checkpoint lifecycle restamp
-    // on flush (steal/yield boundary). Ensures defuse_version_ +
-    // pending checkpoint visibility before fiber migration.
-    const bool outermost_active = mutation_boundary_depth() == 1 ||
-                                  (mutation_boundary_depth() == 0 &&
-                                   !mutation_boundary_held_.load(std::memory_order_acquire));
-    if (outermost_active || mutation_boundary_depth() == 1) {
+    // Issue #3261 / #1268: outermost-only panic checkpoint + hygiene
+    // restamp on flush (steal/yield boundary). Depth is TLS / per-fiber
+    // stack size (active_mutation_stack / active_mutation_stack_static),
+    // not a cross-thread atomic — sample once from the stack we already
+    // bound. held_ is the per-Evaluator acquire flag. Do not re-read
+    // depth in the if: `|| depth==1` was dead (subsumed by
+    // outermost_active) and would silently re-activate if the predicate
+    // grew extra clauses.
+    const auto depth = stack.size();
+    const bool outermost_active =
+        depth == 1 || (depth == 0 && !mutation_boundary_held_.load(std::memory_order_acquire));
+    if (outermost_active) {
         if (pending_panic_checkpoint()) {
             bump_panic_checkpoint_transfer_count();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics()))
@@ -1703,15 +1708,14 @@ void Evaluator::flush_mutation_boundary() {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
                 m->dirty_propagation_to_ir_count.fetch_add(1, std::memory_order_relaxed);
                 m->epoch_bump_for_macro.fetch_add(1, std::memory_order_relaxed);
-
-                // Issue #1908 / #3260: outermost Guard exit enforced hygiene
-                // boundary (dirty/epoch bump prevents MacroIntroduced
-                // provenance drift from manifesting as a violation under
-                // concurrent steal). Dual-write file-level C-API.
-                bump_hygiene_violation_prevented_on_boundary_total();
-                aura_bump_hygiene_violation_prevented_on_boundary_total(1);
             }
         }
+        // Issue #1908 / #3260 / #3261: outermost Guard exit enforced hygiene
+        // boundary. Dual-write file-level C-API. Hoisted off
+        // mark_all_defines_dirty_fn_ / compiler_metrics_ so an unwired
+        // dirty-propagation pointer cannot silently drop the event.
+        bump_hygiene_violation_prevented_on_boundary_total();
+        aura_bump_hygiene_violation_prevented_on_boundary_total(1);
         // Issue #1272: structured observability sample on flush.
         if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
             m->runtime_obs_mutation_boundary_flush_samples.fetch_add(1, std::memory_order_relaxed);

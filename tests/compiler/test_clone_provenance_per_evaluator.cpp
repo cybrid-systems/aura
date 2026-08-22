@@ -154,6 +154,72 @@ void ac3260_5_source_and_linter() {
     }
 }
 
+void ac3261_1_depth_sampled_once() {
+    std::println("\n--- #3261 AC1: flush samples depth once; no dead || depth==1 ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto pos = fiber.find("void Evaluator::flush_mutation_boundary()");
+    CHECK(pos != std::string::npos, "3261 AC1: flush present");
+    auto win = fiber.substr(pos, 3600);
+    CHECK(win.find("Issue #3261") != std::string::npos, "3261 AC1: cite");
+    CHECK(win.find("const auto depth = stack.size()") != std::string::npos,
+          "3261 AC1: depth sampled once from bound stack");
+    CHECK(win.find("if (outermost_active ||") == std::string::npos,
+          "3261 AC1: no dead || depth re-read");
+    CHECK(win.find("|| mutation_boundary_depth()") == std::string::npos,
+          "3261 AC1: no second mutation_boundary_depth() in if");
+}
+
+void ac3261_2_hygiene_hoisted_off_dirty_fn() {
+    std::println("\n--- #3261 AC2: hygiene bump not gated on dirty-fn / metrics ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto pos = fiber.find("void Evaluator::flush_mutation_boundary()");
+    auto win = pos == std::string::npos ? std::string{} : fiber.substr(pos, 3600);
+    auto dirty = win.find("if (mark_all_defines_dirty_fn_)");
+    CHECK(dirty != std::string::npos, "3261 AC2: dirty-fn gate remains for IR");
+    auto dirty_end = win.find("Issue #1908 / #3260 / #3261", dirty);
+    CHECK(dirty_end != std::string::npos, "3261 AC2: hygiene after dirty-fn block");
+    auto dirty_block = win.substr(dirty, dirty_end - dirty);
+    CHECK(dirty_block.find("bump_hygiene_violation_prevented_on_boundary_total") ==
+              std::string::npos,
+          "3261 AC2: per-eval bump not inside dirty-fn");
+    CHECK(win.find("bump_hygiene_violation_prevented_on_boundary_total()") != std::string::npos,
+          "3261 AC2: per-eval bump on outermost");
+    CHECK(win.find("aura_bump_hygiene_violation_prevented_on_boundary_total(1)") !=
+              std::string::npos,
+          "3261 AC2: file-level dual-write kept");
+}
+
+void ac3261_3_empty_stack_zero_extra() {
+    std::println("\n--- #3261 AC3: empty stack still early-return ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    auto pos = fiber.find("void Evaluator::flush_mutation_boundary()");
+    auto win = pos == std::string::npos ? std::string{} : fiber.substr(pos, 800);
+    CHECK(win.find("if (stack.empty())") != std::string::npos, "3261 AC3: empty check");
+    CHECK(win.find("return;") != std::string::npos, "3261 AC3: early return");
+}
+
+void ac3261_5_source_and_linter() {
+    std::println("\n--- #3261 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_clone_provenance_per_evaluator.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_flush_mutation_boundary_toctou_3261.py");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(t.find("ac3261_1_depth_sampled_once") != std::string::npos, "3261 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3261") != std::string::npos, "3261 AC5: linter");
+    CHECK(build.find("check_flush_mutation_boundary_toctou_3261") != std::string::npos,
+          "3261 AC5: build.py");
+    CHECK(ixx.find("Issue #3261") != std::string::npos, "3261 AC5: evaluator cite");
+    {
+        std::ifstream f("tests/compiler/test_issue_3261.cpp");
+        CHECK(!f.good(), "3261 AC5: no test_issue_3261.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3261-flush-toctou.md");
+        CHECK(!f.good(), "3261 AC5: no docs/design");
+    }
+}
+
 } // namespace
 
 int run_test_clone_provenance_per_evaluator() {
@@ -335,6 +401,11 @@ int run_test_clone_provenance_per_evaluator() {
     ac3260_3_soft_clone_zero_extra_hygiene();
     ac3260_4_stub_not_hard_zero();
     ac3260_5_source_and_linter();
+    std::println("\n=== Issue #3261: flush outermost TOCTOU + hygiene hoist ===");
+    ac3261_1_depth_sampled_once();
+    ac3261_2_hygiene_hoisted_off_dirty_fn();
+    ac3261_3_empty_stack_zero_extra();
+    ac3261_5_source_and_linter();
 
     std::println("\n=== #2810 clone provenance per-evaluator: {} passed, {} failed ===", g_passed,
                  g_failed);
