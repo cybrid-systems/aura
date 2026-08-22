@@ -3510,6 +3510,19 @@ def cmd_lint():
             "Issue #3264 cascade dep-graph atomic linter failed — run python3 scripts/coverage/checks/check_cascade_dep_graph_atomic_3264.py"
         )
         return r
+    # Issue #3265: atomic JIT fn marker/provenance tables + arena mark
+    # stack. Extends test_jit_macro_introduced_preserve.cpp +
+    # test_arena_lifecycle.cpp (#81967); no docs/design/ (#1655).
+    jma_script = COVERAGE_CHECKS / "check_jit_fn_marker_atomic_3265.py"
+    if not jma_script.exists():
+        fail(f"missing {jma_script}")
+        return 1
+    r = run([sys.executable, str(jma_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3265 JIT fn-marker atomic linter failed — run python3 scripts/coverage/checks/check_jit_fn_marker_atomic_3265.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10903,6 +10916,21 @@ def cmd_cascade_dep_graph_atomic_3264_coverage():
         fail("cascade dep-graph atomic (#3264) coverage contract rows failed")
         return 1
     ok("cascade dep-graph atomic (#3264) coverage clean")
+    return 0
+
+
+def cmd_jit_fn_marker_atomic_3265_coverage():
+    """Issue #3265: atomic JIT fn marker tables + arena mark stack."""
+    print(f"{B}=== JIT fn-marker atomic (#3265) ==={N}")
+    script = COVERAGE_CHECKS / "check_jit_fn_marker_atomic_3265.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("JIT fn-marker atomic (#3265) coverage contract rows failed")
+        return 1
+    ok("JIT fn-marker atomic (#3265) coverage clean")
     return 0
 
 
@@ -19250,6 +19278,8 @@ def main():
         "quote-lambda-marker-once-3263-coverage": cmd_quote_lambda_marker_once_3263_coverage,
         "cascade-dep-graph-atomic-3264": cmd_cascade_dep_graph_atomic_3264_coverage,
         "cascade-dep-graph-atomic-3264-coverage": cmd_cascade_dep_graph_atomic_3264_coverage,
+        "jit-fn-marker-atomic-3265": cmd_jit_fn_marker_atomic_3265_coverage,
+        "jit-fn-marker-atomic-3265-coverage": cmd_jit_fn_marker_atomic_3265_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

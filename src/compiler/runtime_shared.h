@@ -25,6 +25,12 @@ struct TLarena {
     // 0 = resolve to kDefaultCapacity (or env) on first init/alloc.
     size_t capacity = 0;
     static constexpr size_t kDefaultCapacity = 1024 * 1024; // 1MB (#1359)
+    // Issue #3265: external mark stack so pop does not read arena memory
+    // (intervening allocs used to scramble offset). Soft unmatched pop
+    // is a no-op (zero extra); Full contract_assert.
+    static constexpr unsigned kMaxMarks = 8;
+    size_t marks[kMaxMarks]{};
+    unsigned mark_depth = 0;
 };
 
 // Per-thread global arena instance
@@ -138,6 +144,7 @@ void tl_arena_destroy(TLarena* arena);
 void tl_arena_reset(TLarena* arena);
 // Returns nullptr on OOM (no exit). Lazily inits when base is null.
 void* tl_arena_alloc(TLarena* arena, size_t size, size_t align);
+// Issue #3265: push/pop use TLarena::marks[] (not arena memory).
 void tl_arena_push(TLarena* arena);
 void tl_arena_pop(TLarena* arena);
 

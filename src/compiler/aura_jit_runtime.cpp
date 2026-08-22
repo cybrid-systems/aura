@@ -162,6 +162,7 @@ bool tl_arena_init(TLarena* arena) {
         }
     }
     arena->offset = 0;
+    arena->mark_depth = 0;
     return true;
 }
 
@@ -171,12 +172,15 @@ void tl_arena_destroy(TLarena* arena) {
     std::free(arena->base);
     arena->base = nullptr;
     arena->offset = 0;
+    arena->mark_depth = 0;
     // Keep capacity so re-init reuses the same policy size (or 0 → resolve again).
 }
 
 void tl_arena_reset(TLarena* arena) {
-    if (arena)
-        arena->offset = 0;
+    if (!arena)
+        return;
+    arena->offset = 0;
+    arena->mark_depth = 0;
 }
 
 void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
@@ -215,40 +219,44 @@ void* tl_arena_alloc(TLarena* arena, size_t size, size_t align) {
         arena->base = new_base;
         arena->capacity = new_cap;
     }
-    size_t aligned2 = (arena->offset + align - 1) & ~(align - 1);
-    void* ptr = arena->base + aligned2;
-    arena->offset = aligned2 + size;
+    // Issue #3265: reuse aligned (realloc preserves offset).
+    void* ptr = arena->base + aligned;
+    arena->offset = aligned + size;
     return ptr;
 }
 
 void tl_arena_push(TLarena* arena) {
-    // Save current offset on a simple stack (reuses arena memory for stack).
-    // Top of arena = stack of saved offsets.
+    // Issue #3265: external mark stack (not arena memory).
     if (!arena)
         return;
     if (!arena->base) {
         if (!tl_arena_init(arena))
             return;
     }
-    if (arena->offset + sizeof(size_t) > arena->capacity) {
-        // Grow via alloc path, then rewrite the mark (alloc may pad).
-        size_t mark = arena->offset;
-        void* slot = tl_arena_alloc(arena, sizeof(size_t), alignof(size_t));
-        if (!slot)
-            return;
-        *static_cast<size_t*>(slot) = mark;
+    if (arena->mark_depth >= TLarena::kMaxMarks) {
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (hard)
+            contract_assert(false);
         return;
     }
-    size_t* stack_top = reinterpret_cast<size_t*>(arena->base + arena->offset);
-    *stack_top = arena->offset;
-    arena->offset += sizeof(size_t);
+    arena->marks[arena->mark_depth++] = arena->offset;
 }
 
 void tl_arena_pop(TLarena* arena) {
-    // Restore offset from stack (only correct if no intervening allocs past the mark slot).
-    if (!arena || !arena->base || arena->offset < sizeof(size_t))
+    // Issue #3265: restore from marks[], not arena memory.
+    if (!arena || !arena->base)
         return;
-    arena->offset = (reinterpret_cast<size_t*>(arena->base + arena->offset))[-1];
+    if (arena->mark_depth == 0) {
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (hard)
+            contract_assert(false);
+        return; // Soft: unmatched pop is a no-op (do not scramble offset)
+    }
+    arena->offset = arena->marks[--arena->mark_depth];
 }
 
 // ── Arena flag ──
@@ -320,8 +328,9 @@ static std::atomic<MacroDeoptRestoreFn> g_macro_deopt_restore_fn{nullptr};
 // functions once native code is live. Parallel to AOT func table (4096).
 // Non-macro path never writes (source_marker stays 0) — zero hot-path cost.
 static constexpr unsigned kJitMacroMarkerSlots = 4096;
-static std::uint8_t g_jit_fn_source_marker[kJitMacroMarkerSlots]{};
-static std::uint32_t g_jit_fn_provenance[kJitMacroMarkerSlots]{};
+// Issue #3265: atomic side-table — stamp/deopt/reset must not race.
+static std::atomic<std::uint8_t> g_jit_fn_source_marker[kJitMacroMarkerSlots]{};
+static std::atomic<std::uint32_t> g_jit_fn_provenance[kJitMacroMarkerSlots]{};
 // Stamp count = how many times a MacroIntroduced tag was preserved into
 // native metadata (compile or register). Live count = slots currently
 // holding marker==1. Recoverable = slots with marker==1 and provenance!=0.
@@ -448,7 +457,7 @@ extern "C" void aura_jit_note_macro_deopt_roundtrip(int64_t func_id) {
         g_jit_macro_introduced_lost_total.fetch_add(1, std::memory_order_relaxed);
         return;
     }
-    if (g_jit_fn_source_marker[idx] == 1) {
+    if (g_jit_fn_source_marker[idx].load(std::memory_order_acquire) == 1) {
         g_jit_macro_introduced_preserved_total.fetch_add(1, std::memory_order_relaxed);
         return;
     }
@@ -510,33 +519,42 @@ extern "C" void aura_jit_stamp_fn_macro_marker(int64_t func_id, uint8_t marker,
     const auto idx = static_cast<unsigned>(func_id);
     if (idx >= kJitMacroMarkerSlots)
         return;
-    const uint8_t prev = g_jit_fn_source_marker[idx];
+    uint8_t prev = g_jit_fn_source_marker[idx].load(std::memory_order_relaxed);
     if (marker == 0) {
-        // Explicit clear (rare — invalidate). Adjust live/recoverable if needed.
+        // Explicit clear (rare — invalidate). CAS so a concurrent stamp
+        // cannot lose the reset / double-decrement live count.
         if (prev == 1) {
-            g_jit_live_macro_fn_count.fetch_sub(1, std::memory_order_relaxed);
-            if (g_jit_fn_provenance[idx] != 0)
-                g_jit_macro_provenance_recoverable_total.fetch_sub(1, std::memory_order_relaxed);
+            if (g_jit_fn_source_marker[idx].compare_exchange_strong(
+                    prev, 0, std::memory_order_release, std::memory_order_relaxed)) {
+                const auto p = g_jit_fn_provenance[idx].exchange(0, std::memory_order_relaxed);
+                g_jit_live_macro_fn_count.fetch_sub(1, std::memory_order_relaxed);
+                if (p != 0)
+                    g_jit_macro_provenance_recoverable_total.fetch_sub(1,
+                                                                       std::memory_order_relaxed);
+            }
+        } else {
+            g_jit_fn_source_marker[idx].store(0, std::memory_order_relaxed);
+            g_jit_fn_provenance[idx].store(0, std::memory_order_relaxed);
         }
-        g_jit_fn_source_marker[idx] = 0;
-        g_jit_fn_provenance[idx] = 0;
         return;
     }
-    g_jit_fn_source_marker[idx] = marker;
+    // Publish provenance first; release-CAS marker so acquire readers see both.
     if (provenance != 0)
-        g_jit_fn_provenance[idx] = provenance;
-    else if (g_jit_fn_provenance[idx] == 0 && marker == 1) {
+        g_jit_fn_provenance[idx].store(provenance, std::memory_order_relaxed);
+    else if (g_jit_fn_provenance[idx].load(std::memory_order_relaxed) == 0 && marker == 1) {
         // Weak fallback: func_id itself so blame never loses origin entirely.
-        g_jit_fn_provenance[idx] = static_cast<uint32_t>(func_id == 0 ? 1 : func_id);
+        g_jit_fn_provenance[idx].store(static_cast<uint32_t>(func_id == 0 ? 1 : func_id),
+                                       std::memory_order_relaxed);
+    }
+    while (!g_jit_fn_source_marker[idx].compare_exchange_weak(
+        prev, marker, std::memory_order_release, std::memory_order_relaxed)) {
     }
     g_jit_native_marker_preserved_total.fetch_add(1, std::memory_order_relaxed);
     if (prev != 1 && marker == 1) {
         g_jit_live_macro_fn_count.fetch_add(1, std::memory_order_relaxed);
-        if (g_jit_fn_provenance[idx] != 0)
+        if (g_jit_fn_provenance[idx].load(std::memory_order_relaxed) != 0)
             g_jit_macro_provenance_recoverable_total.fetch_add(1, std::memory_order_relaxed);
-    } else if (prev == 1 && marker == 1 && provenance != 0 && g_jit_fn_provenance[idx] != 0) {
-        // Already live; ensure recoverable is counted if we just filled provenance.
-        // (recoverable was bumped only on 0→1; if prev had zero prov this is rare)
+    } else if (prev == 1 && marker == 1 && provenance != 0) {
         (void)0;
     }
 }
@@ -547,7 +565,7 @@ extern "C" uint8_t aura_jit_fn_source_marker(int64_t func_id) {
     const auto idx = static_cast<unsigned>(func_id);
     if (idx >= kJitMacroMarkerSlots)
         return 0;
-    return g_jit_fn_source_marker[idx];
+    return g_jit_fn_source_marker[idx].load(std::memory_order_acquire);
 }
 
 extern "C" uint32_t aura_jit_fn_provenance(int64_t func_id) {
@@ -556,7 +574,7 @@ extern "C" uint32_t aura_jit_fn_provenance(int64_t func_id) {
     const auto idx = static_cast<unsigned>(func_id);
     if (idx >= kJitMacroMarkerSlots)
         return 0;
-    return g_jit_fn_provenance[idx];
+    return g_jit_fn_provenance[idx].load(std::memory_order_acquire);
 }
 
 extern "C" uint64_t aura_jit_native_marker_preserved_total() {
@@ -667,8 +685,8 @@ extern "C" void aura_counters_reset() {
     g_jit_live_macro_fn_count.store(0, std::memory_order_relaxed);
     g_jit_macro_provenance_recoverable_total.store(0, std::memory_order_relaxed);
     for (unsigned i = 0; i < kJitMacroMarkerSlots; ++i) {
-        g_jit_fn_source_marker[i] = 0;
-        g_jit_fn_provenance[i] = 0;
+        g_jit_fn_source_marker[i].store(0, std::memory_order_relaxed);
+        g_jit_fn_provenance[i].store(0, std::memory_order_relaxed);
     }
 }
 
