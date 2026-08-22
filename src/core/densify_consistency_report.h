@@ -352,6 +352,20 @@ inline void note_last_densify_remap_pairing_forced(bool forced) noexcept {
     return "none";
 }
 
+// Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary notes
+// (observe-only inventory drained into post_moving_live_canaries_ before
+// Moving densify). Additive; does not gate. Appended at header end so the
+// DensifyConsistencyReport struct layout stays stable. Soft / Off /
+// !moving_compact_enabled never increment (note helper early-returns).
+inline std::atomic<std::uint64_t> g_moving_temporary_canary_noted_total{0};
+inline constexpr int kMovingTemporaryCanaryIssue = 3210;
+[[nodiscard]] inline std::uint64_t moving_temporary_canary_noted_total_v_read() noexcept {
+    return g_moving_temporary_canary_noted_total.load(std::memory_order_relaxed);
+}
+inline void reset_moving_temporary_canary_noted_for_test() noexcept {
+    g_moving_temporary_canary_noted_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H

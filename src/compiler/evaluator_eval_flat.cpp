@@ -18,6 +18,7 @@ module aura.compiler.evaluator;
 
 import std;
 import aura.core.ast;
+import aura.core.arena; // Issue #3210: TemporaryMovingLivePtrCanary
 import aura.core.type;
 import aura.core.lifetime_pin; // Issue #2363: GeneralObjectPin adopt on intermediate create
 import aura.compiler.value;
@@ -476,6 +477,14 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             }
         }
     }
+    // Issue #3210: cl_copy.flat / cl_copy.pool are stack copies — closures_
+    // is unordered_map so &cl.flat is not a lasting void** slot. Note as
+    // observe-only canaries for the apply window so concurrent Moving
+    // densify (fiber steal × compact) fail-closes if they would go stale.
+    // JIT/FFI apply sites use the same RAII. Soft / !moving_compact_enabled:
+    // ctor is one atomic load (no mutex).
+    aura::ast::TemporaryMovingLivePtrCanary tmp_flat(cl_copy.flat);
+    aura::ast::TemporaryMovingLivePtrCanary tmp_pool(cl_copy.pool);
     CompilerMetrics* metrics =
         compiler_metrics_ ? static_cast<CompilerMetrics*>(compiler_metrics_) : nullptr;
     if (tombstoned) {

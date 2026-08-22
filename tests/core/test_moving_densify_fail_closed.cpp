@@ -2223,7 +2223,8 @@ static void ac3182_2_aggregation() {
     std::println(
         "\n--- #3182 AC2: compact_all_moving_pinned aggregates post_moving_stale_count ---");
     const auto arena = read_file("src/core/arena.ixx");
-    const auto fn_pos = arena.find("compact_all_moving_pinned()");
+    // Unique vs the AdaptiveCompactResult comment that also names the helper.
+    const auto fn_pos = arena.find("compact_all_moving_pinned() noexcept");
     CHECK(fn_pos != std::string::npos, "AC2: compact_all_moving_pinned found");
     if (fn_pos != std::string::npos) {
         const auto fn_end = arena.find("return out;", fn_pos);
@@ -2243,7 +2244,8 @@ static void ac3182_3_hard_gate() {
         arena.find("if (out.objects_moved_total > 0 && out.post_moving_stale_count_total > 0)");
     CHECK(pos != std::string::npos, "AC3: hard-gate condition present");
     if (pos != std::string::npos) {
-        const auto win = arena.substr(pos, 250);
+        // Comment with Issue #3182 / AC2 sits immediately above the if.
+        const auto win = arena.substr(pos > 400 ? pos - 400 : 0, 650);
         CHECK(win.find("out.pin_contract_held = false") != std::string::npos,
               "AC3: hard gate forces pin_contract_held=false");
         CHECK(win.find("Issue #3182") != std::string::npos, "AC3: cite #3182 in hard-gate comment");
@@ -2255,7 +2257,11 @@ static void ac3182_3_hard_gate() {
 static void ac3182_4_empty_considers() {
     std::println("\n--- #3182 AC4: AdaptiveCompactResult::empty() considers new field ---");
     const auto arena = read_file("src/core/arena.ixx");
-    const auto empty_pos = arena.find("AdaptiveCompactResult::empty()");
+    const auto acr_pos = arena.find("export struct AdaptiveCompactResult {");
+    CHECK(acr_pos != std::string::npos, "AC4: AdaptiveCompactResult struct found");
+    const auto empty_pos = acr_pos != std::string::npos
+                               ? arena.find("bool empty() const noexcept", acr_pos)
+                               : std::string::npos;
     CHECK(empty_pos != std::string::npos, "AC4: empty() found");
     if (empty_pos != std::string::npos) {
         const auto win = arena.substr(empty_pos, 400);
@@ -2298,6 +2304,198 @@ static void ac3182_7_no_invent() {
     // No new test_issue_3182.cpp (per #81934 — extend src/-aligned suite).
     // This test file IS the extension.
     CHECK(true, "AC7: this file IS the src/-aligned suite extension");
+}
+
+// ── Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary ──
+// Residual of #3055/#2935/#3182: closed register_known_moving_densify_root_slots
+// misses stack/temp holders. Prefer slot elevation where a stable void**
+// exists; otherwise TemporaryMovingLivePtrCanary → post_moving_live_canaries_.
+
+static void ac3210_1_injected_unregistered_temp_fail_closed() {
+    std::println("\n--- #3210 AC1: injected unregistered temp EnvFrame/Closure/JIT ptr ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    const auto stale0 = aura::core::densify_consistency::moving_post_moving_stale_total_v_read();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    void* alias = p0; // densify-tracked but unregistered temp
+    aura::ast::TemporaryMovingLivePtrCanary tmp(alias);
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() > 0,
+          "AC1: temp inventory counter bumped");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(r.post_moving_stale_count > 0, "AC1: unregistered temp still holds densify-old addr");
+        CHECK(!r.pin_contract_held, "AC1: pin_contract_held=false");
+        CHECK(r.moving_incomplete_remap, "AC1: incomplete-remap");
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC1: sticky armed");
+        CHECK(aura::core::densify_consistency::moving_post_moving_stale_total_v_read() > stale0,
+              "AC1: post-moving-stale-total");
+        CHECK(static_cast<Pod16*>(s0)->a == 1, "AC1: slotted payload intact (no UAF on slot)");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC1: no-move payloads intact");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3210_2_healthy_window_stale_zero() {
+    std::println("\n--- #3210 AC2: healthy window including new canary sources ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    // New canary source that is NOT a last_object_remap_ key (stack dummy).
+    int dummy = 0;
+    aura::ast::TemporaryMovingLivePtrCanary tmp(&dummy);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.post_moving_stale_count == 0, "AC2: healthy window stale==0");
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC2: pin_contract_held after slotted + non-remap canary");
+        CHECK(static_cast<Pod16*>(s0)->a == 1, "AC2: remapped slot payload");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC2: no-move payloads intact");
+    }
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3210_3_elevate_temp_to_slot() {
+    std::println("\n--- #3210 AC2: prefer slot elevation where stable void** exists ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    void* s0 = p0;
+    void* s1 = p1;
+    arena.register_external_root_slot_for_densify(&s0);
+    arena.register_external_root_slot_for_densify(&s1);
+    void* temp = p0; // stable stack void** — elevate to slot, not canary
+    arena.register_external_root_slot_for_densify(&temp);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.post_moving_stale_count == 0, "AC2: slotted temp is not a stale canary");
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "AC2: pin_contract_held after slot elevation");
+        CHECK(static_cast<Pod16*>(temp)->a == 1, "AC2: elevated slot remapped");
+        CHECK(temp == s0, "AC2: elevated slot matches remapped sibling");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "AC2: no-move payloads intact");
+    }
+}
+
+static void ac3210_4_soak_unregistered_temp() {
+    std::println("\n--- #3210 AC4: soak mutate × densify with unregistered temp ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard off(0);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    bool saw_move = false;
+    bool saw_sticky = false;
+    for (int i = 0; i < 8; ++i) {
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+        aura::ast::reset_temporary_moving_live_ptrs_for_test();
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        void* s0 = p0;
+        void* s1 = p1;
+        arena.register_external_root_slot_for_densify(&s0);
+        arena.register_external_root_slot_for_densify(&s1);
+        void* alias = p0;
+        aura::ast::TemporaryMovingLivePtrCanary tmp(alias);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        if (r.objects_moved > 0) {
+            saw_move = true;
+            CHECK(r.post_moving_stale_count > 0, "AC4: soak stale canary");
+            CHECK(!r.pin_contract_held, "AC4: soak pin_contract false");
+            CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "AC4: soak sticky");
+            CHECK(static_cast<Pod16*>(s0)->a == 1, "AC4: no UAF on remapped slot");
+            saw_sticky = true;
+        }
+    }
+    if (saw_move)
+        CHECK(saw_sticky, "AC4: sticky observed on moved soak windows");
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3210_5_soft_zero_extra() {
+    std::println("\n--- #3210 AC3: Soft / Off zero extra ---");
+    RequiredPinGuard off(0);
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test();
+    {
+        MovingFlagGuard off_moving(0);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        aura::ast::TemporaryMovingLivePtrCanary tmp(p0);
+        CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == 0,
+              "AC3: Off path does not note temps");
+        const auto r = arena.live_compact(LiveCompactMode::Soft);
+        CHECK(r.objects_moved == 0, "AC3: Soft does not relocate");
+        CHECK(r.post_moving_stale_count == 0, "AC3: Soft does not scan canaries");
+    }
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("if (!p || !moving_compact_enabled())") != std::string::npos ||
+              arena_src.find("if (!moving_compact_enabled())") != std::string::npos,
+          "AC3: note helper gated on moving_compact_enabled");
+    CHECK(arena_src.find("inv.live.load(std::memory_order_acquire) == 0") != std::string::npos,
+          "AC3: drain empty-list early return");
+}
+
+static void ac3210_6_source_cite_no_invent() {
+    std::println("\n--- #3210 AC5: source-cite + inventory + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto apply = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto dc = read_file("src/core/densify_consistency_report.h");
+    const auto build = read_file("build.py");
+    CHECK(arena.find("TemporaryMovingLivePtrCanary") != std::string::npos,
+          "AC5: RAII canary in arena.ixx");
+    CHECK(arena.find("note_temporary_moving_live_canaries()") != std::string::npos,
+          "AC5: live_compact drains temps");
+    CHECK(arena.find("note_temporary_moving_live_canaries_all()") != std::string::npos,
+          "AC5: group drain helper");
+    CHECK(mut.find("note_temporary_moving_live_canaries_all()") != std::string::npos,
+          "AC5: register_known drains temps");
+    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_flat") != std::string::npos,
+          "AC5: apply_closure notes Closure.flat temp");
+    CHECK(apply.find("TemporaryMovingLivePtrCanary tmp_pool") != std::string::npos,
+          "AC5: apply_closure notes Closure.pool temp");
+    CHECK(ev.find("TemporaryMovingLivePtrCanary") != std::string::npos,
+          "AC5: Evaluator inventory documents #3210 temps");
+    CHECK(dc.find("kMovingTemporaryCanaryIssue = 3210") != std::string::npos,
+          "AC5: stamp at densify_consistency_report.h end");
+    CHECK(build.find("check_moving_temporary_canary_3210") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(arena.find("class PostMovingPinRegistry") == std::string::npos &&
+              arena.find("g_moving_pin_registry_3210") == std::string::npos,
+          "AC5: no extra pin registry");
+    CHECK(read_file("docs/design/3210-temporary-canary.md").empty(),
+          "AC5: no docs/design/3210-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3210.cpp").empty(),
+          "AC5: no test_issue_3210.cpp per #81967");
 }
 
 int run_test_moving_densify_fail_closed() {
@@ -2438,6 +2636,16 @@ int run_test_moving_densify_fail_closed() {
     ac3182_5_soft_no_extra_walk();
     ac3182_6_envframe_protocol_unchanged();
     ac3182_7_no_invent();
+
+    // Issue #3210: exhaustive post-Moving canary + known-root for temporary
+    // EnvFrame/Closure/JIT/FFI live ptrs (residual of #3055/#2935/#3182).
+    std::println("\n=== Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary ===");
+    ac3210_1_injected_unregistered_temp_fail_closed();
+    ac3210_2_healthy_window_stale_zero();
+    ac3210_3_elevate_temp_to_slot();
+    ac3210_4_soak_unregistered_temp();
+    ac3210_5_soft_zero_extra();
+    ac3210_6_source_cite_no_invent();
 
     // Issue #3092: wire production EnvFrame/Closure/FFI/JIT live ptrs into
     // note_post_moving_live_ptr_canary (#3055 gate was blind). Additive to

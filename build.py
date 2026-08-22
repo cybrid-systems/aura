@@ -3584,6 +3584,19 @@ def cmd_lint():
             "Issue #3182 post-Moving stale hard gate linter failed — run python3 scripts/coverage/checks/check_post_moving_stale_hard_gate_3182.py"
         )
         return r
+    # Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary
+    # (residual of #3055/#2935/#3182). Extends
+    # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    mtc3210_script = COVERAGE_CHECKS / "check_moving_temporary_canary_3210.py"
+    if not mtc3210_script.exists():
+        fail(f"missing {mtc3210_script}")
+        return 1
+    r = run([sys.executable, str(mtc3210_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3210 temporary moving canary linter failed — run python3 scripts/coverage/checks/check_moving_temporary_canary_3210.py"
+        )
+        return r
     # Issue #3183: gensym ceiling / depth deny mid-clone rollback + rest
     # path shares ceiling. Refines #2804 / #2811 / #3157. Extends
     # test_unquote_splicing_hygiene (#81934); no docs/design/ (#1655).
@@ -10110,6 +10123,33 @@ def cmd_moving_post_moving_stale_3055():
     """
     print(f"{B}=== moving post-Moving stale (#3055) ==={N}")
     return cmd_moving_post_moving_stale_3055_coverage()
+
+
+def cmd_moving_temporary_canary_3210_coverage():
+    """Issue #3210: temporary EnvFrame/Closure/JIT/FFI live-ptr canary (static)."""
+    print(f"{B}=== moving temporary canary coverage (#3210) ==={N}")
+    script = COVERAGE_CHECKS / "check_moving_temporary_canary_3210.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("moving temporary canary (#3210) coverage contract rows failed")
+        return 1
+    ok("moving temporary canary (#3210) coverage clean")
+    return 0
+
+
+def cmd_moving_temporary_canary_3210():
+    """Issue #3210: exhaustive post-Moving canary for temporary live ptrs.
+
+    Stack/temp EnvFrame/Closure/JIT/FFI holders that cannot be lasting
+    void** slots drain into post_moving_live_canaries_ before Moving
+    densify. objects_moved>0 ∧ canary still a last_object_remap_ key
+    fail-closes (existing gate). Soft / Off empty-list early return.
+    """
+    print(f"{B}=== moving temporary canary (#3210) ==={N}")
+    return cmd_moving_temporary_canary_3210_coverage()
 
 
 def cmd_engine_metrics_hash_overflow_3018_coverage():
@@ -18494,6 +18534,8 @@ def main():
         "moving-incomplete-remap-3017-coverage": cmd_moving_incomplete_remap_3017_coverage,
         "moving-post-moving-stale-3055": cmd_moving_post_moving_stale_3055,
         "moving-post-moving-stale-3055-coverage": cmd_moving_post_moving_stale_3055_coverage,
+        "moving-temporary-canary-3210": cmd_moving_temporary_canary_3210,
+        "moving-temporary-canary-3210-coverage": cmd_moving_temporary_canary_3210_coverage,
         "engine-metrics-hash-overflow-3018": cmd_engine_metrics_hash_overflow_3018,
         "engine-metrics-hash-overflow-3018-coverage": cmd_engine_metrics_hash_overflow_3018_coverage,
         "unified-restamp-3019": cmd_unified_restamp_3019,
