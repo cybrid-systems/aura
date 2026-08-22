@@ -42,6 +42,7 @@
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
+#include "compiler/typed_mutation_audit.h"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
@@ -72,6 +73,8 @@ using aura::orch::AgentHandle;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::g_orch_module_stats;
+using aura::orch::kJoinFailProductionDefaultIssue;
+using aura::orch::resolve_on_join_fail;
 using aura::orch::agent_scope_compat::stall_to_failure_action;
 using aura::serve::Fiber;
 using aura::serve::SchedRunner;
@@ -99,7 +102,182 @@ void sleep_no_progress_body(AgentHandle& h, std::atomic<bool>& keep_running) {
     }
 }
 
+void ac3208_set_prod(bool on) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        on ? 1u : 0u, std::memory_order_relaxed);
+}
+
+static void ac3208_stop(AgentScope& scope, std::atomic<bool>& keep) {
+    keep.store(false, std::memory_order_relaxed);
+    for (auto& h : scope.handles_mut()) {
+        if (!h.fiber)
+            continue;
+        h.fiber->request_cancel();
+        if (auto* s = h.fiber->owner_sched()) {
+            s->note_orphan_fiber(h.fiber, 50);
+            s->reap_orphans_now();
+        }
+    }
+}
+
 } // namespace
+
+// ── Issue #3208: production default on_join_fail Cancel when unset ──
+
+static void ac3208_1_soft_explicit_report_only() {
+    std::println("\n--- #3208 AC1: Soft / explicit ReportOnly zero extra action ---");
+    CHECK(kJoinFailProductionDefaultIssue == 3208, "3208 AC1: issue stamp");
+    ac3208_set_prod(false);
+    CHECK(resolve_on_join_fail(nullptr) == AgentFailureAction::ReportOnly,
+          "AC1: Soft unset → ReportOnly");
+    AgentFailurePolicy explicit_report;
+    CHECK(resolve_on_join_fail(&explicit_report) == AgentFailureAction::ReportOnly,
+          "AC1: explicit ReportOnly honored");
+
+    Scheduler sched(1);
+    SchedRunner runner(sched);
+    std::atomic<bool> keep{true};
+    AgentScope scope(sched);
+    AgentSpec spec;
+    spec.name = "3208-soft";
+    spec.body = [&] {
+        while (keep.load(std::memory_order_relaxed))
+            aura::orch::fiber_sleep_ms(20);
+    };
+    scope.spawn(spec);
+    const auto c0 =
+        g_orch_module_stats.agent_join_fail_action_cancel_total.load(std::memory_order_relaxed);
+    aura::orch::JoinPolicy jp{};
+    jp.primary_ms = 1;
+    jp.drain_ms = 0;
+    (void)scope.join_all(jp); // unset, Soft
+    CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::ReportOnly,
+          "ac3208_1_soft_explicit_report_only: Soft effective ReportOnly");
+    CHECK(scope.last_join_fail_action_taken() == 0, "AC1: Soft no action taken");
+    CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load() == c0,
+          "AC1: Soft cancel-total unchanged");
+
+    AgentFailurePolicy pol; // explicit ReportOnly even under production
+    ac3208_set_prod(true);
+    (void)scope.join_all(jp, pol);
+    CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::ReportOnly,
+          "AC1: explicit ReportOnly under production stays ReportOnly");
+    CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load() == c0,
+          "AC1: explicit ReportOnly does not bump cancel-total");
+    ac3208_set_prod(false);
+    ac3208_stop(scope, keep);
+}
+
+static void ac3208_2_prod_unset_cancel() {
+    std::println("\n--- #3208 AC2: production + unset Timeout → Cancel ---");
+    ac3208_set_prod(true);
+    CHECK(resolve_on_join_fail(nullptr) == AgentFailureAction::Cancel,
+          "AC2: production unset → Cancel");
+    Scheduler sched(1);
+    SchedRunner runner(sched);
+    std::atomic<bool> keep{true};
+    AgentScope scope(sched);
+    AgentSpec spec;
+    spec.name = "3208-prod";
+    spec.body = [&] {
+        while (keep.load(std::memory_order_relaxed))
+            aura::orch::fiber_sleep_ms(20);
+    };
+    scope.spawn(spec);
+    const auto c0 =
+        g_orch_module_stats.agent_join_fail_action_cancel_total.load(std::memory_order_relaxed);
+    const auto f0 = g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed);
+    aura::orch::JoinPolicy jp{};
+    jp.primary_ms = 1;
+    jp.drain_ms = 0;
+    const auto jr = scope.join_all(jp); // unset → production Cancel
+    CHECK(jr.status != aura::serve::JoinStatus::Ok, "ac3208_2_prod_unset_cancel: join not Ok");
+    CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::Cancel,
+          "AC2: effective Cancel");
+    CHECK(scope.last_join_fail_action_taken() >= 1, "AC2: action taken");
+    CHECK(g_orch_module_stats.agent_join_fail_total.load() == f0 + 1, "AC2: join-fail-total +1");
+    CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load() == c0 + 1,
+          "AC2: cancel-total +1");
+    if (scope.handles()[0].fiber)
+        CHECK(scope.handles()[0].fiber->is_cancel_requested() ||
+                  scope.handles()[0].fiber->is_done(),
+              "AC2: Cancel path request_cancel");
+    ac3208_set_prod(false);
+    ac3208_stop(scope, keep);
+}
+
+static void ac3208_3_reclaimed_skip() {
+    std::println("\n--- #3208 AC3: Reclaimed still-running skip Cancel (#2661) ---");
+    ac3208_set_prod(true);
+    Scheduler sched(1);
+    SchedRunner runner(sched);
+    AgentScope scope(sched);
+    AgentSpec spec;
+    spec.name = "3208-reclaimed";
+    spec.body = [] { aura::orch::fiber_sleep_ms(400); };
+    scope.spawn(spec);
+    if (scope.handles()[0].fiber)
+        scope.handles()[0].fiber->mark_reclaimed();
+    const auto c0 =
+        g_orch_module_stats.agent_join_fail_action_cancel_total.load(std::memory_order_relaxed);
+    const auto f0 = g_orch_module_stats.agent_join_fail_total.load(std::memory_order_relaxed);
+    aura::orch::JoinPolicy jp{};
+    jp.primary_ms = 1;
+    jp.drain_ms = 0;
+    (void)scope.join_all(jp); // production unset Cancel — must skip reclaimed
+    CHECK(scope.handles()[0].reclaimed_deferred_cleanup ||
+              (scope.handles()[0].fiber && scope.handles()[0].fiber->is_reclaimed()),
+          "ac3208_3_reclaimed_skip: still reclaimed");
+    CHECK(g_orch_module_stats.agent_join_fail_total.load() == f0,
+          "AC3: reclaimed is not join_fail fuel");
+    CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load() == c0,
+          "AC3: no Cancel action on reclaimed live");
+    if (scope.handles()[0].fiber) {
+        scope.handles()[0].fiber->set_state(aura::serve::FiberState::Done);
+        scope.handles()[0].fiber->note_body_exit_if_reclaimed();
+        scope.handles_mut()[0].finish_reclaimed_cleanup_on_dtor();
+    }
+    ac3208_set_prod(false);
+}
+
+static void ac3208_4_hash_and_soak() {
+    std::println("\n--- #3208 AC4/AC5: hash keys + multi-agent Timeout soak + HardDeny ---");
+    ac3208_set_prod(true);
+    unsetenv("AURA_SANDBOX");
+    unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+    CHECK(aura::orch::resolve_agent_scope_concurrent_policy() ==
+              aura::orch::AgentScopeConcurrentPolicy::HardDeny,
+          "AC5: production concurrent enter is HardDeny");
+
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    std::atomic<bool> keep{true};
+    AgentScope scope(sched);
+    for (int i = 0; i < 3; ++i) {
+        AgentSpec spec;
+        spec.name = "3208-soak-" + std::to_string(i);
+        spec.body = [&] {
+            while (keep.load(std::memory_order_relaxed))
+                aura::orch::fiber_sleep_ms(20);
+        };
+        scope.spawn(spec);
+    }
+    CHECK(scope.size() == 3, "AC5: multi-agent soak spawned 3");
+    aura::orch::JoinPolicy jp{};
+    jp.primary_ms = 1;
+    jp.drain_ms = 0;
+    (void)scope.join_all(jp);
+    CHECK(scope.last_on_join_fail_effective() == AgentFailureAction::Cancel,
+          "ac3208_4_hash_and_soak: soak effective Cancel");
+    CHECK(scope.last_join_fail_action_taken() >= 1, "AC5: soak action taken");
+    ac3208_set_prod(false);
+    ac3208_stop(scope, keep);
+
+    CompilerService cs;
+    CHECK(href(cs, "schema-3208") == 3208, "AC4: schema-3208");
+    CHECK(href(cs, "join-fail-production-default-wired") == 1, "AC4: wired sentinel");
+    CHECK(href(cs, "agent-join-fail-action-cancel-total") >= 0, "AC4: query key");
+}
 
 int run_test_agent_failure_policy() {
     std::println("=== Issue #2229: AgentFailurePolicy + RestartN ===");
@@ -718,6 +896,11 @@ int run_test_agent_failure_policy() {
         CHECK(href(cs, "join-fail-policy-wired") == 1, "3052: wired sentinel");
         CHECK(href(cs, "agent-join-fail-total") >= 0, "3052: query key");
     }
+
+    ac3208_1_soft_explicit_report_only();
+    ac3208_2_prod_unset_cancel();
+    ac3208_3_reclaimed_skip();
+    ac3208_4_hash_and_soak();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

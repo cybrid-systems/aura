@@ -264,6 +264,10 @@ Rules (per Issue #2229 AC2-AC3):
    Issue #3052 wires `AgentScope::join_all(JoinPolicy, AgentFailurePolicy)`:
    Timeout / Cancelled honor RestartN / Throttle / Cancel; Reclaimed +
    still-running / deferred is never restart fuel (#2661).
+   Issue #3208: production + **unset** policy injects Cancel (env
+   `AURA_JOIN_FAIL_ACTION=report|cancel`). Soft / explicit ReportOnly
+   stay ReportOnly. `orch:scope-join-all` hash exposes
+   `on-join-fail-effective` and `join-fail-action-taken` (schema-3208).
 4. Optional Phase C (`CircuitBreaker` mirror of #2007) is deferred
    — the `consecutive_stall_limit` cap is the simpler version of
    the same idea and ships in #2229.
