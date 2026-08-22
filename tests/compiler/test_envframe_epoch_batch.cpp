@@ -9,6 +9,8 @@
 //   Issue #1756 — resolve_env_frame_detailed status discrimination
 //   Issue #1948 — envframe truncate dual-epoch metrics / stress guard
 //   Issue #2017 — compact-env-frames epoch notify + targeted cache invalidate
+//   Issue #3267 — publish_live_env_linear_to_bridge env_frames_ lock
+//                 + combined live bridge-state C ABI
 //
 // Pattern: CHECK() + run_* AC blocks (test_env_lookup_batch precedent).
 // Source: cmake/AuraDomainTests.cmake · all_test_issue_targets.
@@ -886,6 +888,131 @@ static void ac2930_5_linter_and_no_design() {
           "AC6: #1365 suite preserved");
 }
 
+// ── Issue #3267: publish lock + paired live bridge-state ──
+static void ac3267_1_publish_takes_env_frames_lock() {
+    std::println("\n--- #3267 AC1: publish shared_lock; compact/truncate holding sibling ---");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    auto pos = env.find("void Evaluator::publish_live_env_linear_to_bridge() const noexcept");
+    CHECK(pos != std::string::npos, "3267 AC1: publish def");
+    auto win = env.substr(pos, 900);
+    CHECK(win.find("Issue #3267") != std::string::npos, "3267 AC1: cite");
+    CHECK(win.find("std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_)") !=
+              std::string::npos,
+          "3267 AC1: shared_lock before scan");
+    CHECK(win.find("publish_live_env_linear_to_bridge_holding_env_lock()") != std::string::npos,
+          "3267 AC1: delegates to holding sibling");
+    CHECK(env.find("non-recursive") != std::string::npos, "3267 AC1: non-recursive documented");
+    auto tpos = env.find("Evaluator::truncate_env_frames_to_checkpoint()");
+    CHECK(tpos != std::string::npos, "3267 AC1: truncate def");
+    auto twin = env.substr(tpos, 5000);
+    CHECK(twin.find("publish_live_env_linear_to_bridge_holding_env_lock()") != std::string::npos,
+          "3267 AC1: truncate uses holding sibling");
+    CHECK(twin.find("publish_live_env_linear_to_bridge();") == std::string::npos,
+          "3267 AC1: truncate does not nested-lock publish");
+    auto cpos = env.find("std::size_t Evaluator::compact_env_frames()");
+    CHECK(cpos != std::string::npos, "3267 AC1: compact def");
+    auto cwin = env.substr(cpos, 20000);
+    CHECK(cwin.find("publish_live_env_linear_to_bridge_holding_env_lock()") != std::string::npos,
+          "3267 AC1: compact uses holding sibling");
+    Evaluator ev;
+    (void)ev.alloc_env_frame();
+    const auto gen0 = ev.env_generation();
+    (void)ev.compact_env_frames();
+    CHECK(ev.env_generation() >= gen0, "3267 AC1: compact still bumps/publishes");
+    std::uint64_t v = 0;
+    std::uint8_t lin = 0;
+    aura_get_aot_live_bridge_state(&v, &lin);
+    CHECK(v == ev.env_generation(), "3267 AC1: packed version matches env_generation_");
+}
+
+static void ac3267_2_combined_bridge_state() {
+    std::println("\n--- #3267 AC2: combined set/get; existing setters stay ---");
+    std::uint64_t prev_v = 0;
+    std::uint8_t prev_l = 0;
+    aura_get_aot_live_bridge_state(&prev_v, &prev_l);
+    aura_set_aot_live_bridge_state(42, 7);
+    std::uint64_t v = 0;
+    std::uint8_t lin = 0;
+    aura_get_aot_live_bridge_state(&v, &lin);
+    CHECK(v == 42 && lin == 7, "3267 AC2: combined unpack");
+    CHECK(aura_get_aot_live_env_frame_version() == 42, "3267 AC2: version getter");
+    CHECK(aura_get_aot_live_linear_state_fingerprint() == 7, "3267 AC2: linear getter");
+    aura_set_aot_live_env_frame_version(99);
+    CHECK(aura_get_aot_live_env_frame_version() == 99, "3267 AC2: old version setter");
+    CHECK(aura_get_aot_live_linear_state_fingerprint() == 7, "3267 AC2: lin preserved");
+    aura_set_aot_live_linear_state_fingerprint(3);
+    CHECK(aura_get_aot_live_env_frame_version() == 99, "3267 AC2: version preserved");
+    CHECK(aura_get_aot_live_linear_state_fingerprint() == 3, "3267 AC2: old lin setter");
+    aura_get_aot_live_bridge_state(nullptr, nullptr); // null out_* ok
+    aura_set_aot_live_bridge_state(prev_v, prev_l);
+    const auto ssot = read_file("src/compiler/runtime_ssot.cpp");
+    CHECK(ssot.find("g_aot_live_bridge_state") != std::string::npos, "3267 AC2: packed SSOT");
+    CHECK(ssot.find("aura_set_aot_live_env_frame_version") != std::string::npos,
+          "3267 AC2: old version setter kept");
+    CHECK(ssot.find("aura_set_aot_live_linear_state_fingerprint") != std::string::npos,
+          "3267 AC2: old lin setter kept");
+    const auto hdr = read_file("src/compiler/aura_jit_bridge.h");
+    CHECK(hdr.find("void aura_set_aot_live_bridge_state") != std::string::npos,
+          "3267 AC2: combined setter decl");
+    CHECK(hdr.find("void aura_get_aot_live_bridge_state") != std::string::npos,
+          "3267 AC2: combined getter decl");
+}
+
+static void ac3267_3_epoch_before_lock_comment() {
+    std::println("\n--- #3267 AC3: stamp epoch is closure-creation timestamp ---");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    auto pos = env.find("void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept");
+    CHECK(pos != std::string::npos, "3267 AC3: stamp def");
+    auto win = env.substr(pos, 900);
+    CHECK(win.find("closure-creation timestamp") != std::string::npos,
+          "3267 AC3: contract comment");
+    CHECK(win.find("current_bridge_epoch()") != std::string::npos, "3267 AC3: epoch read");
+    auto epoch = win.find("cl.bridge_epoch = current_bridge_epoch()");
+    auto lock = win.find("std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_)");
+    CHECK(epoch != std::string::npos && lock != std::string::npos && epoch < lock,
+          "3267 AC3: epoch before env lock (intentional)");
+    Evaluator ev;
+    std::atomic<std::uint64_t> epoch_v{11};
+    ev.set_compiler_service(&epoch_v);
+    ev.install_bridge_epoch_fn([](void* p) -> std::uint64_t {
+        return static_cast<std::atomic<std::uint64_t>*>(p)->load(std::memory_order_relaxed);
+    });
+    Closure cl;
+    ev.stamp_closure_bridge_epoch(cl);
+    CHECK(cl.bridge_epoch == 11, "3267 AC3: stamp still sets current");
+}
+
+static void ac3267_4_legacy_trust_read_once() {
+    std::println("\n--- #3267 AC4: LEGACY_TRUST cached read-once ---");
+    const auto env = read_file("src/compiler/evaluator_env.cpp");
+    auto pos = env.find("bool Evaluator::is_bridge_stale");
+    CHECK(pos != std::string::npos, "3267 AC4: is_bridge_stale");
+    auto win = env.substr(pos, 1400);
+    CHECK(win.find("read once at first is_bridge_stale") != std::string::npos,
+          "3267 AC4: read-once comment");
+    CHECK(win.find("static const bool legacy_trust") != std::string::npos,
+          "3267 AC4: function-local static kept");
+    CHECK(!Evaluator::is_bridge_stale(0, 0), "3267 AC4: tracking off still not stale");
+}
+
+static void ac3267_5_source_and_linter() {
+    std::println("\n--- #3267 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_envframe_epoch_batch.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_env_publish_lock_3267.py");
+    CHECK(t.find("ac3267_1_publish_takes_env_frames_lock") != std::string::npos, "3267 AC5: AC1");
+    CHECK(t.find("ac3267_2_combined_bridge_state") != std::string::npos, "3267 AC5: AC2");
+    CHECK(t.find("ac3267_3_epoch_before_lock_comment") != std::string::npos, "3267 AC5: AC3");
+    CHECK(t.find("ac3267_4_legacy_trust_read_once") != std::string::npos, "3267 AC5: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #3267") != std::string::npos, "3267 AC5: linter");
+    CHECK(build.find("check_env_publish_lock_3267") != std::string::npos, "3267 AC5: build.py");
+    CHECK(read_file("docs/design/3267-env-publish-lock.md").empty(),
+          "3267 AC5: no docs/design per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3267.cpp").empty(),
+          "3267 AC5: no invent test per #81967");
+    CHECK(t.find("run_1365_bridge_epoch_strict") != std::string::npos, "3267 AC5: #1365 preserved");
+}
+
 } // namespace aura_envframe_epoch_batch
 
 int main() {
@@ -902,10 +1029,17 @@ int main() {
     aura_envframe_epoch_batch::ac2930_3_stamped_and_remount_unchanged();
     aura_envframe_epoch_batch::ac2930_4_query_and_source();
     aura_envframe_epoch_batch::ac2930_5_linter_and_no_design();
+    std::println("\n=== Issue #3267: publish lock + paired live bridge-state ===");
+    aura_envframe_epoch_batch::ac3267_1_publish_takes_env_frames_lock();
+    aura_envframe_epoch_batch::ac3267_2_combined_bridge_state();
+    aura_envframe_epoch_batch::ac3267_3_epoch_before_lock_comment();
+    aura_envframe_epoch_batch::ac3267_4_legacy_trust_read_once();
+    aura_envframe_epoch_batch::ac3267_5_source_and_linter();
     if (::aura::test::g_failed)
         return 1;
     std::println(
-        "envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930): OK ({} passed)",
+        "envframe/epoch batch (#1360/#1365/#1728/#1739/#1756/#1948/#2017/#2930/#3267): OK ({} "
+        "passed)",
         ::aura::test::g_passed);
     return 0;
 }

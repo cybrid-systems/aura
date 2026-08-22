@@ -91,8 +91,18 @@ void FlatHashTable::destroy(FlatHashTable* ht) {
 // g_aot_table_epoch object; do NOT weak-stub these in
 // runtime_bridge_stub.cpp (would preempt this pointer).
 std::atomic<std::uint64_t> g_aot_table_epoch{1};
-static std::atomic<std::uint64_t> g_aot_live_env_frame_version{0};
-static std::atomic<std::uint8_t> g_aot_live_linear_state_fingerprint{0};
+// Issue #3267: one packed word is the live-bridge SSOT.
+// Layout: [env_frame_version : 56][linear_fingerprint : 8].
+// env_generation_ is a compact/truncate counter; 56 bits is ample.
+// Existing aura_set/get_aot_live_* wrappers CAS/load this word so
+// a reader of the combined getter cannot observe a torn pair.
+static std::atomic<std::uint64_t> g_aot_live_bridge_state{0};
+static constexpr std::uint64_t kLiveBridgeLinMask = 0xffu;
+static constexpr unsigned kLiveBridgeVerShift = 8;
+
+static std::uint64_t pack_live_bridge_state(std::uint64_t version, std::uint8_t lin) noexcept {
+    return (version << kLiveBridgeVerShift) | static_cast<std::uint64_t>(lin);
+}
 
 extern "C" std::uint64_t aura_aot_func_table_epoch(void) {
     return g_aot_table_epoch.load(std::memory_order_acquire);
@@ -108,20 +118,42 @@ extern "C" __attribute__((weak)) void aura_aot_bump_func_table_epoch(void) {
     g_aot_table_epoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
+extern "C" void aura_set_aot_live_bridge_state(std::uint64_t version, std::uint8_t max_lin) {
+    g_aot_live_bridge_state.store(pack_live_bridge_state(version, max_lin),
+                                  std::memory_order_release);
+}
+
+extern "C" void aura_get_aot_live_bridge_state(std::uint64_t* out_version, std::uint8_t* out_lin) {
+    const auto packed = g_aot_live_bridge_state.load(std::memory_order_acquire);
+    if (out_version)
+        *out_version = packed >> kLiveBridgeVerShift;
+    if (out_lin)
+        *out_lin = static_cast<std::uint8_t>(packed & kLiveBridgeLinMask);
+}
+
 extern "C" void aura_set_aot_live_env_frame_version(std::uint64_t v) {
-    g_aot_live_env_frame_version.store(v, std::memory_order_release);
+    auto old = g_aot_live_bridge_state.load(std::memory_order_relaxed);
+    while (!g_aot_live_bridge_state.compare_exchange_weak(
+        old, pack_live_bridge_state(v, static_cast<std::uint8_t>(old & kLiveBridgeLinMask)),
+        std::memory_order_release, std::memory_order_relaxed)) {
+    }
 }
 
 extern "C" std::uint64_t aura_get_aot_live_env_frame_version(void) {
-    return g_aot_live_env_frame_version.load(std::memory_order_acquire);
+    return g_aot_live_bridge_state.load(std::memory_order_acquire) >> kLiveBridgeVerShift;
 }
 
 extern "C" void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v) {
-    g_aot_live_linear_state_fingerprint.store(v, std::memory_order_release);
+    auto old = g_aot_live_bridge_state.load(std::memory_order_relaxed);
+    while (!g_aot_live_bridge_state.compare_exchange_weak(
+        old, pack_live_bridge_state(old >> kLiveBridgeVerShift, v), std::memory_order_release,
+        std::memory_order_relaxed)) {
+    }
 }
 
 extern "C" std::uint8_t aura_get_aot_live_linear_state_fingerprint(void) {
-    return g_aot_live_linear_state_fingerprint.load(std::memory_order_acquire);
+    return static_cast<std::uint8_t>(g_aot_live_bridge_state.load(std::memory_order_acquire) &
+                                     kLiveBridgeLinMask);
 }
 
 // ── Current-fiber-id hook (Issue #195) ──

@@ -3535,6 +3535,19 @@ def cmd_lint():
             "Issue #3266 module realpath-TOCTOU linter failed — run python3 scripts/coverage/checks/check_module_realpath_toctou_3266.py"
         )
         return r
+    # Issue #3267: publish_live_env_linear_to_bridge takes env_frames_
+    # shared_lock; combined live bridge-state C ABI. Extends
+    # test_envframe_epoch_batch.cpp (#81967); no docs/design/ (#1655).
+    epl_script = COVERAGE_CHECKS / "check_env_publish_lock_3267.py"
+    if not epl_script.exists():
+        fail(f"missing {epl_script}")
+        return 1
+    r = run([sys.executable, str(epl_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3267 env-publish-lock linter failed — run python3 scripts/coverage/checks/check_env_publish_lock_3267.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10958,6 +10971,21 @@ def cmd_module_realpath_toctou_3266_coverage():
         fail("module realpath-TOCTOU (#3266) coverage contract rows failed")
         return 1
     ok("module realpath-TOCTOU (#3266) coverage clean")
+    return 0
+
+
+def cmd_env_publish_lock_3267_coverage():
+    """Issue #3267: publish env_frames_ lock + combined live bridge-state."""
+    print(f"{B}=== env publish lock (#3267) ==={N}")
+    script = COVERAGE_CHECKS / "check_env_publish_lock_3267.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("env publish lock (#3267) coverage contract rows failed")
+        return 1
+    ok("env publish lock (#3267) coverage clean")
     return 0
 
 
@@ -19309,6 +19337,8 @@ def main():
         "jit-fn-marker-atomic-3265-coverage": cmd_jit_fn_marker_atomic_3265_coverage,
         "module-realpath-toctou-3266": cmd_module_realpath_toctou_3266_coverage,
         "module-realpath-toctou-3266-coverage": cmd_module_realpath_toctou_3266_coverage,
+        "env-publish-lock-3267": cmd_env_publish_lock_3267_coverage,
+        "env-publish-lock-3267-coverage": cmd_env_publish_lock_3267_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

@@ -14,6 +14,8 @@ Contract:
   AC5  extend test_module_path_refuse; linter after #3265; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3267: publish_live_env_linear_to_bridge env_frames_ lock + combined bridge state.
 """
 
 from __future__ import annotations
