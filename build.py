@@ -3378,6 +3378,19 @@ def cmd_lint():
             "Issue #3254 noncoop force-edge linter failed — run python3 scripts/coverage/checks/check_hold_budget_noncoop_force_edge_3254.py"
         )
         return r
+    # Issue #3255: Soft dual-graph parity fail fail-closed before partial peel.
+    # Extends test_dep_graph_hybrid_cascade.cpp (#81967); no
+    # docs/design/ (#1655).
+    dgs_script = COVERAGE_CHECKS / "check_dual_dep_graph_soft_parity_partial_3255.py"
+    if not dgs_script.exists():
+        fail(f"missing {dgs_script}")
+        return 1
+    r = run([sys.executable, str(dgs_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3255 Soft dual-graph parity partial linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_soft_parity_partial_3255.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10621,6 +10634,21 @@ def cmd_hold_budget_noncoop_force_edge_3254_coverage():
         fail("hold-budget noncoop force-edge (#3254) coverage contract rows failed")
         return 1
     ok("hold-budget noncoop force-edge (#3254) coverage clean")
+    return 0
+
+
+def cmd_dual_dep_graph_soft_parity_partial_3255_coverage():
+    """Issue #3255: Soft dual-graph parity fail fail-closed before partial peel."""
+    print(f"{B}=== dual-dep-graph Soft parity partial (#3255) ==={N}")
+    script = COVERAGE_CHECKS / "check_dual_dep_graph_soft_parity_partial_3255.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dual-dep-graph Soft parity partial (#3255) coverage contract rows failed")
+        return 1
+    ok("dual-dep-graph Soft parity partial (#3255) coverage clean")
     return 0
 
 
@@ -18948,6 +18976,8 @@ def main():
         "repair-solved-residual-3253-coverage": cmd_repair_solved_residual_3253_coverage,
         "hold-budget-noncoop-force-edge-3254": cmd_hold_budget_noncoop_force_edge_3254_coverage,
         "hold-budget-noncoop-force-edge-3254-coverage": cmd_hold_budget_noncoop_force_edge_3254_coverage,
+        "dual-dep-graph-soft-parity-partial-3255": cmd_dual_dep_graph_soft_parity_partial_3255_coverage,
+        "dual-dep-graph-soft-parity-partial-3255-coverage": cmd_dual_dep_graph_soft_parity_partial_3255_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

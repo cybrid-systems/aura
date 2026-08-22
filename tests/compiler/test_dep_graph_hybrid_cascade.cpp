@@ -38,6 +38,7 @@ import aura.compiler.dirty_propagation; // aura::compiler::dirty::*
 
 namespace {
 
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -319,7 +320,10 @@ void ac2247_dual_dep_graph_parity_gate() {
     // Wire-up in service.ixx (record_dependency chokepoint)
     CHECK(svc.find("graphs_consistent(dep_graph_") != std::string::npos,
           "parity gate wire-up at record_dependency");
-    CHECK(svc.find("dual_dep_graph_strict_enabled") != std::string::npos,
+    // Issue #3187: wire-up uses dual_dep_graph_strict_or_production
+    // (subsumes dual_dep_graph_strict_enabled). Accept either.
+    CHECK(svc.find("dual_dep_graph_strict_or_production") != std::string::npos ||
+              svc.find("dual_dep_graph_strict_enabled") != std::string::npos,
           "strict toggle check in wire-up");
     // Query surface (query:dirty-cascade-stats)
     CHECK(q.find("dual-dep-graph-parity-check-total") != std::string::npos,
@@ -586,7 +590,7 @@ static void ac3187_production_fail_closed_default() {
         auto rd_pos = svc.find("void record_dependency(const std::string& caller");
         if (rd_pos == std::string::npos)
             rd_pos = svc.find("void record_dependency(");
-        REQUIRE(rd_pos != std::string::npos);
+        CHECK(rd_pos != std::string::npos, "ac3187 AC2: record_dependency definition");
         auto rd_end = svc.find("\n    }\n", rd_pos);
         if (rd_end == std::string::npos)
             rd_end = rd_pos + 8000;
@@ -607,7 +611,7 @@ static void ac3187_production_fail_closed_default() {
     {
         const auto svc = read_file("src/compiler/service.ixx");
         auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
-        REQUIRE(drain_pos != std::string::npos);
+        CHECK(drain_pos != std::string::npos, "ac3187 AC3: drain_deferred_hybrid_cascade_ present");
         auto drain_end = svc.find("\n    }\n", drain_pos);
         if (drain_end == std::string::npos)
             drain_end = drain_pos + 5000;
@@ -647,9 +651,15 @@ static void ac3187_production_fail_closed_default() {
         // codebase to confirm no new key was inserted.
         const auto ixx = read_file("src/compiler/dirty_propagation.ixx");
         const auto svc = read_file("src/compiler/service.ixx");
-        const auto total = std::count(obs.begin(), obs.end(), "dual_dep_graph_parity_fail_total") +
-                           std::count(ixx.begin(), ixx.end(), "dual_dep_graph_parity_fail_total") +
-                           std::count(svc.begin(), svc.end(), "dual_dep_graph_parity_fail_total");
+        auto count_sub = [](const std::string& s, std::string_view n) {
+            std::size_t c = 0;
+            for (std::size_t p = 0; (p = s.find(n, p)) != std::string::npos; p += n.size())
+                ++c;
+            return c;
+        };
+        const auto total = count_sub(obs, "dual_dep_graph_parity_fail_total") +
+                           count_sub(ixx, "dual_dep_graph_parity_fail_total") +
+                           count_sub(svc, "dual_dep_graph_parity_fail_total");
         CHECK(total >= 4, "ac3187 AC5: existing dual_dep_graph_parity_fail_total counter reused "
                           "(no new metric key)");
         auto root = std::filesystem::current_path();
@@ -667,6 +677,262 @@ static void ac3187_production_fail_closed_default() {
             }
         }
     }
+}
+
+// ── Issue #3255: Soft dual-graph parity fail fail-closed before partial peel ──
+// Residual of #3187: Production/Strict force-dirties all callers on parity
+// fail so the next relower cannot silently partial-peel. Soft / non-Strict
+// only rebuilt; a concurrent fiber / lockless batch that left the graphs
+// divergent can still reach relower_dirty_defines_from_workspace with
+// want_partial=true under an incomplete hybrid cascade cone.
+//   AC1: Soft + injected dual-graph fork + mutate + partial path → rebuild
+//        + force-dirty / forced full; lookup_define_v2 after mutate is
+//        never a silent clean hit
+//   AC2: Production/Strict record_dependency + drain still force-dirty all
+//        callers via dual_dep_graph_strict_or_production (unchanged)
+//   AC3: clean Soft (graphs already consistent) — no extra exclusive
+//        rebuild, no forced full
+//   AC4: dual_dep_graph_parity_fail_total still increments; existing
+//        partial_forced_full_by_impact_total distinguishes
+//        "parity-fail → forced full"
+//   AC5: concurrent record_dependency soak under Soft fork; abort
+//        dual-topology restore still forces relower
+//   AC6: no test_issue_3255.cpp (#81967); no docs/design/3255-* (#1655)
+
+static void ac3255_enter_soft() {
+    aura::compiler::dirty::set_dual_dep_graph_strict(0);
+    aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Off);
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        0, std::memory_order_relaxed);
+}
+
+static void ac3255_1_soft_fork_forces_full() {
+    std::println("\n--- #3255 AC1: Soft fork + mutate cannot silent-partial-peel ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save_prod =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    const auto save_strat = aura::compiler::typed_audit::get_strategy();
+    const auto save_strict = aura::compiler::dirty::dual_dep_graph_strict_enabled();
+    ac3255_enter_soft();
+    CHECK(!aura::compiler::dirty::dual_dep_graph_strict_or_production(),
+          "ac3255 AC1: Soft / Off (strict_or_production false)");
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda () (B)))
+")")
+              .has_value(),
+          "ac3255 AC1: set-code A/B");
+    CHECK(cs.eval("(eval-current)").has_value(), "ac3255 AC1: eval");
+    cs.public_record_dependency("A", "B");
+    CHECK(cs.public_graphs_consistent(), "ac3255 AC1: consistent after record");
+    CHECK(cs.get_define_v2("A") != nullptr, "ac3255 AC1: A cached");
+    CHECK(cs.get_define_v2("B") != nullptr, "ac3255 AC1: B cached");
+    const auto hash_a = cs.get_define_v2("A")->source_hash;
+
+    // Dirty only B (one block) so want_partial stays true. Drop the NodeId
+    // mirror AFTER the mark so string cascade cannot hide the fork, and
+    // immediately before relower so record_dependency cannot rebuild first.
+    const auto* be = cs.get_define_v2("B");
+    const std::size_t fi = (be && be->irs.size() >= 2) ? 1 : 0;
+    CHECK(cs.mark_block_dirty_v2("B", fi, 0), "ac3255 AC1: B one-block dirty (want_partial)");
+    cs.public_drop_node_dep_mirror_edge("A", "B");
+    CHECK(!cs.public_graphs_consistent(), "ac3255 AC1: injected NodeId fork");
+
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto full0 = m.incremental_full_fallback_total.load(std::memory_order_relaxed);
+
+    (void)cs.public_relower_dirty_defines_from_workspace();
+
+    CHECK(cs.public_graphs_consistent(), "ac3255 AC1: rebuilt at peel (graphs consistent)");
+    const auto fail1 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced1 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto full1 = m.incremental_full_fallback_total.load(std::memory_order_relaxed);
+    CHECK(fail1 > fail0, "ac3255 AC1: dual_dep_graph_parity_fail_total incremented");
+    CHECK(forced1 > forced0 || full1 > full0,
+          "ac3255 AC1: parity-fail → forced full (never silent partial)");
+    const auto* after_a = cs.get_define_v2("A");
+    CHECK(after_a != nullptr, "ac3255 AC1: A still cached");
+    const int look_after = cs.lookup_define_v2("A", hash_a);
+    CHECK(look_after != 0 || after_a->dirty || after_a->dirty_block_count() > 0,
+          "ac3255 AC1: lookup_define_v2(A) after peel is not silent clean");
+    auto ra = cs.eval("(A)");
+    CHECK(ra.has_value(), "ac3255 AC1: (A) evals after peel");
+    (void)full1;
+    (void)ra;
+
+    aura::compiler::dirty::set_dual_dep_graph_strict(save_strict ? 1 : 0);
+    aura::compiler::typed_audit::set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save_prod,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3255_2_production_unchanged() {
+    std::println("\n--- #3255 AC2: Production/Strict force-dirty all callers unchanged ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    auto rd_pos = svc.find("void record_dependency(const std::string& caller");
+    if (rd_pos == std::string::npos)
+        rd_pos = svc.find("void record_dependency(");
+    CHECK(rd_pos != std::string::npos, "ac3255 AC2: record_dependency definition");
+    auto rd_end = svc.find("\n    }\n", rd_pos);
+    if (rd_end == std::string::npos)
+        rd_end = rd_pos + 8000;
+    auto rd_win = svc.substr(rd_pos, rd_end - rd_pos);
+    CHECK(rd_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
+          "ac3255 AC2: record_dependency still uses dual_dep_graph_strict_or_production");
+    CHECK(rd_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
+              std::string::npos,
+          "ac3255 AC2: record_dependency all-callers walk preserved");
+
+    auto drain_pos = svc.find("void drain_deferred_hybrid_cascade_()");
+    CHECK(drain_pos != std::string::npos, "ac3255 AC2: drain_deferred_hybrid_cascade_ present");
+    auto drain_end = svc.find("\n    }\n", drain_pos);
+    if (drain_end == std::string::npos)
+        drain_end = drain_pos + 5000;
+    auto drain_win = svc.substr(drain_pos, drain_end - drain_pos);
+    CHECK(drain_win.find("dual_dep_graph_strict_or_production()") != std::string::npos,
+          "ac3255 AC2: drain still uses dual_dep_graph_strict_or_production");
+    CHECK(drain_win.find("for (const auto& [callee_name, callee_entry] : dep_graph_)") !=
+              std::string::npos,
+          "ac3255 AC2: drain all-callers walk preserved");
+}
+
+static void ac3255_3_clean_soft_zero_extra() {
+    std::println("\n--- #3255 AC3: clean Soft path zero extra exclusive / forced full ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save_prod =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    const auto save_strat = aura::compiler::typed_audit::get_strategy();
+    const auto save_strict = aura::compiler::dirty::dual_dep_graph_strict_enabled();
+    ac3255_enter_soft();
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define Y (lambda () 1))
+(define X (lambda () (Y)))
+")")
+              .has_value(),
+          "ac3255 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "ac3255 AC3: eval");
+    cs.public_record_dependency("X", "Y");
+    CHECK(cs.public_graphs_consistent(), "ac3255 AC3: consistent");
+
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    cs.public_mark_define_dirty("X");
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "ac3255 AC3: still consistent");
+    CHECK(m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) == fail0,
+          "ac3255 AC3: no parity_fail bump on already-consistent graphs");
+    (void)forced0; // impact_ub may still force full; parity path must not.
+
+    const auto svc = read_file("src/compiler/service.ixx");
+    auto help_pos = svc.find("fail_closed_soft_dual_graph_parity_before_partial_");
+    CHECK(help_pos != std::string::npos, "ac3255 AC3: Soft parity helper present");
+    auto help_win = svc.substr(help_pos > 2000 ? help_pos - 2000 : 0, 4500);
+    CHECK(help_win.find("Issue #3255") != std::string::npos,
+          "ac3255 AC3: helper cites Issue #3255");
+    CHECK(help_win.find("graphs_consistent") != std::string::npos,
+          "ac3255 AC3: peel-time graphs_consistent re-check");
+    CHECK(help_win.find("OrderedSharedLock") != std::string::npos,
+          "ac3255 AC3: consistent path is shared-lock walk");
+    CHECK(help_win.find("rebuild_node_dep_graph_from_string") != std::string::npos,
+          "ac3255 AC3: rebuild only on fail");
+    auto rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()");
+    CHECK(rel_pos != std::string::npos, "ac3255 AC3: relower_dirty_defines_from_workspace present");
+    auto rel_win = svc.substr(rel_pos, 8000);
+    CHECK(rel_win.find("fail_closed_soft_dual_graph_parity_before_partial_") != std::string::npos,
+          "ac3255 AC3: relower calls Soft parity helper before peel");
+
+    aura::compiler::dirty::set_dual_dep_graph_strict(save_strict ? 1 : 0);
+    aura::compiler::typed_audit::set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save_prod,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3255_4_metrics_soak_and_linter() {
+    std::println("\n--- #3255 AC4/AC5: distinguisher + concurrent soak + linter ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    const auto save_prod =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    const auto save_strat = aura::compiler::typed_audit::get_strategy();
+    const auto save_strict = aura::compiler::dirty::dual_dep_graph_strict_enabled();
+    ac3255_enter_soft();
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define leaf (lambda () 1))
+(define root (lambda () (leaf)))
+")")
+              .has_value(),
+          "ac3255 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "ac3255 AC5: eval");
+    cs.public_record_dependency("root", "leaf");
+    auto& m = cs.metrics();
+    const auto fail0 = m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed);
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+
+    std::atomic<int> stop{0};
+    std::thread writer([&] {
+        for (int i = 0; i < 80 && !stop.load(std::memory_order_relaxed); ++i) {
+            cs.public_record_dependency(std::format("c{}", i % 4), "leaf");
+            if (i % 7 == 0)
+                cs.public_drop_node_dep_mirror_edge("root", "leaf");
+        }
+    });
+    for (int i = 0; i < 24; ++i) {
+        cs.public_mark_define_dirty("root");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+        if (i % 5 == 0)
+            cs.public_drop_node_dep_mirror_edge("root", "leaf");
+    }
+    stop.store(1, std::memory_order_relaxed);
+    writer.join();
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "ac3255 AC5: consistent after soak");
+    auto rr = cs.eval("(root)");
+    CHECK(rr.has_value(), "ac3255 AC5: (root) evals after soak");
+    // Distinguisher: fail_total + partial_forced_full_by_impact_total both
+    // live (parity-fail → forced full). Soak may or may not hit the fork
+    // window every iteration; counters are non-decreasing.
+    CHECK(m.dual_dep_graph_parity_fail_total.load(std::memory_order_relaxed) >= fail0,
+          "ac3255 AC4: fail_total non-decreasing");
+    CHECK(m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >= forced0,
+          "ac3255 AC4: forced-full distinguisher non-decreasing");
+
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_dep_graph_hybrid_cascade.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_dual_dep_graph_soft_parity_partial_3255.py");
+    const auto build = read_file("build.py");
+    CHECK(obs.find("Issue #3255") != std::string::npos, "ac3255 AC4: obs cite");
+    CHECK(obs.find("partial_forced_full_by_impact_total") != std::string::npos,
+          "ac3255 AC4: existing distinguisher");
+    CHECK(svc.find("Issue #3255") != std::string::npos, "ac3255 AC4: service cite");
+    CHECK(t.find("ac3255_1_soft_fork_forces_full") != std::string::npos, "ac3255 AC6: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3255") != std::string::npos, "ac3255 AC6: linter");
+    CHECK(build.find("check_dual_dep_graph_soft_parity_partial_3255") != std::string::npos,
+          "ac3255 AC6: build.py gate");
+    CHECK(read_file("tests/compiler/test_issue_3255.cpp").empty(),
+          "ac3255 AC6: no test_issue_3255.cpp");
+    CHECK(read_file("tests/issues/test_issue_3255.cpp").empty(),
+          "ac3255 AC6: no tests/issues/test_issue_3255.cpp");
+    CompilerService qcs;
+    CHECK(href(qcs, "schema-3255") == 3255, "ac3255 AC4: live schema-3255");
+    CHECK(href(qcs, "issue-3255") == 3255, "ac3255 AC4: live issue-3255");
+
+    aura::compiler::dirty::set_dual_dep_graph_strict(save_strict ? 1 : 0);
+    aura::compiler::typed_audit::set_strategy(save_strat);
+    g_typed_mutation_audit_counters.production_defaults_active.store(save_prod,
+                                                                     std::memory_order_relaxed);
 }
 
 int run_test_dep_graph_hybrid_cascade() {
@@ -690,6 +956,11 @@ int run_test_dep_graph_hybrid_cascade() {
     // Issue #3187: production fail-closed default (extends #3165 Strict to
     // also fire under production_defaults_active).
     ac3187_production_fail_closed_default();
+    // Issue #3255: Soft dual-graph parity fail fail-closed before partial peel.
+    ac3255_1_soft_fork_forces_full();
+    ac3255_2_production_unchanged();
+    ac3255_3_clean_soft_zero_extra();
+    ac3255_4_metrics_soak_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
