@@ -878,6 +878,9 @@ void FlatAST::restamp_all_node_generations() {
         // enable lazy gen-align only (zero eager restamp). wrap_epoch
         // still invalidates pre-wrap StableNodeRefs.
         // Issue #2421: release so is_valid/make_ref see the enable.
+        // Issue #3259: production outermost may eager-restamp a hot
+        // cone after this call (restamp_hot_cone_after_budget); this
+        // path itself stays lazy-align only (Soft/Off zero extra).
         restamp_lazy_align_enabled_.store(true, std::memory_order_release);
         restamped = 0;
     } else if (use_incremental) {
@@ -937,6 +940,59 @@ void FlatAST::restamp_all_node_generations() {
     if (auto_restamp_pending_.exchange(false, std::memory_order_relaxed)) {
         auto_restamp_on_wrap_count_.fetch_add(1, std::memory_order_relaxed);
     }
+}
+
+// --- FlatAST::restamp_hot_cone_after_budget ---
+// Issue #3259: eager-restamp dirty/touched + parent chain, capped.
+// Does not clear restamp_last_budget_exceeded_ / restamp_generation_torn_
+// (remainder stays fail-closed). Soft/budget==0 never call this.
+std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes) {
+    if (max_nodes == 0)
+        return 0;
+    if (restamp_eager_.size() < size())
+        restamp_eager_.resize(size(), 0);
+    std::size_t restamped = 0;
+    auto restamp_one = [&](NodeId id) {
+        if (restamped >= max_nodes)
+            return;
+        if (id == NULL_NODE || id >= size() || is_free_slot(id))
+            return;
+        if (id >= node_gen_.size())
+            return;
+        if (id < restamp_eager_.size() && restamp_eager_[id] != 0)
+            return;
+        node_gen_[id] = generation_;
+        if (id < restamp_eager_.size())
+            restamp_eager_[id] = 1;
+        ++restamped;
+    };
+    auto walk_seed = [&](NodeId seed) {
+        NodeId cur = seed;
+        std::size_t hops = 0;
+        const auto hop_cap = size() + 1;
+        while (cur != NULL_NODE && restamped < max_nodes && hops < hop_cap) {
+            restamp_one(cur);
+            const NodeId p = cur < parent_.size() ? parent_[cur] : NULL_NODE;
+            if (p == cur)
+                break;
+            cur = p;
+            ++hops;
+        }
+    };
+    for (NodeId id = 0; id < size() && restamped < max_nodes; ++id) {
+        if (id == NULL_NODE || is_free_slot(id) || !is_live_node(id))
+            continue;
+        const bool touched = id < restamp_touched_.size() && restamp_touched_[id] != 0;
+        if (!touched && !is_dirty(id))
+            continue;
+        walk_seed(id);
+    }
+    if (restamped > 0) {
+        restamp_incremental_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
+        restamp_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
+        restamp_nodes_last_.store(restamped, std::memory_order_relaxed);
+    }
+    return restamped;
 }
 
 // --- FlatAST::note_restamp_touched ---

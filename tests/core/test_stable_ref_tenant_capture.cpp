@@ -75,6 +75,239 @@ void reset_all() {
     aura::core::provenance::set_isolation_capture_tenant(0);
 }
 
+std::string read_src(const char* path) {
+    const std::string rel(path);
+    for (const auto& p : {rel, std::string("../") + rel, std::string("../../") + rel}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+void seed_over_budget_dirty(FlatAST& ws) {
+    for (NodeId id = 1; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id))
+            ws.mark_dirty(id);
+    }
+}
+
+NodeId first_eager(FlatAST& ws) {
+    for (NodeId id = 1; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id) && ws.node_eagerly_restamped(id))
+            return id;
+    }
+    return NULL_NODE;
+}
+
+NodeId first_non_eager(FlatAST& ws) {
+    for (NodeId id = 1; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id) && !ws.node_eagerly_restamped(id))
+            return id;
+    }
+    return NULL_NODE;
+}
+
+void ac3259_1_hot_cone_export() {
+    std::println("\n--- #3259 AC1: production over-budget hot cone exports post-mutate gen ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kRestampHotConeBudgetIssue;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kRestampHotConeBudgetIssue == 3259, "3259 AC1: issue constant");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (h3259a x) x) (define (h3259b y) y) "
+                  "(define (h3259c z) z) (define (h3259d w) w)\")")
+              .has_value(),
+          "3259 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3259 AC1: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3259 AC1: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(*ws);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_over_budget_torn(), "3259 AC1: torn after over-budget");
+    CHECK(ws->restamp_nodes_last() == 0, "3259 AC1: restamp_all lazy-align only");
+    const auto cap = restamp_hot_cone_budget(4);
+    CHECK(cap > 0 && cap <= 4, "3259 AC1: hot-cone cap is a fraction of budget");
+    const auto n = ws->restamp_hot_cone_after_budget(cap);
+    CHECK(n > 0 && n <= cap, "3259 AC1: hot cone restamped");
+    const auto hot = first_eager(*ws);
+    CHECK(hot != NULL_NODE, "3259 AC1: hot-cone node");
+    CHECK(ws->node_eagerly_restamped(hot), "3259 AC1: eager bit");
+    CHECK(ws->node_generation_is_post_mutate(hot), "3259 AC1: node_gen post-mutate");
+    CHECK(ev.allow_query_stable_ref_export(hot), "3259 AC1: allow export of hot cone");
+    FlatAST::StableNodeRef stamped{};
+    stamped.id = hot;
+    ev.stamp_query_stable_ref_export(stamped);
+    CHECK(stamped.id == hot, "3259 AC1: stamp keeps hot-cone id (no restamp-lag)");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3259_2_outside_cone_restamp_lag() {
+    std::println("\n--- #3259 AC2: node outside hot cone still restamp-lag ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (o3259a x) x) (define (o3259b y) y) "
+                  "(define (o3259c z) z) (define (o3259d w) w)\")")
+              .has_value(),
+          "3259 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3259 AC2: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3259 AC2: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(*ws);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    CHECK(ws->restamp_over_budget_torn(), "3259 AC2: remainder still torn");
+    const auto lag = first_non_eager(*ws);
+    CHECK(lag != NULL_NODE, "3259 AC2: node outside hot cone");
+    CHECK(!ev.allow_query_stable_ref_export(lag), "3259 AC2: production rejects lag");
+    (void)ws->make_ref_layout(lag);
+    CHECK(ws->node_generation_is_post_mutate(lag), "3259 AC2: lazy-align hid raw lag");
+    FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    brace.gen = 1;
+    ev.stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == NULL_NODE, "3259 AC2: never green pre-mutate gen");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3259_3_soft_gen0_zero_extra() {
+    std::println("\n--- #3259 AC3: Soft / budget==0 zero extra ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_all();
+    CHECK(restamp_hot_cone_budget(0) == 0, "3259 AC3: budget==0 cap is 0");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (s3259 x) x)\")").has_value(), "3259 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3259 AC3: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3259 AC3: workspace");
+    clear_restamp_budget_nodes_override_for_test();
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(!ws->restamp_over_budget_torn(), "3259 AC3: unlimited not torn");
+    const auto live = first_live(*ws);
+    CHECK(live != NULL_NODE, "3259 AC3: live");
+    CHECK(ev.allow_query_stable_ref_export(live), "3259 AC3: Soft/unlimited allow");
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    auto upos = fiber.find("if (r.budget_exceeded)");
+    CHECK(upos != std::string::npos, "3259 AC3: unified budget-exceeded");
+    auto uwin = fiber.substr(upos, 2000);
+    CHECK(uwin.find("if (production)") != std::string::npos, "3259 AC3: production gate");
+    CHECK(uwin.find("restamp_hot_cone_after_budget") != std::string::npos,
+          "3259 AC3: hot-cone only under production");
+}
+
+void ac3259_4_torn_counters_accurate() {
+    std::println("\n--- #3259 AC4: torn counters remain accurate after hot cone ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (t3259a x) x) (define (t3259b y) y) "
+                  "(define (t3259c z) z)\")")
+              .has_value(),
+          "3259 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3259 AC4: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3259 AC4: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(*ws);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    CHECK(ws->restamp_last_budget_exceeded(), "3259 AC4: last exceeded still set");
+    CHECK(ws->restamp_generation_torn(), "3259 AC4: generation still torn");
+    CHECK(ws->restamp_over_budget_torn(), "3259 AC4: over-budget torn helper");
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    auto upos = fiber.find("if (r.budget_exceeded)");
+    auto uwin = upos == std::string::npos ? std::string{} : fiber.substr(upos, 2000);
+    CHECK(uwin.find("g_unified_restamp_torn_visible_total") != std::string::npos,
+          "3259 AC4: torn-visible still bumped");
+    CHECK(uwin.find("force_query_epoch_stale_from_restamp_budget") != std::string::npos,
+          "3259 AC4: query-epoch stale still forced");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3259_5_source_and_linter() {
+    std::println("\n--- #3259 AC5: nested no hot-cone; linter; no invent ---");
+    const auto restamp = read_src("src/core/flatast_restamp.hh");
+    const auto astx = read_src("src/core/ast.ixx");
+    const auto impl = read_src("src/core/ast_impl.cpp");
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto emb = read_src("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto sec = read_src("src/compiler/evaluator_security.cpp");
+    const auto build = read_src("build.py");
+    const auto lint = read_src("scripts/coverage/checks/check_restamp_hot_cone_budget_3259.py");
+    CHECK(restamp.find("kRestampHotConeBudgetIssue = 3259") != std::string::npos,
+          "3259 AC5: issue stamp");
+    CHECK(restamp.find("restamp_hot_cone_budget") != std::string::npos, "3259 AC5: cap helper");
+    CHECK(astx.find("restamp_hot_cone_after_budget") != std::string::npos,
+          "3259 AC5: FlatAST method");
+    CHECK(impl.find("Issue #3259") != std::string::npos, "3259 AC5: restamp_all cite");
+    CHECK(fiber.find("restamp_hot_cone_after_budget") != std::string::npos,
+          "3259 AC5: outermost unified");
+    auto npos = emb.find("if (workspace_flat_ && !stack.empty())");
+    CHECK(npos != std::string::npos, "3259 AC5: nested restamp");
+    auto nwin = emb.substr(npos, 3200);
+    CHECK(nwin.find("restamp_all_node_generations") != std::string::npos,
+          "3259 AC5: nested still restamp_all");
+    CHECK(nwin.find("restamp_hot_cone_after_budget(") == std::string::npos,
+          "3259 AC5: nested does not hot-cone");
+    CHECK(nwin.find("Issue #3259") != std::string::npos, "3259 AC5: nested cite");
+    CHECK(sec.find("Issue #3259") != std::string::npos, "3259 AC5: stamp/allow cite");
+    CHECK(!lint.empty() && lint.find("Issue #3259") != std::string::npos, "3259 AC5: linter");
+    CHECK(build.find("check_restamp_hot_cone_budget_3259") != std::string::npos,
+          "3259 AC5: build.py");
+    {
+        std::ifstream f("tests/compiler/test_issue_3259.cpp");
+        CHECK(!f.good(), "3259 AC5: no test_issue_3259.cpp");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3259.cpp");
+        CHECK(!f.good(), "3259 AC5: no tests/issues/test_issue_3259.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3259-restamp-hot-cone.md");
+        CHECK(!f.good(), "3259 AC5: no docs/design");
+    }
+}
+
 } // namespace
 
 int run_test_stable_ref_tenant_capture() {
@@ -351,6 +584,13 @@ int run_test_stable_ref_tenant_capture() {
         CHECK(aura::core::provenance::kQueryStableRefRestampTornIssue == 3037,
               "#3037: issue stamp");
     }
+
+    std::println("\n=== Issue #3259: production over-budget hot-cone restamp ===");
+    ac3259_1_hot_cone_export();
+    ac3259_2_outside_cone_restamp_lag();
+    ac3259_3_soft_gen0_zero_extra();
+    ac3259_4_torn_counters_accurate();
+    ac3259_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

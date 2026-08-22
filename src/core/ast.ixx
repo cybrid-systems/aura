@@ -60,7 +60,9 @@ export using ::aura::ast::kUnifiedRestampQueryVisibleIssue;
 export using ::aura::ast::kQueryStableRestampLagStructuredIssue;
 export using ::aura::ast::kQueryStableRestampExportUniformIssue;
 export using ::aura::ast::kQueryStableRestampLagHardRejectIssue;
+export using ::aura::ast::kRestampHotConeBudgetIssue;
 export using ::aura::ast::restamp_over_budget_torn;
+export using ::aura::ast::restamp_hot_cone_budget;
 export using ::aura::ast::kRestampLagErrorKind;
 export using ::aura::ast::kRestampLagReasonBudgetExceeded;
 export using ::aura::ast::unified_restamp_torn_visible_total_v_read;
@@ -8085,6 +8087,17 @@ public:
     // restamp when called explicitly).
     void restamp_all_node_generations();
 
+    // Issue #3259: after over-budget restamp_all degraded to lazy-align
+    // only, eager-restamp dirty/touched nodes + their parent chain up to
+    // max_nodes. Sets restamp_eager_ so stamp_query_stable_ref_export can
+    // keep those Agent refs; does not clear workspace torn (remainder
+    // stays restamp-lag). Returns the number restamped. max_nodes==0 is
+    // a no-op (Soft / budget==0 never call this).
+    std::size_t restamp_hot_cone_after_budget(std::uint32_t max_nodes);
+    std::size_t restamp_hot_cone_after_budget() {
+        return restamp_hot_cone_after_budget(
+            restamp_hot_cone_budget(restamp_budget_nodes_effective()));
+    }
 
     // Issue #2122: mark a node for wrap-window incremental restamp.
     void note_restamp_touched(NodeId id) noexcept;

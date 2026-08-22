@@ -871,6 +871,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // that query:*-stable / stamp export / QueryResult freshness
         // consult. Does NOT run unified_restamp_after_boundary (outermost
         // still owns the triad). Soft / Off: zero extra (AC2).
+        // Issue #3259: nested success does NOT eager-restamp the hot
+        // cone (restamp_hot_cone_after_budget). Full hot-cone restamp
+        // is outermost-only via unified_restamp_after_boundary.
         if (success && (typed_audit::production_defaults_active() ||
                         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
             defuse_index_ = nullptr;
@@ -3275,6 +3278,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // hot-update sees consistent pins (#2120 order). Always on
         // outermost (including RenderFastExit — live render buffers).
         // Abort restore uses the same entry (AbortRestore).
+        // Issue #3259: production over-budget restamp eager-restamps
+        // the hot cone here (outermost only) before Agent export.
         const auto ur = ev_->unified_restamp_after_boundary(
             success ? Evaluator::UnifiedRestampSite::BoundarySuccess
                     : Evaluator::UnifiedRestampSite::AbortRestore);

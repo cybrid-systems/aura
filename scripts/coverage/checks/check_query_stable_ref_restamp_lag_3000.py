@@ -107,6 +107,8 @@ def main() -> int:
     must("allow_query_stable_ref_export", "AC5 isolation", iso)
     must("#3000", "AC5 capture", cap)
     must("stamp_query_stable_ref_export", "AC5 capture", cap)
+    must("ac3259_1_hot_cone_export", "AC5 3259 hot-cone", cap)
+    must("restamp_hot_cone_after_budget", "AC5 3259 helper", cap)
     if (ROOT / "tests" / "compiler" / "test_issue_3000.cpp").is_file():
         fails.append("AC5: test_issue_3000.cpp present (forbidden #81967)")
     if (ROOT / "tests" / "core" / "test_issue_3000.cpp").is_file():
