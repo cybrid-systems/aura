@@ -627,6 +627,122 @@ int run_guard_move_1767() {
 } // namespace aura_mut_run_guard_move_1767
 // ─── end test_guard_move_ownership.cpp ───
 
+// ─── Issue #3268: flag_ atomic_ref fail-close + region_lock_ move + TLS noexcept ───
+namespace aura_mut_run_guard_flag_3268 {
+
+namespace {
+
+    using aura::compiler::CompilerService;
+    using aura::compiler::Evaluator;
+    using aura::test::g_failed;
+    using aura::test::g_passed;
+
+    std::string read_file(const char* path) {
+        for (const char* prefix : {"", "../", "../../"}) {
+            std::ifstream in(std::string(prefix) + path);
+            if (!in)
+                continue;
+            return std::string((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+        }
+        return {};
+    }
+
+} // namespace
+
+static void ac3268_1_cancel_exchange() {
+    std::println("\n--- #3268 AC1: cancel-poll fail-close is exchange via atomic_ref ---");
+    const auto cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    auto pos = cpp.find("Issue #3268: single exchange");
+    CHECK(pos != std::string::npos, "3268 AC1: cancel cite");
+    auto win = cpp.substr(pos, 500);
+    CHECK(win.find("success_flag_exchange_false(flag_)") != std::string::npos,
+          "3268 AC1: cancel uses exchange");
+    CHECK(ixx.find("std::atomic_ref<bool>(*f).exchange(false") != std::string::npos,
+          "3268 AC1: atomic_ref exchange");
+    CHECK(ixx.find("fiber-local") != std::string::npos, "3268 AC1: fiber-local contract");
+    CHECK(ixx.find("bool* flag_") != std::string::npos, "3268 AC1: public bool* stays");
+}
+
+static void ac3268_2_region_lock_move() {
+    std::println("\n--- #3268 AC2: region_lock_ is unique_lock and moved ---");
+    const auto cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    auto pos = cpp.find(
+        "MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept");
+    CHECK(pos != std::string::npos, "3268 AC2: move ctor");
+    auto win = cpp.substr(pos, 5000);
+    CHECK(win.find("region_lock_(std::move(o.region_lock_))") != std::string::npos,
+          "3268 AC2: region_lock_ moved");
+    CHECK(win.find("region_lock_(o.region_lock_)") == std::string::npos,
+          "3268 AC2: no copy of region_lock_");
+    CHECK(ixx.find("std::unique_lock<std::mutex> region_lock_") != std::string::npos,
+          "3268 AC2: unique_lock type");
+    CHECK(ixx.find("Moved-from owns nothing") != std::string::npos,
+          "3268 AC2: moved-from no-op documented");
+}
+
+static void ac3268_3_tls_noexcept() {
+    std::println("\n--- #3268 AC3: TLS rebind depends on noexcept ---");
+    const auto cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto pos = cpp.find(
+        "MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept");
+    CHECK(pos != std::string::npos, "3268 AC3: move ctor");
+    auto win = cpp.substr(pos, 5000);
+    CHECK(win.find("g_tls_outermost_guard = this") != std::string::npos, "3268 AC3: TLS assign");
+    CHECK(win.find("this ctor is noexcept") != std::string::npos, "3268 AC3: noexcept comment");
+    auto tls = win.find("g_tls_outermost_guard = this");
+    auto reset = win.find("o.ev_ = nullptr");
+    CHECK(tls != std::string::npos && reset != std::string::npos && reset < tls,
+          "3268 AC3: TLS after source reset");
+}
+
+static void ac3268_4_stack_bool_api() {
+    std::println("\n--- #3268 AC4: stack bool API + mark_failed exchange ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    bool ok = true;
+    {
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
+        CHECK(gr.has_value(), "3268 AC4: try_acquire");
+        CHECK(ok, "3268 AC4: optimistic true");
+        (*gr)->mark_failed();
+        CHECK(!ok, "3268 AC4: exchange-false visible to caller");
+    }
+    CHECK(ev.mutation_boundary_depth_slot_value() == 0, "3268 AC4: depth 0 after dtor");
+    CHECK(true, "3268 AC4: quiet path zero extra (atomic_ref store = one word)");
+}
+
+static void ac3268_5_source_and_linter() {
+    std::println("\n--- #3268 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_mutation_guard_unit_batch.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_guard_flag_atomic_ref_3268.py");
+    CHECK(t.find("ac3268_1_cancel_exchange") != std::string::npos, "3268 AC5: AC1");
+    CHECK(t.find("ac3268_2_region_lock_move") != std::string::npos, "3268 AC5: AC2");
+    CHECK(t.find("ac3268_3_tls_noexcept") != std::string::npos, "3268 AC5: AC3");
+    CHECK(t.find("ac3268_4_stack_bool_api") != std::string::npos, "3268 AC5: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #3268") != std::string::npos, "3268 AC5: linter");
+    CHECK(build.find("check_guard_flag_atomic_ref_3268") != std::string::npos,
+          "3268 AC5: build.py");
+    CHECK(read_file("docs/design/3268-guard-flag-atomic-ref.md").empty(),
+          "3268 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3268.cpp").empty(), "3268 AC5: no invent");
+}
+
+int run_guard_flag_3268() {
+    ac3268_1_cancel_exchange();
+    ac3268_2_region_lock_move();
+    ac3268_3_tls_noexcept();
+    ac3268_4_stack_bool_api();
+    ac3268_5_source_and_linter();
+    std::println("\n=== test_guard_flag_3268: {} passed, {} failed ===", g_passed, g_failed);
+    return g_failed ? 1 : 0;
+}
+
+} // namespace aura_mut_run_guard_flag_3268
+
 // ─── from test_clear_instruction_dirty_guard.cpp →
 // aura_mut_run_clear_instr_dirty_1853::run_clear_instr_dirty_1853 ───
 namespace aura_mut_run_clear_instr_dirty_1853 {
@@ -4529,6 +4645,13 @@ int main() {
     std::println("\n######## run_guard_move_1767 ########");
     if (int rc = aura_mut_run_guard_move_1767::run_guard_move_1767(); rc != 0) {
         std::println("run_guard_move_1767 FAILED rc={}", rc);
+        return rc;
+    }
+    ::aura::test::g_failed = 0;
+    ::aura::test::g_passed = 0;
+    std::println("\n######## run_guard_flag_3268 ########");
+    if (int rc = aura_mut_run_guard_flag_3268::run_guard_flag_3268(); rc != 0) {
+        std::println("run_guard_flag_3268 FAILED rc={}", rc);
         return rc;
     }
     ::aura::test::g_failed = 0;

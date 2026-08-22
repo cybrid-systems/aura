@@ -3548,6 +3548,19 @@ def cmd_lint():
             "Issue #3267 env-publish-lock linter failed — run python3 scripts/coverage/checks/check_env_publish_lock_3267.py"
         )
         return r
+    # Issue #3268: MutationBoundaryGuard flag_ atomic_ref fail-close +
+    # region_lock_ move. Extends test_mutation_guard_unit_batch.cpp
+    # (#81967); no docs/design/ (#1655).
+    gfa_script = COVERAGE_CHECKS / "check_guard_flag_atomic_ref_3268.py"
+    if not gfa_script.exists():
+        fail(f"missing {gfa_script}")
+        return 1
+    r = run([sys.executable, str(gfa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3268 guard-flag atomic-ref linter failed — run python3 scripts/coverage/checks/check_guard_flag_atomic_ref_3268.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10986,6 +10999,21 @@ def cmd_env_publish_lock_3267_coverage():
         fail("env publish lock (#3267) coverage contract rows failed")
         return 1
     ok("env publish lock (#3267) coverage clean")
+    return 0
+
+
+def cmd_guard_flag_atomic_ref_3268_coverage():
+    """Issue #3268: Guard flag_ atomic_ref fail-close + region_lock_ move."""
+    print(f"{B}=== guard flag atomic_ref (#3268) ==={N}")
+    script = COVERAGE_CHECKS / "check_guard_flag_atomic_ref_3268.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("guard flag atomic_ref (#3268) coverage contract rows failed")
+        return 1
+    ok("guard flag atomic_ref (#3268) coverage clean")
     return 0
 
 
@@ -19339,6 +19367,8 @@ def main():
         "module-realpath-toctou-3266-coverage": cmd_module_realpath_toctou_3266_coverage,
         "env-publish-lock-3267": cmd_env_publish_lock_3267_coverage,
         "env-publish-lock-3267-coverage": cmd_env_publish_lock_3267_coverage,
+        "guard-flag-atomic-ref-3268": cmd_guard_flag_atomic_ref_3268_coverage,
+        "guard-flag-atomic-ref-3268-coverage": cmd_guard_flag_atomic_ref_3268_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

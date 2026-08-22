@@ -16,6 +16,8 @@ Contract:
   AC5  extend test_envframe_epoch_batch; linter after #3266; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3268: MutationBoundaryGuard flag_ atomic_ref fail-close + region_lock_ move.
 """
 
 from __future__ import annotations

@@ -6000,6 +6000,8 @@ private:
     // Set by outermost MutationBoundaryGuard; used by
     // restore_post_yield_or_rollback to signal rollback on
     // cross-thread migration / yield desync during an active boundary.
+    // Issue #3268: same fiber-local bool* as Guard::flag_; accesses
+    // go through MutationBoundaryGuard::success_flag_* (atomic_ref).
     bool* outermost_mutation_success_flag_ = nullptr;
     // (#10) Track mutation-affected symbols for targeted index rebuild
     // Mutation primitives push affected sym names here; ensure_defuse
@@ -14808,12 +14810,29 @@ public:
         }
         // Issue #1590: true when legacy ctor soft-failed on mutation quota.
         [[nodiscard]] bool is_inert() const noexcept { return inert_; }
+        // Issue #3268: atomic_ref protocol for the caller-owned success
+        // flag. Public try_acquire / legacy ctor keep bool* (C ABI +
+        // stack locals). Null flag loads as success (legacy default).
+        // Fail-close is a single exchange so cancel-poll cannot tear
+        // true→act. Fiber steal can change OS thread — do not assert
+        // ctor thread id.
+        static bool success_flag_load(bool* f) noexcept {
+            if (!f)
+                return true;
+            return std::atomic_ref<bool>(*f).load(std::memory_order_acquire);
+        }
+        static void success_flag_store(bool* f, bool v) noexcept {
+            if (f)
+                std::atomic_ref<bool>(*f).store(v, std::memory_order_release);
+        }
+        static bool success_flag_exchange_false(bool* f) noexcept {
+            if (!f)
+                return false;
+            return std::atomic_ref<bool>(*f).exchange(false, std::memory_order_acq_rel);
+        }
         // Issue #1684: mark success_flag false so dtor rolls back (if
         // panic_auto_rollback_) instead of committing a partial mutate.
-        void mark_failed() noexcept {
-            if (flag_)
-                *flag_ = false;
-        }
+        void mark_failed() noexcept { (void)success_flag_exchange_false(flag_); }
         // Issue #1684: run callable under Guard; on any throw, mark_failed
         // so ~MutationBoundaryGuard does not commit. Prefer this for
         // validate / typecheck / ownership and other external call sites
@@ -14863,6 +14882,8 @@ public:
         // Issue #1547 / #1556 / #1590: typed-error factory — check_mutation_quota
         // then construct. Replaces panic/throw paths with AuraResult. On pass,
         // bumps mutation_quota_used_ by pending_count. Prefer this over legacy ctor.
+        // Issue #3268: success_flag stays bool* (C ABI / stack locals);
+        // must be fiber-local; Guard accesses it via atomic_ref.
         // Impl: evaluator_mutation_boundary.cpp
         [[nodiscard]] static aura::core::AuraResult<std::unique_ptr<MutationBoundaryGuard>>
         try_acquire(Evaluator& ev, std::uint64_t pending_count = 1, bool* success_flag = nullptr,
@@ -14936,7 +14957,8 @@ public:
         // inert_ / atomic-batch flags must transfer or hold metrics
         // and checkpoint ownership are lost after std::move.
         // noexcept: if a future maintainer removes noexcept, a throw
-        // after o.ev_=nullptr would leak the depth increment.
+        // after o.ev_=nullptr would leak the depth increment AND leave
+        // g_tls_outermost_guard pointing at the source (#3268).
         // Impl: evaluator_mutation_boundary.cpp
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept;
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept;
@@ -14961,6 +14983,10 @@ public:
         void force_release_hold_after_cancel_() noexcept;
 
         Evaluator* ev_;
+        // Issue #3268: caller-owned success flag. Must be (i) fiber-local,
+        // (ii) alive until this dtor, (iii) not concurrently written as a
+        // plain bool. Public API stays bool*. Guard accesses use
+        // atomic_ref (exchange on fail-close).
         bool* flag_;
         // Issue #233 / #2121:
         //   GlobalExclusive: unique_lock(workspace_mtx_) in lock_
@@ -14968,6 +14994,9 @@ public:
         // Nested guards do NOT touch locks (outer owns them).
         std::unique_lock<std::shared_mutex> lock_;
         std::shared_lock<std::shared_mutex> shared_lock_;
+        // Issue #3268: unique_lock is move-only. Move ctor/assign MUST
+        // std::move; copy would not compile. Moved-from owns nothing so
+        // source dtor is a no-op (no double-unlock).
         std::unique_lock<std::mutex> region_lock_;
     };
 

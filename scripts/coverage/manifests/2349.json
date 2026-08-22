@@ -9,7 +9,7 @@
       "contains": [
         "mutation_hold_slo_us",
         "mutation_hold_slo_violation_total",
-        "*flag_ = false"
+        "success_flag_store(flag_, false)"
       ]
     },
     {
