@@ -7,6 +7,8 @@
 // fail-rate > SLO_BP) → would_arm_degraded + posture key
 // `wal-append-fail-breach`. Soft / WAL-off: observe only, never arm.
 // Mutation commit stays fail-open (callers keep `(void)append`).
+// Issue #3211: security-schedule-gate consumes would_arm_degraded and
+// hard-denies the *next* outermost mutate in production.
 //
 // SLO env:
 //   AURA_WAL_APPEND_FAIL_SLO     consecutive fails (default 3)

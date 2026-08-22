@@ -956,6 +956,8 @@ new mutate**. Synthesizes:
 - Capability deny storm (#2534 short-window rate)
 - `mid_fallback_rate_bp > SLO`
 - Posture `wal_off` under Restricted (#2076)
+- Production WAL append-fail SLO `would_arm_degraded` (Issue #3211 /
+  #3056) — force_reason `wal-append-fail-breach`
 - Mailbox under-boundary wait p99 / starvation throttle (Issue #2947 /
   #2903 / #2551) — default SLO 100 ms via
   `AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US` (0 disables latency arm)
@@ -970,8 +972,8 @@ defense-in-depth.
 
 | Symbol | Purpose |
 |--------|---------|
-| `enum class SecurityScheduleForceReason` | `ok` / `commit_not_ready` / `deny_storm` / `mid_fallback_slo` / `posture_degraded` / `mailbox_hold_slo` (#2947) |
-| `struct SecurityScheduleInput` | knobs (commit_readiness_would_allow, *_hard_reject, capability_deny_storm, mid_fallback_slo_breach, posture_wal_off_restricted, mailbox_wait_p99_us, mailbox_starvation_throttled, mailbox_wait_slo_us, production_mode, soft_mode) |
+| `enum class SecurityScheduleForceReason` | `ok` / `commit_not_ready` / `deny_storm` / `mid_fallback_slo` / `posture_degraded` / `mailbox_hold_slo` (#2947) / `wal_append_fail_breach` (#3211) |
+| `struct SecurityScheduleInput` | knobs (commit_readiness_would_allow, *_hard_reject, capability_deny_storm, mid_fallback_slo_breach, posture_wal_off_restricted, mailbox_wait_p99_us, mailbox_starvation_throttled, mailbox_wait_slo_us, production_mode, soft_mode, wal_append_fail_would_arm) |
 | `struct SecurityScheduleDecision` | `would_allow_new_mutate` + `force_reason` |
 | `decide_security_schedule(in)` | **pure** — same input → same output, no atomics (#2590 AC1) |
 | `evaluate_security_schedule(in)` | pure + bumps process-wide counters atomically (#2590 AC2 + AC3) |
@@ -986,10 +988,11 @@ Decision priority (first match wins, only when `production_mode && !soft_mode`):
 | `capability_deny_storm` | `deny_storm` | false |
 | `mid_fallback_slo_breach` | `mid_fallback_slo` | false |
 | `posture_wal_off_restricted` | `posture_degraded` | false |
+| `wal_append_fail_would_arm` (#3211) | `wal-append-fail-breach` | false |
 | `mailbox_wait_p99_us ≥ SLO` or `mailbox_starvation_throttled` (#2947) | `mailbox_hold_slo` | false |
 | other | `ok` | true |
 
-Query surface (`query:security-schedule-gate`, schema-2590 / schema-2947):
+Query surface (`query:security-schedule-gate`, schema-2590 / schema-2947 / schema-3211):
 
 ```text
 would-allow-new-mutate           ← last_would_allow (1=allow, 0=deny)
@@ -997,11 +1000,15 @@ force-reason-code                ← last_force_reason_code (enum int)
 checks-total / deny-total / allow-total
 deny-commit-not-ready-total / deny-deny-storm-total /
   deny-mid-fallback-slo-total / deny-posture-degraded-total /
-  deny-mailbox-hold-slo-total (#2947)
+  deny-mailbox-hold-slo-total (#2947) /
+  deny-wal-append-fail-breach-total (#3211)
+wal-append-fail-breach / would-deny-admit (#3211)
 security-schedule-gate-wired = 1
 security-schedule-mailbox-hold-slo-wired = 1
+security-schedule-wal-append-fail-wired = 1
 schema-2590 / issue-2590
 schema-2947 / issue-2947
+schema-3211 / issue-3211
 ```
 
 **Call sites** (caller wraps `evaluate_security_schedule()` BEFORE

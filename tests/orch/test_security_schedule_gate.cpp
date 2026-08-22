@@ -42,6 +42,7 @@
 
 #include "orch/security_schedule_gate.h"
 #include "compiler/aot_hot_update_health.hh"
+#include "core/wal_append_fail_slo.h"
 
 #include <atomic>
 #include <cstdint>
@@ -655,8 +656,159 @@ int run_test_security_schedule_gate() {
         }
     }
 
+    // ─── Issue #3211: production WAL append-fail SLO → schedule deny ───
+    // AC1: input additive + pure decide deny with wal-append-fail-breach
+    // AC2: production + would_arm → admit reject; Soft never rejects
+    // AC3: live helper + boundary uses make_security_schedule_input_live
+    // AC4: query wal-append-fail-breach / would-deny-admit / schema-3211
+    // AC5: consecutive==0 && combined==0 → live helper false (two loads)
+    // AC6: recover consecutive=0 → admit again; linter; no invent
+    {
+        std::println("\n--- #3211 AC1–AC6: WAL append-fail schedule deny ---");
+        CHECK(aura::orch::kSecurityScheduleWalAppendFailIssue == 3211, "3211: issue stamp");
+
+        // AC1 / AC2: production + wal_append_fail_would_arm → deny
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = false;
+            in.wal_append_fail_would_arm = true;
+            const auto d1 = decide_security_schedule(in);
+            const auto d2 = decide_security_schedule(in);
+            CHECK(d1.would_allow_new_mutate == d2.would_allow_new_mutate,
+                  "3211 AC1: pure decide idempotent");
+            CHECK(!d1.would_allow_new_mutate, "3211 AC2: production + would_arm → deny");
+            CHECK(d1.force_reason == SecurityScheduleForceReason::wal_append_fail_breach,
+                  "3211 AC2: force_reason = wal_append_fail_breach");
+            CHECK(std::string(aura::orch::security_schedule_force_reason_name(d1.force_reason)) ==
+                      "wal-append-fail-breach",
+                  "3211 AC2: stable force_reason string");
+            const auto d = evaluate_security_schedule(in);
+            CHECK(!d.would_allow_new_mutate, "3211 AC2: evaluate denies");
+            CHECK(g_orch_security_schedule_counters.deny_wal_append_fail_breach_total.load(
+                      std::memory_order_relaxed) == 1,
+                  "3211 AC2: deny_wal_append_fail_breach_total++");
+            const auto rej = aura::orch::admit_security_schedule(in);
+            CHECK(rej.has_value(), "3211 AC2: admit rejects under production");
+            CHECK(rej.value_or("").find("wal-append-fail-breach") != std::string::npos,
+                  "3211 AC2: admit reason = wal-append-fail-breach");
+        }
+
+        // AC2 Soft: same signal never hard-deny
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = true;
+            in.wal_append_fail_would_arm = true;
+            const auto d = evaluate_security_schedule(in);
+            CHECK(d.would_allow_new_mutate, "3211 AC2: Soft never denies on WAL append-fail");
+            CHECK(d.force_reason == SecurityScheduleForceReason::ok,
+                  "3211 AC2: Soft force_reason ok");
+            CHECK(g_orch_security_schedule_counters.deny_wal_append_fail_breach_total.load(
+                      std::memory_order_relaxed) == 0,
+                  "3211 AC2: Soft does not bump deny_wal_append_fail_breach_total");
+            CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+                  "3211 AC2: Soft admit never rejects");
+        }
+
+        // AC4: commit_not_ready wins over wal append-fail
+        {
+            auto in = base_input();
+            in.production_mode = true;
+            in.commit_readiness_would_allow = false;
+            in.commit_readiness_hard_reject = true;
+            in.wal_append_fail_would_arm = true;
+            const auto d = decide_security_schedule(in);
+            CHECK(d.force_reason == SecurityScheduleForceReason::commit_not_ready,
+                  "3211 AC4: does not mask commit_not_ready");
+        }
+
+        // AC5: quiet live helper (no consecutive / combined fail)
+        {
+            aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+            CHECK(!aura::orch::wal_append_fail_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "3211 AC5: quiet consecutive=0 → live false");
+        }
+
+        // AC6.1: inject consecutive SLO → live would_arm + admit deny
+        {
+            reset_orch_security_schedule_counters_for_test();
+            aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.consecutive.store(
+                aura::core::wal_slo::wal_append_fail_slo_consecutive(), std::memory_order_relaxed);
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.combined_fail_total.store(
+                3, std::memory_order_relaxed);
+            CHECK(aura::orch::wal_append_fail_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "3211 AC6: consecutive SLO + production → would_arm");
+            CHECK(!aura::orch::wal_append_fail_would_arm_live(/*prod=*/true, /*soft=*/true),
+                  "3211 AC6: Soft live helper never arms");
+            const auto live_in = aura::orch::make_security_schedule_input_live(
+                /*sandbox Off=*/0, /*prod=*/true, /*soft=*/false);
+            CHECK(live_in.wal_append_fail_would_arm, "3211 AC6: live input would_arm");
+            // Admit via a clean input so leftover commit_readiness / deny-storm
+            // from earlier batch members cannot mask the WAL reason.
+            auto in = base_input();
+            in.production_mode = true;
+            in.wal_append_fail_would_arm = true;
+            const auto rej = aura::orch::admit_security_schedule(in);
+            CHECK(rej.has_value(), "3211 AC6: next mutate schedule-denied");
+            CHECK(rej.value_or("").find("wal-append-fail-breach") != std::string::npos,
+                  "3211 AC6: deny reason wal-append-fail-breach");
+            CHECK(href(cs, "wal-append-fail-breach") == 1,
+                  "3211 AC4: query wal-append-fail-breach");
+            CHECK(href(cs, "would-deny-admit") == 1, "3211 AC4: query would-deny-admit");
+            CHECK(href(cs, "schema-3211") == 3211, "3211 AC4: schema-3211");
+            CHECK(href(cs, "issue-3211") == 3211, "3211 AC4: issue-3211");
+            CHECK(href(cs, "security-schedule-wal-append-fail-wired") == 1,
+                  "3211 AC4: wired sentinel");
+            CHECK(href(cs, "schema-2590") == 2590, "3211 AC4: schema-2590 preserved");
+        }
+
+        // AC6.3: clear consecutive → admit again
+        {
+            reset_orch_security_schedule_counters_for_test();
+            aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+            CHECK(!aura::orch::wal_append_fail_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "3211 AC6: recovered consecutive=0 → not armed");
+            auto in = base_input();
+            in.production_mode = true;
+            in.wal_append_fail_would_arm = false;
+            CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+                  "3211 AC6: recovered admit allows");
+        }
+
+        // AC6 source-cite / no invent
+        {
+            const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+            CHECK(gate_h.find("wal_append_fail_would_arm") != std::string::npos,
+                  "3211 AC6: input field");
+            CHECK(gate_h.find("wal_append_fail_would_arm_live") != std::string::npos,
+                  "3211 AC6: live helper");
+            CHECK(gate_h.find("wal-append-fail-breach") != std::string::npos,
+                  "3211 AC6: force_reason string");
+            CHECK(gate_h.find("make_security_schedule_input_live") != std::string::npos,
+                  "3211 AC3: existing live helper still used");
+            const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+            CHECK(mbc.find("wal_append_fail_would_arm_live") != std::string::npos,
+                  "3211 AC3: boundary cites live helper");
+            const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+            CHECK(prim.find("wal-append-fail-breach") != std::string::npos, "3211 AC4: query key");
+            CHECK(prim.find("would-deny-admit") != std::string::npos, "3211 AC4: would-deny-admit");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_wal_append_fail_schedule_3211") != std::string::npos,
+                  "3211 AC6: build.py wires linter");
+            CHECK(read_file("docs/design/3211-wal-append-fail-schedule.md").empty(),
+                  "3211 AC6: no docs/design/ per #1655");
+            CHECK(read_file("tests/orch/test_issue_3211.cpp").empty(),
+                  "3211 AC6: no test_issue_3211.cpp per #81967");
+        }
+    }
+
     reset_orch_security_schedule_counters_for_test();
-    std::println("\n=== #2590/#2947: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+    std::println("\n=== #2590/#2947/#3211: {}/{} checks passed ===", g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
