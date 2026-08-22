@@ -296,12 +296,12 @@ int run_test_stable_ref_export_validate() {
     }
 
     // ── Issue #2663: mailbox push / broadcast_fanout held-ref gate ───────────
-    // AC1: held_ref_token set + handoff_completed=false → Closed +
-    //      handoff_reject_total bumps; message NOT enqueued.
-    // AC2: held_ref_token set + handoff_completed=true → not Closed by gate.
+    // AC1: held_ref_token set + handoff_completed=false → HandoffRequired +
+    //      handoff_reject_total bumps; message NOT enqueued (#3212).
+    // AC2: held_ref_token set + handoff_completed=true → not rejected by gate.
     // AC3: ordinary string payload (held_ref_token empty) → no gate cost.
     // AC4: broadcast_fanout honors the same gate (all-or-nothing reject).
-    // AC5: Soft path documented; production Restricted enforces Closed.
+    // AC5: Soft path documented; production Restricted enforces HandoffRequired.
     // AC6: coverage linter extended.
     {
         std::println("\n--- #2663 AC1-AC4: mailbox push / broadcast_fanout held-ref gate ---");
@@ -367,7 +367,7 @@ int run_test_stable_ref_export_validate() {
     // ── Issue #2848: language-path auto handoff_ref on orch:agent-send ──
     // AC1: StableNodeRef pair → auto handoff + push Ok (or structured fail)
     // AC2: string/int/bool zero-cost short-circuit (source-cite)
-    // AC3: raw C++ push without handoff still Closed (#2663 regression)
+    // AC3: raw C++ push without handoff still HandoffRequired (#2663/#3212)
     // AC4: additive metrics + schema-2848 query keys
     // AC5: prefer-existing tests + coverage linter
     // AC6: Soft prefer export documented; production gate preserved
@@ -400,7 +400,7 @@ int run_test_stable_ref_export_validate() {
         CHECK(spawn_src.find("kAgentSendAutoHandoffIssue = 2848") != std::string::npos,
               "2848 AC1: issue constant 2848");
 
-        // AC3: raw C++ #2663 gate still Closed without handoff.
+        // AC3: raw C++ #2663/#3212 gate still HandoffRequired without handoff.
         CHECK(mb_src.find("if (msg.held_ref_token.has_value() && !msg.handoff_completed)") !=
                   std::string::npos,
               "2848 AC3: #2663 push gate preserved");
@@ -414,7 +414,8 @@ int run_test_stable_ref_export_validate() {
             raw.held_ref_token = 42;
             raw.handoff_completed = false;
             const auto st = box.push(std::move(raw));
-            CHECK(st == PushStatus::Closed, "2848 AC3: raw C++ push without handoff still Closed");
+            CHECK(st == PushStatus::HandoffRequired,
+                  "2848 AC3/#3212: raw C++ push without handoff → HandoffRequired");
             // Stamped path admits (gate not Closed solely for held-ref).
             MailMessage okm;
             okm.payload = "held-with-handoff";

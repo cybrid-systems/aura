@@ -5414,6 +5414,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 insert_kv("issue-3013", 3013);
                 insert_kv("agent-send-handoff-required-wired", 1);
             }
+            // Issue #3212: mailbox->push / broadcast_fanout unstamped
+            // held_ref aligned to HandoffRequired (same typed fail).
+            {
+                insert_kv("schema-3212", 3212);
+                insert_kv("issue-3212", 3212);
+                insert_kv("mailbox-handoff-required-wired", 1);
+            }
             insert_kv("recv-empty", static_cast<std::int64_t>(
                                         os.recv_empty_total.load(std::memory_order_relaxed)));
             insert_kv("join-ok",

@@ -97,12 +97,13 @@ enum class PushStatus : std::uint8_t {
     Ok = 0,
     Backpressure = 1, // queue at high-water mark
     Closed = 2,
-    // Issue #2884 / #3013: typed handoff-required failure. Returned by
-    // agent_send_safe (handoff fail) and raw agent_send (unstamped
-    // held_ref_token). Distinct from Closed so C++ callers can
-    // disambiguate mailbox-closed from export-stale / handoff-required
-    // — never silent Closed conflation. Direct mailbox->push still
-    // returns Closed for unstamped held_ref (#2663 defense in depth).
+    // Issue #2884 / #3013 / #3212: typed handoff-required failure.
+    // Returned by agent_send_safe (handoff fail), raw agent_send
+    // (unstamped held_ref_token), and MultiFiberMailbox::push /
+    // broadcast_fanout (same unstamped held_ref gate). Distinct from
+    // Closed so C++ callers can disambiguate mailbox-closed from
+    // export-stale / handoff-required — never silent Closed
+    // conflation. Closed is reserved for true closed / linear-viol.
     HandoffRequired = 3,
 };
 
@@ -123,15 +124,16 @@ struct MailMessage {
     // Issue #2538: typed correlation (0 = none / legacy text-prefix only).
     std::uint64_t correlation_id = 0;
     MailKind kind = MailKind::Normal;
-    // Issue #2663: held-ref export token + handoff-completed flag. When
-    // held_ref_token is set, the message carries a StableNodeRef that
+    // Issue #2663 / #3212: held-ref export token + handoff-completed flag.
+    // When held_ref_token is set, the message carries a StableNodeRef that
     // needs to be re-exported via Evaluator::handoff_ref. The mailbox
     // gate rejects any push where held_ref_token is set but
-    // handoff_completed is false (Closed + handoff_reject_total bump).
-    // Ordinary string payloads leave both default-initialized (zero cost
-    // on hot path — single optional load + bool check). Populated by
-    // Agent-send-side helpers (agent_send_ref) after a successful
-    // handoff_ref call.
+    // handoff_completed is false, reject (HandoffRequired +
+    // handoff_reject_total bump). Closed is reserved for true closed /
+    // linear-viol. Ordinary string payloads leave both default-initialized
+    // (zero cost on hot path — single optional load + bool check).
+    // Populated by Agent-send-side helpers (agent_send_ref) after a
+    // successful handoff_ref call.
     std::optional<std::uint64_t> held_ref_token{};
     bool handoff_completed = false;
 };
@@ -164,7 +166,8 @@ struct MultiFiberMailboxStats {
     // GC defer), any MailMessage that carries a StableNodeRef payload
     // MUST have completed Evaluator::handoff_ref before push/broadcast
     // succeeds. Messages that arrive without handoff_completed are rejected
-    // (Closed + bump handoff_reject_total + bump local_stats_.handoff_reject_total).
+    // (HandoffRequired + bump handoff_reject_total + bump
+    // local_stats_.handoff_reject_total; Closed reserved for true closed).
     // Query / mutate observers on other fibers either block on workspace_mtx_
     // or see only committed post-exit state. The contract is verified by:
     //   - scripts/coverage/checks/check_handoff_ref_mailbox_gate_2700.py (linter)
@@ -1149,14 +1152,16 @@ public:
     [[nodiscard]] PushStatus push(MailMessage msg) {
         if (reject_if_linear_viol(msg.payload))
             return PushStatus::Closed;
-        // Issue #2663: held-ref gate. If held_ref_token is set but
-        // handoff_completed is false, reject the push (Closed + bump
-        // counter). Zero cost when held_ref_token is empty (ordinary
-        // string payloads never set this — single relaxed load + bool).
+        // Issue #2663 / Issue #3212: held-ref gate. If held_ref_token is set but
+        // handoff_completed is false, reject the push (HandoffRequired + bump
+        // counter). Aligns with agent_send / agent_send_safe typed fail.
+        // Closed reserved for true closed / linear-viol. Zero cost when
+        // held_ref_token is empty (ordinary string payloads never set this
+        // — single relaxed load + bool).
         if (msg.held_ref_token.has_value() && !msg.handoff_completed) {
             g_mf_mailbox_stats.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
             local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
-            return PushStatus::Closed;
+            return PushStatus::HandoffRequired;
         }
         (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
                                                        __builtin_FILE(), __builtin_LINE());
@@ -1255,15 +1260,16 @@ public:
     [[nodiscard]] PushStatus broadcast_fanout(const MailMessage& proto) {
         if (reject_if_linear_viol(proto.payload))
             return PushStatus::Closed;
-        // Issue #2663: held-ref gate (mirror of push() — broadcast fan-out
-        // cannot partial-deliver an unexported ref to a subset of
+        // Issue #2663 / #3212: held-ref gate (mirror of push() — broadcast
+        // fan-out cannot partial-deliver an unexported ref to a subset of
         // attachers; either all-or-nothing reject). production-safe default:
-        // always Closed + counter bump; Soft / sandbox=off may interpret
-        // the bump as metric-only via a future refinement.
+        // always HandoffRequired + counter bump; Soft / sandbox=off may
+        // interpret the bump as metric-only via a future refinement. Closed
+        // reserved for true closed / linear-viol.
         if (proto.held_ref_token.has_value() && !proto.handoff_completed) {
             g_mf_mailbox_stats.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
             local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed);
-            return PushStatus::Closed;
+            return PushStatus::HandoffRequired;
         }
         std::lock_guard lock(mu_);
         if (closed_.load(std::memory_order_relaxed))
