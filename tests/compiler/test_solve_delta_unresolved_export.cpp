@@ -2700,6 +2700,221 @@ static void ac3108_5_source_and_linter() {
           "3108 AC5: #2911 lineage preserved");
 }
 
+// ── Issue #3253: repair SOLVED residual drain (anti half-green stamp) ──
+// AC1 production: TIMEOUT → repair SOLVED + injected dirty → drain rejects
+// AC2 stamp gate: dirty residual (empty pending/locality) reuses force_reason 16
+// AC3 remount: dropped var_to_constraints_ INSTANCE is reindexed before repair
+// AC4 Soft: no reindex / no extra escalate on quiet TIMEOUT
+// AC5 IR/JIT still consults live commit_readiness
+// AC6 source-cite + linter; no test_issue_3253 / docs/design
+
+struct ProdScope3253 {
+    ProdScope3253() { aura::compiler::typed_audit::apply_production_audit_defaults(); }
+    ~ProdScope3253() { aura::compiler::typed_audit::apply_dev_audit_defaults(); }
+};
+
+static void ac3253_1_production_repair_solved_injected_dirty_rejects() {
+    std::println("\n--- #3253 AC1: production repair SOLVED + injected dirty rejects ---");
+    using aura::compiler::typed_audit::pending_full_solve_residual_face_hit;
+    using aura::compiler::typed_audit::pending_full_solve_residual_reject_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    ProdScope3253 prod;
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    CHECK(cs.solve_delta(&unresolved) == SolveResult::TIMEOUT, "3253 AC1: synthetic TIMEOUT");
+    auto post = cs.escalate_if_production(SolveResult::TIMEOUT, &unresolved);
+    CHECK(post == SolveResult::SOLVED, "3253 AC1: repair reaches SOLVED");
+    CHECK(!cs.is_dirty(), "3253 AC1: dirty cleared after repair");
+
+    Constraint bad;
+    bad.kind = Constraint::EQUAL;
+    bad.lhs = v;
+    bad.rhs = reg.bool_type();
+    cs.add_delta(std::move(bad));
+    CHECK(cs.is_dirty(), "3253 AC1: injected residual dirty");
+    const auto rej0 = pending_full_solve_residual_reject_total_v_read();
+    auto drain = cs.drain_pending_full_solve_before_commit(&unresolved);
+    CHECK(drain != SolveResult::SOLVED, "3253 AC1: drain must not stamp green");
+    CHECK(pending_full_solve_residual_reject_total_v_read() > rej0, "3253 AC1: reject bumps");
+    CHECK(pending_full_solve_residual_face_hit(), "3253 AC1: residual face latched");
+    reset_pending_full_solve_residual_for_test();
+}
+
+static void ac3253_2_stamp_gate_dirty_residual() {
+    std::println("\n--- #3253 AC2: dirty residual stamp gate (force_reason 16) ---");
+    using aura::compiler::typed_audit::commit_readiness;
+    using aura::compiler::typed_audit::CommitReadinessInput;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    ProdScope3253 prod;
+    reset_pending_full_solve_residual_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint a;
+    a.kind = Constraint::EQUAL;
+    a.lhs = v;
+    a.rhs = reg.int_type();
+    Constraint b;
+    b.kind = Constraint::EQUAL;
+    b.lhs = v;
+    b.rhs = reg.bool_type();
+    cs.add_delta(std::move(a));
+    cs.add_delta(std::move(b));
+    CHECK(cs.is_dirty(), "3253 AC2: dirty residual");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3253 AC2: pending empty");
+    CHECK(cs.last_locality_pruned() == 0, "3253 AC2: locality empty");
+    auto r = cs.drain_pending_full_solve_before_commit();
+    CHECK(r != SolveResult::SOLVED, "3253 AC2: dirty-only residual rejects");
+
+    CommitReadinessInput in;
+    in.solve_status = 0;
+    in.linear_ok = true;
+    in.blame_ok = true;
+    in.pending_full_solve_hard = true;
+    in.pending_full_solve_residual = true;
+    auto cr = commit_readiness(in);
+    CHECK(!cr.would_allow_commit, "3253 AC2: would_allow_commit false");
+    CHECK(cr.force_reason == "pending_full_solve_residual", "3253 AC2: reuse #3031 face");
+    CHECK(cr.force_reason_code == 16, "3253 AC2: force_reason 16");
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3253 AC2: warm");
+    CHECK(href(svc, "schema-3253") == 3253, "3253 AC2: schema-3253");
+    CHECK(href(svc, "repair-solved-residual-wired") == 1, "3253 AC2: wired");
+    CHECK(href(svc, "schema-3031") == 3031, "3253 AC2: schema-3031 preserved");
+    reset_pending_full_solve_residual_for_test();
+}
+
+static void ac3253_3_densify_remount_reindex() {
+    std::println("\n--- #3253 AC3: remount-incomplete INSTANCE reindexed ---");
+    ProdScope3253 prod;
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint inst;
+    inst.kind = Constraint::INSTANCE;
+    inst.lhs = v;
+    inst.rhs = reg.int_type();
+    cs.add(inst); // committed, not dirty
+    const auto rep = cs.find(v).index;
+    CHECK(cs.var_constraint_indexed_for_test(rep, 0), "3253 AC3: INSTANCE indexed");
+    cs.drop_var_to_constraints_entry_for_test(rep);
+    CHECK(!cs.var_constraint_indexed_for_test(rep, 0), "3253 AC3: index dropped");
+
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    CHECK(cs.solve_delta(&unresolved) == SolveResult::TIMEOUT, "3253 AC3: TIMEOUT");
+    auto post = cs.escalate_if_production(SolveResult::TIMEOUT, &unresolved);
+    CHECK(post == SolveResult::SOLVED || post == SolveResult::TIMEOUT,
+          "3253 AC3: no silent CONFLICT");
+    CHECK(cs.var_constraint_indexed_for_test(rep, 0), "3253 AC3: INSTANCE reindexed");
+}
+
+static void ac3253_4_soft_zero_extra() {
+    std::println("\n--- #3253 AC4: Soft skip reindex / extra escalate ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::pending_full_solve_residual_escalate_total_v_read;
+    using aura::compiler::typed_audit::pending_full_solve_residual_observe_total_v_read;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    apply_dev_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    auto v = cs.fresh_var();
+    Constraint inst;
+    inst.kind = Constraint::INSTANCE;
+    inst.lhs = v;
+    inst.rhs = reg.int_type();
+    cs.add(inst);
+    const auto rep = cs.find(v).index;
+    cs.drop_var_to_constraints_entry_for_test(rep);
+
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.force_next_delta_timeout_for_test(true);
+    const auto repair0 =
+        g_typed_mutation_audit_counters.delta_instance_repair_total.load(std::memory_order_relaxed);
+    const auto esc0 = pending_full_solve_residual_escalate_total_v_read();
+    std::vector<Constraint> unresolved;
+    CHECK(cs.solve_delta(&unresolved) == SolveResult::TIMEOUT, "3253 AC4: Soft TIMEOUT");
+    auto post = cs.escalate_if_production(SolveResult::TIMEOUT, &unresolved);
+    CHECK(post == SolveResult::TIMEOUT, "3253 AC4: Soft pass-through");
+    CHECK(g_typed_mutation_audit_counters.delta_instance_repair_total.load(
+              std::memory_order_relaxed) == repair0,
+          "3253 AC4: no repair walk");
+    CHECK(!cs.var_constraint_indexed_for_test(rep, 0), "3253 AC4: no remount reindex");
+
+    const auto obs0 = pending_full_solve_residual_observe_total_v_read();
+    auto drain = cs.drain_pending_full_solve_before_commit();
+    CHECK(drain == SolveResult::SOLVED, "3253 AC4: Soft dirty observe-allow");
+    CHECK(pending_full_solve_residual_observe_total_v_read() > obs0, "3253 AC4: observe bumps");
+    CHECK(pending_full_solve_residual_escalate_total_v_read() == esc0, "3253 AC4: no escalate");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    apply_dev_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+}
+
+static void ac3253_5_ir_jit_commit_readiness() {
+    std::println("\n--- #3253 AC5: IR/JIT still consults live commit_readiness ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(aud.find("ir_typed_entry_commit_readiness_ok") != std::string::npos,
+          "3253 AC5: ir_typed_entry_commit_readiness_ok");
+    CHECK(aud.find("linear_move_drop_elision_ok") != std::string::npos,
+          "3253 AC5: linear_move_drop_elision_ok");
+    CHECK(aud.find("commit_readiness(commit_readiness_live_policy())") != std::string::npos,
+          "3253 AC5: live commit_readiness");
+}
+
+static void ac3253_6_source_and_linter() {
+    std::println("\n--- #3253 AC6: source-cite + linter ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto build = read_file("build.py");
+    CHECK(impl.find("Issue #3253") != std::string::npos, "3253 AC6: impl cite");
+    CHECK(impl.find("reindexes unmapped INSTANCE") != std::string::npos ||
+              impl.find("Constraint::INSTANCE") != std::string::npos,
+          "3253 AC6: remount reindex");
+    CHECK(impl.find("dirty_count_ == 0") != std::string::npos, "3253 AC6: drain dirty residual");
+    CHECK(ixx.find("Issue #3253") != std::string::npos, "3253 AC6: ixx cite");
+    CHECK(q.find("schema-3253") != std::string::npos, "3253 AC6: additive schema");
+    CHECK(q.find("repair-solved-residual-wired") != std::string::npos, "3253 AC6: wired");
+    CHECK(q.find("schema-3031") != std::string::npos, "3253 AC6: #3031 preserved");
+    CHECK(t.find("ac3253_1_production_repair_solved_injected_dirty_rejects") != std::string::npos,
+          "3253 AC6: AC1 test");
+    CHECK(build.find("check_repair_solved_residual_3253") != std::string::npos,
+          "3253 AC6: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3253.cpp").empty(), "3253 AC6: no invent");
+    CHECK(read_file("docs/design/3253-repair-solved-residual.md").empty(),
+          "3253 AC6: no docs/design");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -2793,6 +3008,13 @@ int run_test_solve_delta_unresolved_export() {
     ac3190_4_lockless_batch_covered();
     ac3190_5_existing_surfaces_preserved();
     ac3190_6_source_and_linter();
+    std::println("\n=== Issue #3253: repair SOLVED residual drain (anti half-green) ===");
+    ac3253_1_production_repair_solved_injected_dirty_rejects();
+    ac3253_2_stamp_gate_dirty_residual();
+    ac3253_3_densify_remount_reindex();
+    ac3253_4_soft_zero_extra();
+    ac3253_5_ir_jit_commit_readiness();
+    ac3253_6_source_and_linter();
     std::println("\n=== Issue #3169: production solve_delta fail-closed + clear partial ===");
     ac3169_1_production_clear_partial_and_reject();
     ac3169_2_soft_zero_extra();

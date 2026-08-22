@@ -546,6 +546,12 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                           aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
                 insert_kv("issue-3031",
                           aura::compiler::typed_audit::kPendingFullSolveResidualIssue);
+                // Issue #3253: repair-SOLVED residual drain (reuse #3031
+                // residual face; additive lineage only).
+                insert_kv("schema-3253", 3253);
+                insert_kv("issue-3253", 3253);
+                insert_kv("lineage-3253", 3253);
+                insert_kv("repair-solved-residual-wired", 1);
                 // Issue #3032: rehydrate-miss invalidate.
                 insert_kv(
                     "rehydrate-miss-invalidate-total",

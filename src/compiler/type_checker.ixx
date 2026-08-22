@@ -830,6 +830,9 @@ public:
     // under production when prefer_instance_repair_before_full. Returns
     // SOLVED when local cone fixpoint clears; TIMEOUT residual → caller
     // full-solves; CONFLICT propagates. Zero-cost when no dirty / roots.
+    // Issue #3253: production reindexes unmapped INSTANCE/SUBTYPE edges
+    // (densify/steal remount) and refuses SOLVED while unprocessed dirty
+    // remains — never half-green. Soft/Off skip the extra scan.
     SolveResult try_instance_repair_before_full(std::vector<Constraint>* unresolved_out = nullptr);
     // Issue #2913: solve_delta locality SLO. When the prior delta returned
     // SOLVED but locality deferred residual dirty (last_locality_pruned_ > 0
@@ -854,10 +857,26 @@ public:
     // pending_full_solve_roots_ or last_locality_pruned_ residual,
     // production/Full force one escalate; still dirty → TIMEOUT reject.
     // Soft: observe + allow. Quiet (no residual): zero extra work.
+    // Issue #3253: dirty_count_ residual (empty pending/locality) is
+    // also a production drain face — repair SOLVED + remount leftover.
     SolveResult
     drain_pending_full_solve_before_commit(std::vector<Constraint>* unresolved_out = nullptr);
     void seed_pending_full_solve_root_for_test(std::uint32_t rep) {
         pending_full_solve_roots_.insert(rep);
+    }
+    // Issue #3253: test inject — drop reverse-index so remount-incomplete
+    // INSTANCE edges can be observed by production repair reindex.
+    void drop_var_to_constraints_entry_for_test(std::uint32_t rep) {
+        var_to_constraints_.erase(rep);
+    }
+    [[nodiscard]] bool var_indexed_for_test(std::uint32_t rep) const {
+        return var_to_constraints_.find(rep) != var_to_constraints_.end();
+    }
+    [[nodiscard]] bool var_constraint_indexed_for_test(std::uint32_t rep, std::size_t idx) const {
+        auto it = var_to_constraints_.find(rep);
+        if (it == var_to_constraints_.end())
+            return false;
+        return std::find(it->second.begin(), it->second.end(), idx) != it->second.end();
     }
     // Issue #2900: Agent SolverBudget surface (null/default = current behavior).
     void set_solver_budget(SolverBudget b) noexcept { solver_budget_ = b; }
