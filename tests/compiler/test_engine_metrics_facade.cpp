@@ -137,6 +137,15 @@ int main() {
         aura_query_hash_set_force_cap(0);
         aura_query_hash_reset_overflow_for_test();
         reset_for_test();
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "schema-3246") ==
+                  3246,
+              "3246 AC4: schema-3246 additive on facade");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                       "suggested-next-code") == 1,
+              "ac3246_3_soft: Soft suggested-next-code=soft-observe");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "observe-only") ==
+                  1,
+              "3246 AC2: observe-only preserved");
     }
 
     // ── AC2: :prefix ──

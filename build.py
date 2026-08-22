@@ -4629,6 +4629,20 @@ def cmd_lint():
             "Issue #3205 evolution-audit-decision durable linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py"
         )
         return r
+    # Issue #3246: additive suggested-next on evolution-audit-decision.
+    # Pure fold of existing commit/posture/densify/playbook/schedule.
+    # Observe-only — does not execute playbook. Extends
+    # test_security_audit_unify (#81967); no docs/design/ (#1655).
+    ead3246_script = COVERAGE_CHECKS / "check_evolution_audit_suggested_next_3246.py"
+    if not ead3246_script.exists():
+        fail(f"missing {ead3246_script}")
+        return 1
+    r = run([sys.executable, str(ead3246_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3246 evolution-audit suggested-next linter failed — run python3 scripts/coverage/checks/check_evolution_audit_suggested_next_3246.py"
+        )
+        return r
     # Issue #3242: durable typed summary sidecar after typed-trail wrap.
     # Additive kind/sidecar (AURATYS1); old mutation WAL replay ignores it.
     # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).

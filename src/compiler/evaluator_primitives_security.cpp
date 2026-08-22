@@ -5468,8 +5468,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 3 additive keys (durable-hit + schema-3205 + issue-3205)
             // + 4 additive keys (typed-summary-from-wal + typed-kind +
             //   schema-3242 + issue-3242)
-            // = 42 minimum; planned 44 → query_hash_capacity_for 128.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 44;
+            // + 4 additive keys (suggested-next + suggested-next-code +
+            //   schema-3246 + issue-3246)
+            // = 46 minimum; planned 48 → query_hash_capacity_for 128.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 48;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -5780,6 +5782,30 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("typed-kind", typed_kind);
             insert_kv("schema-3242", kTypedSummaryWalIssue);
             insert_kv("issue-3242", kTypedSummaryWalIssue);
+            // Issue #3246: additive suggested-next. Pure fold of already
+            // loaded commit / posture / densify / playbook / schedule.
+            // Does not execute playbook / reemit / drain / reload.
+            {
+                using aura::compiler::typed_audit::decide_evolution_suggested_next;
+                using aura::compiler::typed_audit::evolution_suggested_next_cstr;
+                using aura::compiler::typed_audit::EvolutionSuggestedNextInput;
+                using aura::compiler::typed_audit::kEvolutionAuditSuggestedNextIssue;
+                EvolutionSuggestedNextInput nin;
+                nin.production_defaults = production_defaults_active();
+                nin.join_mid = join_mid;
+                nin.schedule_would_deny =
+                    aura::orch::g_orch_security_schedule_counters.last_would_allow.load(
+                        std::memory_order_relaxed) == 0;
+                nin.commit_would_allow = cr.would_allow_commit;
+                nin.densify_ok = densify.would_allow_mutate;
+                nin.posture_degraded = posture_degraded;
+                nin.playbook_action = static_cast<std::int64_t>(pb.action);
+                const auto next = decide_evolution_suggested_next(nin);
+                insert_kv_str("suggested-next", evolution_suggested_next_cstr(next));
+                insert_kv("suggested-next-code", static_cast<std::int64_t>(next));
+                insert_kv("schema-3246", kEvolutionAuditSuggestedNextIssue);
+                insert_kv("issue-3246", kEvolutionAuditSuggestedNextIssue);
+            }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }

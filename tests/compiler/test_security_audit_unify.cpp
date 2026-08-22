@@ -822,6 +822,79 @@ int run_test_security_audit_unify() {
         fs::remove_all(dir, ec);
     }
 
+    // ── Issue #3246: additive suggested-next observe field ──
+    {
+        using aura::compiler::typed_audit::decide_evolution_suggested_next;
+        using aura::compiler::typed_audit::evolution_suggested_next_cstr;
+        using aura::compiler::typed_audit::EvolutionSuggestedNext;
+        using aura::compiler::typed_audit::EvolutionSuggestedNextInput;
+        using aura::compiler::typed_audit::kEvolutionAuditSuggestedNextIssue;
+        std::println("\n--- #3246 AC1/AC3: Soft / mid=0 suggested-next ---");
+        reset_process();
+        CompilerService cs;
+        CHECK(kEvolutionAuditSuggestedNextIssue == 3246, "3246 stamp");
+        CHECK(href_evol(cs, "schema-3246") == 3246, "3246 AC1: schema-3246 additive");
+        CHECK(href_evol(cs, "issue-3246") == 3246, "3246 AC1: issue-3246");
+        CHECK(href_evol(cs, "schema-3114") == 3114, "3246 AC4: schema-3114 preserved");
+        CHECK(href_evol(cs, "observe-only") == 1, "3246 AC2: still observe-only");
+        CHECK(href_evol(cs, "suggested-next-code") ==
+                  static_cast<std::int64_t>(EvolutionSuggestedNext::SoftObserve),
+              "ac3246_3_soft: Soft suggested-next-code=soft-observe");
+        {
+            auto r = cs.eval("(hash-ref (engine:metrics \"query:evolution-audit-decision\") "
+                             "\"suggested-next\")");
+            CHECK(r && is_string(*r), "3246 AC1: suggested-next is a string");
+            const auto idx = as_string_idx(*r);
+            const auto heap = cs.evaluator().string_heap();
+            CHECK(idx < heap.size() && heap[idx] == "soft-observe",
+                  "3246 AC3: Soft suggested-next=soft-observe");
+        }
+        EvolutionSuggestedNextInput idle_prod;
+        idle_prod.production_defaults = true;
+        idle_prod.join_mid = 0;
+        CHECK(decide_evolution_suggested_next(idle_prod) == EvolutionSuggestedNext::None,
+              "3246 AC3: production mid=0 → none (no invented Success)");
+        CHECK(std::string_view(evolution_suggested_next_cstr(EvolutionSuggestedNext::None)) ==
+                  "none",
+              "3246 AC1: none cstr");
+    }
+    {
+        using aura::compiler::typed_audit::decide_evolution_suggested_next;
+        using aura::compiler::typed_audit::evolution_suggested_next_cstr;
+        using aura::compiler::typed_audit::EvolutionSuggestedNext;
+        using aura::compiler::typed_audit::EvolutionSuggestedNextInput;
+        std::println("\n--- #3246 AC4: synthetic fold → non-ok / ok ---");
+        EvolutionSuggestedNextInput in;
+        in.production_defaults = true;
+        in.join_mid = 42;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::Ok,
+              "ac3246_4_ok: all-green → ok");
+        CHECK(std::string_view(evolution_suggested_next_cstr(EvolutionSuggestedNext::Ok)) == "ok",
+              "3246 AC1: ok cstr");
+        in.posture_degraded = true;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::ScheduleDeny,
+              "ac3246_4_breach: posture breach → schedule-deny");
+        in.posture_degraded = false;
+        in.commit_would_allow = false;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::WaitCommitReadiness,
+              "3246 AC4: commit not ready → wait-commit-readiness");
+        in.commit_would_allow = true;
+        in.densify_ok = false;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::InspectDensify,
+              "3246 AC4: densify unhealthy → inspect-densify");
+        in.densify_ok = true;
+        in.playbook_action = 3;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::ReloadPlaybook,
+              "3246 AC4: playbook reemit → reload-playbook");
+        in.playbook_action = 0;
+        in.schedule_would_deny = true;
+        CHECK(decide_evolution_suggested_next(in) == EvolutionSuggestedNext::ScheduleDeny,
+              "3246 AC4: schedule deny → schedule-deny");
+        reset_process();
+        CompilerService cs;
+        CHECK(href_evol(cs, "observe-only") == 1, "3246 AC2: query does not execute playbook");
+    }
+
     {
         std::println("\n--- 3242 AC3: mid=0 Success does not invent typed summary ---");
         reset_process();

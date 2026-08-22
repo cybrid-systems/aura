@@ -87,6 +87,68 @@ inline constexpr int kEvolutionAuditDecisionDurableIssue = 3205;
 // Compact (mid, outcome, kind, nodes, name_hash) in typed-summary-N.wal.
 // Soft / WAL-off / Sampled-skip: no write. mid=0 never invents Success.
 inline constexpr int kTypedSummaryWalIssue = 3242;
+// Issue #3246: observe-only suggested-next on evolution-audit-decision.
+// Pure fold of already-loaded commit / posture / densify / playbook /
+// schedule flags. Does not execute playbook / reemit / drain / reload.
+inline constexpr int kEvolutionAuditSuggestedNextIssue = 3246;
+
+enum class EvolutionSuggestedNext : std::uint8_t {
+    None = 0,                // production + mid=0 (do not invent Success)
+    SoftObserve = 1,         // Soft / Off
+    Ok = 2,                  // production all-green
+    ScheduleDeny = 3,        // schedule-gate deny or posture breach
+    WaitCommitReadiness = 4, // commit_readiness would_allow=false
+    InspectDensify = 5,      // densify would_allow_mutate=false
+    ReloadPlaybook = 6,      // playbook action != Idle
+};
+
+[[nodiscard]] inline const char* evolution_suggested_next_cstr(EvolutionSuggestedNext n) noexcept {
+    switch (n) {
+        case EvolutionSuggestedNext::None:
+            return "none";
+        case EvolutionSuggestedNext::SoftObserve:
+            return "soft-observe";
+        case EvolutionSuggestedNext::Ok:
+            return "ok";
+        case EvolutionSuggestedNext::ScheduleDeny:
+            return "schedule-deny";
+        case EvolutionSuggestedNext::WaitCommitReadiness:
+            return "wait-commit-readiness";
+        case EvolutionSuggestedNext::InspectDensify:
+            return "inspect-densify";
+        case EvolutionSuggestedNext::ReloadPlaybook:
+            return "reload-playbook";
+    }
+    return "none";
+}
+
+struct EvolutionSuggestedNextInput {
+    bool production_defaults = false;
+    std::uint64_t join_mid = 0;
+    bool schedule_would_deny = false;
+    bool commit_would_allow = true;
+    bool densify_ok = true;
+    bool posture_degraded = false;
+    std::int64_t playbook_action = 0; // 0 = Idle
+};
+
+// Pure: same input → same output. No atomics / WAL / mutate.
+[[nodiscard]] inline EvolutionSuggestedNext
+decide_evolution_suggested_next(const EvolutionSuggestedNextInput& in) noexcept {
+    if (!in.production_defaults)
+        return EvolutionSuggestedNext::SoftObserve;
+    if (in.join_mid == 0)
+        return EvolutionSuggestedNext::None;
+    if (in.schedule_would_deny || in.posture_degraded)
+        return EvolutionSuggestedNext::ScheduleDeny;
+    if (!in.commit_would_allow)
+        return EvolutionSuggestedNext::WaitCommitReadiness;
+    if (!in.densify_ok)
+        return EvolutionSuggestedNext::InspectDensify;
+    if (in.playbook_action != 0)
+        return EvolutionSuggestedNext::ReloadPlaybook;
+    return EvolutionSuggestedNext::Ok;
+}
 // Issue #3217: deny-path stamp order (all abort variants).
 //   1. structural restore / dual-topology abort
 //   2. coercion / occurrence / proof clear (abort path)
