@@ -3457,6 +3457,19 @@ def cmd_lint():
             "Issue #3260 macro-provenance counter unify linter failed — run python3 scripts/coverage/checks/check_macro_provenance_counter_unify_3260.py"
         )
         return r
+    # Issue #3261: flush_mutation_boundary outermost TOCTOU + hygiene
+    # hoist. Extends test_clone_provenance_per_evaluator.cpp (#81967);
+    # no docs/design/ (#1655).
+    fbt_script = COVERAGE_CHECKS / "check_flush_mutation_boundary_toctou_3261.py"
+    if not fbt_script.exists():
+        fail(f"missing {fbt_script}")
+        return 1
+    r = run([sys.executable, str(fbt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3261 flush-mutation-boundary TOCTOU linter failed — run python3 scripts/coverage/checks/check_flush_mutation_boundary_toctou_3261.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10790,6 +10803,21 @@ def cmd_macro_provenance_counter_unify_3260_coverage():
         fail("macro-provenance counter unify (#3260) coverage contract rows failed")
         return 1
     ok("macro-provenance counter unify (#3260) coverage clean")
+    return 0
+
+
+def cmd_flush_mutation_boundary_toctou_3261_coverage():
+    """Issue #3261: flush outermost TOCTOU + hygiene hoist."""
+    print(f"{B}=== flush-mutation-boundary TOCTOU (#3261) ==={N}")
+    script = COVERAGE_CHECKS / "check_flush_mutation_boundary_toctou_3261.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("flush-mutation-boundary TOCTOU (#3261) coverage contract rows failed")
+        return 1
+    ok("flush-mutation-boundary TOCTOU (#3261) coverage clean")
     return 0
 
 
@@ -19129,6 +19157,8 @@ def main():
         "restamp-hot-cone-budget-3259-coverage": cmd_restamp_hot_cone_budget_3259_coverage,
         "macro-provenance-counter-unify-3260": cmd_macro_provenance_counter_unify_3260_coverage,
         "macro-provenance-counter-unify-3260-coverage": cmd_macro_provenance_counter_unify_3260_coverage,
+        "flush-mutation-boundary-toctou-3261": cmd_flush_mutation_boundary_toctou_3261_coverage,
+        "flush-mutation-boundary-toctou-3261-coverage": cmd_flush_mutation_boundary_toctou_3261_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

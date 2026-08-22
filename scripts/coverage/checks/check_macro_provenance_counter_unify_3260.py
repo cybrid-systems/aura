@@ -74,6 +74,7 @@ def main() -> int:
     must("aura_bump_macro_provenance_repin_on_steal_total(1)", "AC2 steal repin", swin)
     must("aura_bump_hygiene_violation_prevented_on_boundary_total(1)", "AC2 steal hygiene", swin)
     must("ac3260_2_violation_and_accessor_mirror", "AC2 test", test)
+    must("ac3261_2_hygiene_hoisted_off_dirty_fn", "AC2 3261 hoist", test)
 
     must("ac3260_3_soft_clone_zero_extra_hygiene", "AC3 test", test)
     must("was_violation=0", "AC3 clone comment", me)
