@@ -18125,7 +18125,7 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:dirty-cascade-stats", [&ev](const auto&) -> EvalValue {
             (void)aura::compiler::dirty::flush_dirty_skip_subtree_to_metrics();
-            auto* ht = FlatHashTable::create(32); // #2191 headroom
+            auto* ht = FlatHashTable::create(64); // #2191 / #3264 headroom
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -18157,6 +18157,9 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                  make_int(load(aura::compiler::dirty::dirty_cascade_nodes_marked_total))},
                 {"cascade-bfs-hits",
                  make_int(load(aura::compiler::dirty::dirty_propagation_bfs_hits))},
+                // Issue #3264: additive on existing query (no new query:*).
+                {"cascade-roots-dropped-no-dep-graph-total",
+                 make_int(load(aura::compiler::dirty::cascade_roots_dropped_no_dep_graph_total))},
                 {"cascade-depth-samples",
                  make_int(load(aura::compiler::dirty::dirty_cascade_depth_samples))},
                 {"cascade-skip-file-scope",

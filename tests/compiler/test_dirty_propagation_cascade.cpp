@@ -13,6 +13,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <vector>
@@ -42,6 +43,17 @@ using aura::test::g_passed;
 
 static std::uint64_t load_u64(std::atomic<std::uint64_t>& a) {
     return a.load(std::memory_order_relaxed);
+}
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 // Minimal DirtyAware + Pass for run_one integration.
@@ -255,6 +267,25 @@ static void ac_phase() {
     CHECK(aura::compiler::dirty::kDirtyPropagationPhase >= 2, "phase >= 2 (#1575)");
 }
 
+static void run_3264_source() {
+    std::println("\n--- AC (#3264): atomic graph + dropped-roots counter ---");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(dirty.find("#3264") != std::string::npos, "cites #3264");
+    CHECK(dirty.find("std::atomic<const DepGraph*> g_pipeline_dep_graph") != std::string::npos,
+          "atomic pointer");
+    CHECK(dirty.find("memory_order_release") != std::string::npos, "release store");
+    CHECK(dirty.find("memory_order_acquire") != std::string::npos, "acquire load");
+    CHECK(dirty.find("cascade_roots_dropped_no_dep_graph_total") != std::string::npos,
+          "dropped counter");
+    CHECK(dirty.find("g_pipeline_cascade_mtx") != std::string::npos, "flush mutex");
+    aura::compiler::dirty::clear_pipeline_cascade_roots();
+    aura::compiler::dirty::set_pipeline_dep_graph(nullptr);
+    const auto d0 = load_u64(aura::compiler::dirty::cascade_roots_dropped_no_dep_graph_total);
+    CHECK(aura::compiler::dirty::flush_pipeline_cascade_roots() == 0, "empty quiet");
+    CHECK(load_u64(aura::compiler::dirty::cascade_roots_dropped_no_dep_graph_total) == d0,
+          "empty zero extra");
+}
+
 } // namespace
 
 int main() {
@@ -267,6 +298,7 @@ int main() {
     ac5_complex_graph_1000_rounds();
     ac6_instruction_level();
     ac_phase();
+    run_3264_source();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -35,6 +35,9 @@ inline std::atomic<std::uint64_t> dirty_cascade_depth_samples{0};
 inline std::atomic<std::uint64_t> dirty_cascade_nodes_marked_total{0};
 inline std::atomic<std::uint64_t> dirty_sync_from_ir_total{0};
 inline std::atomic<std::uint64_t> dirty_push_to_ir_total{0};
+// Issue #3264: cascade roots discarded because g_pipeline_dep_graph was
+// unset. Quiet empty-root flush does not bump (zero extra).
+inline std::atomic<std::uint64_t> cascade_roots_dropped_no_dep_graph_total{0};
 
 // Issue #2191: type affected-subtree cone mirrored into DepGraph cascade.
 // type_dirty_cone_mirrored_total — AST NodeIds pushed as cascade roots.
@@ -263,16 +266,23 @@ struct DirtySet {
 
 inline DirtySet g_global_dirty{};
 
+// Issue #3264: mutex serializes set_pipeline_dep_graph vs flush
+// dereference, and g_global_dirty writes inside flush (TLS roots
+// invite multi-thread drain; DirtySet has no thread-safety).
+inline std::mutex g_pipeline_cascade_mtx;
+
 // Optional pipeline dep graph for DirtyAwarePass auto-cascade (#1575 AC2).
-inline const DepGraph* g_pipeline_dep_graph = nullptr;
+// Issue #3264: atomic pointer — release store / acquire load.
+inline std::atomic<const DepGraph*> g_pipeline_dep_graph{nullptr};
 inline thread_local std::vector<NodeId> t_pipeline_cascade_roots{};
 
 inline void set_pipeline_dep_graph(const DepGraph* g) noexcept {
-    g_pipeline_dep_graph = g;
+    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
+    g_pipeline_dep_graph.store(g, std::memory_order_release);
 }
 
 [[nodiscard]] inline const DepGraph* pipeline_dep_graph() noexcept {
-    return g_pipeline_dep_graph;
+    return g_pipeline_dep_graph.load(std::memory_order_acquire);
 }
 
 inline void note_pipeline_cascade_root(NodeId root) {
@@ -383,15 +393,31 @@ inline std::size_t cascade_mark_dirty_many(DirtySet& set, std::span<const NodeId
 // Drain thread-local cascade roots into g_global_dirty (pass_manager hook).
 // Issue #2106: each cascade_mark_dirty already flushes skip counts into
 // metrics; final flush is a no-op safety net if any residual remains.
+// Issue #3264: lock + acquire-load the graph; count dropped roots when
+// the graph is unset. Empty-root flush is a no-op (zero extra).
 inline std::size_t flush_pipeline_cascade_roots() {
-    if (!g_pipeline_dep_graph || t_pipeline_cascade_roots.empty()) {
-        t_pipeline_cascade_roots.clear();
+    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
+    const DepGraph* graph = g_pipeline_dep_graph.load(std::memory_order_acquire);
+    if (t_pipeline_cascade_roots.empty()) {
+        (void)flush_dirty_skip_subtree_to_metrics();
+        return 0; // Issue #3264: empty-root flush is zero extra
+    }
+    if (!graph) {
+        cascade_roots_dropped_no_dep_graph_total.fetch_add(t_pipeline_cascade_roots.size(),
+                                                           std::memory_order_relaxed);
+        // Full/production: preserve roots until a graph is registered.
+        // Soft/Off: drop after counting (legacy).
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (!hard)
+            t_pipeline_cascade_roots.clear();
         (void)flush_dirty_skip_subtree_to_metrics();
         return 0;
     }
     std::size_t n = 0;
     for (NodeId r : t_pipeline_cascade_roots)
-        n += cascade_mark_dirty(g_global_dirty, r, *g_pipeline_dep_graph);
+        n += cascade_mark_dirty(g_global_dirty, r, *graph);
     t_pipeline_cascade_roots.clear();
     (void)flush_dirty_skip_subtree_to_metrics();
     return n;
@@ -420,6 +446,7 @@ inline void push_to_ir_dirty(const DirtySet& src, std::span<std::uint8_t> ir_dir
 
 // Convenience: merge local DirtySet into g_global_dirty.
 inline void push_to_global(const DirtySet& src) {
+    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
     for (std::size_t i = 0; i < src.bits.size(); ++i) {
         if (src.bits[i])
             g_global_dirty.mark(static_cast<NodeId>(i));
@@ -430,6 +457,7 @@ inline void push_to_global(const DirtySet& src) {
 
 // Convenience: copy g_global_dirty into dest (OR-merge).
 inline void pull_from_global(DirtySet& dest) {
+    std::lock_guard<std::mutex> lock(g_pipeline_cascade_mtx);
     for (std::size_t i = 0; i < g_global_dirty.bits.size(); ++i) {
         if (g_global_dirty.bits[i])
             dest.mark(static_cast<NodeId>(i));
