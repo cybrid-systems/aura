@@ -1446,6 +1446,8 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
     if (workspace_flat_ && ref.id != ast::NULL_NODE) {
         // Issue #3230: consult torn/budget *before* make_ref_layout so
         // lazy-align cannot hide a pre-mutate gen. Soft allow proceeds.
+        // Issue #3259: hot-cone eager bit is accepted by allow; lagging
+        // remainder still nulls (never green a pre-mutate gen).
         if (!allow_query_stable_ref_export(ref.id)) {
             ref = {};
             return;

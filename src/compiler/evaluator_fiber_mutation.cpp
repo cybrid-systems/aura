@@ -856,8 +856,12 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
             // Issue #3041: production budget exceed → force QueryEpoch stale
             // so Agents poll query:query-epoch-stats after Guard (lazy-align
             // still ran above). Soft: metric-only (existing exceeded total).
-            if (production)
+            if (production) {
+                // Issue #3259: lazy-only → eager hot cone; never green a pre-mutate gen.
+                if (r.nodes == 0)
+                    r.nodes = ws->restamp_hot_cone_after_budget();
                 aura::core::force_query_epoch_stale_from_restamp_budget();
+            }
         }
     }
     const auto sref_site = (site == UnifiedRestampSite::Densify)

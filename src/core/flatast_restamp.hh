@@ -128,6 +128,15 @@ inline constexpr int kQueryStableRestampExportUniformIssue = 3198;
 // Equivalent to last_budget_exceeded || generation_torn (#3037).
 // Soft/Off observe-only. No new public query key.
 inline constexpr int kQueryStableRestampLagHardRejectIssue = 3230;
+// Issue #3259: production over-budget outermost restamp eager-restamps
+// a hot cone (dirty roots + parent chain) up to a fraction of the
+// restamp budget so Agent-held StableNodeRef / QueryResult on those
+// nodes stay exportable. Remainder stays lazy-align + torn (never
+// green a pre-mutate gen). Soft / budget==0 / no production_defaults:
+// zero extra (this helper is not consulted). Env:
+// AURA_RESTAMP_HOT_CONE_FRAC percent in [1,100], default 50 (budget/2).
+inline constexpr int kRestampHotConeBudgetIssue = 3259;
+inline constexpr std::uint32_t kRestampHotConeFracPercentDefault = 50;
 [[nodiscard]] inline bool restamp_over_budget_torn(bool last_budget_exceeded,
                                                    bool generation_torn) noexcept {
     return last_budget_exceeded || generation_torn;
@@ -181,6 +190,33 @@ inline void set_restamp_budget_nodes_for_process(std::uint32_t n) noexcept {
     if (g_restamp_budget_nodes_override_set().load(std::memory_order_acquire))
         return g_restamp_budget_nodes_override().load(std::memory_order_acquire);
     return resolve_restamp_budget_nodes();
+}
+
+// Issue #3259: fraction of restamp budget reserved for eager hot-cone
+// restamp on production over-budget outermost exit. Cached env, same
+// shape as resolve_restamp_budget_nodes. Default 50%.
+[[nodiscard]] inline std::uint32_t resolve_restamp_hot_cone_frac_percent() noexcept {
+    static std::atomic<std::uint32_t> cached{kRestampHotConeFracPercentDefault};
+    static std::atomic<bool> initialized{false};
+    if (!initialized.load(std::memory_order_acquire)) {
+        const char* e = std::getenv("AURA_RESTAMP_HOT_CONE_FRAC");
+        if (e && *e) {
+            char* end = nullptr;
+            const unsigned long v = std::strtoul(e, &end, 10);
+            if (end != e && v >= 1ul && v <= 100ul)
+                cached.store(static_cast<std::uint32_t>(v), std::memory_order_release);
+        }
+        initialized.store(true, std::memory_order_release);
+    }
+    return cached.load(std::memory_order_acquire);
+}
+
+[[nodiscard]] inline std::uint32_t restamp_hot_cone_budget(std::uint32_t budget) noexcept {
+    if (budget == 0)
+        return 0;
+    const auto pct = resolve_restamp_hot_cone_frac_percent();
+    const auto n = static_cast<std::uint32_t>((static_cast<std::uint64_t>(budget) * pct) / 100ull);
+    return n == 0 ? 1u : n;
 }
 
 inline void clear_restamp_budget_nodes_override_for_test() noexcept {

@@ -3430,6 +3430,20 @@ def cmd_lint():
             "Issue #3258 abort-force lookup reject linter failed — run python3 scripts/coverage/checks/check_abort_force_lookup_reject_3258.py"
         )
         return r
+    # Issue #3259: production over-budget restamp eager-restamps the hot
+    # cone (dirty + parents) so Agent StableNodeRef / QueryResult on
+    # those nodes stay exportable. Extends test_stable_ref_tenant_capture
+    # + test_hygiene_mutate_closed_loop (#81967); no docs/design/ (#1655).
+    rhc_script = COVERAGE_CHECKS / "check_restamp_hot_cone_budget_3259.py"
+    if not rhc_script.exists():
+        fail(f"missing {rhc_script}")
+        return 1
+    r = run([sys.executable, str(rhc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3259 restamp hot-cone budget linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_budget_3259.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10733,6 +10747,21 @@ def cmd_abort_force_lookup_reject_3258_coverage():
         fail("abort-force lookup reject (#3258) coverage contract rows failed")
         return 1
     ok("abort-force lookup reject (#3258) coverage clean")
+    return 0
+
+
+def cmd_restamp_hot_cone_budget_3259_coverage():
+    """Issue #3259: production over-budget restamp eager-restamps hot cone."""
+    print(f"{B}=== restamp hot-cone budget (#3259) ==={N}")
+    script = COVERAGE_CHECKS / "check_restamp_hot_cone_budget_3259.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restamp hot-cone budget (#3259) coverage contract rows failed")
+        return 1
+    ok("restamp hot-cone budget (#3259) coverage clean")
     return 0
 
 
@@ -19068,6 +19097,8 @@ def main():
         "deferred-hybrid-rearm-last-look-3257-coverage": cmd_deferred_hybrid_rearm_last_look_3257_coverage,
         "abort-force-lookup-reject-3258": cmd_abort_force_lookup_reject_3258_coverage,
         "abort-force-lookup-reject-3258-coverage": cmd_abort_force_lookup_reject_3258_coverage,
+        "restamp-hot-cone-budget-3259": cmd_restamp_hot_cone_budget_3259_coverage,
+        "restamp-hot-cone-budget-3259-coverage": cmd_restamp_hot_cone_budget_3259_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

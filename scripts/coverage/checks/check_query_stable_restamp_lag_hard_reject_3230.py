@@ -50,6 +50,7 @@ def main() -> int:
     sec = _read("src/compiler/evaluator_security.cpp")
     qws = _read("src/compiler/evaluator_primitives_query_workspace.cpp")
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
+    cap = _read("tests/core/test_stable_ref_tenant_capture.cpp")
     batch = _read("tests/compiler/test_stable_ref_provenance_batch.cpp")
     qrp = _read("tests/compiler/test_query_result_full_provenance.cpp")
     build = _read("build.py")
@@ -60,6 +61,8 @@ def main() -> int:
     must("kQueryStableRestampLagHardRejectIssue = 3230", "AC1 stamp", restamp)
     must("restamp_over_budget_torn", "AC1 helper", restamp)
     must("ac3230_1_production_stamp_before_layout", "AC1 test", t)
+    must("ac3259_1_hot_cone_export", "3259 hot-cone residual", cap)
+    must("kRestampHotConeBudgetIssue = 3259", "3259 helper", restamp)
 
     must("ac3230_2_soft_and_quiet", "AC2 test", t)
     must("should_hard_reject_soft_sibling", "AC2 Soft gate", sec)
