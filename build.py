@@ -3586,6 +3586,19 @@ def cmd_lint():
     if r != 0:
         fail("Issue #3270 PrimId-drift linter failed — run python3 scripts/coverage/checks/check_primid_drift_3270.py")
         return r
+    # Issue #3271: ShapeProfiler dirty hook is DirtyHookFn (no
+    # std::function). Extends test_shape_profiler_concurrency.cpp
+    # (#81967); no docs/design/ (#1655).
+    sdh_script = COVERAGE_CHECKS / "check_shape_dirty_hook_no_std_function_3271.py"
+    if not sdh_script.exists():
+        fail(f"missing {sdh_script}")
+        return 1
+    r = run([sys.executable, str(sdh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3271 shape-dirty-hook linter failed — run python3 scripts/coverage/checks/check_shape_dirty_hook_no_std_function_3271.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -11069,6 +11082,21 @@ def cmd_primid_drift_3270_coverage():
         fail("PrimId drift (#3270) coverage contract rows failed")
         return 1
     ok("PrimId drift (#3270) coverage clean")
+    return 0
+
+
+def cmd_shape_dirty_hook_no_std_function_3271_coverage():
+    """Issue #3271: ShapeProfiler dirty hook fn ptr (no std::function)."""
+    print(f"{B}=== shape dirty hook no std::function (#3271) ==={N}")
+    script = COVERAGE_CHECKS / "check_shape_dirty_hook_no_std_function_3271.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape dirty hook no std::function (#3271) coverage contract rows failed")
+        return 1
+    ok("shape dirty hook no std::function (#3271) coverage clean")
     return 0
 
 
@@ -19428,6 +19456,8 @@ def main():
         "arena-compact-toctou-3269-coverage": cmd_arena_compact_toctou_3269_coverage,
         "primid-drift-3270": cmd_primid_drift_3270_coverage,
         "primid-drift-3270-coverage": cmd_primid_drift_3270_coverage,
+        "shape-dirty-hook-no-std-function-3271": cmd_shape_dirty_hook_no_std_function_3271_coverage,
+        "shape-dirty-hook-no-std-function-3271-coverage": cmd_shape_dirty_hook_no_std_function_3271_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

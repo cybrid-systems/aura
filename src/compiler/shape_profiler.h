@@ -21,10 +21,10 @@
 // hash-bucket traversal. Issue #2937: one map
 // per shard under its own shared_mutex.
 #include <flat_map>
-#include <functional>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
+#include <type_traits>
 #include <vector>
 #include "shape.h"
 
@@ -47,6 +47,8 @@ namespace aura::compiler::shape {
 //     (cross-function walks that must observe a consistent set).
 //   - Config knobs under config_mtx_ (rare writers; not on hot record path).
 //   - Deopt-storm ring under meta_mtx_ (mutation-only; never from compact).
+//   - dirty_hook_ is std::atomic<DirtyHookFn> (#3271) — no std::function;
+//     load after shard unlock so the callback stays allocation-free.
 //   - External deopt/dirty hooks fire *after* releasing locks so
 //     callbacks may re-enter without deadlock.
 //   - Metrics atomics remain lock-free for publish. Contention counted in
@@ -57,8 +59,14 @@ inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
 inline constexpr int kShapeProfilerShardIssue = 2937;
 // Issue #3199: on_arena_compact must not unique_lock_all_shards_.
 inline constexpr int kShapeCompactNoAllShardsLockIssue = 3199;
+// Issue #3271: dirty hook is a trivially-copyable fn ptr (no std::function).
+inline constexpr int kShapeDirtyHookNoStdFunctionIssue = 3271;
 // Fixed shard count — power-of-two friendly; FnKey hash selects shard.
 inline constexpr std::size_t kShapeProfilerShardCount = 16;
+// Production IR/cascade callback. Unset (nullptr) is zero extra (#3271).
+using DirtyHookFn = void (*)(FnKey, std::uint32_t) noexcept;
+static_assert(std::is_trivially_copyable_v<DirtyHookFn>,
+              "DirtyHookFn must be inlineable (no std::function) (#3271)");
 
 // Issue #2255: process-wide shape version accessor for
 // LayoutStamp.shape_version capture in
@@ -395,8 +403,9 @@ public:
     // 0 if no history lookups yet.
     [[nodiscard]] double history_hit_rate() const noexcept;
 
-    // Issue #686: optional dirty-scope callback (IRSoA / block_dirty_).
-    void set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook);
+    // Issue #686 / #3271: optional dirty-scope callback (IRSoA / block_dirty_).
+    // Function pointer — no std::function heap / type erasure. nullptr clears.
+    void set_dirty_hook(DirtyHookFn hook) noexcept;
 
     // Issue #2141 / #2937: how often exclusive/shared lock had to wait
     // (try_lock miss on any shard or config mutex).
@@ -504,7 +513,7 @@ private:
     mutable std::atomic<std::uint64_t> lock_contended_total_{0};
     // Config knobs (not on hot record_shape path for distinct FnKeys).
     mutable std::shared_mutex config_mtx_;
-    // Deopt-storm ring + dirty_hook (mutation-only meta; never compact).
+    // Deopt-storm ring (mutation-only meta; never compact). Hook is atomic.
     mutable std::mutex meta_mtx_;
 
     std::uint32_t window_size_ = kDefaultWindowSize;
@@ -552,7 +561,8 @@ private:
     std::atomic<std::uint64_t> adaptive_suppress_total_{0};
     std::atomic<std::uint64_t> adaptive_enter_total_{0};
     Preset active_preset_ = kDefaultPreset;
-    std::function<void(FnKey fn, std::uint32_t dirty_scope)> dirty_hook_;
+    // Issue #3271: atomic fn ptr (no std::function). Unset = nullptr.
+    std::atomic<DirtyHookFn> dirty_hook_{nullptr};
 };
 
 // Issue #570 / #686: deopt hook fired on version bump / stable→unstable.

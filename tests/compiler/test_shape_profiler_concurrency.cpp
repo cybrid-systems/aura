@@ -2,6 +2,7 @@
 // @reason: Issue #2141 — ShapeProfiler shared_mutex for multi-fiber mutate.
 //          Issue #2937 — FnKey-sharded locks (extend per #81967).
 //          Issue #3199 — on_arena_compact per-shard unique (no all-shards).
+//          Issue #3271 — dirty hook is fn ptr (no std::function).
 //
 //   AC1: docs model A (shared_mutex) in shape_profiler.h
 //   AC2: concurrent record_shape + invalidate does not corrupt profiles_
@@ -28,12 +29,15 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 namespace {
 
+using aura::compiler::shape::DirtyHookFn;
 using aura::compiler::shape::FnKey;
 using aura::compiler::shape::kShapeCompactNoAllShardsLockIssue;
+using aura::compiler::shape::kShapeDirtyHookNoStdFunctionIssue;
 using aura::compiler::shape::kShapeProfilerConcurrencyIssue;
 using aura::compiler::shape::kShapeProfilerShardCount;
 using aura::compiler::shape::kShapeProfilerShardIssue;
@@ -174,6 +178,117 @@ static void ac3199_3_compact_not_storm() {
     (void)sp.on_arena_compact();
     CHECK(sp.mutation_induced_invalidations() == mut0, "3199 AC3: no mutation_induced");
     CHECK(sp.deopt_storm_total() == storm0, "3199 AC3: no storm total");
+}
+
+static std::atomic<int> g_dirty_hook_fires{0};
+
+static void test_dirty_hook_count(FnKey, std::uint32_t) noexcept {
+    g_dirty_hook_fires.fetch_add(1, std::memory_order_relaxed);
+}
+
+static void ac3271_1_no_std_function() {
+    std::println("\n--- #3271 AC1: DirtyHookFn, no std::function storage ---");
+    static_assert(std::is_trivially_copyable_v<DirtyHookFn>);
+    CHECK(kShapeDirtyHookNoStdFunctionIssue == 3271, "3271 AC1: issue stamp");
+    const auto hh = read_file("src/compiler/shape_profiler.h");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(hh.find("using DirtyHookFn = void (*)(FnKey, std::uint32_t) noexcept") !=
+              std::string::npos,
+          "3271 AC1: DirtyHookFn");
+    CHECK(hh.find("std::atomic<DirtyHookFn> dirty_hook_") != std::string::npos,
+          "3271 AC1: atomic storage");
+    CHECK(hh.find("std::function<") == std::string::npos, "3271 AC1: header no std::function<");
+    CHECK(cpp.find("std::function<") == std::string::npos, "3271 AC1: cpp no std::function<");
+    CHECK(hh.find("is_trivially_copyable_v<DirtyHookFn>") != std::string::npos,
+          "3271 AC1: trivially copyable assert");
+}
+
+static void ac3271_2_fire_after_unlock() {
+    std::println("\n--- #3271 AC2: hook fires after shard unlock ---");
+    ShapeProfiler sp;
+    for (int i = 0; i < 150; ++i)
+        (void)sp.record_shape(9, SHAPE_INT);
+    g_dirty_hook_fires.store(0, std::memory_order_relaxed);
+    sp.set_dirty_hook(&test_dirty_hook_count);
+    (void)sp.invalidate(9);
+    CHECK(g_dirty_hook_fires.load(std::memory_order_relaxed) >= 1, "3271 AC2: invalidate fires");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(cpp.find("Issue #3271: fn-ptr load after shard unlock") != std::string::npos,
+          "3271 AC2: record/invalidate load after unlock");
+    CHECK(cpp.find("Issue #3271: load after all shard unique locks drop") != std::string::npos,
+          "3271 AC2: compact load after unlock");
+    sp.set_dirty_hook(nullptr);
+}
+
+static void ac3271_3_unset_zero_extra() {
+    std::println("\n--- #3271 AC3: unset hook is a null load ---");
+    ShapeProfiler sp;
+    for (int i = 0; i < 150; ++i)
+        (void)sp.record_shape(11, SHAPE_INT);
+    g_dirty_hook_fires.store(0, std::memory_order_relaxed);
+    (void)sp.invalidate(11);
+    CHECK(g_dirty_hook_fires.load(std::memory_order_relaxed) == 0, "3271 AC3: unset does not fire");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(cpp.find("Soft unset is a null load") != std::string::npos, "3271 AC3: quiet cite");
+    CHECK(cpp.find("dirty_hook_copy") == std::string::npos, "3271 AC3: no std::function copy");
+}
+
+static void ac3271_4_hook_path_no_meta() {
+    std::println("\n--- #3271 AC4: hook path does not take meta_mtx_ ---");
+    ShapeProfiler sp;
+    g_dirty_hook_fires.store(0, std::memory_order_relaxed);
+    sp.set_dirty_hook(&test_dirty_hook_count);
+    std::atomic<bool> start{false};
+    std::atomic<std::uint64_t> records{0};
+    auto worker = [&](int base) {
+        while (!start.load(std::memory_order_acquire)) {
+        }
+        for (int i = 0; i < 400; ++i) {
+            const FnKey fn = static_cast<FnKey>(base + i);
+            (void)sp.record_shape(fn == 0 ? 1 : fn, (i & 1) ? SHAPE_INT : SHAPE_FLOAT);
+            if ((i % 20) == 0)
+                (void)sp.invalidate(fn == 0 ? 1 : fn);
+            records.fetch_add(1, std::memory_order_relaxed);
+        }
+    };
+    std::thread t0(worker, 1);
+    std::thread t1(worker, 10007);
+    start.store(true, std::memory_order_release);
+    t0.join();
+    t1.join();
+    CHECK(records.load() == 800, "3271 AC4: multi-fiber with hook completed");
+    (void)sp.lock_contended_total();
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(cpp.find("no meta_mtx_ on the hook path") != std::string::npos,
+          "3271 AC4: hook path skips meta_mtx_");
+    sp.set_dirty_hook(nullptr);
+}
+
+static void ac3271_5_source_and_linter() {
+    std::println("\n--- #3271 AC5/AC6: source-cite + linter + no invent ---");
+    const auto hh = read_file("src/compiler/shape_profiler.h");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto t = read_file("tests/compiler/test_shape_profiler_concurrency.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_shape_dirty_hook_no_std_function_3271.py");
+    const auto prev = read_file("scripts/coverage/checks/check_primid_drift_3270.py");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("kShapeDirtyHookNoStdFunctionIssue = 3271") != std::string::npos,
+          "3271 AC5: issue stamp");
+    CHECK(cpp.find("Issue #3271") != std::string::npos, "3271 AC5: cpp cites");
+    CHECK(svc.find("shape_dirty_hook_trampoline") != std::string::npos,
+          "3271 AC5: production trampoline");
+    CHECK(svc.find("set_dirty_hook(&CompilerService::shape_dirty_hook_trampoline)") !=
+              std::string::npos,
+          "3271 AC5: no capturing lambda");
+    CHECK(t.find("ac3271_1_no_std_function") != std::string::npos, "3271 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3271") != std::string::npos, "3271 AC6: linter");
+    CHECK(build.find("check_shape_dirty_hook_no_std_function_3271") != std::string::npos,
+          "3271 AC6: build.py");
+    CHECK(prev.find("Follow-up #3271") != std::string::npos, "3271 AC5: sequential after #3270");
+    CHECK(read_file("docs/design/3271-shape-dirty-hook.md").empty(), "3271 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3271.cpp").empty(), "3271 AC5: no invent");
 }
 
 static void ac3199_4_source_and_linter() {
@@ -522,9 +637,8 @@ int run_test_shape_profiler_concurrency() {
         for (int i = 0; i < 150; ++i)
             (void)sp.record_shape(7, SHAPE_INT);
         const auto snap0 = sp.current_snapshot(7);
-        std::atomic<int> hooks{0};
-        sp.set_dirty_hook(
-            [&](FnKey, std::uint32_t) { hooks.fetch_add(1, std::memory_order_relaxed); });
+        g_dirty_hook_fires.store(0, std::memory_order_relaxed);
+        sp.set_dirty_hook(&test_dirty_hook_count);
         const bool was_stable = sp.invalidate(7);
         (void)was_stable;
         const auto snap1 = sp.current_snapshot(7);
@@ -534,7 +648,8 @@ int run_test_shape_profiler_concurrency() {
         const auto cpp = read_file("src/compiler/shape_profiler.cpp");
         CHECK(cpp.find("fire_shape_deopt_hook") != std::string::npos,
               "AC4: deopt hook after unlock");
-        (void)hooks;
+        (void)g_dirty_hook_fires;
+        sp.set_dirty_hook(nullptr);
     }
     {
         std::println("\n--- #2937 AC5/AC6: lineage + linter + no design ---");
@@ -562,6 +677,13 @@ int run_test_shape_profiler_concurrency() {
     ac3199_2_version_advances();
     ac3199_3_compact_not_storm();
     ac3199_4_source_and_linter();
+
+    std::println("\n=== Issue #3271: dirty hook no std::function ===");
+    ac3271_1_no_std_function();
+    ac3271_2_fire_after_unlock();
+    ac3271_3_unset_zero_extra();
+    ac3271_4_hook_path_no_meta();
+    ac3271_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

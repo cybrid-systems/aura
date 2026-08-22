@@ -475,9 +475,8 @@ std::uint64_t ShapeProfiler::profile_evictions() const noexcept {
     return profile_evictions_.load(std::memory_order_relaxed);
 }
 
-void ShapeProfiler::set_dirty_hook(std::function<void(FnKey fn, std::uint32_t dirty_scope)> hook) {
-    std::lock_guard<std::mutex> meta(meta_mtx_);
-    dirty_hook_ = std::move(hook);
+void ShapeProfiler::set_dirty_hook(DirtyHookFn hook) noexcept {
+    dirty_hook_.store(hook, std::memory_order_release);
 }
 
 void ShapeProfiler::ShapeHistoryRing::push(const ShapeRecord& rec, std::uint32_t window_size) {
@@ -521,7 +520,6 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     // Issue #2141 / #2937: unique lock on owning shard only; fire hooks after unlock.
     bool fire_stability_loss = false;
     std::uint64_t fire_version = 0;
-    std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
     bool result = false;
 
     // Issue #2937 lock order: config (shared) before shard unique — never nest
@@ -593,10 +591,6 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
             update_deopt_storm_state_(fn);
             fire_stability_loss = true;
             fire_version = profile.version;
-            {
-                std::lock_guard<std::mutex> meta(meta_mtx_);
-                dirty_hook_copy = dirty_hook_;
-            }
         }
         profile.is_stable = false;
         profile.stable_shape = SHAPE_UNKNOWN;
@@ -605,9 +599,11 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
 
     if (fire_stability_loss) {
         fire_shape_deopt_hook(fn, fire_version, kShapeDirtyScopeStabilityLoss);
-        if (dirty_hook_copy) {
+        // Issue #3271: fn-ptr load after shard unlock — no std::function
+        // copy, no meta_mtx_ on the hook path (Soft unset is a null load).
+        if (const DirtyHookFn dirty_hook = dirty_hook_.load(std::memory_order_acquire)) {
             shape_jit_pass::record_dirty_from_shape();
-            dirty_hook_copy(fn, kShapeDirtyScopeStabilityLoss);
+            dirty_hook(fn, kShapeDirtyScopeStabilityLoss);
         }
     }
     return result;
@@ -677,7 +673,6 @@ bool ShapeProfiler::invalidate(FnKey fn) {
     bool was_stable = false;
     std::uint64_t version = 0;
     bool found = false;
-    std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
     const std::size_t si = shard_index(fn);
     {
         auto lock = unique_lock_shard_(si);
@@ -690,16 +685,13 @@ bool ShapeProfiler::invalidate(FnKey fn) {
         it = profiles.find(fn);
         if (it != profiles.end())
             version = it->second.version;
-        {
-            std::lock_guard<std::mutex> meta(meta_mtx_);
-            dirty_hook_copy = dirty_hook_;
-        }
     }
     if (found) {
         fire_shape_deopt_hook(fn, version, kShapeDirtyScopeInvalidate);
-        if (dirty_hook_copy) {
+        // Issue #3271: fn-ptr load after shard unlock.
+        if (const DirtyHookFn dirty_hook = dirty_hook_.load(std::memory_order_acquire)) {
             shape_jit_pass::record_dirty_from_shape();
-            dirty_hook_copy(fn, kShapeDirtyScopeInvalidate);
+            dirty_hook(fn, kShapeDirtyScopeInvalidate);
         }
     }
     return was_stable;
@@ -761,12 +753,10 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
         std::uint64_t version;
     };
     std::vector<HookWork> hooks_to_fire;
-    std::function<void(FnKey, std::uint32_t)> dirty_hook_copy;
     std::uint32_t ring_before = 0;
     {
         std::lock_guard<std::mutex> meta(meta_mtx_);
         ring_before = deopt_ring_count_;
-        dirty_hook_copy = dirty_hook_;
     }
     const auto mut_before = mutation_induced_invalidations_.load(std::memory_order_relaxed);
     // Issue #2908: capture process-global version for PerEval contract.
@@ -844,11 +834,13 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     (void)mut_before;
     (void)global_ver_before;
 
+    // Issue #3271: load after all shard unique locks drop.
+    const DirtyHookFn dirty_hook = dirty_hook_.load(std::memory_order_acquire);
     for (const auto& h : hooks_to_fire) {
         fire_shape_deopt_hook(h.fn, h.version, kShapeDirtyScopeArenaCompact);
-        if (dirty_hook_copy) {
+        if (dirty_hook) {
             shape_jit_pass::record_dirty_from_shape();
-            dirty_hook_copy(h.fn, kShapeDirtyScopeArenaCompact);
+            dirty_hook(h.fn, kShapeDirtyScopeArenaCompact);
         }
     }
     // Issue #2256: Moving-compact hard-contract observability
