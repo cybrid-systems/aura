@@ -167,6 +167,113 @@ int run_test_must_deopt_before_next_call() {
         aura_free_closure(cid);
     }
 
+    // ── Issue #3247: getter is sticky observe (Option A), not consume ──
+    {
+        std::println("\n--- #3247 AC1: N consecutive getter probes stay 1 ---");
+        auto cid = aura_alloc_closure(/*func_id=*/4247);
+        CHECK(cid >= 0, "3247: alloc");
+        aura_closure_set_must_deopt(cid, 1);
+        // remount-fail / residual set → flag=1; getter is sticky (all 1).
+        for (int i = 0; i < 5; ++i) {
+            CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1,
+                  "ac3247_1_sticky: getter returns 1 on consecutive probes");
+        }
+        CHECK(aura_closure_get_must_deopt(cid) == 1,
+              "ac3247_1_sticky: flag still set after N getter probes");
+        aura_free_closure(cid);
+    }
+    {
+        std::println("\n--- #3247 AC2: remount/remap/alloc heal → getter 0 ---");
+        auto cid = aura_alloc_closure(/*func_id=*/4248);
+        aura_closure_set_must_deopt(cid, 1);
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1, "3247: armed");
+        aura_closure_set_must_deopt(cid, 0); // remount ok / remap / alloc reuse
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 0,
+              "ac3247_2_heal: remount/remap/alloc clear → getter 0");
+        aura_free_closure(cid);
+    }
+    {
+        std::println("\n--- #3247 AC2: aura_closure_call still consumes ---");
+        auto cid = aura_alloc_closure(/*func_id=*/4249);
+        aura_closure_set_must_deopt(cid, 1);
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1, "3247: armed before call");
+        const auto deopt0 = aura_deopt_count();
+        std::int64_t args[1] = {0};
+        (void)aura_closure_call(cid, args, 0);
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 0,
+              "ac3247_2_call: force-deopt still clears under exclusive");
+        CHECK(aura_deopt_count() > deopt0, "3247: deopt advanced (call path unchanged)");
+        aura_free_closure(cid);
+    }
+    {
+        std::println("\n--- #3247 AC3: free+realloc — getter does not clear new flag ---");
+        auto cid = aura_alloc_closure(/*func_id=*/111);
+        CHECK(cid >= 0, "3247 realloc: orig alloc");
+        aura_closure_set_must_deopt(cid, 1);
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1,
+              "3247 realloc: orig getter 1 (no consume)");
+        aura_free_closure(cid);
+        auto nid = aura_alloc_closure(/*func_id=*/222);
+        CHECK(nid >= 0, "3247 realloc: new alloc");
+        // Alloc reuse already clears (#2128). Stamp a *new* identity's flag.
+        aura_closure_set_must_deopt(nid, 1);
+        CHECK(aura_get_closure_must_deopt_before_next_call(nid) == 1,
+              "ac3247_3_realloc: new identity flag set");
+        CHECK(aura_get_closure_must_deopt_before_next_call(nid) == 1,
+              "ac3247_3_realloc: getter does not clear new closure");
+        CHECK(aura_closure_get_must_deopt(nid) == 1,
+              "ac3247_3_realloc: new flag still sticky (#2472 parity)");
+        aura_free_closure(nid);
+    }
+    {
+        std::println("\n--- #3247 AC4: source contract + gate ---");
+        auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        auto hdr = read_file("src/compiler/runtime_shared.h");
+        auto build = read_file("build.py");
+        auto script = read_file("scripts/coverage/checks/check_must_deopt_getter_sticky_3247.py");
+        CHECK(!rt.empty(), "3247: runtime readable");
+        const auto g = rt.find("aura_get_closure_must_deopt_before_next_call");
+        CHECK(g != std::string::npos, "3247: getter present");
+        if (g != std::string::npos) {
+            const auto body = rt.substr(g > 400 ? g - 400 : 0, 900);
+            CHECK(body.find("clears it") == std::string::npos,
+                  "3247 AC1: getter comment no longer claims clear-on-read");
+            CHECK(body.find("does **not** clear") != std::string::npos ||
+                      body.find("does not clear") != std::string::npos,
+                  "3247 AC1: getter documents sticky observe");
+            CHECK(body.find("Agent") != std::string::npos,
+                  "3247 AC1: Agent must not treat getter as consume");
+            const auto fn = rt.substr(g, 500);
+            CHECK(fn.find("g_closure_must_deopt[cid] = 0") == std::string::npos,
+                  "3247 AC1: getter body does not store 0");
+            CHECK(fn.find("shared_lock") != std::string::npos, "3247: getter shared-lock read");
+        }
+        const auto call = rt.find("int64_t aura_closure_call(");
+        CHECK(call != std::string::npos, "3247: aura_closure_call present");
+        if (call != std::string::npos) {
+            const auto body = rt.substr(call, 4500);
+            CHECK(body.find("g_closure_must_deopt[cid] = 0") != std::string::npos,
+                  "3247 AC2: call path still clears under exclusive");
+            CHECK(body.find("g_closure_bridge_epochs[cid] = 0") != std::string::npos,
+                  "3247 AC2: call path still poisons bridge_epoch");
+            CHECK(body.find("Issue #2472") != std::string::npos,
+                  "3247 AC2: #2472 identity recheck retained");
+            CHECK(body.find("Issue #3247") != std::string::npos,
+                  "3247 AC2: call path notes getter is not consume");
+        }
+        CHECK(hdr.find("aura_get_closure_must_deopt_before_next_call") != std::string::npos,
+              "3247 AC1: header declares getter");
+        CHECK(hdr.find("does **not** clear") != std::string::npos ||
+                  hdr.find("does not clear") != std::string::npos,
+              "3247 AC1: header sticky contract");
+        CHECK(build.find("check_must_deopt_getter_sticky_3247") != std::string::npos,
+              "3247 AC5: linter in build.py");
+        CHECK(build.find("cmd_must_deopt_getter_sticky_3247_coverage") != std::string::npos,
+              "3247 AC5: coverage cmd");
+        CHECK(!script.empty() && script.find("3247") != std::string::npos,
+              "3247 AC5: check script");
+    }
+
     // ── AC5: TW apply_closure path ──
     {
         std::println("\n--- AC5: TW must_deopt_before_next_call ---");

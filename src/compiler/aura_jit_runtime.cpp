@@ -920,7 +920,10 @@ static std::vector<std::uint64_t> g_closure_defuse_versions;
 // default, gated by aura_set_remap_name_fallback_enabled).
 static std::vector<std::uint32_t> g_closure_stable_func_ids;
 // Issue #2128: MustDeoptBeforeNextCall — set when reemit matched a live
-// closure but remap could not retarget native; cleared on force-deopt.
+// closure but remap could not retarget native. Cleared on remount success,
+// remap, alloc reuse, or aura_closure_call force-deopt (exclusive + #2472).
+// Issue #3247: the C ABI getter is sticky observe — Agent must not treat
+// aura_get_closure_must_deopt_before_next_call as consume.
 // Parallel to func_ids (0 = clear, 1 = must deopt before next native call).
 static std::vector<std::uint8_t> g_closure_must_deopt;
 // Issue #2129: per-closure linear_ownership aggregate (0=Untracked).
@@ -1048,7 +1051,10 @@ extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id) {
     return g_closure_must_deopt[cid] != 0 ? 1 : 0;
 }
 
-// Issue #2238 stub: before-next-call gate (returns current must_deopt + clears it).
+// Issue #2238 / #3247: before-next-call observe gate. Returns current
+// MustDeoptBeforeNextCall flag; does **not** clear. Agent / tests must
+// not treat this as consume. Clear happens on remount success, remap,
+// alloc, or aura_closure_call force-deopt (exclusive + #2472 identity).
 extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id) {
     if (closure_id < 0)
         return 0;
@@ -1056,8 +1062,7 @@ extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure
     const auto cid = static_cast<std::size_t>(closure_id);
     if (cid >= g_closure_must_deopt.size())
         return 0;
-    const int v = g_closure_must_deopt[cid] != 0 ? 1 : 0;
-    return v;
+    return g_closure_must_deopt[cid] != 0 ? 1 : 0;
 }
 
 // Issue #1485 C2: per-closure provenance accessors (extern "C") for
@@ -3513,6 +3518,8 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // Issue #2128: MustDeoptBeforeNextCall — hard refuse native if reemit
     // matched this closure but remap did not retarget. Clear flag under
     // upgrade to exclusive so concurrent calls see at most one force-deopt.
+    // Issue #3247: this exclusive clear is the consume path. The C ABI
+    // getter is sticky observe and must not be treated as consume.
     //
     // Issue #2472: lock-downgrade TOCTOU — between shared unlock and exclusive
     // re-acquire, free (or free+realloc) can reuse cid. Stash func_id under
