@@ -22,6 +22,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
 #include "orch/orch.h"
 #include "serve/parallel_orch.h"
@@ -76,6 +77,8 @@ static void ac2852_run_added_tests();
 static void ac2843_run_added_tests();
 // Issue #2974: multi-stage workflow primitive (extend-in-place).
 static void ac2974_run_added_tests();
+// Issue #3206: residual cancel / join-drain action (extend-in-place).
+static void ac3206_run_added_tests();
 
 int run_test_failure_policy_bridge() {
     std::println("=== Issue #2539: FailurePolicy → AgentFailurePolicy bridge ===");
@@ -396,6 +399,8 @@ int run_test_failure_policy_bridge() {
     ac2843_run_added_tests();
     // Issue #2974: multi-stage workflow (per #81967 extend-in-place).
     ac2974_run_added_tests();
+    // Issue #3206: residual action (per #81967 extend-in-place).
+    ac3206_run_added_tests();
 
     // Issue #3052: RetryN projects on_join_fail; explicit policy not overwritten.
     {
@@ -428,9 +433,9 @@ int run_test_failure_policy_bridge() {
               "3052 AC5: no test_issue_3052.cpp per #81967");
     }
 
-    std::println(
-        "\n=== #2539 + #2756 + #2852 + #2843 + #2974 + #3052 results: {} passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== #2539 + #2756 + #2852 + #2843 + #2974 + #3052 + #3206 results: {} passed, "
+                 "{} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
@@ -954,6 +959,112 @@ static void ac2974_run_added_tests() {
     ac2974_4_defaults_unchanged();
     ac2974_5_additive_metrics();
     ac2974_6_tests_linter_mvp();
+}
+
+static void ac3206_set_prod(bool on) {
+    aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active.store(
+        on ? 1u : 0u, std::memory_order_relaxed);
+}
+
+// ── Issue #3206: residual Cancel/JoinDrain act under production ──
+static void ac3206_1_soft_unset_observe_only() {
+    std::println("\n--- #3206 AC1: Soft / unset residual stays observe-only ---");
+    using aura::orch::AgentScope;
+    using aura::orch::kWorkflowResidualActionIssue;
+    using aura::orch::run_workflow;
+    using aura::orch::WorkflowStage;
+    CHECK(kWorkflowResidualActionIssue == 3206, "3206 AC1: issue stamp");
+    ac3206_set_prod(false);
+    aura::serve::Scheduler sched;
+    AgentScope scope(sched);
+    WorkflowStage fail{};
+    fail.batch.max_concurrency = 0;
+    WorkflowStage arr[] = {fail};
+    const auto c0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    const auto d0 = g_orch_module_stats.workflow_residual_join_drain_total.load();
+    auto r = run_workflow(sched, scope, arr, ResidualReclaimPreference::Cancel);
+    CHECK(r.residual_observed, "ac3206_1_soft_quiet: residual observed");
+    CHECK(!r.residual_acted, "3206 AC1: Soft Cancel does not act");
+    CHECK(std::string(r.residual_action) == "observe", "3206 AC1: Soft action=observe");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == c0,
+          "3206 AC1: Soft cancel-total unchanged");
+    CHECK(g_orch_module_stats.workflow_residual_join_drain_total.load() == d0,
+          "3206 AC1: Soft join-drain-total unchanged");
+    auto r2 = run_workflow(sched, scope, arr, ResidualReclaimPreference::Report);
+    CHECK(!r2.residual_acted, "3206 AC1: unset Report does not act");
+}
+
+static void ac3206_2_production_cancel_on_residual() {
+    std::println("\n--- #3206 AC2: production + CancelOnResidual → cancel_all ---");
+    using aura::orch::AgentScope;
+    using aura::orch::run_workflow;
+    using aura::orch::WorkflowStage;
+    ac3206_set_prod(true);
+    aura::serve::Scheduler sched;
+    AgentScope scope(sched);
+    WorkflowStage fail{};
+    fail.batch.max_concurrency = 0; // Invalid batch → residual
+    WorkflowStage arr[] = {fail};
+    const auto c0 = g_orch_module_stats.workflow_residual_cancel_total.load();
+    auto r = run_workflow(sched, scope, arr, ResidualReclaimPreference::CancelOnResidual);
+    CHECK(r.residual_observed, "3206 AC2: residual observed");
+    CHECK(r.residual_acted, "ac3206_2_prod_cancel: acted");
+    CHECK(std::string(r.residual_action) == "cancel", "3206 AC2: residual-action=cancel");
+    CHECK(g_orch_module_stats.workflow_residual_cancel_total.load() == c0 + 1,
+          "3206 AC2: cancel-total +1");
+    ac3206_set_prod(false);
+}
+
+static void ac3206_3_production_join_drain() {
+    std::println("\n--- #3206 AC3: production + JoinDrainOnResidual ---");
+    using aura::orch::AgentScope;
+    using aura::orch::run_workflow;
+    using aura::orch::WorkflowStage;
+    ac3206_set_prod(true);
+    aura::serve::Scheduler sched;
+    AgentScope scope(sched);
+    WorkflowStage fail{};
+    fail.batch.max_concurrency = 0;
+    WorkflowStage arr[] = {fail};
+    const auto d0 = g_orch_module_stats.workflow_residual_join_drain_total.load();
+    auto r = run_workflow(sched, scope, arr, ResidualReclaimPreference::JoinDrainOnResidual);
+    CHECK(r.residual_acted, "ac3206_3_join_drain: acted");
+    CHECK(std::string(r.residual_action) == "join-drain", "3206 AC3: residual-action=join-drain");
+    CHECK(g_orch_module_stats.workflow_residual_join_drain_total.load() == d0 + 1,
+          "3206 AC3: join-drain-total +1");
+    ac3206_set_prod(false);
+}
+
+static void ac3206_4_source_linter_no_registry() {
+    std::println("\n--- #3206 AC4/AC5: residual-action hash + no registry + no invent ---");
+    const auto header = read_file("src/orch/agent_spawn.h");
+    const auto scope = read_file("src/orch/agent_scope.h");
+    const auto q = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto t = read_file("tests/orch/test_failure_policy_bridge.cpp");
+    const auto build = read_file("build.py");
+    CHECK(header.find("kWorkflowResidualActionIssue") != std::string::npos, "3206 AC4: stamp");
+    CHECK(header.find("JoinDrainOnResidual") != std::string::npos, "3206 AC4: JoinDrain enum");
+    CHECK(header.find("CancelOnResidual") != std::string::npos, "3206 AC4: CancelOnResidual");
+    CHECK(scope.find("apply_residual_reclaim_action") != std::string::npos,
+          "3206 AC4: action helper");
+    CHECK(scope.find("cancel_all") != std::string::npos, "3206 AC4: cancel_all");
+    CHECK(q.find("residual-action") != std::string::npos, "3206 AC4: residual-action hash");
+    CHECK(q.find("schema-3206") != std::string::npos, "3206 AC4: schema-3206");
+    CHECK(q.find("workflow-residual-cancel-total") != std::string::npos, "3206 AC4: query key");
+    CHECK(build.find("check_workflow_residual_action_3206") != std::string::npos,
+          "ac3206_5_source_linter: build.py");
+    CHECK(t.find("ac3206_1_soft_quiet") != std::string::npos, "3206 AC5: Soft test");
+    CHECK(header.find("class AgentRegistry") == std::string::npos, "3206 AC4: no AgentRegistry");
+    CHECK(read_file("docs/design/3206-residual-action.md").empty(), "3206 AC5: no docs/design");
+    CHECK(read_file("tests/orch/test_issue_3206.cpp").empty(), "3206 AC5: no invent");
+    ac3206_set_prod(false);
+}
+
+static void ac3206_run_added_tests() {
+    ac3206_1_soft_unset_observe_only();
+    ac3206_2_production_cancel_on_residual();
+    ac3206_3_production_join_drain();
+    ac3206_4_source_linter_no_registry();
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER

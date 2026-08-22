@@ -2978,6 +2978,18 @@ def cmd_lint():
     if r != 0:
         fail("Issue #2974 workflow-run linter failed — run python3 scripts/coverage/checks/check_workflow_run_2974.py")
         return r
+    # Issue #3206: apply_workflow residual Cancel/JoinDrain under production.
+    # Soft / Report observe-only. Extends test_failure_policy_bridge.
+    wra3206_script = COVERAGE_CHECKS / "check_workflow_residual_action_3206.py"
+    if not wra3206_script.exists():
+        fail(f"missing {wra3206_script}")
+        return 1
+    r = run([sys.executable, str(wra3206_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3206 workflow residual action linter failed — run python3 scripts/coverage/checks/check_workflow_residual_action_3206.py"
+        )
+        return r
     # Issue #2975: outermost MutationBoundary exit residual + pin_contract
     # production hard gate. Extends test_residual_gc_defer_assert (#81967);
     # no docs/design/ (#1655).

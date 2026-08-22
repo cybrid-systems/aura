@@ -1249,16 +1249,45 @@ inline std::size_t reset_all_agent_scopes_for_test() noexcept {
     return n;
 }
 
+// Issue #3206: production + explicit Cancel / JoinDrain residual action.
+// Soft / Report / Defer: observe-only (one production_defaults load on
+// the residual path). Uses existing cancel_all + join_all (#2661 no
+// early free). Session-local AgentScope only.
+inline const char* apply_residual_reclaim_action(AgentScope& scope,
+                                                 const WorkflowFailurePolicy& w) noexcept {
+    using P = ResidualReclaimPreference;
+    if (w.residual == P::Report || w.residual == P::Defer)
+        return "observe";
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return "observe";
+    JoinPolicy jp;
+    jp.primary_ms = 0;
+    jp.drain_ms = kResidualJoinDrainMs;
+    if (w.residual == P::Cancel) {
+        scope.cancel_all();
+        (void)scope.join_all(jp);
+        g_orch_module_stats.workflow_residual_cancel_total.fetch_add(1, std::memory_order_relaxed);
+        return "cancel";
+    }
+    if (w.residual == P::JoinDrain) {
+        (void)scope.join_all(jp);
+        g_orch_module_stats.workflow_residual_join_drain_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+        return "join-drain";
+    }
+    return "observe";
+}
+
 // Issue #2852: apply_workflow body — defined here (after AgentScope is
 // fully defined) so it can call scope.watch_all. Declaration is in
 // agent_spawn.h (forward decl + simplified ApplyWorkflowResult to break
 // the circular include between agent_spawn.h and agent_scope.h).
 //   - Phase A: parallel_intend with to_parallel_policy(w)
 //   - Phase B: scope.watch_all with to_agent_policy(w) (when watch_scope)
-//   - Phase C: residual observe via note_workflow_residual_reclaim_
-//              under_policy when batch != Ok OR watch saw stalled
+//   - Phase C: residual observe; production + explicit Cancel/JoinDrain
+//              cancel_all / join_all (Issue #3206). Soft/Report observe-only.
 //   - additive: workflow_apply_total bumps once per call
-// No #2661 reclaim change. No AgentRegistry / process-global map.
+// No #2661 early-free. No AgentRegistry / process-global map.
 [[nodiscard]] inline ApplyWorkflowResult
 apply_workflow(serve::Scheduler& sched, AgentScope& scope,
                std::span<const serve::parallel_orch::TaskSpec> tasks,
@@ -1275,12 +1304,15 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
         out.scope_alive = static_cast<int>(wres.alive);
         out.scope_done = static_cast<int>(wres.done);
     }
-    // Phase C — residual observe (advisory; #2661 contract preserved).
+    // Phase C — residual observe; production + explicit Cancel/JoinDrain
+    // act via cancel_all / short join_all (#3206). Soft/Report observe-only.
     const bool batch_residual = out.batch.status != serve::parallel_orch::BatchStatus::Ok;
     const bool scope_residual = out.scope_stalled > 0;
     if (batch_residual || scope_residual) {
         note_workflow_residual_reclaim_under_policy(w);
         out.residual_observed = true;
+        out.residual_action = apply_residual_reclaim_action(scope, w);
+        out.residual_acted = (out.residual_action[0] != 'o'); // not "observe"
     }
     // Additive apply counter (AC3) — once per call regardless of outcome.
     g_orch_module_stats.workflow_apply_total.fetch_add(1, std::memory_order_relaxed);
@@ -1315,13 +1347,20 @@ apply_workflow(serve::Scheduler& sched, AgentScope& scope,
             stage.scope_alive = static_cast<int>(wres.alive);
             stage.scope_done = static_cast<int>(wres.done);
         }
-        // Phase C — residual observe only (AC3). Does not reclaim.
+        // Phase C — residual observe; production + explicit Cancel/JoinDrain
+        // act (#3206). Soft/Report still observe-only (#2661).
         const bool batch_fail = workflow_stage_failed(stage.batch.status);
         const bool scope_residual = stage.scope_stalled > 0;
         if (batch_fail || scope_residual) {
             note_workflow_residual_reclaim_under_policy(observe);
             stage.residual_observed = true;
             out.residual_observed = true;
+            stage.residual_action = apply_residual_reclaim_action(scope, observe);
+            stage.residual_acted = (stage.residual_action[0] != 'o');
+            if (stage.residual_acted) {
+                out.residual_acted = true;
+                out.residual_action = stage.residual_action;
+            }
         }
         if (batch_fail) {
             ++out.stages_failed;

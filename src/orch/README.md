@@ -443,9 +443,11 @@ in-place per #81967 — adds `ac2852_*` tests).
 
 Rules:
 1. **Not calling compose leaves #2007 / #2229 / #2539 defaults unchanged** (AC1).
-2. Residual preference is **advisory** — #2661 reclaim / deferred cleanup
-   mechanics are not altered; hosts observe via
-   `workflow-residual-reclaim-under-policy-total` (AC2).
+2. Residual preference is **advisory under Soft / Report / Defer** — #2661
+   reclaim / deferred cleanup mechanics are not altered. Production +
+   explicit `Cancel` / `JoinDrain` runs `cancel_all` + short `join_all`
+   (#3206). Hosts observe via `workflow-residual-reclaim-under-policy-total`
+   and `residual-action`.
 3. Counters on `query:orch-module-stats`: `workflow-compose-total`,
    `workflow-retry-total`, `workflow-circuit-open-total`,
    `workflow-residual-reclaim-under-policy-total`, `schema-2756` (AC3).
@@ -471,8 +473,8 @@ hand-wiring switch tables:
       max-retries, consecutive-fail-limit, retry-backoff-ms, fail-fast,
       policy / on-stall,               ; scope-watch kwargs
       max-restarts, consecutive-stall-limit, restart-backoff-ms,
-      residual, residual-cancel, residual-defer,  ; advisory only
-      schema-2756, schema-2843, wired
+      residual, residual-action, residual-cancel, residual-defer,  ; #3206
+      schema-2756, schema-2843, schema-3206, wired
     }
 ```
 
@@ -485,7 +487,8 @@ Apply without duplicating mapping tables:
 ```
 
 Parity with C++ `to_agent_policy` / `to_parallel_policy` (AC1). Residual is
-**advisory** — does not alter #2661 reclaim (AC2). Soft never hard-denies
+**advisory under Soft / Report** — does not alter #2661 reclaim (AC2).
+Production + explicit cancel/join-drain acts (#3206). Soft never hard-denies
 (AC3). Unused path leaves #2007 / #2229 / #2539 / #2756 defaults (AC1).
 
 Counters on `query:orch-module-stats`: `workflow-compose-aura-total` (+

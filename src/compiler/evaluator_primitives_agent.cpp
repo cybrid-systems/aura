@@ -4631,8 +4631,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                                            : orch_keyword_key(val);
                     while (!rv.empty() && rv[0] == ':')
                         rv = rv.substr(1);
-                    if (rv == "cancel")
+                    if (rv == "cancel" || rv == "cancel-on-residual")
                         residual = aura::orch::ResidualReclaimPreference::Cancel;
+                    else if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
+                        residual = aura::orch::ResidualReclaimPreference::JoinDrain;
                     else if (rv == "defer")
                         residual = aura::orch::ResidualReclaimPreference::Defer;
                     else
@@ -4668,8 +4670,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 return make_string(idx);
             };
             // Projected fields usable as parallel-intend / scope-watch kwargs
-            // (AC1 / AC4). Residual is advisory only (AC2) — not applied to
-            // #2661 reclaim.
+            // (AC1 / AC4). Residual is advisory under Soft / Report (#2661);
+            // production + explicit cancel/join-drain acts in apply_workflow
+            // (#3206). Reclaim path unchanged.
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(true)},
                 {"batch-policy", push_str(aura::orch::failure_policy_name(w.batch_policy))},
@@ -4689,8 +4692,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"restart-backoff-ms", make_int(static_cast<std::int64_t>(ap.restart_backoff_ms))},
                 // residual preference (advisory)
                 {"residual", push_str(aura::orch::residual_preference_name(w.residual))},
+                {"residual-action", push_str(aura::orch::residual_action_name(w.residual))},
                 {"residual-cancel", make_bool(aura::orch::residual_prefers_cancel(w))},
                 {"residual-defer", make_bool(aura::orch::residual_prefers_defer(w))},
+                {"residual-join-drain", make_bool(aura::orch::residual_prefers_join_drain(w))},
+                {"schema-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
+                {"issue-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
                 {"parallel-intend-kwargs-ready", make_bool(true)},
                 {"scope-watch-kwargs-ready", make_bool(true)},
                 {"schema", make_int(aura::orch::kWorkflowComposeAuraIssue)},
@@ -4741,13 +4748,19 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         aura::orch::g_orch_module_stats.workflow_apply_total.store(apply_total,
                                                                    std::memory_order_relaxed);
         // Build hash echo (status mirrors parallel_intend output).
+        // Issue #3206: residual-action for Agent observability (observe
+        // unless compose hash projected cancel/join-drain).
+        auto ridx = ev.string_heap_.size();
+        ev.string_heap_.push_back("observe");
         std::vector<std::pair<std::string, EvalValue>> kv = {
             {"ok", make_bool(true)},
             {"schema", make_int(aura::orch::kWorkflowApplySugarIssue)},
             {"schema-2852", make_int(aura::orch::kWorkflowApplySugarIssue)},
+            {"schema-3206", make_int(aura::orch::kWorkflowResidualActionIssue)},
             {"watch-scope", make_bool(watch_scope)},
             {"stall-timeout-ms", make_int(static_cast<std::int64_t>(stall_timeout_ms))},
             {"apply-total", make_int(static_cast<std::int64_t>(apply_total))},
+            {"residual-action", make_string(static_cast<std::uint64_t>(ridx))},
         };
         (void)par_eval; // Surface for follow-up AC: reuse joined stats.
         return build_orch_hash(kv);
@@ -4780,8 +4793,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                                            : orch_keyword_key(val);
                     while (!rv.empty() && rv[0] == ':')
                         rv = rv.substr(1);
-                    if (rv == "cancel")
+                    if (rv == "cancel" || rv == "cancel-on-residual")
                         residual = aura::orch::ResidualReclaimPreference::Cancel;
+                    else if (rv == "join-drain" || rv == "join_drain" || rv == "drain")
+                        residual = aura::orch::ResidualReclaimPreference::JoinDrain;
                     else if (rv == "defer")
                         residual = aura::orch::ResidualReclaimPreference::Defer;
                     else
@@ -5582,6 +5597,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("workflow-run-wired", 1);
             insert_kv("schema-2974", aura::orch::kWorkflowRunIssue);
             insert_kv("issue-2974", aura::orch::kWorkflowRunIssue);
+            // Issue #3206: residual cancel / join-drain action counters.
+            insert_kv("workflow-residual-cancel-total",
+                      static_cast<std::int64_t>(
+                          os.workflow_residual_cancel_total.load(std::memory_order_relaxed)));
+            insert_kv("workflow-residual-join-drain-total",
+                      static_cast<std::int64_t>(
+                          os.workflow_residual_join_drain_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3206", aura::orch::kWorkflowResidualActionIssue);
+            insert_kv("issue-3206", aura::orch::kWorkflowResidualActionIssue);
             // Issue #2588: Aura language surface for AgentScope supervision
             // (orch:scope-spawn / orch:scope-watch / orch:scope-join-all /
             // orch:scope-cancel-all). Per-Evaluator scope map
