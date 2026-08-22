@@ -3230,6 +3230,20 @@ def cmd_lint():
             "Issue #3207 dual-Evaluator cascade linter failed — run python3 scripts/coverage/checks/check_dual_evaluator_cascade_3207.py"
         )
         return r
+    # Issue #3209: session_mid × nested abort × steal quiesce
+    # (mark_stolen → revoke → clear mid). Extends
+    # test_capability_single_use_consume.cpp (#81967); no docs/design/
+    # (#1655).
+    sgq3209_script = COVERAGE_CHECKS / "check_session_grant_quiesce_3209.py"
+    if not sgq3209_script.exists():
+        fail(f"missing {sgq3209_script}")
+        return 1
+    r = run([sys.executable, str(sgq3209_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3209 session-grant quiesce linter failed — run python3 scripts/coverage/checks/check_session_grant_quiesce_3209.py"
+        )
+        return r
     # Issue #3049: per-tenant ResourceQuota under multi-tenant production
     # (process ceiling still binds). Extends
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/

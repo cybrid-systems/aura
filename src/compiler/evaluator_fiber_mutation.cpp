@@ -66,6 +66,7 @@ extern int aura_fiber_request_urgent_inbody_poll(std::uint64_t fiber_id) noexcep
 extern int aura_fiber_peek_hold_budget_cancel(std::uint64_t fiber_id) noexcept;
 // Issue #3048: holder session-mid lookup for cross-fiber force-degrade.
 extern std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept;
+extern void aura_fiber_clear_session_mid(std::uint64_t fiber_id) noexcept;
 }
 
 namespace aura::compiler {
@@ -1327,16 +1328,19 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
     // never runs. Second call (Guard dtor #2944) is a no-op (AC3).
     const auto mid = aura::serve::current_fiber_session_mid();
     if (mid != 0) {
-        // Issue #3142 AC2: mark SessionBound entries as stolen so caller-side
-        // check_and_record_effect fails (no double-consume). Then revoke.
-        // Issue #3207: use _locked siblings under one lock_guard —
-        // std::mutex is non-recursive; the public wrappers take mtx themselves.
+        // Issue #3142 AC2 / #3209: mark stolen then revoke under one lock,
+        // then clear fiber + hold mid (happens-before resume consume).
+        const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
         auto& reg = ::aura::core::capability::g_capability_registry();
         std::lock_guard<std::mutex> lock(reg.mtx);
-        (void)reg.mark_session_bound_stolen_locked(
-            capability_tenant_id_, mid, static_cast<std::uint32_t>(aura_fiber_current_id()));
+        (void)reg.mark_session_bound_stolen_locked(capability_tenant_id_, mid, fid);
         (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
-            mid, /*steal=*/false);
+            mid, /*steal=*/false, fid);
+        aura::serve::clear_current_fiber_session_mid();
+        if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+            mid) {
+            aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
+        }
     }
 }
 
@@ -1468,16 +1472,20 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
         if (mid == 0)
             mid = g_mutation_hold_live_session_mid.load(std::memory_order_acquire);
         if (mid != 0) {
-            // Issue #3142 AC2: mark SessionBound entries as stolen (no
-            // double-consume) before revoke.
-            // Issue #3207: _locked siblings under one lock_guard.
+            // Issue #3209: mark stolen for every tenant bound to mid
+            // (tenant=0 used to no-op). Then revoke + clear victim mid.
             auto& reg = ::aura::core::capability::g_capability_registry();
             std::lock_guard<std::mutex> lock(reg.mtx);
-            (void)reg.mark_session_bound_stolen_locked(
-                /*tenant=*/0, mid, fiber_id);
             (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
-                mid, /*steal=*/false);
+                mid, /*steal=*/false, static_cast<std::uint32_t>(fiber_id));
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                mid) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
         }
+        if (mid != 0)
+            aura_fiber_clear_session_mid(fiber_id);
     }
 }
 
@@ -3283,9 +3291,20 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // later Guard dtor is a no-op (AC3).
     if (fiber) {
         const auto mid = fiber->session_mid();
-        if (mid != 0)
-            (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(mid,
-                                                                                    /*steal=*/true);
+        if (mid != 0) {
+            // Issue #3209: mark_stolen → revoke → clear victim mid under
+            // registry lock so resume consume cannot observe a live grant.
+            auto& reg = ::aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
+                mid, /*steal=*/true, static_cast<std::uint32_t>(fiber->id()));
+            fiber->clear_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                mid) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
+        }
     }
     void* prev_eval_id = nullptr;
     if (fiber) {

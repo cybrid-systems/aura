@@ -451,6 +451,145 @@ static void ac3207_4_source_cite_and_linter() {
           "AC5: no docs/design/3207-*.md");
 }
 
+// ── Issue #3209: nested abort × steal × resume session-grant quiesce ──
+
+static void ac3209_grant(std::uint64_t tenant, std::uint64_t mid, bool single_use) {
+    EffectProvenance prov{};
+    prov.epoch = mid;
+    prov.mutation_id = mid;
+    prov.fiber_id = 0;
+    g_capability_registry().grant_session(tenant, "mut-3209", Effect::Mutate, prov, single_use);
+}
+
+static bool ac3209_consume(std::uint64_t tenant, std::uint64_t mid) {
+    EffectProvenance prov{};
+    prov.epoch = mid;
+    prov.mutation_id = mid;
+    return check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant, "3209-consume",
+                                   false, true);
+}
+
+static void ac3209_1_outermost_exit_success_and_fail() {
+    std::println("\n--- #3209 AC1: outermost success/fail → session_bound_entries_alive==0 ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 9;
+    ac3209_grant(tenant, mid, /*single_use=*/false);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1, "AC1 pre: live");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC1: outermost-success-shape revoke clears live");
+    CHECK(!ac3209_consume(tenant, mid), "AC1: consume denies after exit revoke");
+
+    ac3209_grant(tenant, mid, false);
+    const auto n =
+        aura::core::capability::revoke_session_grants_on_steal_or_abort(mid, /*steal=*/false);
+    CHECK(n >= 1, "AC1: outermost-fail-shape abort revokes");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC1: abort path live==0");
+    CHECK(!ac3209_consume(tenant, mid), "AC1: consume denies after abort");
+}
+
+static void ac3209_2_nested_abort_then_outermost() {
+    std::println("\n--- #3209 AC1: nested abort + outermost exit ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant = 9;
+    ev.set_capability_tenant_id(tenant);
+    ac3209_grant(tenant, mid, false);
+    {
+        Evaluator::TenantScope inner(ev, tenant);
+        (void)inner; // nested abort cascade
+    }
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC1 nested: live==0 after cascade + outermost revoke");
+    CHECK(!ac3209_consume(tenant, mid), "AC1 nested: consume denies");
+}
+
+static void ac3209_3_steal_no_double_consume() {
+    std::println("\n--- #3209 AC2: steal then resume consume denies without single-use ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 11;
+    ac3209_grant(tenant, mid, /*single_use=*/true);
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    const auto n =
+        aura::core::capability::revoke_session_grants_on_steal_or_abort(mid, /*steal=*/true);
+    CHECK(n >= 1, "AC2: steal revokes");
+    CHECK(!ac3209_consume(tenant, mid), "AC2: first resume consume denies");
+    CHECK(!ac3209_consume(tenant, mid), "AC2: second resume consume denies (no double-consume)");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() == consumed0,
+          "AC2: single-use-consumed not bumped on stolen/revoked");
+    CHECK(ring_lookup_reason("single-use-consumed") == nullptr,
+          "AC2: audit reason single-use-consumed never fires on stolen entry");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "AC2: live==0");
+}
+
+static void ac3209_4_composed_chaos() {
+    std::println("\n--- #3209 AC1 chaos: nested abort × steal × outermost ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant = 13;
+    ev.set_capability_tenant_id(tenant);
+    ac3209_grant(tenant, mid, /*single_use=*/true);
+    const auto consumed0 =
+        g_capability_effect_metrics().capability_single_use_consumed_total.load();
+    std::thread t_cascade([&] {
+        Evaluator::TenantScope inner(ev, tenant);
+        (void)inner;
+    });
+    std::thread t_steal([&] {
+        (void)aura::core::capability::revoke_session_grants_on_steal_or_abort(mid, /*steal=*/true);
+    });
+    t_cascade.join();
+    t_steal.join();
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC1 chaos: live==0 after composed quiesce");
+    CHECK(!ac3209_consume(tenant, mid), "AC1 chaos: resume consume denies");
+    CHECK(g_capability_effect_metrics().capability_single_use_consumed_total.load() == consumed0,
+          "AC2 chaos: no single-use consume on stolen/revoked");
+}
+
+static void ac3209_5_soft_zero_cost_and_source() {
+    std::println("\n--- #3209 AC3/AC4/AC5: Soft zero-cost + source-cite ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    const auto n =
+        aura::core::capability::revoke_session_grants_on_steal_or_abort(77, /*steal=*/true);
+    CHECK(n == 0, "AC3: Soft empty live → steal quiesce returns 0");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("kCapabilitySessionQuiesceIssue = 3209") != std::string::npos,
+          "AC5: stamp #3209");
+    CHECK(cap.find("mark_session_bound_stolen_for_mid_locked") != std::string::npos,
+          "AC5: for-mid stolen mark");
+    CHECK(steal.find("Issue #3209") != std::string::npos, "AC5: steal path cites #3209");
+    CHECK(bound.find("Issue #3209") != std::string::npos, "AC5: Guard dtor cites #3209");
+    CHECK(build.find("check_session_grant_quiesce_3209") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3209.cpp"), "AC5: no invent");
+    CHECK(!std::filesystem::exists("docs/design/3209-session-quiesce.md"), "AC5: no docs/design");
+}
+
 static void ac3144_1_production_wildcard_only_strip_tenant_admin() {
     std::println(
         "\n--- #3144 AC1: production + kCapWildcard (no explicit TenantAdmin) → strip ---");
@@ -1447,6 +1586,11 @@ int run_test_capability_single_use_consume() {
         ac3207_2_dual_evaluator_concurrent_chaos();
         ac3207_3_soft_off_zero_cost();
         ac3207_4_source_cite_and_linter();
+        ac3209_1_outermost_exit_success_and_fail();
+        ac3209_2_nested_abort_then_outermost();
+        ac3209_3_steal_no_double_consume();
+        ac3209_4_composed_chaos();
+        ac3209_5_soft_zero_cost_and_source();
         ac3144_1_production_wildcard_only_strip_tenant_admin();
         ac3144_2_explicit_tenant_admin_no_strip();
         ac3144_3_soft_off_no_strip();

@@ -1,0 +1,33 @@
+{
+  "issue": 3209,
+  "title": "Issue #3209: [P0][security][area:capability] post-#3142/#3048 session_mid × nested abort × steal residual linearization",
+  "ok": "OK: Issue #3209 mark_stolen → revoke_for_mid → clear mid under one lock; steal/abort marks all tenants; victim fiber mid cleared; Restricted chaos matrix in test_capability_single_use_consume.cpp.",
+  "source_script": "scripts/coverage/checks/check_session_grant_quiesce_3209.py",
+  "checks": [
+    {
+      "ac": "AC1-3209",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "kCapabilitySessionQuiesceIssue = 3209",
+        "mark_session_bound_stolen_for_mid_locked"
+      ]
+    },
+    {
+      "ac": "AC1-3209-steal",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "Issue #3209",
+        "aura_fiber_clear_session_mid"
+      ]
+    },
+    {
+      "ac": "AC5-3209-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "ac3209_1_outermost_exit_success_and_fail",
+        "ac3209_3_steal_no_double_consume",
+        "ac3209_4_composed_chaos"
+      ]
+    }
+  ]
+}

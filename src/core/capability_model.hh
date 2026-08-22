@@ -40,6 +40,9 @@ inline constexpr int kGrantEpochRetainRestrictedIssue = 2529;
 // Issue #3207: dual-Evaluator cascade + consume linearizability on the
 // process-global CapabilityRegistry (no per-Evaluator shard).
 inline constexpr int kCapabilityDualEvaluatorCascadeIssue = 3207;
+// Issue #3209: steal × nested abort × resume session-grant quiesce
+// (mark_stolen → revoke_for_mid; mid clear is commutative no-op after).
+inline constexpr int kCapabilitySessionQuiesceIssue = 3209;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -835,6 +838,32 @@ struct CapabilityRegistry {
         return mark_session_bound_stolen_locked(tenant, mid, fiber_id);
     }
 
+    // Issue #3209: mark stolen for every live session_bound grant bound
+    // to mid (all tenants). Used by steal/abort when the caller has no
+    // tenant (force-degrade tenant=0 was a no-op). Caller MUST hold mtx.
+    bool mark_session_bound_stolen_for_mid_locked(std::uint64_t mid,
+                                                  std::uint32_t fiber_id = 0) noexcept {
+        if (mid == 0)
+            return false;
+        bool found = false;
+        for (auto& [tenant, vec] : by_tenant) {
+            (void)tenant;
+            for (auto& g : vec) {
+                if (g.revoked || !g.session_bound || g.stolen)
+                    continue;
+                if (g.bound_mutation_id != mid)
+                    continue;
+                if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
+                    continue;
+                g.stolen = true;
+                found = true;
+                g_capability_effect_metrics().session_bound_revoked_on_steal_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+        return found;
+    }
+
     // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
     // If revoke_at_epoch == 0, callers should pass current_mutation_epoch() (or
     // the make_grant_provenance helper) so blame trails stay non-zero.
@@ -1459,14 +1488,20 @@ inline CapabilityRegistry& g_capability_registry() noexcept {
 
 // Issue #3207: caller MUST hold registry mtx. Steal/abort counter bump
 // + mid revoke without taking mtx again (std::mutex is non-recursive).
-inline std::size_t revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid,
-                                                                  bool steal) noexcept {
+inline std::size_t
+revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid, bool steal,
+                                               std::uint32_t fiber_id = 0) noexcept {
     if (session_mid == 0)
         return 0;
     auto& met = g_capability_effect_metrics();
+    auto& reg = g_capability_registry();
+    // Issue #3209: mark_stolen before revoke so a resume consume that
+    // interleaves after this lock still denies (stolen skip) even if a
+    // later dtor revoke is the commutative no-op. fiber_id=0 marks every
+    // live grant bound to this mid.
+    (void)reg.mark_session_bound_stolen_for_mid_locked(session_mid, fiber_id);
     const char* reason = steal ? "session-mid-steal-exit" : "session-mid-abort-exit";
-    const auto n =
-        g_capability_registry().revoke_session_grants_for_mid_locked(session_mid, reason);
+    const auto n = reg.revoke_session_grants_for_mid_locked(session_mid, reason);
     if (n > 0) {
         if (steal)
             met.capability_session_revoke_steal_total.fetch_add(n, std::memory_order_relaxed);
@@ -1495,7 +1530,7 @@ inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session
     if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
         return 0; // AC4: Soft / empty live residual — no lock
     std::lock_guard<std::mutex> lock(reg.mtx);
-    return revoke_session_grants_on_steal_or_abort_locked(session_mid, steal);
+    return revoke_session_grants_on_steal_or_abort_locked(session_mid, steal, /*fiber_id=*/0);
 }
 
 // AC1: check_and_record_effect — core enforcement entry.
@@ -1555,6 +1590,8 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         // required is None (no effect to match grants against).
         // Issue #3207: consume + live_session_grants fetch_sub stay under
         // this same lock (no lock-drop vs TenantScope cascade revoke).
+        // Issue #3209: stolen skip below is the resume-after-steal deny
+        // (no single-use-consumed) when mark_stolen happened-before this lock.
         if (allowed && required != Effect::None && !wildcard_ok) {
             auto it = reg.by_tenant.find(tenant);
             if (it != reg.by_tenant.end()) {
