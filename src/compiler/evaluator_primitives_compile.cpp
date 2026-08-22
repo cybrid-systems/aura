@@ -4085,6 +4085,8 @@ void CompilePrims::register_compile_p41(PrimRegistrar add, Evaluator& ev) {
              make_int(static_cast<std::int64_t>(ev.mutation_yield_count()))},
             {"compaction-paused-by-boundary",
              make_int(static_cast<std::int64_t>(ev.compaction_paused_by_boundary()))},
+            {"compaction-boundary-raced-after-check",
+             make_int(static_cast<std::int64_t>(ev.compaction_boundary_raced_after_check()))},
             {"cross-fiber-rollback-count",
              make_int(static_cast<std::int64_t>(ev.cross_fiber_rollback_count()))},
         };

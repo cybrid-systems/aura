@@ -3561,6 +3561,19 @@ def cmd_lint():
             "Issue #3268 guard-flag atomic-ref linter failed — run python3 scripts/coverage/checks/check_guard_flag_atomic_ref_3268.py"
         )
         return r
+    # Issue #3269: arena compact/defrag TOCTOU — unique workspace after
+    # TLS skip. Extends test_arena_defrag.cpp (#81967); no docs/design/
+    # (#1655).
+    act_script = COVERAGE_CHECKS / "check_arena_compact_toctou_3269.py"
+    if not act_script.exists():
+        fail(f"missing {act_script}")
+        return 1
+    r = run([sys.executable, str(act_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3269 arena-compact-TOCTOU linter failed — run python3 scripts/coverage/checks/check_arena_compact_toctou_3269.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -11014,6 +11027,21 @@ def cmd_guard_flag_atomic_ref_3268_coverage():
         fail("guard flag atomic_ref (#3268) coverage contract rows failed")
         return 1
     ok("guard flag atomic_ref (#3268) coverage clean")
+    return 0
+
+
+def cmd_arena_compact_toctou_3269_coverage():
+    """Issue #3269: arena compact/defrag TOCTOU unique workspace after TLS skip."""
+    print(f"{B}=== arena compact TOCTOU (#3269) ==={N}")
+    script = COVERAGE_CHECKS / "check_arena_compact_toctou_3269.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("arena compact TOCTOU (#3269) coverage contract rows failed")
+        return 1
+    ok("arena compact TOCTOU (#3269) coverage clean")
     return 0
 
 
@@ -19369,6 +19397,8 @@ def main():
         "env-publish-lock-3267-coverage": cmd_env_publish_lock_3267_coverage,
         "guard-flag-atomic-ref-3268": cmd_guard_flag_atomic_ref_3268_coverage,
         "guard-flag-atomic-ref-3268-coverage": cmd_guard_flag_atomic_ref_3268_coverage,
+        "arena-compact-toctou-3269": cmd_arena_compact_toctou_3269_coverage,
+        "arena-compact-toctou-3269-coverage": cmd_arena_compact_toctou_3269_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

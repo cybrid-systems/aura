@@ -39,6 +39,10 @@
 
 #include "test_harness.hpp"
 
+#include <fstream>
+#include <iterator>
+#include <string>
+
 import std;
 using namespace std::chrono_literals;
 
@@ -185,6 +189,100 @@ bool test_ac4_request_defrag_returns_bool() {
     return true;
 }
 
+static std::string read_file(const char* path) {
+    for (const char* prefix : {"", "../", "../../"}) {
+        std::ifstream in(std::string(prefix) + path);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
+static void ac3269_1_unique_after_tls_skip() {
+    std::println("\n--- #3269 AC1: compact/defrag unique workspace after TLS skip ---");
+    const auto mem = read_file("src/compiler/evaluator_primitives_memory.cpp");
+    CHECK(mem.find("with_arena_compact_idle") != std::string::npos, "3269 AC1: helper");
+    CHECK(mem.find("WorkspaceUniqueIfNeeded compact_hold") != std::string::npos,
+          "3269 AC1: unique workspace");
+    CHECK(mem.find("Issue #3269") != std::string::npos, "3269 AC1: cite");
+    auto cpos = mem.find("add(\"arena:compact\"");
+    CHECK(cpos != std::string::npos, "3269 AC1: compact public");
+    auto cwin = mem.substr(cpos, 700);
+    CHECK(cwin.find("with_arena_compact_idle") != std::string::npos,
+          "3269 AC1: compact uses helper");
+    CHECK(mem.find("sink_arena_prim(\"arena:defrag\"") != std::string::npos, "3269 AC1: defrag");
+    CHECK(mem.find("sink_arena_prim(\"arena:defrag-now\"") != std::string::npos,
+          "3269 AC1: defrag-now");
+    CHECK(mem.find("sink_arena_prim(\"arena:live-compact\"") != std::string::npos,
+          "3269 AC1: live-compact");
+}
+
+static void ac3269_2_raced_counter() {
+    std::println("\n--- #3269 AC2: raced-after-check counter ---");
+    const auto mem = read_file("src/compiler/evaluator_primitives_memory.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(mem.find("compaction_boundary_raced_after_check_") != std::string::npos,
+          "3269 AC2: bump");
+    CHECK(ixx.find("compaction_boundary_raced_after_check_") != std::string::npos,
+          "3269 AC2: member");
+    CHECK(mem.find("mutation_boundary_held()") != std::string::npos,
+          "3269 AC2: re-check after lock");
+    aura::compiler::CompilerService cs;
+    CHECK(cs.evaluator().compaction_boundary_raced_after_check() == 0,
+          "3269 AC2: quiet path raced is 0");
+}
+
+static void ac3269_3_snapshot_comment() {
+    std::println("\n--- #3269 AC3: live-compact snapshot is best-effort ---");
+    const auto mem = read_file("src/compiler/evaluator_primitives_memory.cpp");
+    auto pos = mem.find("sink_arena_prim(\"arena:live-compact\"");
+    CHECK(pos != std::string::npos, "3269 AC3: live-compact");
+    auto win = mem.substr(pos, 1800);
+    CHECK(win.find("best-effort snapshot") != std::string::npos, "3269 AC3: comment");
+    CHECK(win.find("memory_order_relaxed") != std::string::npos, "3269 AC3: relaxed kept");
+}
+
+static void ac3269_4_compact_under_guard() {
+    std::println("\n--- #3269 AC4: same-fiber Guard pauses compact; idle compact runs ---");
+    aura::compiler::CompilerService cs;
+    auto idle = cs.eval("(arena:compact)");
+    CHECK(idle.has_value() && aura::compiler::types::is_int(*idle) &&
+              aura::compiler::types::as_int(*idle) >= 0,
+          "3269 AC4: idle compact");
+    bool ok = true;
+    {
+        auto gr =
+            aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(gr.has_value(), "3269 AC4: Guard");
+        auto paused = cs.eval("(arena:compact)");
+        CHECK(paused.has_value() && aura::compiler::types::is_int(*paused) &&
+                  aura::compiler::types::as_int(*paused) == 0,
+              "3269 AC4: compact under Guard returns 0");
+        CHECK(cs.evaluator().compaction_paused_by_boundary() >= 1, "3269 AC4: paused counter");
+    }
+    auto after = cs.eval("(arena:compact)");
+    CHECK(after.has_value() && aura::compiler::types::is_int(*after) &&
+              aura::compiler::types::as_int(*after) >= 0,
+          "3269 AC4: compact after Guard");
+}
+
+static void ac3269_5_source_and_linter() {
+    std::println("\n--- #3269 AC5: linter + no invent ---");
+    const auto t = read_file("tests/core/test_arena_defrag.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_arena_compact_toctou_3269.py");
+    CHECK(t.find("ac3269_1_unique_after_tls_skip") != std::string::npos, "3269 AC5: AC1");
+    CHECK(t.find("ac3269_2_raced_counter") != std::string::npos, "3269 AC5: AC2");
+    CHECK(t.find("ac3269_3_snapshot_comment") != std::string::npos, "3269 AC5: AC3");
+    CHECK(t.find("ac3269_4_compact_under_guard") != std::string::npos, "3269 AC5: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #3269") != std::string::npos, "3269 AC5: linter");
+    CHECK(build.find("check_arena_compact_toctou_3269") != std::string::npos, "3269 AC5: build.py");
+    CHECK(read_file("docs/design/3269-arena-compact-toctou.md").empty(),
+          "3269 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3269.cpp").empty(), "3269 AC5: no invent");
+}
+
 } // namespace aura_arena_defrag_concurrent_detail
 
 int main() {
@@ -194,9 +292,15 @@ int main() {
     ok &= test_ac2_warn_no_safepoint_primitive();
     ok &= test_ac3_concurrent_alloc_defrag();
     ok &= test_ac4_request_defrag_returns_bool();
+    std::println("\n=== Issue #3269: arena compact TOCTOU ===");
+    ac3269_1_unique_after_tls_skip();
+    ac3269_2_raced_counter();
+    ac3269_3_snapshot_comment();
+    ac3269_4_compact_under_guard();
+    ac3269_5_source_and_linter();
 
     int failed = aura::test::g_failed;
-    std::println("\n=== Issue #1390 arena defrag concurrent: {} ({} failures) ===",
+    std::println("\n=== Issue #1390/#3269 arena defrag: {} ({} failures) ===",
                  (ok && failed == 0) ? "PASS" : "FAIL", failed);
     return (ok && failed == 0) ? 0 : 1;
 }
