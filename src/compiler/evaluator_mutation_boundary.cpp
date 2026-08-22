@@ -2696,14 +2696,32 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // session grants (capability_live_session_grants==0 early-out, AC3).
     if (is_outermost_ && session_mid_at_enter_ != 0) {
         using ::aura::core::capability::g_capability_registry;
-        (void)g_capability_registry().revoke_session_grants_for_mid(session_mid_at_enter_);
-        // Issue #3048: drop fiber-local / hold snapshot after #2944 revoke
-        // so a later steal of this fiber cannot re-fire on a dead mid.
-        // Second revoke (if steal already ran) is a no-op (AC3).
-        aura::serve::clear_current_fiber_session_mid();
-        if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
-            session_mid_at_enter_) {
-            aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
+        // Issue #3209: revoke + clear mid under one lock so steal cannot
+        // sample a published mid after grants are already gone (or skip
+        // revoke because mid already 0). Steal/abort that already ran is
+        // a commutative no-op (AC3 / #3048). Soft live==0 still takes
+        // the public wrapper's short-circuit.
+        auto& reg = g_capability_registry();
+        auto& met = ::aura::core::capability::g_capability_effect_metrics();
+        const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+        const bool production = mode == ::aura::core::capability::EffectSandboxMode::Restricted ||
+                                mode == ::aura::core::capability::EffectSandboxMode::Strict;
+        if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_);
+            aura::serve::clear_current_fiber_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                session_mid_at_enter_) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
+        } else {
+            aura::serve::clear_current_fiber_session_mid();
+            if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+                session_mid_at_enter_) {
+                aura::compiler::g_mutation_hold_live_session_mid.store(0,
+                                                                       std::memory_order_release);
+            }
         }
     }
     // Issue #2847: region type/occurrence commit bind. When this Guard

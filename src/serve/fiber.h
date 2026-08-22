@@ -1527,6 +1527,8 @@ void clear_current_fiber_session_mid() noexcept;
 // Issue #3048: registry lookup of a fiber's session mid (cross-fiber
 // force-degrade). Returns 0 when the fiber is gone / id==0.
 extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept;
+// Issue #3209: cross-fiber clear after steal/abort revoke (victim, not TLS).
+extern "C" void aura_fiber_clear_session_mid(std::uint64_t fiber_id) noexcept;
 
 // Issue #2310 / #2346 / #2372: AURA_STEAL_SNAPSHOT_SOFT=1 keeps metric-only
 // mode for unit tests. Production default is fail-closed (force-deopt + full

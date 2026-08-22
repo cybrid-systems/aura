@@ -85,6 +85,8 @@ extern "C" __attribute__((weak)) std::uint64_t aura_fiber_session_mid(std::uint6
     return 0;
 }
 
+extern "C" __attribute__((weak)) void aura_fiber_clear_session_mid(std::uint64_t) noexcept {}
+
 // Issue #2932: hold-budget forced fail-closed at safepoint weak no-op
 // (strong def in evaluator_fiber_mutation.cpp).
 extern "C" __attribute__((weak)) int

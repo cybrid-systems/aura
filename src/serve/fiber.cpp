@@ -462,6 +462,16 @@ extern "C" std::uint64_t aura_fiber_session_mid(std::uint64_t fiber_id) noexcept
     return f->session_mid();
 }
 
+// Issue #3209: clear victim fiber session mid after steal/abort revoke.
+extern "C" void aura_fiber_clear_session_mid(std::uint64_t fiber_id) noexcept {
+    if (fiber_id == 0)
+        return;
+    std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+    Fiber* f = find_fiber_by_id_locked_held(fiber_id);
+    if (f)
+        f->clear_session_mid();
+}
+
 // Issue #213 Cycle 3: function pointers that the Evaluator
 // registers at startup. See fiber.h for the rationale.
 void* (*g_fiber_setter_)(void*) = nullptr;
