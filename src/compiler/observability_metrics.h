@@ -233,6 +233,9 @@ struct CompilerMetrics {
     //   - dual_dep_graph_parity_check_total: graphs_consistent invocations
     //   - dual_dep_graph_parity_fail_total: rebuild_node_dep_graph_from_string
     //     fired (Strict path forces all callers dirty; Off mode is soft)
+    // Issue #3255: Soft peel-time re-check also bumps fail_total on mismatch
+    // and reuses partial_forced_full_by_impact_total as the
+    // "parity-fail → forced full" distinguisher (no new metric key).
     std::atomic<std::uint64_t> dual_dep_graph_parity_check_total{0};
     std::atomic<std::uint64_t> dual_dep_graph_parity_fail_total{0};
     // Issue #2032: dep_graph concurrent correctness + partial threshold.

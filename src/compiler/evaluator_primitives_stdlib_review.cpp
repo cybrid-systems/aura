@@ -1157,6 +1157,10 @@ void register_stdlib_review_primitives(PrimRegistrar /*add*/, Evaluator& ev) {
                             : 1)},
                 {"schema-3067", make_int(3067)},
                 {"issue-3067", make_int(3067)},
+                // Issue #3255: Soft dual-graph parity fail fail-closed before
+                // partial peel (additive schema; no new query:*).
+                {"schema-3255", make_int(3255)},
+                {"issue-3255", make_int(3255)},
                 {"dep-graph-hygiene-propagate",
                  make_int(m ? load_u64(m, m->dep_graph_hygiene_propagate) : 0)},
                 {"hot-swap-versioned-mangle",

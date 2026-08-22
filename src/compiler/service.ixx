@@ -6900,6 +6900,63 @@ public:
         }
     }
 
+    // Issue #3255: Soft dual-graph parity fail must fail-closed before
+    // partial peel. Production/Strict already force-dirties all callers
+    // at record_dependency / drain (#3187); Soft only rebuilt. A concurrent
+    // fiber / lockless batch that left the graphs divergent can still
+    // reach relower_dirty_defines_from_workspace with want_partial=true
+    // under an incomplete hybrid cascade cone. Re-check graphs_consistent
+    // under shared dep_graph_mtx_ (walk only — no extra exclusive lock
+    // when already consistent). On fail: exclusive rebuild, bump
+    // dual_dep_graph_parity_fail_total, force-dirty all callers (same
+    // walk as #3165/#3187), and set want_partial=false +
+    // mark_all_blocks_dirty. Distinguisher: existing
+    // partial_forced_full_by_impact_total. Quiet when graphs already
+    // consistent (no exclusive lock, no counter bump).
+    void fail_closed_soft_dual_graph_parity_before_partial_(IRCacheEntry& entry,
+                                                            bool& want_partial) {
+        if (!want_partial)
+            return;
+        bool graphs_ok = true;
+        {
+            lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
+                                                                  lock_order::Level::DepGraph);
+            graphs_ok = aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                                 dep_name_to_slot_);
+        }
+        if (graphs_ok)
+            return;
+        lock_order::OrderedUniqueLock<std::shared_mutex> write(dep_graph_mtx_,
+                                                               lock_order::Level::DepGraph);
+        if (aura::compiler::dirty::graphs_consistent(dep_graph_, node_dep_graph_,
+                                                     dep_name_to_slot_))
+            return;
+        aura::compiler::dirty::rebuild_node_dep_graph_from_string(node_dep_graph_, dep_graph_,
+                                                                  dep_name_to_slot_);
+        metrics_.dual_dep_graph_parity_fail_total.fetch_add(1, std::memory_order_relaxed);
+        aura::compiler::dirty::g_dual_dep_graph_parity_fail_total_atomic().fetch_add(
+            1, std::memory_order_relaxed);
+        std::unordered_set<std::string, aura::core::TransparentStringHash, std::equal_to<>>
+            affected;
+        for (const auto& [callee_name, callee_entry] : dep_graph_) {
+            (void)callee_name;
+            for (const auto& caller_name : callee_entry.called_by)
+                affected.insert(caller_name);
+        }
+        for (const auto& caller_name : affected) {
+            auto cit2 = ir_cache_v2_.find(caller_name);
+            if (cit2 != ir_cache_v2_.end()) {
+                cit2->second.dirty = true;
+                cit2->second.mark_all_blocks_dirty();
+                finish_cascade_soa_dirty_sync_(cit2->second);
+            }
+        }
+        want_partial = false;
+        entry.mark_all_blocks_dirty();
+        entry.dirty = true;
+        metrics_.partial_forced_full_by_impact_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
     // Issue #1495: walk dirty ir_cache_v2_ entries and prefer
     // partial re-lower (relower_define_blocks → per-function /
     // per-block) before a full cache_define. Called from
@@ -7022,13 +7079,15 @@ public:
             // under-estimate (silent partial peel). Recovered maps
             // keep partial when the bound is still ≤ dirty_n (#2206).
             if (want_partial && dirty_n > 0) {
-                if (!prepare_source_to_ir_map_for_partial_(it->second)) {
+                // Issue #3255: Soft dual-graph parity fail-closed before peel.
+                fail_closed_soft_dual_graph_parity_before_partial_(it->second, want_partial);
+                if (want_partial && !prepare_source_to_ir_map_for_partial_(it->second)) {
                     want_partial = false;
                     it->second.mark_all_blocks_dirty();
                     it->second.dirty = true;
                     metrics_.partial_forced_full_by_impact_total.fetch_add(
                         1, std::memory_order_relaxed);
-                } else {
+                } else if (want_partial) {
                     const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
                     if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
                         want_partial = false;

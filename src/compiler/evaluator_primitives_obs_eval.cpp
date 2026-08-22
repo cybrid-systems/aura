@@ -18192,6 +18192,12 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                  make_int(m ? static_cast<std::int64_t>(
                                   m->hybrid_deferred_cascade_wired.load(std::memory_order_relaxed))
                             : 1)},
+                // Issue #3255: Soft dual-graph parity fail fail-closed before
+                // partial peel. Additive schema on existing query (no new
+                // query:*). Distinguisher reuses
+                // partial_forced_full_by_impact_total.
+                {"schema-3255", make_int(3255)},
+                {"issue-3255", make_int(3255)},
                 {"schema-2191", make_int(2191)},
                 {"issue-2191", make_int(2191)},
                 {"schema-2063", make_int(2063)},
