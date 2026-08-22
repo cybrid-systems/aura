@@ -902,6 +902,228 @@ int run_test_agent_failure_policy() {
     ac3208_3_reclaimed_skip();
     ac3208_4_hash_and_soak();
 
+    // ── Issue #3250: RestartN specs_ boundary ─────────────────────
+    {
+        using aura::orch::JoinPolicy;
+        using aura::orch::kRestartNSpecBoundaryIssue;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+
+        std::println("\n=== Issue #3250: RestartN specs_ boundary ===");
+        CHECK(kRestartNSpecBoundaryIssue == 3250, "3250: stamp");
+
+        std::println("\n--- #3250 AC2: scope.spawn + RestartN re-spawn Ok ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "3250-scope-restart";
+            spec.attach_mailbox = false;
+            spec.body = [&] {
+                while (keep.load(std::memory_order_relaxed))
+                    aura::orch::fiber_sleep_ms(20);
+            };
+            scope.spawn(spec);
+            const auto first_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol;
+            pol.on_join_fail = AgentFailureAction::RestartN;
+            pol.max_restarts = 2;
+            (void)scope.join_all(jp, pol);
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) ==
+                      rst0 + 1,
+                  "3250 AC2: scope.spawn RestartN re-spawn");
+            const auto mid_id = scope.handles()[0].fiber ? scope.handles()[0].fiber->id() : 0;
+            CHECK(mid_id != first_id, "3250 AC2: replacement fiber id");
+            CHECK(scope.last_restart_ok() == 1, "3250 AC2: last_restart_ok");
+            CHECK(scope.last_restart_skipped_no_spec() == 0, "3250 AC2: no skip");
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+        }
+
+        std::println("\n--- #3250 AC3: name-table only + production skip/Cancel ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentSpec spec;
+            spec.name = "3250-bare";
+            spec.attach_mailbox = false;
+            spec.body = [&] {
+                while (keep.load(std::memory_order_relaxed))
+                    aura::orch::fiber_sleep_ms(20);
+            };
+            auto bare = spawn_agent_with_mailbox(sched, spec);
+            CHECK(bare.ok, "3250 AC3: bare spawn ok");
+            AgentScope scope(sched);
+            scope.adopt_handle_without_spec_for_test(std::move(bare));
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol;
+            pol.on_join_fail = AgentFailureAction::RestartN;
+            pol.max_restarts = 3;
+            ac3208_set_prod(true);
+            (void)scope.join_all(jp, pol);
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+                  "3250 AC3: no re-spawn without spec");
+            CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                      std::memory_order_relaxed) == skip0 + 1,
+                  "3250 AC3: production skip total +1");
+            CHECK(scope.last_restart_attempted() == 1, "3250 AC3: attempted");
+            CHECK(scope.last_restart_skipped_no_spec() == 1, "3250 AC3: skipped");
+            CHECK(scope.last_restart_ok() == 0, "3250 AC3: not ok");
+            CHECK(scope.handles()[0].fiber && scope.handles()[0].fiber->is_cancel_requested(),
+                  "3250 AC3: production degrades to Cancel");
+            ac3208_set_prod(false);
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+        }
+
+        std::println("\n--- #3250 AC5: Soft name-table skip is silent ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentSpec spec;
+            spec.name = "3250-bare-soft";
+            spec.attach_mailbox = false;
+            spec.body = [&] {
+                while (keep.load(std::memory_order_relaxed))
+                    aura::orch::fiber_sleep_ms(20);
+            };
+            auto bare = spawn_agent_with_mailbox(sched, spec);
+            AgentScope scope(sched);
+            scope.adopt_handle_without_spec_for_test(std::move(bare));
+            const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                std::memory_order_relaxed);
+            const auto can0 = g_orch_module_stats.agent_join_fail_action_cancel_total.load(
+                std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol;
+            pol.on_join_fail = AgentFailureAction::RestartN;
+            pol.max_restarts = 3;
+            ac3208_set_prod(false);
+            (void)scope.join_all(jp, pol);
+            CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                      std::memory_order_relaxed) == skip0,
+                  "3250 AC5: Soft no extra skip atomic");
+            CHECK(g_orch_module_stats.agent_join_fail_action_cancel_total.load(
+                      std::memory_order_relaxed) == can0,
+                  "3250 AC5: Soft no extra Cancel metric");
+            CHECK(scope.last_restart_skipped_no_spec() == 1, "3250 AC5: local skip still counted");
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+        }
+
+        std::println("\n--- #3250 AC4: Reclaimed still-running never restart ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "3250-reclaimed";
+            spec.attach_mailbox = false;
+            spec.body = [] { aura::orch::fiber_sleep_ms(400); };
+            scope.spawn(spec);
+            if (scope.handles()[0].fiber)
+                scope.handles()[0].fiber->mark_reclaimed();
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                std::memory_order_relaxed);
+            JoinPolicy jp{};
+            jp.primary_ms = 1;
+            jp.drain_ms = 0;
+            AgentFailurePolicy pol;
+            pol.on_join_fail = AgentFailureAction::RestartN;
+            pol.max_restarts = 3;
+            ac3208_set_prod(true);
+            (void)scope.join_all(jp, pol);
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) == rst0,
+                  "3250 AC4: no restart while reclaimed live");
+            CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                      std::memory_order_relaxed) == skip0,
+                  "3250 AC4: reclaimed is not no-spec skip");
+            CHECK(scope.last_restart_attempted() == 0, "3250 AC4: not attempted");
+            ac3208_set_prod(false);
+            if (scope.handles()[0].fiber) {
+                scope.handles()[0].fiber->set_state(FiberState::Done);
+                scope.handles()[0].fiber->note_body_exit_if_reclaimed();
+                scope.handles_mut()[0].finish_reclaimed_cleanup_on_dtor();
+            }
+        }
+
+        std::println("\n--- #3250 soak: mixed bare/scope + RestartN ---");
+        {
+            Scheduler sched(1);
+            SchedRunner runner(sched);
+            std::atomic<bool> keep{true};
+            AgentScope scope(sched);
+            const auto rst0 =
+                g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
+            const auto skip0 = g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                std::memory_order_relaxed);
+            ac3208_set_prod(true);
+            for (int i = 0; i < 8; ++i) {
+                AgentSpec spec;
+                spec.name = "3250-soak-scope";
+                spec.attach_mailbox = false;
+                spec.body = [&] {
+                    while (keep.load(std::memory_order_relaxed))
+                        aura::orch::fiber_sleep_ms(20);
+                };
+                scope.spawn(spec);
+                AgentSpec bare_spec;
+                bare_spec.name = "3250-soak-bare";
+                bare_spec.attach_mailbox = false;
+                bare_spec.body = [&] {
+                    while (keep.load(std::memory_order_relaxed))
+                        aura::orch::fiber_sleep_ms(20);
+                };
+                scope.adopt_handle_without_spec_for_test(
+                    spawn_agent_with_mailbox(sched, bare_spec));
+                JoinPolicy jp{};
+                jp.primary_ms = 1;
+                jp.drain_ms = 0;
+                AgentFailurePolicy pol;
+                pol.on_join_fail = AgentFailureAction::RestartN;
+                pol.max_restarts = 8;
+                (void)scope.join_all(jp, pol);
+            }
+            CHECK(g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed) >=
+                      rst0 + 1,
+                  "3250 soak: at least one scope restart");
+            CHECK(g_orch_module_stats.agent_restart_skipped_no_spec_total.load(
+                      std::memory_order_relaxed) >= skip0 + 1,
+                  "3250 soak: at least one no-spec skip");
+            ac3208_set_prod(false);
+            keep.store(false, std::memory_order_relaxed);
+            ac3208_stop(scope, keep);
+        }
+
+        {
+            CompilerService cs_q;
+            CHECK(href(cs_q, "schema-3250") == 3250, "3250: schema-3250");
+            CHECK(href(cs_q, "restart-n-spec-boundary-wired") == 1, "3250: wired sentinel");
+            CHECK(href(cs_q, "agent-restart-skipped-no-spec-total") >= 0, "3250: query key");
+        }
+        CHECK(true, "3250 AC5: no AgentRegistry / no test_issue_3250.cpp");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

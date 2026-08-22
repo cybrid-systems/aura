@@ -259,7 +259,10 @@ Rules (per Issue #2229 AC2-AC3):
 2. RestartN is scoped to `attach_mailbox` / `keepalive_interval_ms > 0`
    agents (long-lived). Short-lived batch work still uses
    `serve::parallel_orch::parallel_intend` with the #2007
-   `FailurePolicy` family.
+   `FailurePolicy` family. RestartN only replays `AgentScope::spawn`
+   stored specs_ (copyable body); bare `spawn_agent_with_mailbox` /
+   empty body skips (`restart-skipped-no-spec`) and production
+   degrades to Cancel (#3250).
 3. `on_join_fail` is `ReportOnly` by default (zero behaviour change).
    Issue #3052 wires `AgentScope::join_all(JoinPolicy, AgentFailurePolicy)`:
    Timeout / Cancelled honor RestartN / Throttle / Cancel; Reclaimed +

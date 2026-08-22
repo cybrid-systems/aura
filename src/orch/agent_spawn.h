@@ -151,6 +151,10 @@ inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
 // Throttle / optional RestartN) for BP-hot producers — complements
 // admit soft-reject of new attach_mailbox spawns (#2228/#2535).
 inline constexpr int kAgentBpDegradeIssue = 2887;
+// Issue #3250: RestartN fuel is AgentScope::spawn specs_ (copyable body).
+// Bare spawn_agent_with_mailbox / empty body: skip (observable) rather
+// than silent no-op; production degrades to Cancel.
+inline constexpr int kRestartNSpecBoundaryIssue = 3250;
 
 // Issue #2228 / #2535: env resolution for the BP admit threshold.
 // Returns the configured threshold (0 = admit control off). Parses
@@ -600,6 +604,9 @@ struct OrchModuleStats {
     // the exhausted-after-max-restarts signal.
     std::atomic<std::uint64_t> agent_restart_total{0};
     std::atomic<std::uint64_t> agent_restart_exhausted_total{0};
+    // Issue #3250: RestartN attempted but no copyable specs_ body
+    // (bare / name-table handle). Production only (Soft: zero extra).
+    std::atomic<std::uint64_t> agent_restart_skipped_no_spec_total{0};
     std::atomic<std::uint64_t> agent_consecutive_stall_total{0};
     // Issue #3052: per-handle Timeout/Cancelled seen by join_all
     // on_join_fail (not Reclaimed-deferred). RestartN still bumps
@@ -1606,6 +1613,13 @@ struct AgentSpec {
     // Env opt-in when 0: AURA_ORCH_PRODUCER_BP_BUDGET=N (spawn-time only).
     std::uint32_t producer_bp_budget = 0;
 };
+
+// Issue #3250: RestartN fuel is a copyable AgentSpec body stored by
+// AgentScope::spawn. Empty body (bare handle / name-table only) is
+// not restartable — skip (observable) rather than silent no-op.
+[[nodiscard]] inline bool agent_spec_restartable(const AgentSpec& s) noexcept {
+    return static_cast<bool>(s.body);
+}
 
 // Issue #2925: resolve effective producer BP budget (spec wins; env fallback).
 // Zero cost when both unset (returns 0). Spawn-time only — not per send.
@@ -3481,7 +3495,11 @@ struct AgentFailurePolicy {
     // join_all is called without an explicit AgentFailurePolicy,
     // production injects Cancel (env AURA_JOIN_FAIL_ACTION can
     // force report/cancel). Explicit ReportOnly is unchanged.
-    // RestartN re-spawns under stored specs_; Reclaimed +
+    // RestartN re-spawns under stored specs_ from AgentScope::spawn
+    // only (copyable body). Bare spawn_agent_with_mailbox / empty body
+    // is not restart fuel (#3250): skip is observable
+    // (agent_restart_skipped_no_spec_total + hash fields); production
+    // degrades to Cancel. Soft / ReportOnly: zero extra. Reclaimed +
     // still-running / deferred is never restart/cancel fuel (#2661).
     AgentFailureAction on_join_fail = AgentFailureAction::ReportOnly;
     // Issue #2887: response when scope-local (or process) mailbox BP

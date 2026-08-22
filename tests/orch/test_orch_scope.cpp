@@ -213,6 +213,14 @@ int run_test_orch_scope() {
               "AC3: scope-watch-total bumps per orch:scope-watch call");
         CHECK(href(cs, "schema-2588") == 2588, "AC3: query:orch-module-stats surfaces schema-2588");
         CHECK(href(cs, "orch-scope-wired") == 1, "AC3: orch-scope-wired sentinel == 1");
+        CHECK(hash_int(cs, R"((orch:scope-watch :stall-ms 50 :policy 'report-only))",
+                       "schema-3250") == 3250,
+              "3250: orch:scope-watch hash schema-3250");
+        CHECK(hash_int(cs, R"((orch:scope-watch :stall-ms 50 :policy 'report-only))",
+                       "restart-skipped-no-spec") >= 0,
+              "3250: orch:scope-watch restart-skipped-no-spec");
+        CHECK(href(cs, "schema-3250") == 3250, "3250: query schema-3250");
+        CHECK(href(cs, "restart-n-spec-boundary-wired") == 1, "3250: wired sentinel");
 
         // Cancel-all (best-effort cancel; doesn't wait).
         const auto cancel_hash = cs.eval(R"((orch:scope-cancel-all))");
@@ -229,6 +237,12 @@ int run_test_orch_scope() {
                   2588,
               "AC3: scope-join-all hash carries schema=2588");
         CHECK(href(cs, "scope-join-all-total") >= 2, "AC3: scope-join-all-total bumps per call");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))",
+                       "schema-3250") == 3250,
+              "3250: orch:scope-join-all hash schema-3250");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))",
+                       "restart-attempted") >= 0,
+              "3250: orch:scope-join-all restart-attempted");
     }
 
     // ── AC4: cancel-all + join-all parity with ~AgentHandle / #2155 no-leak ──

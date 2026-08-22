@@ -281,6 +281,11 @@ struct ScopeWatchResult {
     std::size_t bp_degraded = 0;  // #2887: handles that got a BP action
     std::size_t bp_cancelled = 0; // #2887: subset with request_cancel
     std::size_t bp_throttled = 0; // #2887: subset with helper_stop only
+    // Issue #3250: RestartN fuel vs skip (this watch pass). Soft skip
+    // stays local (no process atomic).
+    std::size_t restart_attempted = 0;
+    std::size_t restart_skipped_no_spec = 0;
+    std::size_t restart_ok = 0;
 };
 
 // Scoped multi-agent supervision root. Owns its handles via std::vector
@@ -408,6 +413,27 @@ public:
         return handles_.back();
     }
 
+    // Issue #3250: adopt a bare (name-table) handle without restart
+    // fuel. RestartN on this slot is skipped (observable); production
+    // degrades to Cancel. Prefer spawn(spec) when RestartN must replay.
+    // Tests only — not a second registry / cross-scope restart map.
+    AgentHandle& adopt_handle_without_spec_for_test(AgentHandle h) {
+        ScopeEnterGuard g(this, "adopt_handle_without_spec_for_test");
+        if (g.denied_hard()) {
+            thread_local AgentHandle failed;
+            failed = AgentHandle{};
+            failed.ok = false;
+            failed.error = "AgentScope concurrent hard deny (#2946)";
+            failed.name = h.name;
+            return failed;
+        }
+        handles_.push_back(std::move(h));
+        specs_.push_back(AgentSpec{}); // empty body — not restartable
+        restart_counts_.push_back(0);
+        consecutive_stall_counts_.push_back(0);
+        return handles_.back();
+    }
+
     // Issue #2537: create a child AgentScope owned by this scope.
     // Shares the parent Scheduler. Child's parent() returns this.
     // Cancel/destroy on the parent propagates to all descendants.
@@ -515,6 +541,14 @@ public:
     [[nodiscard]] std::uint32_t last_join_fail_action_taken() const noexcept {
         return last_join_fail_action_taken_;
     }
+    // Issue #3250: last join_all RestartN fuel vs skip (this call).
+    [[nodiscard]] std::uint32_t last_restart_attempted() const noexcept {
+        return last_restart_attempted_;
+    }
+    [[nodiscard]] std::uint32_t last_restart_skipped_no_spec() const noexcept {
+        return last_restart_skipped_no_spec_;
+    }
+    [[nodiscard]] std::uint32_t last_restart_ok() const noexcept { return last_restart_ok_; }
 
     // Best-effort cancel request on all live fibers. Bounded cost; does
     // NOT wait. Use join_all afterwards to drain. Safe to call multiple
@@ -624,6 +658,7 @@ public:
                         // join drain (via #2227 hard-reclaim), optional
                         // backoff, then spawn replacement under the
                         // same AgentSpec and replace the handle.
+                        ++r.restart_attempted;
                         stop_keepalive_helper(h);
                         if (h.fiber && !h.fiber->is_done()) {
                             h.fiber->request_cancel();
@@ -631,20 +666,14 @@ public:
                                 sched->note_orphan_fiber(h.fiber, /*hard_deadline_ms=*/50);
                             }
                         }
-                        if (policy.restart_backoff_ms > 0)
-                            fiber_sleep_ms(policy.restart_backoff_ms);
-                        // Spawn replacement under the same spec.
-                        // Issue #2782: skip re-spawn if Scheduler is gone.
-                        if (sched_) {
-                            handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
-                            // Reset per-handle supervision state.
-                            consecutive_stall_counts_[i] = 0;
-                            ++restart_counts_[i];
-                            g_orch_module_stats.agent_restart_total.fetch_add(
-                                1, std::memory_order_relaxed);
-                        } else {
-                            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
-                                1, std::memory_order_relaxed);
+                        // Issue #3250: no copyable specs_ body → skip
+                        // (observable); production Cancel already fired
+                        // via cancel_on_stall. Soft: no extra atomic.
+                        if (restart_spec_missing_(i)) {
+                            ++r.restart_skipped_no_spec;
+                            note_restart_skipped_no_spec_(h, /*cancel=*/false);
+                        } else if (try_restart_from_spec_(i, policy)) {
+                            ++r.restart_ok;
                         }
                     } else if ((policy.on_stall == AgentFailureAction::RestartN) &&
                                (!within_max_restarts || circuit_open)) {
@@ -746,15 +775,15 @@ public:
                         // Optional RestartN (capped like on_stall path).
                         if (policy.on_backpressure == AgentFailureAction::RestartN) {
                             const bool within_max = restart_counts_[i] < policy.max_restarts;
-                            if (within_max && sched_) {
-                                if (policy.restart_backoff_ms > 0)
-                                    fiber_sleep_ms(policy.restart_backoff_ms);
-                                handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
-                                consecutive_stall_counts_[i] = 0;
-                                ++restart_counts_[i];
-                                g_orch_module_stats.agent_restart_total.fetch_add(
-                                    1, std::memory_order_relaxed);
-                            } else if (!within_max) {
+                            if (within_max) {
+                                ++r.restart_attempted;
+                                if (restart_spec_missing_(i)) {
+                                    ++r.restart_skipped_no_spec;
+                                    note_restart_skipped_no_spec_(h, /*cancel=*/false);
+                                } else if (try_restart_from_spec_(i, policy)) {
+                                    ++r.restart_ok;
+                                }
+                            } else {
                                 g_orch_module_stats.agent_restart_exhausted_total.fetch_add(
                                     1, std::memory_order_relaxed);
                             }
@@ -1140,6 +1169,9 @@ private:
         const auto action = resolve_on_join_fail(explicit_policy);
         last_on_join_fail_effective_ = action;
         last_join_fail_action_taken_ = 0;
+        last_restart_attempted_ = 0;
+        last_restart_skipped_no_spec_ = 0;
+        last_restart_ok_ = 0;
         AgentFailurePolicy policy{};
         if (explicit_policy)
             policy = *explicit_policy;
@@ -1171,7 +1203,7 @@ private:
             }
             if (action != AgentFailureAction::RestartN)
                 continue;
-            if (i >= restart_counts_.size() || i >= specs_.size())
+            if (i >= restart_counts_.size())
                 continue;
             const bool within = restart_counts_[i] < policy.max_restarts;
             if (!within) {
@@ -1179,20 +1211,59 @@ private:
                     1, std::memory_order_relaxed);
                 continue;
             }
-            if (!sched_) {
-                g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
-                    1, std::memory_order_relaxed);
+            ++last_restart_attempted_;
+            // Issue #3250: no copyable specs_ body → skip (not silent).
+            // Production degrades to Cancel; Soft: zero extra.
+            if (restart_spec_missing_(i)) {
+                ++last_restart_skipped_no_spec_;
+                note_restart_skipped_no_spec_(h, /*cancel=*/true);
+                if (aura::compiler::typed_audit::production_defaults_active())
+                    ++last_join_fail_action_taken_;
                 continue;
             }
-            if (policy.restart_backoff_ms > 0)
-                fiber_sleep_ms(policy.restart_backoff_ms);
-            handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
-            if (i < consecutive_stall_counts_.size())
-                consecutive_stall_counts_[i] = 0;
-            ++restart_counts_[i];
-            g_orch_module_stats.agent_restart_total.fetch_add(1, std::memory_order_relaxed);
-            ++last_join_fail_action_taken_;
+            if (try_restart_from_spec_(i, policy)) {
+                ++last_restart_ok_;
+                ++last_join_fail_action_taken_;
+            }
         }
+    }
+
+    // Issue #3250: RestartN fuel is AgentScope::spawn specs_ with a
+    // copyable body. Missing slot / empty body is not restartable.
+    [[nodiscard]] bool restart_spec_missing_(std::size_t i) const noexcept {
+        return i >= specs_.size() || !agent_spec_restartable(specs_[i]);
+    }
+
+    // Soft: silent skip (zero extra atomics). Production: bump skip
+    // + optional Cancel so RestartN is never a silent no-op.
+    void note_restart_skipped_no_spec_(AgentHandle& h, bool cancel) noexcept {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        g_orch_module_stats.agent_restart_skipped_no_spec_total.fetch_add(
+            1, std::memory_order_relaxed);
+        if (cancel && h.fiber && !h.fiber->is_done()) {
+            h.fiber->request_cancel();
+            g_orch_module_stats.agent_join_fail_action_cancel_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+    }
+
+    // Spawn replacement under stored spec. Caller already checked
+    // within max_restarts and spec present. Returns true on re-spawn.
+    bool try_restart_from_spec_(std::size_t i, const AgentFailurePolicy& policy) noexcept {
+        if (!sched_) {
+            g_orch_module_stats.agent_scope_scheduler_dangling_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return false;
+        }
+        if (policy.restart_backoff_ms > 0)
+            fiber_sleep_ms(policy.restart_backoff_ms);
+        handles_[i] = spawn_agent_with_mailbox(*sched_, specs_[i]);
+        if (i < consecutive_stall_counts_.size())
+            consecutive_stall_counts_[i] = 0;
+        ++restart_counts_[i];
+        g_orch_module_stats.agent_restart_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
     }
 
     // Issue #2777: child subtree collect with ScopeEnterGuard on the child.
@@ -1228,6 +1299,10 @@ private:
     // Issue #3208: last join_all resolve (unset vs explicit).
     AgentFailureAction last_on_join_fail_effective_ = AgentFailureAction::ReportOnly;
     std::uint32_t last_join_fail_action_taken_ = 0;
+    // Issue #3250: last join_all RestartN fuel vs skip.
+    std::uint32_t last_restart_attempted_ = 0;
+    std::uint32_t last_restart_skipped_no_spec_ = 0;
+    std::uint32_t last_restart_ok_ = 0;
     // Taken only when mode_ == MutexGuarded. recursive so ~AgentScope
     // → cancel_all → join_all same-thread re-entry does not deadlock.
     mutable std::recursive_mutex api_mu_;
