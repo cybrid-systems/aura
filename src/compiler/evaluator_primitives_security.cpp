@@ -4690,6 +4690,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::compiler::typed_audit::AuditOutcome;
             using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
             using aura::compiler::typed_audit::MutationKind;
+            using aura::compiler::typed_audit::production_defaults_active;
             using aura::compiler::typed_audit::trail_find_by_mutation_id;
             using aura::compiler::typed_audit::TypedMutationAuditEvent;
             using aura::core::audit_wal::g_mutation_audit_wal;
@@ -4812,17 +4813,35 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 const bool wal_on =
                     g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled();
                 const int wal_hint = (typed_miss && wal_on) ? 1 : 0;
+                // Issue #3242: on typed miss under production + mutation WAL,
+                // fill additive sidecar keys. Existing typed_kind / typed_outcome
+                // stay "-" (do not rewrite old keys). Soft: no scan.
+                int typed_summary_from_wal = 0;
+                const char* typed_outcome_wal = "-";
+                const char* typed_kind_wal = "-";
+                if (typed_miss && production_defaults_active() &&
+                    g_mutation_audit_wal().is_enabled()) {
+                    if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
+                            e.mutation_id, 2)) {
+                        typed_summary_from_wal = 1;
+                        typed_outcome_wal =
+                            typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
+                        typed_kind_wal = typed_kind_name(static_cast<MutationKind>(ts->kind));
+                    }
+                }
 
                 auto line = std::format(
                     "seq={} kind={} tenant={} fiber={} mutation_id={} epoch={} effect={} "
                     "op=\"{}\" reason=\"{}\" denied={} typed_seq={} typed_kind={} "
                     "typed_outcome={} schema={} typed-trail-miss={} typed-trail-size={} "
-                    "se-ring-size={} wal-replay-hint={}",
+                    "se-ring-size={} wal-replay-hint={} typed-summary-from-wal={} "
+                    "typed-outcome-wal={} typed-kind-wal={}",
                     e.seq, kind_name(e.kind), e.tenant_id, e.fiber_id, e.mutation_id, e.epoch,
                     e.effect_bits, e.op, e.reason, e.denied ? 1 : 0, typed_seq, typed_kind,
                     typed_outcome, kSecurityAuditUnifyIssue, typed_miss,
                     static_cast<unsigned>(kTypedMutationAuditTrailSize),
-                    static_cast<unsigned>(kSecurityEventRingSize), wal_hint);
+                    static_cast<unsigned>(kSecurityEventRingSize), wal_hint, typed_summary_from_wal,
+                    typed_outcome_wal, typed_kind_wal);
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
@@ -5401,6 +5420,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             using aura::compiler::typed_audit::kEvolutionAuditDecisionDurableIssue;
             using aura::compiler::typed_audit::kEvolutionAuditDecisionIssue;
             using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
+            using aura::compiler::typed_audit::kTypedSummaryWalIssue;
             using aura::compiler::typed_audit::kTypedTrailWrapMissIssue;
             using aura::compiler::typed_audit::production_defaults_active;
             using aura::compiler::typed_audit::trail_find_by_mutation_id;
@@ -5412,8 +5432,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // 26 live keys + 1 additive key (last-se-reason, #3149)
             // + 4 additive keys (forensic-source + 3 enum sentinels, #3152)
             // + 3 additive keys (durable-hit + schema-3205 + issue-3205)
-            // = 38 minimum; planned 40 → query_hash_capacity_for 128.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 40;
+            // + 4 additive keys (typed-summary-from-wal + typed-kind +
+            //   schema-3242 + issue-3242)
+            // = 42 minimum; planned 44 → query_hash_capacity_for 128.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 44;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -5584,6 +5606,10 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // with :durable. Join key is join_mid (explicit mid or last
             // stamped) — never a synthetic process-origin mid.
             std::int64_t durable_hit = 0;
+            std::int64_t typed_summary_from_wal = 0;
+            std::int64_t typed_kind = 0;
+            if (typed_hit)
+                typed_kind = static_cast<std::int64_t>(te.kind);
             bool want_durable = false;
             for (const auto& arg : args) {
                 if (is_keyword(arg)) {
@@ -5631,6 +5657,30 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         if (forensic_source < 3)
                             forensic_source = 3;
                         durable_hit = 1;
+                    }
+                    // Issue #3242: typed-trail-miss + :durable → typed summary sidecar.
+                    if (typed_miss && mut_wal.is_enabled()) {
+                        if (auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, 2)) {
+                            typed_summary_from_wal = 1;
+                            typed_kind = static_cast<std::int64_t>(ts->kind);
+                            if (typed_outcome == 0) {
+                                switch (ts->outcome) {
+                                    case 0:
+                                        typed_outcome = 1;
+                                        break;
+                                    case 1:
+                                        typed_outcome = 2;
+                                        break;
+                                    case 2:
+                                        typed_outcome = 3;
+                                        break;
+                                    default:
+                                        break;
+                                }
+                            }
+                            if (forensic_source < 3)
+                                forensic_source = 3;
+                        }
                     }
                 }
             }
@@ -5690,6 +5740,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("durable-hit", durable_hit);
             insert_kv("schema-3205", kEvolutionAuditDecisionDurableIssue);
             insert_kv("issue-3205", kEvolutionAuditDecisionDurableIssue);
+            // Issue #3242: additive typed-summary-from-wal / typed-kind.
+            // Default path stays 0 (no sidecar scan). :durable fills on miss.
+            insert_kv("typed-summary-from-wal", typed_summary_from_wal);
+            insert_kv("typed-kind", typed_kind);
+            insert_kv("schema-3242", kTypedSummaryWalIssue);
+            insert_kv("issue-3242", kTypedSummaryWalIssue);
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }

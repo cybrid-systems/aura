@@ -744,6 +744,104 @@ int run_test_security_audit_unify() {
         fs::remove_all(dir, ec);
     }
 
+    // ── Issue #3242: durable typed summary sidecar after trail wrap ──
+    {
+        std::println("\n--- 3242 AC1: wrap trail, WAL typed summary recovers outcome+kind ---");
+        reset_process();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        apply_production_audit_defaults();
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3242-typed-summary";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_mutation_audit_wal(dir.string()),
+              "3242 AC1: enable mutation WAL");
+        const std::uint64_t mid = 3242;
+        capture_audit_event_forced(mid, "op-3242", MutationKind::Structural, 1, 2,
+                                   AuditOutcome::Rollback, /*target=*/7, /*nodes=*/3);
+        append_security_event(g_security_event_ring(), SecurityEventKind::InvariantFail,
+                              /*tenant=*/12, mid, /*epoch=*/2, kEffectMutate, "op-3242",
+                              "typed-wrap-rollback", /*denied=*/true, /*fiber=*/4);
+        CHECK(g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.load() >= 1,
+              "3242 AC1: typed summary persisted");
+        TypedMutationAuditEvent te_pre{};
+        CHECK(trail_find_by_mutation_id(mid, te_pre), "3242 AC1: mid in trail before wrap");
+        for (std::size_t i = 0; i < kTypedMutationAuditTrailSize; ++i) {
+            capture_audit_event_forced(96000 + i, "wrap-fill-3242", MutationKind::Other, 1, 1,
+                                       AuditOutcome::Success);
+        }
+        TypedMutationAuditEvent te_miss{};
+        CHECK(!trail_find_by_mutation_id(mid, te_miss), "3242 AC1: mid wrapped out of typed trail");
+        CHECK(href_evol_mid(cs, mid, "typed-trail-miss") == 1, "3242 AC1: typed-trail-miss=1");
+        CHECK(href_evol_mid(cs, mid, "typed-summary-from-wal") == 0,
+              "3242 AC1: default path no sidecar scan");
+        CHECK(href_evol_mid_durable(cs, mid, "typed-summary-from-wal") == 1,
+              "ac3242_1_wal_hit: :durable recovers typed summary");
+        CHECK(href_evol_mid_durable(cs, mid, "typed-outcome") == 2,
+              "3242 AC1: WAL typed-outcome=Rollback");
+        CHECK(href_evol_mid_durable(cs, mid, "typed-kind") ==
+                  static_cast<std::int64_t>(MutationKind::Structural),
+              "3242 AC1: WAL typed-kind=Structural");
+        CHECK(href_evol_mid_durable(cs, mid, "schema-3242") == 3242, "3242 AC3: schema-3242");
+        auto q = cs.eval(std::format("(engine:metrics \"query:security-audit\" 8 12 4 0 {})", mid));
+        CHECK(q.has_value(), "3242 AC2: query:security-audit callable");
+        bool saw_wal = false;
+        if (q) {
+            for (const auto& ln : list_string_lines(cs, *q)) {
+                if (ln.find("typed-summary-from-wal=1") != std::string::npos &&
+                    ln.find("typed-outcome-wal=Rollback") != std::string::npos &&
+                    ln.find("typed-kind-wal=Structural") != std::string::npos)
+                    saw_wal = true;
+            }
+        }
+        CHECK(saw_wal, "3242 AC2: security-audit additive WAL typed keys");
+        cs.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir, ec);
+    }
+
+    {
+        std::println("\n--- 3242 AC2: Soft does not write typed summary ---");
+        reset_process();
+        CompilerService cs;
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3242-soft";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_mutation_audit_wal(dir.string()), "3242 AC2: Soft WAL enable");
+        const auto p0 = g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.load();
+        capture_audit_event_forced(32421, "soft-3242", MutationKind::ReplaceValue, 1, 1,
+                                   AuditOutcome::Success, 1, 1);
+        CHECK(g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.load() == p0,
+              "ac3242_2_soft: no typed WAL write");
+        CHECK(href_evol_mid_durable(cs, 32421, "typed-summary-from-wal") == 0,
+              "3242 AC2: Soft :durable typed-summary-from-wal=0");
+        cs.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir, ec);
+    }
+
+    {
+        std::println("\n--- 3242 AC3: mid=0 Success does not invent typed summary ---");
+        reset_process();
+        apply_production_audit_defaults();
+        CompilerService cs;
+        apply_production_audit_defaults();
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3242-mid0";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_mutation_audit_wal(dir.string()), "3242 AC3: WAL enable");
+        const auto p0 = g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.load();
+        aura::compiler::typed_audit::record_boundary_outcome(0, "mid0-success", 1, 1, true);
+        CHECK(g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.load() == p0,
+              "ac3242_3_mid0: no invented Success summary");
+        cs.evaluator().disable_mutation_audit_wal();
+        fs::remove_all(dir, ec);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

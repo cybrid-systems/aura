@@ -233,6 +233,12 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "durable-hit") ==
                   0,
               "#3205 AC2: default durable-hit=0");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "schema-3242") ==
+                  3242,
+              "#3242 AC3: schema-3242 additive");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                       "typed-summary-from-wal") == 0,
+              "#3242 AC2: default typed-summary-from-wal=0");
         CHECK(aura_query_hash_overflow_total() == soak0,
               "#3020 AC5: soak — no query_hash_overflow_total bump under default catalog");
 

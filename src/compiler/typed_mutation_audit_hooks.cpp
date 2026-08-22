@@ -10,6 +10,7 @@
 
 #include "typed_mutation_audit.h"
 #include "compiler/observability_metrics.h"
+#include "core/mutation_audit_wal.hh"
 #include "core/persistent_child_vector.hh"
 #include "compiler/ownership_escape_lowering_gate.h"
 
@@ -24,6 +25,39 @@
 extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept {
     aura::ast::pcv_set_stale_span_exclusive_enabled(on != 0);
 }
+
+namespace aura::compiler::typed_audit {
+
+void maybe_persist_typed_summary(const TypedMutationAuditEvent& ev) noexcept {
+    // Issue #3242: production + mutation WAL → compact typed summary.
+    // Soft / WAL-off: two loads, no fwrite. mid=0 already dropped by
+    // capture_audit_event_forced (no invented Success summary).
+    if (ev.mutation_id == 0)
+        return;
+    if (!production_defaults_active())
+        return;
+    auto& wal = ::aura::core::audit_wal::g_mutation_audit_wal();
+    if (!wal.is_enabled())
+        return;
+    ::aura::core::audit_wal::TypedSummaryWalRecord rec{};
+    rec.mutation_id = ev.mutation_id;
+    rec.seq = ev.seq;
+    rec.timestamp_ms = ev.timestamp_ms;
+    rec.nodes_changed = ev.nodes_changed;
+    rec.target_node = ev.target_node;
+    rec.outcome = static_cast<std::uint8_t>(ev.outcome);
+    rec.kind = static_cast<std::uint8_t>(ev.kind);
+    rec.name_hash = 2166136261u;
+    for (std::size_t i = 0; i < kAuditNameCap && ev.name[i] != '\0'; ++i) {
+        rec.name_hash = (rec.name_hash ^ static_cast<std::uint8_t>(ev.name[i])) * 16777619u;
+    }
+    if (wal.append_typed_summary(rec)) {
+        g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+}
+
+} // namespace aura::compiler::typed_audit
 
 namespace aura::compiler {
 // Issue #2262: free process storage (evaluator bumps hard_empty_miss;

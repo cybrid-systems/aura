@@ -83,6 +83,10 @@ inline constexpr int kEvolutionAuditDecisionIssue = 3114;
 // Issue #3205: optional :durable mid point-query into SE / mutation WAL
 // (default path still no scan). Additive residual after #3152.
 inline constexpr int kEvolutionAuditDecisionDurableIssue = 3205;
+// Issue #3242: durable typed summary sidecar after trail wrap.
+// Compact (mid, outcome, kind, nodes, name_hash) in typed-summary-N.wal.
+// Soft / WAL-off / Sampled-skip: no write. mid=0 never invents Success.
+inline constexpr int kTypedSummaryWalIssue = 3242;
 // Issue #3217: deny-path stamp order (all abort variants).
 //   1. structural restore / dual-topology abort
 //   2. coercion / occurrence / proof clear (abort path)
@@ -152,6 +156,9 @@ struct TypedMutationAuditEvent {
     std::uint64_t timestamp_ms = 0;
     std::uint32_t affected_ref_count = 0;
 };
+
+// Defined in typed_mutation_audit_hooks.cpp (keeps WAL I/O out of this header).
+void maybe_persist_typed_summary(const TypedMutationAuditEvent& ev) noexcept;
 
 // Process-wide atomics (thread-safe).
 struct TypedMutationAuditCounters {
@@ -490,6 +497,8 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint64_t> linear_cross_closure_trunc_force_total{0};
     std::atomic<std::uint32_t> linear_cross_closure_depth_max{3}; // hard cap (env clamp)
     std::atomic<std::uint32_t> linear_cross_closure_prod_depth_default{2};
+    // Issue #3242: typed-summary WAL persist (struct end).
+    std::atomic<std::uint64_t> typed_summary_wal_persisted_total{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
@@ -3208,6 +3217,8 @@ inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_vi
     if (seq >= kTypedMutationAuditTrailSize)
         g_typed_mutation_audit_counters.typed_trail_wrap_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
+    // Issue #3242: production + mutation WAL persist (out-of-line).
+    maybe_persist_typed_summary(ev);
 }
 
 inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
@@ -3710,6 +3721,9 @@ inline void reset_for_test() noexcept {
     g_typed_mutation_audit_counters.trail_seq.store(0, std::memory_order_relaxed);
     // Issue #3113
     g_typed_mutation_audit_counters.typed_trail_wrap_total.store(0, std::memory_order_relaxed);
+    // Issue #3242
+    g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.store(
+        0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.macro_hygiene_events.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.macro_hygiene_blocked.store(0, std::memory_order_relaxed);
     g_typed_mutation_audit_counters.macro_hygiene_allowed.store(0, std::memory_order_relaxed);
