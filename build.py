@@ -3327,6 +3327,19 @@ def cmd_lint():
             "Issue #3250 RestartN spec-boundary linter failed — run python3 scripts/coverage/checks/check_restart_n_spec_boundary_3250.py"
         )
         return r
+    # Issue #3251: unified deny-class on spawn/join/send fail hashes.
+    # Extends test_orch_obs_facade + quota/BP/schedule suites (#81967);
+    # no docs/design/ (#1655).
+    adc_script = COVERAGE_CHECKS / "check_agent_deny_class_3251.py"
+    if not adc_script.exists():
+        fail(f"missing {adc_script}")
+        return 1
+    r = run([sys.executable, str(adc_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3251 agent deny-class linter failed — run python3 scripts/coverage/checks/check_agent_deny_class_3251.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10555,6 +10568,21 @@ def cmd_linear_root_abort_release_3023_coverage():
         fail("linear_roots abort/reclaim (#3023) coverage contract rows failed")
         return 1
     ok("linear_roots abort/reclaim (#3023) coverage clean")
+    return 0
+
+
+def cmd_agent_deny_class_3251_coverage():
+    """Issue #3251: unified deny-class on Aura spawn/join/send fail hashes."""
+    print(f"{B}=== agent deny-class coverage (#3251) ==={N}")
+    script = COVERAGE_CHECKS / "check_agent_deny_class_3251.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("agent deny-class (#3251) coverage contract rows failed")
+        return 1
+    ok("agent deny-class (#3251) coverage clean")
     return 0
 
 
@@ -18829,6 +18857,8 @@ def main():
         "linear-nested-abort-drain-3249-coverage": cmd_linear_nested_abort_drain_3249_coverage,
         "restart-n-spec-boundary-3250": cmd_restart_n_spec_boundary_3250_coverage,
         "restart-n-spec-boundary-3250-coverage": cmd_restart_n_spec_boundary_3250_coverage,
+        "agent-deny-class-3251": cmd_agent_deny_class_3251_coverage,
+        "agent-deny-class-3251-coverage": cmd_agent_deny_class_3251_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

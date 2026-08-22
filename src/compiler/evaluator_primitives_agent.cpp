@@ -3076,6 +3076,31 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
     // Issue #3216: additive identity-plane intern, production-only.
     // Soft / Off: one load of production_defaults_active, no string intern.
+    // Issue #3251: unified deny-class intern, production-only.
+    // Soft / success: one production_defaults load, no string intern.
+    auto add_deny_class = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv,
+                                aura::orch::AgentDenyClass cls, std::string_view detail,
+                                std::uint64_t retry_ms, bool emit_retry) {
+        if (cls == aura::orch::AgentDenyClass::None)
+            return;
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        const char* name = aura::orch::agent_deny_class_name(cls);
+        if (!name)
+            return;
+        auto cidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(name);
+        kv.emplace_back("deny-class", make_string(cidx));
+        if (!detail.empty()) {
+            auto didx = ev.string_heap_.size();
+            ev.string_heap_.push_back(std::string(detail));
+            kv.emplace_back("deny-detail", make_string(didx));
+        }
+        if (emit_retry)
+            kv.emplace_back("retry-after-ms", make_int(static_cast<std::int64_t>(retry_ms)));
+        kv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
+        kv.emplace_back("issue-3251", make_int(aura::orch::kAgentDenyClassIssue));
+    };
     auto add_identity_plane = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv,
                                     const char* plane) {
         if (!aura::compiler::typed_audit::production_defaults_active())
@@ -3142,7 +3167,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // API — check_orch_mvp_scope.py --strict still guards the public surface.
 
     add("orch:spawn-agent",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
@@ -3323,6 +3349,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 auto eidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(qerr);
                 qkv.push_back({"error", make_string(eidx)});
+                // Issue #3251: unified deny-class (quota vs bp-admit).
+                // retry-after-ms already on this hash (emit_retry=false).
+                const auto dcls = (qdim == "mailbox-bp") ? aura::orch::AgentDenyClass::BpAdmit
+                                                         : aura::orch::AgentDenyClass::Quota;
+                add_deny_class(qkv, dcls, qdim, qretry, /*emit_retry=*/false);
                 return build_orch_hash(qkv);
             }
 
@@ -3344,7 +3375,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // (orch:agent-join name [:timeout-ms n] [:drain-ms n])
     // Issue #2153: :drain-ms secondary cancel-drain window (default 2000).
     add("orch:agent-join",
-        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
+        [&ev, build_orch_hash, orch_keyword_key, add_identity_plane, add_deny_class,
          add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty()) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
@@ -3518,6 +3549,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 kv.emplace_back("schema-3014", make_int(3014));
                 kv.emplace_back("issue-3014", make_int(3014));
                 kv.emplace_back("body-acquire-rejected-wired", make_int(1));
+                // Issue #3251: fiber alive / body did not run.
+                if (aura::compiler::typed_audit::production_defaults_active()) {
+                    auto lidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back("body-not-run");
+                    kv.emplace_back("lifecycle", make_string(lidx));
+                }
+                add_deny_class(kv, hp->body_deny_class(), {}, 0, /*emit_retry=*/false);
             }
             // Issue #3216: name-table plane (production-only intern).
             add_identity_plane(kv, "name-table");
@@ -4271,8 +4309,15 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     {"ok", make_bool(e.ok)},
                     {"schema", make_int(aura::orch::kAgentDirectoryIssue)},
                 };
-                // Issue #3220: additive lifecycle on directory rows.
-                add_reclaimed_pending_lifecycle(ekv, !e.lifecycle.empty());
+                // Issue #3220 / #3251: additive lifecycle on directory rows.
+                add_reclaimed_pending_lifecycle(ekv, e.lifecycle == "reclaimed-pending");
+                if (e.lifecycle == "body-not-run" &&
+                    aura::compiler::typed_audit::production_defaults_active()) {
+                    auto lidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back("body-not-run");
+                    ekv.emplace_back("lifecycle", make_string(lidx));
+                    ekv.emplace_back("schema-3251", make_int(aura::orch::kAgentDenyClassIssue));
+                }
                 agent_elems.push_back(build_orch_hash(ekv));
             }
             const auto vidx = ev.vector_heap_.size();
@@ -4427,116 +4472,127 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // ambiguous Closed conflation with mailbox-closed. Soft / sandbox=off
     // still prefer the export path for consistency (AC6). #2663 gate stays
     // hard for raw C++ MultiFiberMailbox::push callers (defense in depth).
-    add("orch:agent-send", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.size() < 2 || !types::is_string(a[0])) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-send: usage (orch:agent-send name payload)",
-                                        ev.primitive_error_counter_ptr());
-        }
-        auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto* hp = ev.agent_names_->find(name);
-        if (!hp || !hp->ok) {
-            return make_primitive_error(ev.string_heap_, ev.error_values_,
-                                        "orch:agent-send: unknown agent",
-                                        ev.primitive_error_counter_ptr());
-        }
+    add("orch:agent-send",
+        [&ev, build_orch_hash, add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+            if (a.size() < 2 || !types::is_string(a[0])) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-send: usage (orch:agent-send name payload)",
+                                            ev.primitive_error_counter_ptr());
+            }
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            auto* hp = ev.agent_names_->find(name);
+            if (!hp || !hp->ok) {
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "orch:agent-send: unknown agent",
+                                            ev.primitive_error_counter_ptr());
+            }
 
-        aura::serve::mf_mailbox::MailMessage msg;
-        msg.priority = aura::serve::mf_mailbox::MailPriority::Normal;
-        bool auto_handoff_ok = false;
+            aura::serve::mf_mailbox::MailMessage msg;
+            msg.priority = aura::serve::mf_mailbox::MailPriority::Normal;
+            bool auto_handoff_ok = false;
 
-        // AC2: string/int/bool — existing short-circuit; no held_ref_token,
-        // no handoff work, single optional load on the #2663 gate.
-        if (types::is_string(a[1])) {
-            msg.payload = heap_str_from(ev.string_heap_, a[1]);
-        } else if (types::is_int(a[1])) {
-            msg.payload = std::to_string(types::as_int(a[1]));
-        } else if (types::is_bool(a[1])) {
-            msg.payload = types::as_bool(a[1]) ? "#t" : "#f";
-        } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
-            // Issue #2848 AC1: packed StableNodeRef (id . gen) shape.
-            // Require in-bounds id so ordinary cons lists of ints do not
-            // spuriously enter the handoff path.
-            const auto outer = types::as_pair_idx(a[1]);
-            bool is_stable_shape = false;
-            aura::ast::FlatAST::StableNodeRef held{};
-            if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
-                held.id = static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
-                const auto cdr = ev.pairs_[outer].cdr;
-                if (types::is_pair(cdr)) {
-                    const auto inner = types::as_pair_idx(cdr);
-                    if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
-                        held.gen = static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
+            // AC2: string/int/bool — existing short-circuit; no held_ref_token,
+            // no handoff work, single optional load on the #2663 gate.
+            if (types::is_string(a[1])) {
+                msg.payload = heap_str_from(ev.string_heap_, a[1]);
+            } else if (types::is_int(a[1])) {
+                msg.payload = std::to_string(types::as_int(a[1]));
+            } else if (types::is_bool(a[1])) {
+                msg.payload = types::as_bool(a[1]) ? "#t" : "#f";
+            } else if (types::is_pair(a[1]) && ev.workspace_flat_) {
+                // Issue #2848 AC1: packed StableNodeRef (id . gen) shape.
+                // Require in-bounds id so ordinary cons lists of ints do not
+                // spuriously enter the handoff path.
+                const auto outer = types::as_pair_idx(a[1]);
+                bool is_stable_shape = false;
+                aura::ast::FlatAST::StableNodeRef held{};
+                if (outer < ev.pairs_.size() && types::is_int(ev.pairs_[outer].car)) {
+                    held.id = static_cast<aura::ast::NodeId>(types::as_int(ev.pairs_[outer].car));
+                    const auto cdr = ev.pairs_[outer].cdr;
+                    if (types::is_pair(cdr)) {
+                        const auto inner = types::as_pair_idx(cdr);
+                        if (inner < ev.pairs_.size() && types::is_int(ev.pairs_[inner].car)) {
+                            held.gen =
+                                static_cast<std::uint16_t>(types::as_int(ev.pairs_[inner].car));
+                            is_stable_shape = true;
+                        }
+                    } else if (types::is_int(cdr)) {
+                        held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
                         is_stable_shape = true;
                     }
-                } else if (types::is_int(cdr)) {
-                    held.gen = static_cast<std::uint16_t>(types::as_int(cdr));
-                    is_stable_shape = true;
                 }
-            }
-            auto* ws = ev.workspace_flat_;
-            if (is_stable_shape && held.id != aura::ast::NULL_NODE && held.id < ws->size()) {
-                // Soft / production: prefer export path for consistency (AC6).
-                ev.stamp_stable_ref(held);
-                auto out = ev.handoff_ref(std::move(held));
-                if (!out) {
-                    // Structured typed failure — not silent Closed (#2848 AC1).
-                    aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
+                auto* ws = ev.workspace_flat_;
+                if (is_stable_shape && held.id != aura::ast::NULL_NODE && held.id < ws->size()) {
+                    // Soft / production: prefer export path for consistency (AC6).
+                    ev.stamp_stable_ref(held);
+                    auto out = ev.handoff_ref(std::move(held));
+                    if (!out) {
+                        // Structured typed failure — not silent Closed (#2848 AC1).
+                        aura::orch::g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        auto sidx = ev.string_heap_.size();
+                        // Distinguish export-stale vs generic handoff-required when
+                        // last_mutate_error_ carries a stale-ref reason.
+                        const char* fail_st = "handoff-required";
+                        if (!ev.last_mutate_error().empty() &&
+                            ev.last_mutate_error().find("stale") != std::string::npos)
+                            fail_st = "export-stale";
+                        ev.string_heap_.push_back(fail_st);
+                        std::vector<std::pair<std::string, EvalValue>> fkv = {
+                            {"ok", make_bool(false)},
+                            {"status", make_string(sidx)},
+                            {"schema", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                            {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                            {"schema-2011", make_int(2011)},
+                            {"schema-2663", make_int(2663)},
+                            {"agent-send-auto-handoff-wired", make_int(1)},
+                        };
+                        add_deny_class(fkv, aura::orch::AgentDenyClass::Handoff, fail_st, 0,
+                                       /*emit_retry=*/false);
+                        return build_orch_hash(fkv);
+                    }
+                    aura::orch::stamp_mail_message_handoff_completed(
+                        msg, static_cast<std::uint64_t>(out->id));
+                    // Encode post-handoff id:gen so receivers can rehydrate.
+                    msg.payload =
+                        "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
+                    auto_handoff_ok = true;
+                    aura::orch::g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(
                         1, std::memory_order_relaxed);
-                    auto sidx = ev.string_heap_.size();
-                    // Distinguish export-stale vs generic handoff-required when
-                    // last_mutate_error_ carries a stale-ref reason.
-                    const char* fail_st = "handoff-required";
-                    if (!ev.last_mutate_error().empty() &&
-                        ev.last_mutate_error().find("stale") != std::string::npos)
-                        fail_st = "export-stale";
-                    ev.string_heap_.push_back(fail_st);
-                    std::vector<std::pair<std::string, EvalValue>> fkv = {
-                        {"ok", make_bool(false)},
-                        {"status", make_string(sidx)},
-                        {"schema", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-                        {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-                        {"schema-2011", make_int(2011)},
-                        {"schema-2663", make_int(2663)},
-                        {"agent-send-auto-handoff-wired", make_int(1)},
-                    };
-                    return build_orch_hash(fkv);
+                } else {
+                    msg.payload = "payload";
                 }
-                aura::orch::stamp_mail_message_handoff_completed(
-                    msg, static_cast<std::uint64_t>(out->id));
-                // Encode post-handoff id:gen so receivers can rehydrate.
-                msg.payload =
-                    "stable-ref:" + std::to_string(out->id) + ":" + std::to_string(out->gen);
-                auto_handoff_ok = true;
-                aura::orch::g_orch_module_stats.agent_send_auto_handoff_total.fetch_add(
-                    1, std::memory_order_relaxed);
             } else {
                 msg.payload = "payload";
             }
-        } else {
-            msg.payload = "payload";
-        }
 
-        auto st = aura::orch::agent_send(*hp, std::move(msg));
-        const char* st_s = "ok";
-        if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
-            st_s = "backpressure";
-        else if (st == aura::serve::mf_mailbox::PushStatus::Closed)
-            st_s = "closed";
-        auto sidx = ev.string_heap_.size();
-        ev.string_heap_.push_back(st_s);
-        std::vector<std::pair<std::string, EvalValue>> kv = {
-            {"ok", make_bool(st == aura::serve::mf_mailbox::PushStatus::Ok)},
-            {"status", make_string(sidx)},
-            {"schema", make_int(1588)},
-            {"schema-2011", make_int(2011)},
-            {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
-            {"agent-send-auto-handoff-wired", make_int(1)},
-        };
-        if (auto_handoff_ok)
-            kv.push_back({"auto-handoff", make_bool(true)});
-        return build_orch_hash(kv);
-    });
+            auto st = aura::orch::agent_send(*hp, std::move(msg));
+            const char* st_s = "ok";
+            aura::orch::AgentDenyClass send_deny = aura::orch::AgentDenyClass::None;
+            if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
+                st_s = "backpressure";
+            else if (st == aura::serve::mf_mailbox::PushStatus::Closed) {
+                st_s = "closed";
+                send_deny = aura::orch::AgentDenyClass::Closed;
+            } else if (st == aura::serve::mf_mailbox::PushStatus::HandoffRequired) {
+                st_s = "handoff-required";
+                send_deny = aura::orch::AgentDenyClass::Handoff;
+            }
+            auto sidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(st_s);
+            std::vector<std::pair<std::string, EvalValue>> kv = {
+                {"ok", make_bool(st == aura::serve::mf_mailbox::PushStatus::Ok)},
+                {"status", make_string(sidx)},
+                {"schema", make_int(1588)},
+                {"schema-2011", make_int(2011)},
+                {"schema-2848", make_int(aura::orch::kAgentSendAutoHandoffIssue)},
+                {"agent-send-auto-handoff-wired", make_int(1)},
+            };
+            if (auto_handoff_ok)
+                kv.push_back({"auto-handoff", make_bool(true)});
+            add_deny_class(kv, send_deny, st_s, 0, /*emit_retry=*/false);
+            return build_orch_hash(kv);
+        });
 
     add("orch:agent-recv",
         [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
@@ -5979,6 +6035,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3250", aura::orch::kRestartNSpecBoundaryIssue);
             insert_kv("issue-3250", aura::orch::kRestartNSpecBoundaryIssue);
             insert_kv("restart-n-spec-boundary-wired", 1);
+            // Issue #3251: unified deny-class (additive; append).
+            insert_kv("schema-3251", aura::orch::kAgentDenyClassIssue);
+            insert_kv("issue-3251", aura::orch::kAgentDenyClassIssue);
+            insert_kv("agent-deny-class-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

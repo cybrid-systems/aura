@@ -42,7 +42,11 @@
 
 #include "orch/security_schedule_gate.h"
 #include "compiler/aot_hot_update_health.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/wal_append_fail_slo.h"
+#include "orch/agent_spawn.h"
+#include "orch/sched_runner_test_helper.h"
+#include "serve/scheduler.h"
 
 extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void);
 extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
@@ -931,9 +935,42 @@ int run_test_security_schedule_gate() {
         }
     }
 
+    {
+        std::println("\n--- #3251: schedule-gate body deny-class ---");
+        using aura::orch::AgentDenyClass;
+        using aura::orch::AgentSpec;
+        using aura::orch::g_capability_deny_storm_threshold;
+        using aura::orch::join_agent;
+        using aura::orch::JoinPolicy;
+        using aura::orch::spawn_agent_with_mailbox;
+        using aura::serve::SchedRunner;
+        using aura::serve::Scheduler;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        const auto prev_thr =
+            g_capability_deny_storm_threshold().exchange(0, std::memory_order_relaxed);
+        Scheduler sched(1);
+        SchedRunner runner(sched);
+        AgentSpec spec;
+        spec.name = "3251-sched";
+        spec.attach_mailbox = false;
+        spec.body = [] {};
+        auto h = spawn_agent_with_mailbox(sched, spec);
+        CHECK(h.ok, "3251: spawn ok (deny is body try_acquire)");
+        JoinPolicy jp{};
+        jp.primary_ms = 2000;
+        jp.drain_ms = 200;
+        (void)join_agent(h, jp);
+        CHECK(h.body_acquire_rejected(), "3251: body try_acquire rejected");
+        CHECK(h.body_deny_class() == AgentDenyClass::ScheduleGate,
+              "3251: deny class schedule-gate");
+        g_capability_deny_storm_threshold().store(prev_thr, std::memory_order_relaxed);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        reset_orch_security_schedule_counters_for_test();
+    }
+
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println("\n=== #2590/#2947/#3211/#3244: {}/{} checks passed ===", g_passed,
+    std::println("\n=== #2590/#2947/#3211/#3244/#3251: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

@@ -1136,6 +1136,9 @@ private:
             if ((h.must_wait_reclaimed || h.reclaimed_deferred_cleanup) &&
                 aura::compiler::typed_audit::production_defaults_active())
                 e.lifecycle = "reclaimed-pending";
+            else if (h.body_acquire_rejected() && e.status == "alive" &&
+                     aura::compiler::typed_audit::production_defaults_active())
+                e.lifecycle = "body-not-run"; // Issue #3251
             if (filter.alive_only && e.status != "alive")
                 continue;
             if (!filter.name_prefix.empty()) {

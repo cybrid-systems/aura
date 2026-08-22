@@ -34,6 +34,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "orch/agent_spawn.h"
 #include "serve/parallel_orch.h"
 
@@ -510,7 +511,42 @@ int run_test_orch_obs_facade() {
               "3212 AC6: no test_issue_3212.cpp per #81967");
     }
 
-    std::println("\n=== #2589+#2636+2884+#3013+#3212: {}/{} checks passed ===", g_passed,
+    {
+        std::println("\n--- #3251: unified deny-class surface ---");
+        CHECK(aura::orch::kAgentDenyClassIssue == 3251, "3251: stamp");
+        CHECK(href(cs, "schema-3251") == 3251, "3251: query schema-3251");
+        CHECK(href(cs, "agent-deny-class-wired") == 1, "3251: wired");
+        CHECK(std::string_view(
+                  aura::orch::agent_deny_class_name(aura::orch::AgentDenyClass::Quota)) == "quota",
+              "3251: quota name");
+        CHECK(std::string_view(aura::orch::agent_deny_class_name(
+                  aura::orch::AgentDenyClass::Handoff)) == "handoff",
+              "3251: handoff name");
+        const auto spawn_src = read_file("src/orch/agent_spawn.h");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto fib = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(spawn_src.find("classify_agent_deny") != std::string::npos, "3251: classify helper");
+        CHECK(agent.find("deny-class") != std::string::npos, "3251: Aura deny-class");
+        CHECK(fib.find("admit_security_schedule") != std::string::npos, "3251: body schedule-gate");
+        CHECK(read_file("src/orch/README.md").find("deny-class") != std::string::npos,
+              "3251: README deny-class");
+        CHECK(read_file("docs/design/3251-agent-deny-class.md").empty(),
+              "3251: no docs/design/ per #1655");
+        CHECK(read_file("tests/orch/test_issue_3251.cpp").empty(),
+              "3251: no test_issue_3251.cpp per #81967");
+
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        (void)cs.eval(R"((orch:spawn-agent "3251-closed" (lambda () 0) :attach-mailbox #f))");
+        const auto sch = cs.eval(R"((hash-ref (orch:agent-send "3251-closed" "x") "schema-3251"))");
+        CHECK(sch && is_int(*sch) && as_int(*sch) == 3251,
+              "3251: production send Closed hash schema-3251");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        (void)cs.eval(R"((orch:spawn-agent "3251-soft" (lambda () 0) :attach-mailbox #f))");
+        const auto sch_s = cs.eval(R"((hash-ref (orch:agent-send "3251-soft" "x") "schema-3251"))");
+        CHECK(!sch_s || !is_int(*sch_s), "3251: Soft send no deny-class intern");
+    }
+
+    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

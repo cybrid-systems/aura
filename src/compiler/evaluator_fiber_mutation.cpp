@@ -24,7 +24,8 @@ module;
 #include "compiler/mutation_boundary_shared_exit.h" // Issue #2600: shared exit helper (soft + full Guard)
 #include "compiler/mutation_hold_budget.h" // Issue #2720/#2726: holder degrade counters + reject_enabled
 #include "compiler/typed_mutation_audit.h" // Issue #2710: production_defaults_active on steal Ok clear
-#include "core/layout_stamp.hh"            // Issue #2519: full 8-field LayoutStamp equality
+#include "orch/security_schedule_gate.h"      // Issue #3251: body try_acquire schedule-gate class
+#include "core/layout_stamp.hh"               // Issue #2519: full 8-field LayoutStamp equality
 #include "core/lifetime_consistency_proof.hh" // Issue #2888: unified proof header
 #include "core/flatast_restamp.hh"            // Issue #3019: unified restamp counters
 #include "core/security_event_wal.hh"  // Issue #2839: IsolationDeny SE on fiber principal mismatch
@@ -2700,6 +2701,8 @@ namespace {
         int register_soft = 1;
     };
     thread_local OrchSoftTxState g_orch_soft_tx_state{};
+    // Issue #3251: fiber try_acquire lambda → outer return code.
+    thread_local std::uint8_t g_orch_body_acq_deny = 0;
     // Issue #2118: soft boundary depth pushed on fiber agent body (nested-safe).
     thread_local int g_orch_soft_boundary_depth = 0;
     // Issue #2515: track the Evaluator that owns the soft window so
@@ -2811,6 +2814,7 @@ extern "C" int aura_orch_agent_body_try_acquire() {
 }
 
 extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
+    g_orch_body_acq_deny = 0;
     // Issue #2543: once per agent-body enter — sample hot-update health and
     // record advisory throttle (never rejects the body; agents/orchestrators
     // observe orch-hot-update-health-throttle-total + last force_reason).
@@ -2867,7 +2871,23 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
                 }
                 if (success_flag)
                     *success_flag = false;
+                g_orch_body_acq_deny =
+                    static_cast<std::uint8_t>(aura::orch::AgentDenyClass::TryAcquire);
                 return nullptr;
+            }
+            // Issue #3251: schedule-gate class distinct from quota try-acquire.
+            // Soft: admit_security_schedule observes and allows (null).
+            {
+                const auto prod = aura::compiler::typed_audit::production_defaults_active();
+                const auto in = aura::orch::make_security_schedule_input_live(
+                    st->ev->effect_sandbox_mode(), prod, /*soft_mode=*/!prod);
+                if (aura::orch::admit_security_schedule(in)) {
+                    if (success_flag)
+                        *success_flag = false;
+                    g_orch_body_acq_deny =
+                        static_cast<std::uint8_t>(aura::orch::AgentDenyClass::ScheduleGate);
+                    return nullptr;
+                }
             }
             if (auto* m = static_cast<CompilerMetrics*>(st->ev->compiler_metrics()))
                 m->mutation_guard_try_acquire_total.fetch_add(1, std::memory_order_relaxed);
@@ -2907,6 +2927,9 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
         g_orch_agent_body_tx.emplace(soft_host, /*pending=*/1);
         if (g_orch_agent_body_tx->result() != aura::core::TransactionGuardResult::Acquired) {
             g_orch_agent_body_tx.reset();
+            if (g_orch_body_acq_deny ==
+                static_cast<std::uint8_t>(aura::orch::AgentDenyClass::ScheduleGate))
+                return 2;
             return 1;
         }
         return 0;
@@ -2933,6 +2956,11 @@ extern "C" int aura_orch_agent_body_try_acquire_ex(int register_soft_boundary) {
             m->quota_reject_typed_total.fetch_add(1, std::memory_order_relaxed);
         }
         g_orch_agent_body_tx.reset();
+        // Issue #3251: schedule-gate vs quota try-acquire (Guard already
+        // evaluated the live schedule; last_would_allow is 0 on deny).
+        if (aura::orch::g_orch_security_schedule_counters.last_would_allow.load(
+                std::memory_order_relaxed) == 0)
+            return 2;
         return 1; // typed reject — caller skips body, no panic
     }
     if (register_soft_boundary) {

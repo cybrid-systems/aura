@@ -151,6 +151,40 @@ inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
 // Throttle / optional RestartN) for BP-hot producers — complements
 // admit soft-reject of new attach_mailbox spawns (#2228/#2535).
 inline constexpr int kAgentBpDegradeIssue = 2887;
+// Issue #3251: unified deny-class on Aura spawn/join/send fail hashes.
+inline constexpr int kAgentDenyClassIssue = 3251;
+
+enum class AgentDenyClass : std::uint8_t {
+    None = 0,
+    Quota = 1,
+    BpAdmit = 2,
+    ScheduleGate = 3,
+    TryAcquire = 4,
+    Handoff = 5,
+    Closed = 6,
+    Other = 7,
+};
+
+[[nodiscard]] inline const char* agent_deny_class_name(AgentDenyClass c) noexcept {
+    switch (c) {
+        case AgentDenyClass::Quota:
+            return "quota";
+        case AgentDenyClass::BpAdmit:
+            return "bp-admit";
+        case AgentDenyClass::ScheduleGate:
+            return "schedule-gate";
+        case AgentDenyClass::TryAcquire:
+            return "try-acquire";
+        case AgentDenyClass::Handoff:
+            return "handoff";
+        case AgentDenyClass::Closed:
+            return "closed";
+        case AgentDenyClass::Other:
+            return "other";
+        default:
+            return nullptr;
+    }
+}
 // Issue #3250: RestartN fuel is AgentScope::spawn specs_ (copyable body).
 // Bare spawn_agent_with_mailbox / empty body: skip (observable) rather
 // than silent no-op; production degrades to Cancel.
@@ -1310,11 +1344,20 @@ struct AgentHandle {
     // Issue #3014: fiber stores true when try_acquire rejects (body
     // skipped). Shared so the write survives handle move / name-table
     // put. Success path never stores (no extra atomic on hot ok).
-    std::shared_ptr<std::atomic<bool>> body_acquire_rejected_slot;
+    std::shared_ptr<std::atomic<std::uint8_t>> body_acquire_rejected_slot;
     [[nodiscard]] bool body_acquire_rejected() const noexcept {
         return body_acquire_rejected_slot &&
-               body_acquire_rejected_slot->load(std::memory_order_acquire);
+               body_acquire_rejected_slot->load(std::memory_order_acquire) != 0;
     }
+    [[nodiscard]] AgentDenyClass body_deny_class() const noexcept {
+        if (!body_acquire_rejected_slot)
+            return AgentDenyClass::None;
+        return static_cast<AgentDenyClass>(
+            body_acquire_rejected_slot->load(std::memory_order_acquire));
+    }
+    // Issue #3251: spawn-time deny class (quota / bp-admit). Body
+    // try_acquire / schedule-gate use body_acquire_rejected_slot.
+    AgentDenyClass deny_class = AgentDenyClass::None;
     // Issue #3147: effective bp_scope_id at spawn admit (populated from
     // AgentSpec.bp_scope_id, which #3015 already auto-fills from the
     // AgentScope when production inherit is on). Empty / "-" continues
@@ -1358,7 +1401,8 @@ struct AgentHandle {
         , wait_reclaimed_timeout(o.wait_reclaimed_timeout)
         , must_wait_reclaimed(o.must_wait_reclaimed)
         , last_join_status(o.last_join_status)
-        , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot)) {
+        , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot))
+        , deny_class(o.deny_class) {
         // Issue #3245: hold-path signal when a still-pending handle is
         // stored (vector / another component). Soft: pending=false.
         note_reclaimed_pending_hold(o.must_wait_reclaimed);
@@ -1385,6 +1429,7 @@ struct AgentHandle {
         o.wait_reclaimed_timeout = false;
         o.must_wait_reclaimed = false;
         o.last_join_status = serve::JoinStatus::Invalid;
+        o.deny_class = AgentDenyClass::None;
     }
 
     AgentHandle& operator=(AgentHandle&& o) noexcept {
@@ -1423,6 +1468,7 @@ struct AgentHandle {
             must_wait_reclaimed = o.must_wait_reclaimed;
             last_join_status = o.last_join_status;
             body_acquire_rejected_slot = std::move(o.body_acquire_rejected_slot);
+            deny_class = o.deny_class;
             note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
@@ -1448,6 +1494,7 @@ struct AgentHandle {
             o.must_wait_reclaimed = false;
             o.last_join_status = serve::JoinStatus::Invalid;
             o.body_acquire_rejected_slot.reset();
+            o.deny_class = AgentDenyClass::None;
         }
         return *this;
     }
@@ -1619,6 +1666,22 @@ struct AgentSpec {
 // not restartable — skip (observable) rather than silent no-op.
 [[nodiscard]] inline bool agent_spec_restartable(const AgentSpec& s) noexcept {
     return static_cast<bool>(s.body);
+}
+
+// Issue #3251: unified deny-class from spawn stamps + body reject slot.
+[[nodiscard]] inline AgentDenyClass classify_agent_deny(const AgentHandle& h) noexcept {
+    const auto body = h.body_deny_class();
+    if (body != AgentDenyClass::None)
+        return body;
+    if (h.deny_class != AgentDenyClass::None)
+        return h.deny_class;
+    if (h.ok)
+        return AgentDenyClass::None;
+    if (h.quota_dimension == "mailbox-bp")
+        return AgentDenyClass::BpAdmit;
+    if (h.quota_exceeded)
+        return AgentDenyClass::Quota;
+    return AgentDenyClass::Other;
 }
 
 // Issue #2925: resolve effective producer BP budget (spec wins; env fallback).
@@ -1903,6 +1966,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // #1600: align preflight reject with Scheduler::spawn metric surface.
         pq.fiber_spawn_rejected_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
+        h.deny_class = AgentDenyClass::Quota;
         // Issue #2079: structured quota-reject fields (machine-readable per Agent spec).
         h.quota_dimension = "fibers";
         h.quota_used = ferr->used;
@@ -1921,6 +1985,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
+        h.deny_class = AgentDenyClass::Quota;
         // Issue #2079: structured quota-reject fields (machine-readable per Agent spec).
         h.quota_dimension = "memory";
         h.quota_used = merr->used;
@@ -1980,6 +2045,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                     1, std::memory_order_relaxed);
             }
             h.quota_exceeded = true;
+            h.deny_class = AgentDenyClass::BpAdmit;
             h.quota_dimension = "mailbox-bp";
             h.quota_used = bp_recent;
             h.quota_limit = thr_limit;
@@ -2052,7 +2118,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     const bool register_soft = spec.mutation_boundary;
     // Issue #3014: heap flag so the fiber can mark try_acquire reject
     // after this handle is moved into the name table / caller.
-    auto body_acq_rej = std::make_shared<std::atomic<bool>>(false);
+    auto body_acq_rej = std::make_shared<std::atomic<std::uint8_t>>(0);
     h.body_acquire_rejected_slot = body_acq_rej;
     serve::Fiber* f =
         sched.spawn([body = std::move(body), mb, attach, live, coop,
@@ -2100,10 +2166,13 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 // probe so COW / steal / GC cannot leave dangling refs for join.
                 orch_agent_body_exit_provenance();
             } else {
-                // Issue #3014: per-handle reject bit (join hash / C++ hosts).
-                // Success path does not store (no extra atomic on hot ok).
-                if (body_acq_rej)
-                    body_acq_rej->store(true, std::memory_order_release);
+                // Issue #3014 / #3251: per-handle reject class (join hash).
+                // acq==2 schedule-gate; else try-acquire. Success does not store.
+                if (body_acq_rej) {
+                    const auto cls =
+                        (acq == 2) ? AgentDenyClass::ScheduleGate : AgentDenyClass::TryAcquire;
+                    body_acq_rej->store(static_cast<std::uint8_t>(cls), std::memory_order_release);
+                }
                 g_orch_module_stats.agent_body_try_acquire_rejects_total.fetch_add(
                     1, std::memory_order_relaxed);
                 g_orch_module_stats.resource_quota_rejects_total.fetch_add(
@@ -2127,6 +2196,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);
         h.quota_exceeded = true;
+        h.deny_class = AgentDenyClass::Quota;
         // Issue #2079: structured quota-reject fields (Scheduler::spawn nullptr
         // mirrors the fiber preflight reject; we snapshot current quota state).
         h.quota_dimension = "fibers";
