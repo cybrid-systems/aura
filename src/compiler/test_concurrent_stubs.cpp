@@ -11,6 +11,7 @@
 // — never in target_sources(aura ...) — so no duplicate symbol.
 
 #include "compiler/aura_jit_bridge.h" // for the C-linkage declaration
+#include <cstddef>
 #include <cstdint>
 
 extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* /*ev_ptr*/) noexcept {
@@ -38,3 +39,22 @@ extern "C" __attribute__((weak)) void aura_clear_partial_relower_threshold_force
 extern "C" __attribute__((weak)) int aura_escape_move_gate_active() noexcept {
     return 0; // stub: no escape gate in the concurrent-fiber binary
 }
+
+// typed_mutation_audit.h inlines call these. Strong defs live in
+// ownership_rebind.cpp / typed_mutation_audit_hooks.cpp (full-module
+// binaries). test_concurrent does not compile those TUs — without
+// stubs asan-build / build-test / ubsan-smoke fail at link:
+//   linear_or_dirty_roots_count_for_rebind
+//   maybe_persist_typed_summary
+namespace aura::compiler {
+__attribute__((weak)) std::size_t linear_or_dirty_roots_count_for_rebind() noexcept {
+    return 0; // stub: no live rebind roots in the concurrent-fiber binary
+}
+} // namespace aura::compiler
+
+namespace aura::compiler::typed_audit {
+struct TypedMutationAuditEvent;
+__attribute__((weak)) void maybe_persist_typed_summary(const TypedMutationAuditEvent&) noexcept {
+    // stub: no mutation WAL persist (Soft / zero extra)
+}
+} // namespace aura::compiler::typed_audit
