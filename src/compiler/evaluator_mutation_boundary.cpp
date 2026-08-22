@@ -5015,6 +5015,17 @@ bool Evaluator::restore_hygiene_checkpoint(const HygieneCheckpoint& cp) noexcept
     // the OLD generation). Refuse rather than partially restoring.
     if (workspace_flat_->generation() != cp.saved_flat_generation) {
         bump_hygiene_checkpoint_restore_fail_total();
+        // Issue #3252: refuse still must not restore metadata onto a
+        // recycled generation (topology safety). Production additionally
+        // homology-repairs live MacroIntroduced columns via restamp +
+        // invariant check so steal×densify cannot leave orphan markers
+        // that bypass query/mutate/JIT gates. Soft / Off: metric-only
+        // refuse (zero extra).
+        if (typed_audit::production_defaults_active() || aura::core::sandbox::is_strict()) {
+            last_mutate_error_ = "hygiene-checkpoint-gen-drift";
+            (void)workspace_flat_->restamp_macro_introduced_generations();
+            (void)check_macro_hygiene_invariant_post_restore("hygiene-checkpoint-gen-drift");
+        }
         return false;
     }
     // AC1/AC2: restore only the metadata columns. Structural
@@ -5156,8 +5167,9 @@ std::uint64_t Evaluator::get_hygiene_checkpoint_cross_fiber_reject_total() const
 // always, hard_fail + stable reason under production (Restricted /
 // Strict), metric-only under Soft / Off. The helper is invoked
 // immediately after every successful abort_restore_dual_topology
-// (3 sites in this TU) and after restore_metadata_columns
-// (restore_hygiene_checkpoint body), so the marker / provenance /
+// (3 sites in this TU), after restore_metadata_columns
+// (restore_hygiene_checkpoint success), and after production
+// gen-drift refuse restamp (#3252), so the marker / provenance /
 // macro_dirty_ columns stay consistent with the restored children_ /
 // parent_ topology and the flat generation.
 std::size_t Evaluator::check_macro_hygiene_invariant_post_restore(const char* reason_tag) noexcept {

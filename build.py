@@ -3340,6 +3340,18 @@ def cmd_lint():
             "Issue #3251 agent deny-class linter failed — run python3 scripts/coverage/checks/check_agent_deny_class_3251.py"
         )
         return r
+    # Issue #3252: gen-drift refuse homology-repairs MacroIntroduced.
+    # Extends test_hygiene_checkpoint.cpp (#81967); no docs/design/ (#1655).
+    hgd_script = COVERAGE_CHECKS / "check_hygiene_checkpoint_gen_drift_3252.py"
+    if not hgd_script.exists():
+        fail(f"missing {hgd_script}")
+        return 1
+    r = run([sys.executable, str(hgd_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3252 hygiene gen-drift restamp linter failed — run python3 scripts/coverage/checks/check_hygiene_checkpoint_gen_drift_3252.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10568,6 +10580,21 @@ def cmd_linear_root_abort_release_3023_coverage():
         fail("linear_roots abort/reclaim (#3023) coverage contract rows failed")
         return 1
     ok("linear_roots abort/reclaim (#3023) coverage clean")
+    return 0
+
+
+def cmd_hygiene_checkpoint_gen_drift_3252_coverage():
+    """Issue #3252: gen-drift refuse restamps MacroIntroduced (production)."""
+    print(f"{B}=== hygiene checkpoint gen-drift restamp (#3252) ==={N}")
+    script = COVERAGE_CHECKS / "check_hygiene_checkpoint_gen_drift_3252.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hygiene checkpoint gen-drift (#3252) coverage contract rows failed")
+        return 1
+    ok("hygiene checkpoint gen-drift (#3252) coverage clean")
     return 0
 
 
@@ -18859,6 +18886,8 @@ def main():
         "restart-n-spec-boundary-3250-coverage": cmd_restart_n_spec_boundary_3250_coverage,
         "agent-deny-class-3251": cmd_agent_deny_class_3251_coverage,
         "agent-deny-class-3251-coverage": cmd_agent_deny_class_3251_coverage,
+        "hygiene-checkpoint-gen-drift-3252": cmd_hygiene_checkpoint_gen_drift_3252_coverage,
+        "hygiene-checkpoint-gen-drift-3252-coverage": cmd_hygiene_checkpoint_gen_drift_3252_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

@@ -85,11 +85,13 @@ int run_test_hygiene_diagnostic() {
         CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
 
         auto h = cs.eval("(query:hygiene-diagnostic 0)");
-        CHECK(h && is_error(*h), "3175: query:hygiene-diagnostic sunk");
+        // Dual-track: EvalValue error (false) or Result unexpected (merr).
+        // Light-linked batch observes merr for unregistered query: names.
+        CHECK(!h || is_error(*h), "3175: query:hygiene-diagnostic sunk");
         auto bad = cs.eval("(query:hygiene-diagnostic)");
-        CHECK(bad && is_error(*bad), "3175: hygiene-diagnostic unbound");
+        CHECK(!bad || is_error(*bad), "3175: hygiene-diagnostic unbound");
         auto bad2 = cs.eval("(query:hygiene-diagnostic -1)");
-        CHECK(bad2 && is_error(*bad2), "3175: hygiene-diagnostic unbound");
+        CHECK(!bad2 || is_error(*bad2), "3175: hygiene-diagnostic unbound");
     }
 
     // ── AC2: after restamp / gen-valid ──
@@ -106,7 +108,7 @@ int run_test_hygiene_diagnostic() {
         // Trigger more expansion / possible restamp via re-eval.
         (void)cs.eval("(eval-current)");
         auto h2 = cs.eval("(query:hygiene-diagnostic 0)");
-        CHECK(h2 && is_error(*h2), "3175: hygiene-diagnostic sunk after restamp");
+        CHECK(!h2 || is_error(*h2), "3175: hygiene-diagnostic sunk after restamp");
     }
 
     // ── AC4: macro-provenance-chain ──
@@ -121,9 +123,9 @@ int run_test_hygiene_diagnostic() {
               "set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "eval");
         auto ch = cs.eval("(query:macro-provenance-chain 0)");
-        CHECK(ch && is_error(*ch), "3175: query:macro-provenance-chain sunk");
+        CHECK(!ch || is_error(*ch), "3175: query:macro-provenance-chain sunk");
         auto bad = cs.eval("(query:macro-provenance-chain)");
-        CHECK(bad && is_error(*bad), "3175: macro-provenance-chain unbound");
+        CHECK(!bad || is_error(*bad), "3175: macro-provenance-chain unbound");
     }
 
     // ── AC5: wired into reflect / pattern hygiene stats ──

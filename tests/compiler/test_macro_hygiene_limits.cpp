@@ -48,9 +48,11 @@ using aura::compiler::Evaluator;
 using aura::compiler::macro_exp::clone_macro_body;
 using aura::compiler::macro_exp::effective_hygiene_depth_limit;
 using aura::compiler::macro_exp::effective_hygiene_pass_cap;
+using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
 using aura::compiler::macro_exp::g_macro_self_evo_depth_clamp_total;
 using aura::compiler::macro_exp::g_macro_self_evo_pass_clamp_total;
 using aura::compiler::macro_exp::hard_hygiene_depth_limit;
+using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
 using aura::compiler::macro_exp::macro_expand_all;
 using aura::compiler::macro_exp::MAX_HYGIENE_DEPTH;
 using aura::compiler::macro_exp::reset_hygiene_runtime_caps_for_test;
@@ -344,14 +346,15 @@ static void ac3029_depth_reason() {
     FlatAST tgt;
     StringPool tp;
     NameMap names;
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     auto cid = clone_macro_body(tgt, tp, flat, pool, flat.root, nullptr, &names,
                                 SyntaxMarker::MacroIntroduced);
     (void)cid;
-    const auto* rs = aura_macro_hygiene_last_limit_reason_string();
+    const auto* rs = hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-depth-limit",
           "3029: last reason hygiene-depth-limit");
-    CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 2, "3029: reason enum 2");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 2,
+          "3029: reason enum 2");
     reset_all();
 }
 
@@ -364,11 +367,11 @@ static void ac3029_ceiling_reason() {
     FlatAST tgt;
     StringPool tp;
     NameMap names;
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     auto cid = clone_macro_body(tgt, tp, flat, pool, flat.root, nullptr, &names,
                                 SyntaxMarker::MacroIntroduced);
     (void)cid;
-    const auto* rs = aura_macro_hygiene_last_limit_reason_string();
+    const auto* rs = hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-gensym-ceiling",
           "3029: last reason hygiene-gensym-ceiling");
     aura_test_set_max_gensym_map_size_for_test(0);
@@ -399,12 +402,13 @@ static void ac3029_pass_reason() {
     auto dcall = flat.add_variable(d);
     std::array<aura::ast::NodeId, 1> call_args{three};
     flat.root = flat.add_call(dcall, call_args);
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     (void)macro_expand_all(flat, pool, flat.root, 8);
-    const auto* rs = aura_macro_hygiene_last_limit_reason_string();
+    const auto* rs = hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-pass-limit",
           "3029: last reason hygiene-pass-limit");
-    CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3029: reason enum 3");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 3,
+          "3029: reason enum 3");
     reset_all();
 }
 
@@ -472,12 +476,13 @@ static void ac3062_no_boundary_refuse_partial() {
     fill_two_pass_macros(flat, pool);
     const auto orig = flat.root;
     const auto fp0 = tree_fp(flat, orig);
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     auto out = macro_expand_all(flat, pool, orig, 8);
-    const auto* rs = aura_macro_hygiene_last_limit_reason_string();
+    const auto* rs = hygiene_last_limit_reason_string();
     CHECK(rs != nullptr && std::string(rs) == "hygiene-pass-limit",
           "3062 AC1 last reason hygiene-pass-limit");
-    CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3062 AC1 reason enum 3");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 3,
+          "3062 AC1 reason enum 3");
     CHECK(out == orig, "3062 AC1 no-boundary returns original_root");
     CHECK(tree_fp(flat, out) == fp0, "3062 AC1 tree identical to pre-expand");
     reset_all();
@@ -496,14 +501,15 @@ static void ac3062_boundary_restore() {
     fill_two_pass_macros(flat, pool);
     const auto orig = flat.root;
     const auto fp0 = tree_fp(flat, orig);
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     bool ok = true;
     {
         auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, /*pending=*/1, &ok);
         CHECK(gr.has_value(), "3062 AC2 Guard acquired");
         auto out = macro_expand_all(flat, pool, orig, 8);
         CHECK(out == orig, "3062 AC2 boundary returns original_root");
-        CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3062 AC2 reason 3");
+        CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 3,
+              "3062 AC2 reason 3");
         CHECK(tree_fp(flat, out) == fp0, "3062 AC2 tree identical after restore");
     }
     reset_all();
@@ -517,9 +523,10 @@ static void ac3062_soft_off_half_expand() {
     FlatAST flat;
     fill_two_pass_macros(flat, pool);
     const auto orig = flat.root;
-    aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
     auto out = macro_expand_all(flat, pool, orig, 8);
-    CHECK(aura_macro_hygiene_last_limit_reason_v_read() == 3, "3062 AC3 reason 3");
+    CHECK(g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) == 3,
+          "3062 AC3 reason 3");
     CHECK(out != orig, "3062 AC3 Soft/Off still half-expands");
     reset_all();
 }

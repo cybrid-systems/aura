@@ -941,7 +941,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
 
-            auto* ht = FlatHashTable::create(64); // #2099 + #3095 (~21 keys)
+            auto* ht = FlatHashTable::create(64); // #2099 + #3095 + #3252 (~25 keys)
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -1021,6 +1021,13 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema", 3095);
             insert_kv("issue", 3095);
             insert_kv("lineage-3095", 3095);
+            // Issue #3252: gen-drift refuse homology repair stamp.
+            // Additive on this query (no new query:*). restore_fail_total
+            // remains the refuse counter; restamp reuses #2019.
+            insert_kv("schema-3252", 3252);
+            insert_kv("issue-3252", 3252);
+            insert_kv("lineage-3252", 3252);
+            insert_kv("hygiene-checkpoint-gen-drift-wired", 1);
             insert_kv("active", 1);
             insert_kv("lineage-1893", 1893);
             insert_kv("nested-under-mutation-boundary", 1);

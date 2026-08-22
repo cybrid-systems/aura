@@ -13709,6 +13709,9 @@ public:
     // Returns false on: handle == 0, handle not found, already
     // restored, cross-fiber mismatch, or generation drift
     // (workspace compacted / recycled since save).
+    // Issue #3252: production gen-drift refuse restamps live
+    // MacroIntroduced + runs the post-restore invariant (topology
+    // restore still refused). Soft / Off: metric-only refuse.
     bool restore_hygiene_checkpoint_handle(std::uint64_t handle) noexcept;
     // Test / observability accessors.
     [[nodiscard]] std::size_t hygiene_checkpoint_pending_count() const noexcept;
