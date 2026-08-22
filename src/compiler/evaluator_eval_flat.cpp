@@ -77,6 +77,7 @@ using types::as_closure_id;
 using types::as_float;
 using types::as_hash_idx;
 using types::as_int;
+using types::as_keyword_idx;
 using types::as_pair_idx;
 using types::as_primitive_slot;
 using types::as_string_idx;
@@ -89,6 +90,7 @@ using types::is_error;
 using types::is_float;
 using types::is_hash;
 using types::is_int;
+using types::is_keyword;
 using types::is_pair;
 using types::is_primitive;
 using types::is_string;
@@ -2027,6 +2029,34 @@ static bool coerce_value(types::EvalValue& val, aura::core::TypeTag from, aura::
 
 // ── Phase 4: FlatAST tree-walker evaluator (EvalValue) ───────
 
+// Issue #373 / #3213: shared `:allow-macro? #t` parse for lockless
+// eval_flat_apply_mutate_* and (via thin wrap) public mutate prims.
+// Keyword-table scan is ~10-30 entries; callers short-circuit with
+// `is_macro_introduced && !(get_allow_macro_mutate() || parse…)` so
+// Soft/Off / non-macro / already-allowed paths never scan.
+bool Evaluator::parse_allow_macro_opt_out(std::span<const types::EvalValue> args) const {
+    const auto& kt = keyword_table_;
+    std::size_t target_idx = std::string::npos;
+    for (std::size_t i = 0; i < kt.size(); ++i) {
+        if (kt[i] == ":allow-macro?") {
+            target_idx = i;
+            break;
+        }
+    }
+    if (target_idx == std::string::npos)
+        return false;
+    for (std::size_t i = 0; i + 1 < args.size(); ++i) {
+        if (!is_keyword(args[i]))
+            continue;
+        if (as_keyword_idx(args[i]) != target_idx)
+            continue;
+        if (is_bool(args[i + 1]))
+            return as_bool(args[i + 1]);
+        return false;
+    }
+    return false;
+}
+
 // Issue #236: helper implementations for mutate:atomic-batch.
 // The existing atomic-batch (line ~9071) called the sub-primitive
 // via primitives_.lookup which re-enters MutationBoundaryGuard
@@ -2128,9 +2158,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_value(std::span<const types
     if (node >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :replace-value: node out of range"});
-    // Issue #3115: batch has no :allow-macro? kwargs — honor the global
-    // allow-macro-mutate flag only. Default still rejects MacroIntroduced.
-    if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
+    // Issue #3115 / Issue #3213: dual-track :allow-macro? (parity with
+    // public mutate:replace-value). Global flag is not required when
+    // the kwarg is present. Soft/Off: no parse unless MacroIntroduced
+    // and global is false.
+    if (flat.is_macro_introduced(node) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -2212,9 +2245,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_tweak_literal(std::span<const types
     if (node >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :tweak-literal: node out of range"});
-    // Issue #3191: macro hygiene default-deny on lockless tweak-literal
-    // (post-#3131 scalar residual). Sibling #2249 remove-node pattern.
-    if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
+    // Issue #3191 / Issue #3213: dual-track :allow-macro? on lockless
+    // tweak-literal (post-#3131 scalar residual). Sibling #2249
+    // remove-node pattern. Soft/Off: no parse unless MacroIntroduced
+    // and global is false.
+    if (flat.is_macro_introduced(node) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
@@ -2266,8 +2302,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_remove_node(std::span<const types::
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :remove-node: node ID " + std::to_string(target) +
                                        " >= flat size " + std::to_string(flat.size())});
-    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced.
-    if (flat.is_macro_introduced(target)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? (parity with
+    // public mutate:remove-node). Soft/Off: no parse unless MacroIntroduced
+    // and global is false.
+    if (flat.is_macro_introduced(target) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -2313,8 +2352,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_insert_child(std::span<const types:
         !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :insert-child: parent out of range"});
-    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced spine.
-    if (flat.is_macro_introduced(parent)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
+    // spine (parity with public mutate:insert-child). Soft/Off: no parse
+    // unless MacroIntroduced and global is false.
+    if (flat.is_macro_introduced(parent) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError,
@@ -2396,8 +2438,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :set-body: function \"" + name + "\" not found"});
-    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced define/lambda.
-    if (flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
+    // define/lambda (parity with public mutate:set-body). Soft/Off: no parse
+    // unless MacroIntroduced and global is false.
+    if ((flat.is_macro_introduced(target) || flat.is_macro_introduced(lambda_id)) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -2428,7 +2473,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_set_body(std::span<const types::Eva
             if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
                 hit = id;
         });
-        if (hit != aura::ast::NULL_NODE) {
+        if (hit != aura::ast::NULL_NODE &&
+            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             if (size_before_parse < flat.size())
                 (void)flat.free_orphan_nodes_from(
                     static_cast<aura::ast::NodeId>(size_before_parse));
@@ -2573,10 +2619,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
         if (flat.root != aura::ast::NULL_NODE && id != flat.root &&
             flat.parent_of(id) == aura::ast::NULL_NODE && !flat.is_macro_introduced(id))
             continue;
-        // Issue #2961: default skip MacroIntroduced (parity with public
-        // matcher :include-macro-introduced #f). Batch has no :allow-macro?
-        // so never mutate macro sites on the lockless path.
-        if (flat.is_macro_introduced(id)) {
+        // Issue #2961 / Issue #3213: default skip MacroIntroduced (parity
+        // with public matcher :include-macro-introduced #f). :allow-macro?
+        // #t or global allow includes macro sites. Soft/Off: keyword parse
+        // only when the node is MacroIntroduced and global is false.
+        if (flat.is_macro_introduced(id) &&
+            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             if (match_sub(id, pat_pr.root)) {
                 flat.note_replace_pattern_hygiene_reject();
                 note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
@@ -2736,9 +2784,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
     if (target == aura::ast::NULL_NODE || target >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :replace-subtree: node-id out of range"});
-    // Issue #3061: batch has no :allow-macro? kwargs — honor the global
-    // allow-macro-mutate flag only. Default still rejects MacroIntroduced.
-    if (flat.is_macro_introduced(target) && !get_allow_macro_mutate()) {
+    // Issue #3061 / Issue #3213: dual-track :allow-macro? (parity with
+    // public mutate:replace-subtree). Global flag is not required when
+    // the kwarg is present. Soft/Off: no parse unless MacroIntroduced
+    // and global is false.
+    if (flat.is_macro_introduced(target) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -2783,7 +2834,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_subtree(std::span<const typ
             if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
                 hit = id;
         });
-        if (hit != aura::ast::NULL_NODE) {
+        if (hit != aura::ast::NULL_NODE &&
+            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             if (size_before_parse < flat.size())
                 (void)flat.free_orphan_nodes_from(
                     static_cast<aura::ast::NodeId>(size_before_parse));
@@ -2853,8 +2905,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_splice(std::span<const types::EvalV
     if (parent == aura::ast::NULL_NODE || parent >= flat.size() || !flat.is_live_node(parent))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :splice: parent out of range"});
-    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced spine.
-    if (flat.is_macro_introduced(parent)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? on MacroIntroduced
+    // spine (parity with public mutate:splice). Soft/Off: no parse unless
+    // MacroIntroduced and global is false.
+    if (flat.is_macro_introduced(parent) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -2932,8 +2987,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
     if (node == aura::ast::NULL_NODE || node >= flat.size() || !flat.is_live_node(node))
         return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                                       "batch :wrap: node out of range"});
-    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced target.
-    if (flat.is_macro_introduced(node)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? (parity with
+    // public mutate:wrap). Soft/Off: no parse unless MacroIntroduced
+    // and global is false.
+    if (flat.is_macro_introduced(node) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -3038,8 +3096,9 @@ EvalResult Evaluator::eval_flat_apply_mutate_wrap(std::span<const types::EvalVal
 }
 
 // Issue #1900: lockless variant of (mutate:rename-symbol).
-// Issue #2961: MacroIntroduced / MacroDef sites default-reject (no
-// :allow-macro? on batch path); mark_dirty_upward + restamp after success.
+// Issue #2961 / Issue #3213: MacroIntroduced / MacroDef sites default-reject;
+// :allow-macro? #t or global allow unlocks. mark_dirty_upward + restamp
+// after success.
 EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types::EvalValue> a) {
     if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]) || !workspace_flat_ ||
         !workspace_pool_)
@@ -3060,8 +3119,9 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
     std::string summary = (a.size() > 2 && is_string(a[2]))
                               ? string_heap_[as_string_idx(a[2])]
                               : "rename " + old_name + " -> " + new_name;
-    // Issue #2961: batch path has no :allow-macro? — reject if any
-    // MacroIntroduced / MacroDef would be renamed.
+    // Issue #2961 / Issue #3213: reject if any MacroIntroduced / MacroDef
+    // would be renamed unless :allow-macro? #t or global allow. Soft/Off:
+    // keyword parse only on a hygiene hit (C++ `||` skips when global).
     for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
         if (!flat.is_live_node(id))
             continue;
@@ -3077,7 +3137,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_rename_symbol(std::span<const types
         }
         if (!hit)
             continue;
-        if (flat.is_macro_introduced(id) || flat.tag(id) == aura::ast::NodeTag::MacroDef) {
+        if ((flat.is_macro_introduced(id) || flat.tag(id) == aura::ast::NodeTag::MacroDef) &&
+            !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             flat.note_rename_symbol_hygiene_reject();
             record_hygiene_violation_attempt();
             note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
@@ -3138,9 +3199,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_move_node(std::span<const types::Ev
         new_parent == aura::ast::NULL_NODE)
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :move-node: node or parent out of range"});
-    // Issue #2801 / Issue #3061: hygiene gate before cycle / detach.
-    // Batch has no :allow-macro? kwargs — honor the global flag only.
-    if (flat.is_macro_introduced(node) && !get_allow_macro_mutate()) {
+    // Issue #2801 / Issue #3061 / Issue #3213: dual-track :allow-macro?
+    // before cycle / detach (parity with public mutate:move-node).
+    // Soft/Off: no parse unless MacroIntroduced and global is false.
+    if (flat.is_macro_introduced(node) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         flat.note_move_node_hygiene_reject();
         record_hygiene_violation_attempt();
         note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
@@ -3213,8 +3276,11 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
     if (call_id >= flat.size())
         return std::unexpected(aura::diag::Diagnostic{
             aura::diag::ErrorKind::InternalError, "batch :inline-call: call node out of range"});
-    // Issue #3027: batch has no :allow-macro? — reject MacroIntroduced call.
-    if (flat.is_macro_introduced(call_id)) {
+    // Issue #3027 / Issue #3213: dual-track :allow-macro? (parity with
+    // public mutate:inline-call). Soft/Off: no parse unless MacroIntroduced
+    // and global is false.
+    if (flat.is_macro_introduced(call_id) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
@@ -3267,7 +3333,8 @@ EvalResult Evaluator::eval_flat_apply_mutate_inline_call(std::span<const types::
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
                                    "batch :inline-call: target function form not supported"});
     }
-    if (func_body_node != aura::ast::NULL_NODE && flat.is_macro_introduced(func_body_node)) {
+    if (func_body_node != aura::ast::NULL_NODE && flat.is_macro_introduced(func_body_node) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
         record_hygiene_violation_attempt();
         return std::unexpected(
             aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,

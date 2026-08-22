@@ -1955,6 +1955,177 @@ static void ac3191_6_source_and_linter() {
           "3191 AC6: no tests/compiler/test_issue_3191");
 }
 
+// ── Issue #3213: lockless atomic-batch dual-track :allow-macro? ──
+// Public prims honor get_allow_macro_mutate() || parse_allow_macro_opt_out.
+// Lockless eval_flat_apply_mutate_* now share the same parse. Agent can
+// surgically opt-in a single op inside mutate:atomic-batch without flipping
+// the Evaluator-global flag. Default-deny unchanged. Soft/Off: no extra
+// parse when the node is not MacroIntroduced / allow already true.
+// Tests: extend this suite; no tests/issues/test_issue_3213.cpp per #81967;
+// no docs/design/3213-* per #1655.
+
+static aura::ast::NodeId nth_lit_int(aura::ast::FlatAST* ws, std::size_t n) {
+    if (!ws)
+        return aura::ast::NULL_NODE;
+    std::size_t seen = 0;
+    for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt) {
+            if (seen == n)
+                return id;
+            ++seen;
+        }
+    }
+    return aura::ast::NULL_NODE;
+}
+
+static std::string eval_flat_fn_win(const std::string& src, const char* name) {
+    const auto key = std::string("eval_flat_apply_mutate_") + name;
+    auto pos = src.find(key);
+    if (pos == std::string::npos)
+        return {};
+    auto nxt = src.find("EvalResult Evaluator::eval_flat_apply_mutate_", pos + key.size());
+    auto end = (nxt == std::string::npos) ? pos + 8000 : nxt;
+    return src.substr(pos, end - pos);
+}
+
+static void ac3213_1_source_all_gates_parse() {
+    std::println("\n--- 3213 AC1: every lockless MacroIntroduced gate parses :allow-macro? ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto hdr = read_file("src/compiler/evaluator.ixx");
+    CHECK(flat.find("Issue #3213") != std::string::npos, "3213 AC1: eval_flat cites #3213");
+    CHECK(hdr.find("parse_allow_macro_opt_out") != std::string::npos,
+          "3213 AC1: Evaluator member declared");
+    CHECK(mut.find("Issue #3213") != std::string::npos, "3213 AC1: mutate thin-wrap cites #3213");
+    CHECK(mut.find("return ev.parse_allow_macro_opt_out(args)") != std::string::npos,
+          "3213 AC1: public prims thin-wrap Evaluator member");
+    const char* gated[] = {"replace_value", "tweak_literal",   "remove_node",     "insert_child",
+                           "set_body",      "replace_pattern", "replace_subtree", "splice",
+                           "wrap",          "rename_symbol",   "move_node",       "inline_call"};
+    for (auto name : gated) {
+        auto win = eval_flat_fn_win(flat, name);
+        CHECK(!win.empty(), std::string("3213 AC1: found eval_flat_apply_mutate_") + name);
+        CHECK(win.find("parse_allow_macro_opt_out") != std::string::npos,
+              std::string("3213 AC1: ") + name + " parses :allow-macro?");
+        CHECK(win.find("get_allow_macro_mutate()") != std::string::npos,
+              std::string("3213 AC1: ") + name + " still honors global flag");
+    }
+}
+
+static void ac3213_2_per_op_opt_in_no_global() {
+    std::println("\n--- 3213 AC2: :allow-macro? #t in batch op args, global not required ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10) (define b 20)\")").has_value(), "3213 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3213 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3213 AC2: workspace");
+    auto a = nth_lit_int(ws, 0);
+    auto b = nth_lit_int(ws, 1);
+    CHECK(a != aura::ast::NULL_NODE && b != aura::ast::NULL_NODE && a != b, "3213 AC2: two lits");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3213 AC2: stamp a");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", b)).has_value(), "3213 AC2: stamp b");
+    CHECK(ws->is_macro_introduced(a) && ws->is_macro_introduced(b), "3213 AC2: both marked");
+    CHECK(!cs.evaluator().get_allow_macro_mutate(), "3213 AC2: global still false");
+    const auto old_b = ws->get(b).int_value;
+    auto r = cs.eval(
+        std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 42 \"3213-opt\" "
+                    ":allow-macro? #t)) \"3213-opt\")",
+                    a));
+    CHECK(r.has_value(), "3213 AC2: batch returns");
+    CHECK(ws->get(a).int_value == 42, "3213 AC2: opted-in MacroIntroduced node committed");
+    CHECK(ws->get(b).int_value == old_b, "3213 AC2: sibling without opt-in unchanged");
+    CHECK(!cs.evaluator().get_allow_macro_mutate(), "3213 AC2: global still false after opt-in");
+}
+
+static void ac3213_3_default_deny() {
+    std::println("\n--- 3213 AC3: default (no keyword, global=false) still rejects ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10) (define b 20)\")").has_value(), "3213 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3213 AC3: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3213 AC3: workspace");
+    auto a = nth_lit_int(ws, 0);
+    CHECK(a != aura::ast::NULL_NODE, "3213 AC3: LiteralInt");
+    const auto old_a = ws->get(a).int_value;
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3213 AC3: stamp");
+    CHECK(!cs.evaluator().get_allow_macro_mutate(), "3213 AC3: global false");
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3213-deny\")) "
+        "\"3213-deny\")",
+        a));
+    CHECK(r.has_value(), "3213 AC3: batch returns");
+    CHECK(ws->get(a).int_value == old_a, "3213 AC3: value unchanged after default-deny");
+    CHECK(cs.evaluator().get_hygiene_violation_attempts() >= 1,
+          "3213 AC3: hygiene violation counter bumped");
+}
+
+static void ac3213_4_surgical_sibling_denied() {
+    std::println("\n--- 3213 AC4: opt-in one MacroIntroduced op, sibling in same batch denied ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10) (define b 20)\")").has_value(), "3213 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3213 AC4: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3213 AC4: workspace");
+    auto a = nth_lit_int(ws, 0);
+    auto b = nth_lit_int(ws, 1);
+    CHECK(a != aura::ast::NULL_NODE && b != aura::ast::NULL_NODE && a != b, "3213 AC4: two lits");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3213 AC4: stamp a");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", b)).has_value(), "3213 AC4: stamp b");
+    const auto old_a = ws->get(a).int_value;
+    const auto old_b = ws->get(b).int_value;
+    CHECK(!cs.evaluator().get_allow_macro_mutate(), "3213 AC4: global false");
+    // Two-op batch: first op opts in, second does not. Atomic-batch rolls
+    // back the opted-in write so both values stay at pre-batch. Proves
+    // per-op parse (not batch-wide) + default-deny on the sibling.
+    auto r =
+        cs.eval(std::format("(mutate:atomic-batch (list "
+                            "(list \"mutate:replace-value\" {} 42 \"3213-opt\" :allow-macro? #t) "
+                            "(list \"mutate:replace-value\" {} 99 \"3213-deny\")) \"3213-mixed\")",
+                            a, b));
+    CHECK(r.has_value(), "3213 AC4: batch returns");
+    CHECK(ws->get(a).int_value == old_a, "3213 AC4: opted-in write rolled back with sibling deny");
+    CHECK(ws->get(b).int_value == old_b, "3213 AC4: denied sibling unchanged");
+}
+
+static void ac3213_5_soft_non_macro_zero_extra() {
+    std::println("\n--- 3213 AC5: Soft/Off non-macro zero extra parse ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "3213 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3213 AC5: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3213 AC5: workspace");
+    auto a = nth_lit_int(ws, 0);
+    CHECK(a != aura::ast::NULL_NODE, "3213 AC5: LiteralInt");
+    CHECK(!ws->is_macro_introduced(a), "3213 AC5: not MacroIntroduced");
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 7 \"3213-soft\")) "
+        "\"3213-soft\")",
+        a));
+    CHECK(r.has_value(), "3213 AC5: batch returns");
+    CHECK(ws->get(a).int_value == 7, "3213 AC5: non-macro replace-value commits");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("is_macro_introduced(node) &&") != std::string::npos,
+          "3213 AC5: short-circuit is_macro_introduced before parse");
+    CHECK(flat.find("get_allow_macro_mutate() || parse_allow_macro_opt_out(a)") !=
+              std::string::npos,
+          "3213 AC5: C++ || skips parse when global already true");
+}
+
+static void ac3213_6_linter_no_docs() {
+    std::println("\n--- 3213 AC6: linter + no docs/design / no invent test ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_atomic_batch_allow_macro_3213.py");
+    CHECK(!lint.empty() && lint.find("Issue #3213") != std::string::npos, "3213 AC6: linter");
+    CHECK(build.find("check_atomic_batch_allow_macro_3213") != std::string::npos,
+          "3213 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3213-atomic-batch-allow-macro.md").empty(),
+          "3213 AC6: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3213.cpp").empty(),
+          "3213 AC6: no tests/issues/test_issue_3213");
+    CHECK(read_file("tests/compiler/test_issue_3213.cpp").empty(),
+          "3213 AC6: no tests/compiler/test_issue_3213");
+}
+
 // ── Issue #3218: SV prims dual-track bool false → merr("hygiene") ──
 // After #3191 closed MacroIntroduced default-deny on sv-add-coverpoint /
 // sv-weaken-property, the reject still returned make_bool(false) while
@@ -3026,6 +3197,13 @@ int main() {
     ac3191_4_soft_non_macro_zero_cost();
     ac3191_5_existing_surfaces_preserved();
     ac3191_6_source_and_linter();
+    std::println("\n=== Issue #3213: lockless atomic-batch dual-track :allow-macro? ===");
+    ac3213_1_source_all_gates_parse();
+    ac3213_2_per_op_opt_in_no_global();
+    ac3213_3_default_deny();
+    ac3213_4_surgical_sibling_denied();
+    ac3213_5_soft_non_macro_zero_extra();
+    ac3213_6_linter_no_docs();
     std::println(
         "\n=== Issue #3192: force all structural mutate through mutate_dispatch_try_acquire ===");
     ac3192_1_set_body_uses_ssol_acquire();

@@ -2061,6 +2061,22 @@ def cmd_lint():
             "Issue #3191 macro hygiene default-deny linter failed — run python3 scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py"
         )
         return r
+    # Issue #3213: lockless atomic-batch dual-track :allow-macro? (parity
+    # with public mutate prims). Every eval_flat_apply_mutate_* MacroIntroduced
+    # gate honors get_allow_macro_mutate() || parse_allow_macro_opt_out.
+    # Default-deny unchanged. Soft/Off: no extra parse unless MacroIntroduced
+    # and global is false. Extends test_hygiene_mutate_closed_loop; no
+    # docs/design / invent.
+    aba3213_script = COVERAGE_CHECKS / "check_atomic_batch_allow_macro_3213.py"
+    if not aba3213_script.exists():
+        fail(f"missing {aba3213_script}")
+        return 1
+    r = run([sys.executable, str(aba3213_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3213 atomic-batch :allow-macro? linter failed — run python3 scripts/coverage/checks/check_atomic_batch_allow_macro_3213.py"
+        )
+        return r
     # Issue #3218: SV prims hygiene deny is merr("hygiene") not bool false.
     # Reuses reject_structural_macro_hygiene; get_allow_macro_mutate() still
     # unlocks. Soft/Off: helper short-circuits on non-macro. Extends
