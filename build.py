@@ -5162,6 +5162,20 @@ def cmd_lint():
             "Issue #2886 parallel_intend region-concurrent linter failed — run python3 scripts/coverage/checks/check_parallel_intend_region_concurrent_2886.py"
         )
         return r
+    # Issue #3243: production missing/overlap region_keys stay Serialized
+    # with an observable missing-keys signal (no false concurrent).
+    # Extends test_parallel_intend_pure_contract.cpp (#81967); no
+    # docs/design/ (#1655).
+    prk3243_script = COVERAGE_CHECKS / "check_parallel_region_key_missing_3243.py"
+    if not prk3243_script.exists():
+        fail(f"missing {prk3243_script}")
+        return 1
+    r = run([sys.executable, str(prk3243_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3243 parallel region-key-missing linter failed — run python3 scripts/coverage/checks/check_parallel_region_key_missing_3243.py"
+        )
+        return r
     # Issue #2887: mailbox BP storm — producer degrade hook on
     # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
     # default ReportOnly). Complements admit soft-reject of new spawns

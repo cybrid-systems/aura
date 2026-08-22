@@ -2749,6 +2749,53 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     1, std::memory_order_relaxed);
             }
         }
+        // Issue #2400 / #2886 / #2923 / #3243: isolation SSOT before admit
+        // so production missing-keys can observe / optionally deny without
+        // a second ternary. Soft: production_defaults_active() is false.
+        const auto iso_decision =
+            aura::serve::parallel_orch::decide_isolation(policy, tasks, pure_mode);
+        const bool prod = aura::compiler::typed_audit::production_defaults_active();
+        const bool region_key_missing = aura::serve::parallel_orch::region_key_missing_serialized(
+            iso_decision, pure_mode, tasks.size(), prod);
+        if (region_key_missing) {
+            aura::serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
+                .fetch_add(1, std::memory_order_relaxed);
+            if (aura::serve::parallel_orch::parallel_require_region_keys_env()) {
+                aura::serve::parallel_orch::g_parallel_orch_stats.invalid_batches.fetch_add(
+                    1, std::memory_order_relaxed);
+                auto iso_sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("serialized");
+                auto reason_sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(
+                    aura::serve::parallel_orch::kSerializedReasonMissingOrOverlapKeys);
+                auto st_sidx = ev.string_heap_.size();
+                ev.string_heap_.push_back("invalid");
+                auto rvidx = ev.vector_heap_.size();
+                ev.vector_heap_.push_back({});
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"status", make_string(st_sidx)},
+                    {"ok-count", make_int(0)},
+                    {"err-count", make_int(0)},
+                    {"aborted-count", make_int(0)},
+                    {"wait-us", make_int(0)},
+                    {"results", make_vector(rvidx)},
+                    {"eval-serialized", make_bool(true)},
+                    {"pure", make_bool(false)},
+                    {"isolation-level", make_string(iso_sidx)},
+                    {"isolation-level-wired", make_int(1)},
+                    {"region-concurrent-eligible", make_bool(false)},
+                    {"region-key-missing-serialized", make_int(1)},
+                    {"serialized-reason", make_string(reason_sidx)},
+                    {"schema", make_int(1587)},
+                    {"schema-3243",
+                     make_int(aura::serve::parallel_orch::kParallelRegionKeyMissingIssue)},
+                    {"issue-3243",
+                     make_int(aura::serve::parallel_orch::kParallelRegionKeyMissingIssue)},
+                };
+                return build_hash(kv);
+            }
+        }
+
         const int workers = static_cast<int>(
             std::min<std::uint32_t>(std::max<std::uint32_t>(policy.max_concurrency, 1), 8));
         aura::serve::Scheduler sched(workers);
@@ -2842,19 +2889,22 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
 
         // Issue #2400 / #2886 / #2923: isolation-level for Agent control planes.
         // Sole authority: aura::serve::parallel_orch::decide_isolation (pure).
+        // Decision computed before admit (#3243 missing-keys observe/deny).
         // Do NOT re-derive the pure_mode / region-key ternary here.
         // Do NOT advertise pure as transactional isolation (AC4 #2400 / #2230).
         //   Serialized       — default :pure #f, zero/overlap/single keys
         //   BestEffortPure   — pure_mode (never "transactional"; #2230)
         //   RegionConcurrent — ≥2 distinct non-zero region_keys, !pure
         // C++ TaskSpec-only IsolationLevel::None is not advertised here.
-        const auto iso_decision =
-            aura::serve::parallel_orch::decide_isolation(policy, tasks, pure_mode);
         const bool region_concurrent_eligible = iso_decision.region_concurrent_eligible;
         const char* isolation_level =
             aura::serve::parallel_orch::isolation_level_cstr(iso_decision.level);
         const auto iso_sidx = ev.string_heap_.size();
         ev.string_heap_.push_back(isolation_level);
+        const auto reason_sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(
+            region_key_missing ? aura::serve::parallel_orch::kSerializedReasonMissingOrOverlapKeys
+                               : "");
 
         // Issue #2743: surface underlying Fiber join status (incl. reclaimed)
         // on the batch hash so residual-reclaimed is not collapsed into timeout.
@@ -2922,6 +2972,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                      .load(std::memory_order_relaxed)))},
             // Issue #2923: same IsolationDecision as isolation-level (no 2nd count).
             {"region-concurrent-eligible", make_bool(region_concurrent_eligible)},
+            // Issue #3243: production missing/overlap keys stay Serialized
+            // (no false concurrent) but host can see why. Soft / single /
+            // pure: region-key-missing-serialized=0, serialized-reason="".
+            {"region-key-missing-serialized", make_int(region_key_missing ? 1 : 0)},
+            {"serialized-reason", make_string(reason_sidx)},
+            {"schema-3243", make_int(aura::serve::parallel_orch::kParallelRegionKeyMissingIssue)},
+            {"issue-3243", make_int(aura::serve::parallel_orch::kParallelRegionKeyMissingIssue)},
             {"schema", make_int(1587)},
             {"schema-2007", make_int(2007)},
             {"schema-2081", make_int(2081)},
@@ -5173,6 +5230,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                               .region_keys_supplied_total.load(std::memory_order_relaxed)));
             insert_kv("schema-2746", 2746);
             insert_kv("issue-2746", 2746);
+            // Issue #3243: production missing-keys Serialized observe.
+            insert_kv("parallel-region-key-missing-serialized-total",
+                      static_cast<std::int64_t>(aura::serve::parallel_orch::g_parallel_orch_stats
+                                                    .region_key_missing_serialized_total.load(
+                                                        std::memory_order_relaxed)));
+            insert_kv("schema-3243", aura::serve::parallel_orch::kParallelRegionKeyMissingIssue);
+            insert_kv("issue-3243", aura::serve::parallel_orch::kParallelRegionKeyMissingIssue);
             // Issue #2589: unify parallel_intend residual/reclaim into the
             // orch-module-stats facade so agents/dashboards query one
             // surface for cancel-storm health. Source of truth stays
