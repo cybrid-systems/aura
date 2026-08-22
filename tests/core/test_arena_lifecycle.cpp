@@ -324,9 +324,11 @@ static void ac3_tl_arena_doubling() {
         CHECK(p != nullptr, "alloc before push");
         size_t off = a.offset;
         tl_arena_push(&a);
-        CHECK(a.offset > off, "push advanced offset");
+        void* q = tl_arena_alloc(&a, 32, 8);
+        CHECK(q != nullptr, "3265: intervening alloc");
+        CHECK(a.offset > off, "alloc after push advanced offset");
         tl_arena_pop(&a);
-        CHECK(a.offset == off, "pop restored offset");
+        CHECK(a.offset == off, "3265: pop restored despite intervening alloc");
         tl_arena_destroy(&a);
     }
 }

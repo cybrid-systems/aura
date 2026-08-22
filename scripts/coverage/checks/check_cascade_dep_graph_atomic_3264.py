@@ -15,6 +15,9 @@ Contract:
   AC5  extend existing suites; linter after #3263; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3265: JIT fn marker/provenance arrays atomic + arena mark stack.
+
 """
 
 from __future__ import annotations

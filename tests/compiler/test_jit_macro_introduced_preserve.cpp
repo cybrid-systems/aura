@@ -14,15 +14,25 @@
 //   AC8: #2176 selective unstamp for MacroIntroduced subtrees
 //        (Agent experimental rollback path)
 //        native keys still readable
+//
+//   #3265 AC1: marker/provenance arrays are atomic
+//   #3265 AC2: stamp CAS + acquire-load; concurrent stamp
+//   #3265 AC3: tl_arena_alloc reuses aligned (no aligned2)
+//   #3265 AC4: mark stack restores offset after intervening alloc
+//   #3265 AC5: linter after #3264; no invent
 
-#include "test_harness.hpp"
 #include "compiler/aura_jit.h"
+#include "compiler/runtime_shared.h"
+#include "test_harness.hpp"
 
+#include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <vector>
 
 import std;
@@ -461,6 +471,92 @@ static void ac3064_4_source_and_linter() {
           "3064 AC4: no invent test_issue_3064");
 }
 
+static void ac3265_1_atomic_side_table() {
+    std::println("\n--- #3265 AC1: marker/provenance arrays are atomic ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Issue #3265") != std::string::npos, "3265 AC1: cite");
+    CHECK(rt.find("std::atomic<std::uint8_t> g_jit_fn_source_marker") != std::string::npos,
+          "3265 AC1: marker atomic");
+    CHECK(rt.find("std::atomic<std::uint32_t> g_jit_fn_provenance") != std::string::npos,
+          "3265 AC1: provenance atomic");
+    CHECK(rt.find("compare_exchange_weak") != std::string::npos, "3265 AC1: CAS stamp");
+    CHECK(rt.find("compare_exchange_strong") != std::string::npos, "3265 AC1: CAS clear");
+}
+
+static void ac3265_2_stamp_acquire_roundtrip() {
+    std::println("\n--- #3265 AC2: stamp then acquire-load roundtrip ---");
+    const std::int64_t fid = 2022;
+    aura_jit_stamp_fn_macro_marker(fid, 0, 0);
+    aura_jit_stamp_fn_macro_marker(fid, 1, 4242);
+    CHECK(aura_jit_fn_source_marker(fid) == 1, "3265 AC2: marker 1");
+    CHECK(aura_jit_fn_provenance(fid) == 4242, "3265 AC2: provenance");
+    std::atomic<bool> start{false};
+    std::vector<std::thread> thr;
+    for (int i = 0; i < 4; ++i) {
+        thr.emplace_back([&] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (int n = 0; n < 50; ++n)
+                aura_jit_stamp_fn_macro_marker(fid, 1, 4242);
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& t : thr)
+        t.join();
+    CHECK(aura_jit_fn_source_marker(fid) == 1, "3265 AC2: concurrent stamp marker");
+    CHECK(aura_jit_fn_provenance(fid) == 4242, "3265 AC2: concurrent stamp provenance");
+    aura_jit_stamp_fn_macro_marker(fid, 0, 0);
+    CHECK(aura_jit_fn_source_marker(fid) == 0, "3265 AC2: clear");
+}
+
+static void ac3265_3_alloc_no_aligned2() {
+    std::println("\n--- #3265 AC3: tl_arena_alloc reuses aligned ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    auto pos = rt.find("void* tl_arena_alloc(");
+    CHECK(pos != std::string::npos, "3265 AC3: alloc present");
+    auto win = rt.substr(pos, 1600);
+    CHECK(win.find("aligned2") == std::string::npos, "3265 AC3: no aligned2");
+    CHECK(win.find("arena->base + aligned") != std::string::npos, "3265 AC3: reuse aligned");
+}
+
+static void ac3265_4_mark_stack_intervening_alloc() {
+    std::println("\n--- #3265 AC4: pop restores offset after intervening alloc ---");
+    TLarena a{};
+    CHECK(tl_arena_init(&a), "3265 AC4: init");
+    void* p = tl_arena_alloc(&a, 16, 8);
+    CHECK(p != nullptr, "3265 AC4: alloc");
+    const auto off = a.offset;
+    tl_arena_push(&a);
+    void* q = tl_arena_alloc(&a, 32, 8);
+    CHECK(q != nullptr, "3265 AC4: intervening alloc");
+    CHECK(a.offset > off, "3265 AC4: offset advanced");
+    tl_arena_pop(&a);
+    CHECK(a.offset == off, "3265 AC4: pop restored despite alloc");
+    tl_arena_destroy(&a);
+}
+
+static void ac3265_5_source_and_linter() {
+    std::println("\n--- #3265 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_jit_macro_introduced_preserve.cpp");
+    const auto arena = read_file("tests/core/test_arena_lifecycle.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_jit_fn_marker_atomic_3265.py");
+    CHECK(t.find("ac3265_1_atomic_side_table") != std::string::npos, "3265 AC5: AC1");
+    CHECK(arena.find("ac3265_4_mark_stack") != std::string::npos ||
+              arena.find("3265") != std::string::npos,
+          "3265 AC5: arena family");
+    CHECK(!lint.empty() && lint.find("Issue #3265") != std::string::npos, "3265 AC5: linter");
+    CHECK(build.find("check_jit_fn_marker_atomic_3265") != std::string::npos, "3265 AC5: build.py");
+    {
+        std::ifstream f("tests/compiler/test_issue_3265.cpp");
+        CHECK(!f.good(), "3265 AC5: no test_issue_3265.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3265-jit-fn-marker-atomic.md");
+        CHECK(!f.good(), "3265 AC5: no docs/design");
+    }
+}
+
 int main() {
     ac1_source();
     ac2_schema_keys();
@@ -475,6 +571,12 @@ int main() {
     ac3064_2_instr_marker_after_lowering();
     ac3064_3_inline_refuses_macro_body();
     ac3064_4_source_and_linter();
+    std::println("\n=== Issue #3265: atomic JIT marker tables + arena mark stack ===");
+    ac3265_1_atomic_side_table();
+    ac3265_2_stamp_acquire_roundtrip();
+    ac3265_3_alloc_no_aligned2();
+    ac3265_4_mark_stack_intervening_alloc();
+    ac3265_5_source_and_linter();
     if (g_failed)
         return 1;
     std::println("jit MacroIntroduced preserve (#2022) + #2176 unstamp + #3064: OK ({} passed)",
