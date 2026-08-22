@@ -1281,8 +1281,11 @@ namespace primitives_detail {
         if (overflowed) {
             g_query_hash_overflow_total.fetch_add(1, std::memory_order_relaxed);
             query_hash_stamp_overflow(ht, string_heap);
+            (void)insert_kv_checked(ht, string_heap, "hash-overflow", 1);
             (void)insert_kv_checked(ht, string_heap, "schema-3020", 3020);
             (void)insert_kv_checked(ht, string_heap, "issue-3020", 3020);
+            (void)insert_kv_checked(ht, string_heap, "schema-3244", 3244);
+            (void)insert_kv_checked(ht, string_heap, "issue-3244", 3244);
         }
         auto hidx = g_hash_tables.size();
         g_hash_tables.push_back(ht);

@@ -1937,6 +1937,8 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     // src/orch/security_schedule_gate.h::make_security_schedule_input_live.
     // Issue #3211: WAL append-fail SLO would_arm_degraded is filled by
     // the same live helper (wal_append_fail_would_arm_live).
+    // Issue #3244: metrics_hash_overflow_would_arm_live is filled by
+    // the same helper (observe+posture; no admit deny).
     {
         const auto prod = typed_audit::production_defaults_active();
         const auto in = aura::orch::make_security_schedule_input_live(ev.effect_sandbox_mode(),

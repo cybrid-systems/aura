@@ -44,6 +44,10 @@
 #include "compiler/aot_hot_update_health.hh"
 #include "core/wal_append_fail_slo.h"
 
+extern "C" void aura_engine_metrics_reset_hash_overflow_for_test(void);
+extern "C" void aura_query_hash_set_force_cap(std::uint64_t);
+extern "C" void aura_query_hash_reset_overflow_for_test(void);
+
 #include <atomic>
 #include <cstdint>
 #include <fstream>
@@ -806,9 +810,131 @@ int run_test_security_schedule_gate() {
         }
     }
 
+    // ─── Issue #3244: production metrics hash overflow → observe+posture ───
+    // AC1: input additive + live helper from existing overflow counters
+    // AC2: production + would_arm → force_reason, would_allow stays true;
+    //      Soft never arms / never denies
+    // AC3: make_security_schedule_input_live fills the signal
+    // AC4: query metrics-hash-overflow-breach / schema-3244; schema-2590 kept
+    // AC5: overflow totals 0 → live helper false without extra bus
+    {
+        using aura::orch::kSecurityScheduleMetricsHashOverflowIssue;
+        using aura::orch::metrics_hash_overflow_would_arm_live;
+        std::println("\n--- #3244 AC1–AC5: metrics hash overflow schedule observe ---");
+        CHECK(kSecurityScheduleMetricsHashOverflowIssue == 3244, "3244: issue stamp");
+
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = false;
+            in.metrics_hash_overflow_would_arm = true;
+            const auto d1 = decide_security_schedule(in);
+            const auto d2 = decide_security_schedule(in);
+            CHECK(d1.would_allow_new_mutate == d2.would_allow_new_mutate,
+                  "3244 AC1: pure decide idempotent");
+            CHECK(d1.would_allow_new_mutate, "3244 AC2: overflow does not deny admit");
+            CHECK(d1.force_reason == SecurityScheduleForceReason::metrics_hash_overflow_breach,
+                  "3244 AC2: force_reason = metrics-hash-overflow-breach");
+            CHECK(std::string(aura::orch::security_schedule_force_reason_name(d1.force_reason)) ==
+                      "metrics-hash-overflow-breach",
+                  "3244 AC1: stable force_reason string");
+            const auto d = evaluate_security_schedule(in);
+            CHECK(d.would_allow_new_mutate, "3244 AC2: evaluate still allows");
+            CHECK(g_orch_security_schedule_counters.observe_metrics_hash_overflow_total.load(
+                      std::memory_order_relaxed) == 1,
+                  "3244 AC2: observe_metrics_hash_overflow_total++");
+            CHECK(g_orch_security_schedule_counters.deny_total.load(std::memory_order_relaxed) == 0,
+                  "3244 AC2: deny_total unchanged");
+            CHECK(!aura::orch::admit_security_schedule(in).has_value(),
+                  "3244 AC2: admit does not reject on overflow (observe first)");
+            CHECK(href(cs, "metrics-hash-overflow-breach") == 1,
+                  "3244 AC4: query metrics-hash-overflow-breach");
+            CHECK(href(cs, "would-deny-admit") == 0, "3244 AC4: query would-deny-admit=0");
+            CHECK(href(cs, "schema-3244") == 3244, "3244 AC4: schema-3244");
+            CHECK(href(cs, "issue-3244") == 3244, "3244 AC4: issue-3244");
+            CHECK(href(cs, "security-schedule-metrics-hash-overflow-wired") == 1,
+                  "3244 AC4: wired sentinel");
+            CHECK(href(cs, "schema-2590") == 2590, "3244 AC4: schema-2590 preserved");
+        }
+
+        {
+            reset_orch_security_schedule_counters_for_test();
+            auto in = base_input();
+            in.production_mode = true;
+            in.soft_mode = true;
+            in.metrics_hash_overflow_would_arm = true;
+            const auto d = evaluate_security_schedule(in);
+            CHECK(d.would_allow_new_mutate, "3244 AC2: Soft never denies");
+            CHECK(d.force_reason == SecurityScheduleForceReason::ok,
+                  "3244 AC2: Soft force_reason ok");
+            CHECK(g_orch_security_schedule_counters.observe_metrics_hash_overflow_total.load(
+                      std::memory_order_relaxed) == 0,
+                  "3244 AC2: Soft does not bump observe counter");
+        }
+
+        {
+            auto in = base_input();
+            in.production_mode = true;
+            in.commit_readiness_would_allow = false;
+            in.commit_readiness_hard_reject = true;
+            in.metrics_hash_overflow_would_arm = true;
+            const auto d = decide_security_schedule(in);
+            CHECK(d.force_reason == SecurityScheduleForceReason::commit_not_ready,
+                  "3244 AC2: overflow does not mask commit_not_ready");
+            CHECK(!d.would_allow_new_mutate, "3244 AC2: real deny still denies");
+        }
+
+        {
+            aura_engine_metrics_reset_hash_overflow_for_test();
+            aura_query_hash_reset_overflow_for_test();
+            CHECK(!metrics_hash_overflow_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "3244 AC5: quiet overflow=0 → live false");
+            CHECK(!metrics_hash_overflow_would_arm_live(/*prod=*/false, /*soft=*/false),
+                  "3244 AC2: Soft/non-prod live helper never arms");
+            aura_query_hash_set_force_cap(4);
+            (void)cs.eval("(engine:metrics \"query:security-posture\")");
+            aura_query_hash_set_force_cap(0);
+            CHECK(metrics_hash_overflow_would_arm_live(/*prod=*/true, /*soft=*/false),
+                  "3244 AC3: production live helper arms after overflow");
+            CHECK(!metrics_hash_overflow_would_arm_live(/*prod=*/true, /*soft=*/true),
+                  "3244 AC2: Soft live helper never arms after overflow");
+            const auto live_in = aura::orch::make_security_schedule_input_live(
+                /*sandbox Off=*/0, /*prod=*/true, /*soft=*/false);
+            CHECK(live_in.metrics_hash_overflow_would_arm, "3244 AC3: live input would_arm");
+            aura_query_hash_reset_overflow_for_test();
+        }
+
+        {
+            const auto gate_h = read_file("src/orch/security_schedule_gate.h");
+            CHECK(gate_h.find("metrics_hash_overflow_would_arm") != std::string::npos,
+                  "3244 AC1: input field");
+            CHECK(gate_h.find("metrics_hash_overflow_would_arm_live") != std::string::npos,
+                  "3244 AC3: live helper");
+            CHECK(gate_h.find("metrics-hash-overflow-breach") != std::string::npos,
+                  "3244 AC1: force_reason string");
+            const auto mbc = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+            CHECK(mbc.find("metrics_hash_overflow_would_arm_live") != std::string::npos,
+                  "3244 AC3: boundary cites live helper");
+            const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+            CHECK(prim.find("metrics-hash-overflow-breach") != std::string::npos,
+                  "3244 AC4: posture/query key");
+            CHECK(prim.find("schema-3244") != std::string::npos, "3244 AC4: schema-3244");
+            CHECK(prim.find("schema-2590") != std::string::npos, "3244 AC4: schema-2590 preserved");
+            const auto build = read_file("build.py");
+            CHECK(build.find("check_metrics_hash_overflow_posture_3244") != std::string::npos,
+                  "3244 AC5: build.py wires linter");
+            CHECK(read_file("docs/design/3244-metrics-hash-overflow-posture.md").empty(),
+                  "3244 AC5: no docs/design/ per #1655");
+            CHECK(read_file("tests/compiler/test_issue_3244.cpp").empty(),
+                  "3244 AC5: no test_issue_3244.cpp per #81967");
+        }
+    }
+
     reset_orch_security_schedule_counters_for_test();
     aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
-    std::println("\n=== #2590/#2947/#3211: {}/{} checks passed ===", g_passed, g_passed + g_failed);
+    std::println("\n=== #2590/#2947/#3211/#3244: {}/{} checks passed ===", g_passed,
+                 g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
