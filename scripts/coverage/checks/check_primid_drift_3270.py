@@ -14,6 +14,8 @@ Contract:
   AC5  extend test_jit_macro_introduced_preserve; linter after #3269; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3271: ShapeProfiler dirty hook fn ptr (no std::function).
 """
 
 from __future__ import annotations

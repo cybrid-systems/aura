@@ -698,11 +698,9 @@ public:
                 m.arena_live_move_yield_total.fetch_add(1, std::memory_order_relaxed);
             },
             std::memory_order_release);
-        // Issue #686: shape stability loss / invalidate → IRSoA block_dirty_.
-        shape_profiler_.set_dirty_hook([this](shape::FnKey fn_key, std::uint32_t dirty_scope) {
-            (void)dirty_scope;
-            mark_shape_dirty_for_fn_key(fn_key);
-        });
+        // Issue #686 / #3271: shape stability loss / invalidate → IRSoA
+        // block_dirty_ via fn ptr (no capturing lambda / std::function).
+        shape_profiler_.set_dirty_hook(&CompilerService::shape_dirty_hook_trampoline);
         // Issue #492: stability loss / invalidate → JIT eviction +
         // fiber refresh (closes ShapeProfiler → JIT hot-swap loop).
         shape::set_shape_deopt_hook(&CompilerService::shape_deopt_hook_trampoline);
@@ -13839,6 +13837,16 @@ public:
             return;
         static_cast<CompilerService*>(raw)
             ->evaluator_.bump_compiler_core_jit_unhandled_invalidate();
+    }
+
+    // Issue #3271: ShapeProfiler dirty hook trampoline (C fn ptr; no std::function).
+    static void shape_dirty_hook_trampoline(shape::FnKey fn_key,
+                                            std::uint32_t dirty_scope) noexcept {
+        (void)dirty_scope;
+        auto* raw = aura::messaging::g_current_compiler_service;
+        if (!raw)
+            return;
+        static_cast<CompilerService*>(raw)->mark_shape_dirty_for_fn_key(fn_key);
     }
 
     // Issue #492: ShapeProfiler deopt hook trampoline (C fn ptr).
