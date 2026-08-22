@@ -3500,6 +3500,9 @@ public:
         std::uint8_t linear_state, std::uint64_t frame_version, std::uint64_t current_version,
         std::uint64_t bridge_epoch, std::uint64_t current_bridge_epoch,
         std::atomic<std::uint64_t>* bridge_epoch_drift_counter = nullptr) noexcept;
+    // Issue #3262: restamp after dual shared_locks drop; audit
+    // acquire-loads linear_ownership_gc_violations_prevented_total
+    // (pairs #1867 release writes).
     void probe_linear_ownership_at_gc_safepoint() noexcept;
     void probe_linear_ownership_on_fiber_steal() noexcept;
     // Issue #2197: post-steal / GC-window linear×type provenance revalidate.

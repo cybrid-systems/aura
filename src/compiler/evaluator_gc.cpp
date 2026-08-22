@@ -322,67 +322,70 @@ void Evaluator::probe_linear_ownership_at_gc_safepoint() noexcept {
     // (matches scan_live_closures_for_linear_captures / apply_closure).
     // Pre-#1664 took env then closures — latent deadlock if either side
     // upgrades to unique while the other holds the reverse order.
-    std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
-    std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
-    auto* m_probe = static_cast<CompilerMetrics*>(compiler_metrics_);
-    auto* drift_ctr = m_probe ? &m_probe->linear_validate_bridge_epoch_drift_total : nullptr;
-    using aura::core::provenance::g_provenance_enforcement;
-    using aura::core::provenance::validate_linear_provenance;
-    g_provenance_enforcement().linear_provenance_gc_checks_total.fetch_add(
-        1, std::memory_order_relaxed);
-    for (const auto& [id, cl] : closures_) {
-        (void)id;
-        if (cl.bridge_epoch == 0)
-            continue;
-        if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
-            continue;
-        const auto& fr = env_frames_[cl.env_id];
-        // Issue #2026: explicit linear × provenance validation at GC.
-        // Scan binding ownership states; require complete forensic trail
-        // on tracked linear roots (steal/GC closed-loop).
-        bool frame_has_linear = false;
-        bool frame_has_moved = false;
-        for (const auto s : fr.bindings_linear_ownership_state_) {
-            if (s == linear_rt::Moved)
-                frame_has_moved = true;
-            if (s != linear_rt::Untracked)
-                frame_has_linear = true;
-        }
-        if (frame_has_moved) {
-            const auto pr = validate_linear_provenance(
-                linear_rt::Moved, static_cast<std::uint32_t>(cl.env_id), 0, 0, fr.version_,
-                current_ver, cl.bridge_epoch, current_bridge, /*require_complete=*/true);
-            if (!pr.ok) {
+    {
+        std::shared_lock<std::shared_mutex> cl_lock(closures_mtx_);
+        std::shared_lock<std::shared_mutex> env_lock(env_frames_mtx_);
+        auto* m_probe = static_cast<CompilerMetrics*>(compiler_metrics_);
+        auto* drift_ctr = m_probe ? &m_probe->linear_validate_bridge_epoch_drift_total : nullptr;
+        using aura::core::provenance::g_provenance_enforcement;
+        using aura::core::provenance::validate_linear_provenance;
+        g_provenance_enforcement().linear_provenance_gc_checks_total.fetch_add(
+            1, std::memory_order_relaxed);
+        for (const auto& [id, cl] : closures_) {
+            (void)id;
+            if (cl.bridge_epoch == 0)
+                continue;
+            if (cl.env_id == NULL_ENV_ID || cl.env_id >= env_frames_.size())
+                continue;
+            const auto& fr = env_frames_[cl.env_id];
+            // Issue #2026: explicit linear × provenance validation at GC.
+            // Scan binding ownership states; require complete forensic trail
+            // on tracked linear roots (steal/GC closed-loop).
+            bool frame_has_linear = false;
+            bool frame_has_moved = false;
+            for (const auto s : fr.bindings_linear_ownership_state_) {
+                if (s == linear_rt::Moved)
+                    frame_has_moved = true;
+                if (s != linear_rt::Untracked)
+                    frame_has_linear = true;
+            }
+            if (frame_has_moved) {
+                const auto pr = validate_linear_provenance(
+                    linear_rt::Moved, static_cast<std::uint32_t>(cl.env_id), 0, 0, fr.version_,
+                    current_ver, cl.bridge_epoch, current_bridge, /*require_complete=*/true);
+                if (!pr.ok) {
+                    violation = true;
+                    break;
+                }
+            }
+            if (frame_has_linear) {
+                // Hygiene stamp provides weak mutation/provenance when present.
+                const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
+                const auto pr = validate_linear_provenance(
+                    linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id), hy.node_id,
+                    hy.source_mutation_id, fr.version_, current_ver, cl.bridge_epoch,
+                    current_bridge, /*require_complete=*/false);
+                if (!pr.ok ||
+                    !validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
+                                                     current_bridge, drift_ctr)) {
+                    violation = true;
+                    break;
+                }
+            } else if (!validate_linear_ownership_state(1, fr.version_, current_ver,
+                                                        cl.bridge_epoch, current_bridge,
+                                                        drift_ctr)) {
+                // Non-linear bridged closure still dual-checks epoch (legacy).
                 violation = true;
                 break;
             }
         }
-        if (frame_has_linear) {
-            // Hygiene stamp provides weak mutation/provenance when present.
-            const auto& hy = aura::core::provenance::g_provenance_tracker().last_hygiene;
-            const auto pr = validate_linear_provenance(
-                linear_rt::Owned, static_cast<std::uint32_t>(cl.env_id), hy.node_id,
-                hy.source_mutation_id, fr.version_, current_ver, cl.bridge_epoch, current_bridge,
-                /*require_complete=*/false);
-            if (!pr.ok ||
-                !validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                                 current_bridge, drift_ctr)) {
-                violation = true;
-                break;
-            }
-        } else if (!validate_linear_ownership_state(1, fr.version_, current_ver, cl.bridge_epoch,
-                                                    current_bridge, drift_ctr)) {
-            // Non-linear bridged closure still dual-checks epoch (legacy).
-            violation = true;
-            break;
-        }
+        record_linear_gc_probe(*this, violation, nullptr);
     }
-    record_linear_gc_probe(*this, violation, nullptr);
 
-    // Issue #1473 / #1497: force auto-restamp on pinned StableNodeRefs
-    // at GC safepoint (atomic-batch + cow-boundary registries). Unified
-    // helper bumps stable_ref_validations_at_gc_safepoint +
-    // boundary_pinned_refresh_count + stable_ref_steal_auto_refresh_total.
+    // Issue #3262: force auto-restamp on pinned StableNodeRefs at
+    // GC safepoint AFTER dual shared_locks release (#1473 / #1497).
+    // restamp_pinned mutates StableNodeRef / cow pin table; must not
+    // run under closures_mtx_ / env_frames_mtx_ shared (lock-upgrade).
     (void)auto_restamp_pinned_stable_refs_at(StableRefRefreshSite::GcSafepoint);
 }
 
@@ -462,8 +465,12 @@ bool Evaluator::run_linear_gc_root_audit(std::uint8_t path) noexcept {
         m ? m->linear_ownership_gc_root_registrations_total.load(std::memory_order_relaxed) : 0;
     const std::uint64_t stale =
         m ? m->linear_ownership_gc_root_stale_hits_total.load(std::memory_order_relaxed) : 0;
+    // Issue #3262: acquire-load pairs #1867 release-stores on
+    // linear_ownership_gc_violations_prevented_total so audit cannot
+    // miss a just-recorded violation. Stale/resync stay relaxed (those
+    // writers are relaxed).
     const std::uint64_t viol =
-        m ? m->linear_ownership_gc_violations_prevented_total.load(std::memory_order_relaxed) : 0;
+        m ? m->linear_ownership_gc_violations_prevented_total.load(std::memory_order_acquire) : 0;
     const std::uint64_t resync =
         m ? m->linear_ownership_gc_env_version_resync_total.load(std::memory_order_relaxed) : 0;
 

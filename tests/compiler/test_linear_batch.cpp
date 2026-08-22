@@ -399,6 +399,71 @@ static void run_1867_concurrent_probe_reader() {
     CHECK(max_seen.load() >= before + 1, "reader observed progress under acquire");
 }
 
+// ── Issue #3262 — restamp after shared_locks + audit acquire ──
+static void run_3262_source() {
+    std::println("\n--- AC1 (#3262): restamp after dual shared_locks ---");
+    auto gc = read_first({"src/compiler/evaluator_gc.cpp", "../src/compiler/evaluator_gc.cpp"});
+    CHECK(!gc.empty(), "read evaluator_gc.cpp");
+    auto pos = gc.find("void Evaluator::probe_linear_ownership_at_gc_safepoint()");
+    CHECK(pos != std::string::npos, "probe present");
+    auto end = gc.find("void Evaluator::resync_linear_jit_gc_roots_after_invalidate", pos);
+    auto win = end > pos ? gc.substr(pos, end - pos) : std::string{};
+    CHECK(win.find("#3262") != std::string::npos, "cites #3262");
+    auto rec = win.find("record_linear_gc_probe");
+    auto rest = win.find("auto_restamp_pinned_stable_refs_at");
+    CHECK(rec != std::string::npos && rest != std::string::npos && rest > rec,
+          "restamp after record");
+    auto mid = win.substr(rec, rest - rec);
+    CHECK(mid.find('}') != std::string::npos, "lock scope closed before restamp");
+    auto rpos = gc.find("static void record_linear_gc_probe");
+    auto rwin = rpos == std::string::npos ? std::string{} : gc.substr(rpos, 1800);
+    CHECK(rwin.find("memory_order_release") != std::string::npos, "1867 release kept");
+    auto apos = gc.find("bool Evaluator::run_linear_gc_root_audit");
+    auto awin = apos == std::string::npos ? std::string{} : gc.substr(apos, 2200);
+    CHECK(awin.find(
+              "linear_ownership_gc_violations_prevented_total.load(std::memory_order_acquire)") !=
+              std::string::npos,
+          "audit viol acquire");
+}
+
+static void run_3262_sequential_audit() {
+    std::println("\n--- AC2 (#3262): sequential probe + audit acquire ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "metrics wired");
+    const auto v0 =
+        m->linear_ownership_gc_violations_prevented_total.load(std::memory_order_acquire);
+    ev.test_probe_linear_at_gc_safepoint();
+    CHECK(ev.run_linear_gc_root_audit(Evaluator::kLinearGcRootAuditGcSafepoint), "audit ok");
+    const auto v1 =
+        m->linear_ownership_gc_violations_prevented_total.load(std::memory_order_acquire);
+    CHECK(v1 >= v0, "acquire-load observes probe");
+}
+
+static void run_3262_concurrent_probe() {
+    std::println("\n--- AC3 (#3262): concurrent safepoint probes no hang ---");
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    std::atomic<bool> start{false};
+    std::atomic<std::uint64_t> ops{0};
+    std::vector<std::thread> threads;
+    for (int w = 0; w < 3; ++w) {
+        threads.emplace_back([&] {
+            while (!start.load(std::memory_order_acquire))
+                std::this_thread::yield();
+            for (int i = 0; i < 40; ++i) {
+                ev.test_probe_linear_at_gc_safepoint();
+                ops.fetch_add(1, std::memory_order_relaxed);
+            }
+        });
+    }
+    start.store(true, std::memory_order_release);
+    for (auto& t : threads)
+        t.join();
+    CHECK(ops.load() == 120, "all concurrent probes done");
+}
+
 // ── Issue #1731 — linear_post_mutate_enforce NULL_ENV_ID ──
 static void run_1731_source_field() {
     std::println("\n--- AC1 (#1731): metric field + cites ---");
@@ -648,8 +713,7 @@ static void run_1755_unbridged_skips() {
 
 int main() {
     using namespace aura_linear_batch;
-    std::println(
-        "=== Linear batch: #1615 + #1599 + #1867 + #1731 + #1875 + #1755 (28 ACs total) ===");
+    std::println("=== Linear batch: #1615 + #1599 + #1867 + #3262 + #1731 + #1875 + #1755 ===");
     std::println("(#747 occurrence_predicate + #800 postmutate_guard_steal_envframe");
     std::println(
         " NOT included — bundle members via test_issues_jit_late3_main.cpp + late2_main.cpp.");
@@ -671,6 +735,9 @@ int main() {
     run_1867_source();
     run_1867_sequential_visibility();
     run_1867_concurrent_probe_reader();
+    run_3262_source();
+    run_3262_sequential_audit();
+    run_3262_concurrent_probe();
     run_1731_source_field();
     run_1731_enforce_null_bumps();
     run_1731_oob_doesnt_bump_null();

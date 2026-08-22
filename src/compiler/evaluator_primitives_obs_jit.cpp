@@ -4355,10 +4355,11 @@ void ObservabilityPrims::register_jit_p23(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(m->linear_ownership_gc_root_stale_hits_total.load(
                         std::memory_order_relaxed))
                   : 0;
+            // Issue #3262: acquire pairs #1867 release-stores.
             const std::int64_t violations_prevented =
                 m ? static_cast<std::int64_t>(
                         m->linear_ownership_gc_violations_prevented_total.load(
-                            std::memory_order_relaxed))
+                            std::memory_order_acquire))
                   : 0;
             const std::int64_t env_version_resync =
                 m ? static_cast<std::int64_t>(m->linear_ownership_gc_env_version_resync_total.load(
