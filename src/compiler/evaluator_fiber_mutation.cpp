@@ -1329,12 +1329,14 @@ void Evaluator::mark_outermost_mutation_failed() noexcept {
     if (mid != 0) {
         // Issue #3142 AC2: mark SessionBound entries as stolen so caller-side
         // check_and_record_effect fails (no double-consume). Then revoke.
+        // Issue #3207: use _locked siblings under one lock_guard —
+        // std::mutex is non-recursive; the public wrappers take mtx themselves.
         auto& reg = ::aura::core::capability::g_capability_registry();
         std::lock_guard<std::mutex> lock(reg.mtx);
-        (void)reg.mark_session_bound_stolen(capability_tenant_id_, mid,
-                                            static_cast<std::uint32_t>(aura_fiber_current_id()));
-        (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(mid,
-                                                                                /*steal=*/false);
+        (void)reg.mark_session_bound_stolen_locked(
+            capability_tenant_id_, mid, static_cast<std::uint32_t>(aura_fiber_current_id()));
+        (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
+            mid, /*steal=*/false);
     }
 }
 
@@ -1468,11 +1470,12 @@ extern "C" void aura_evaluator_force_degrade_outermost_holder(std::uint64_t fibe
         if (mid != 0) {
             // Issue #3142 AC2: mark SessionBound entries as stolen (no
             // double-consume) before revoke.
+            // Issue #3207: _locked siblings under one lock_guard.
             auto& reg = ::aura::core::capability::g_capability_registry();
             std::lock_guard<std::mutex> lock(reg.mtx);
-            (void)reg.mark_session_bound_stolen(
+            (void)reg.mark_session_bound_stolen_locked(
                 /*tenant=*/0, mid, fiber_id);
-            (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort(
+            (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
                 mid, /*steal=*/false);
         }
     }

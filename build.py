@@ -3216,6 +3216,20 @@ def cmd_lint():
             "Issue #3048 session-grant steal/abort linter failed — run python3 scripts/coverage/checks/check_session_grant_steal_3048.py"
         )
         return r
+    # Issue #3207: dual-Evaluator grant_session × TenantScope cascade
+    # linearizability on the process-global CapabilityRegistry. Extends
+    # test_capability_single_use_consume.cpp (#81967); no docs/design/
+    # (#1655).
+    dec3207_script = COVERAGE_CHECKS / "check_dual_evaluator_cascade_3207.py"
+    if not dec3207_script.exists():
+        fail(f"missing {dec3207_script}")
+        return 1
+    r = run([sys.executable, str(dec3207_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3207 dual-Evaluator cascade linter failed — run python3 scripts/coverage/checks/check_dual_evaluator_cascade_3207.py"
+        )
+        return r
     # Issue #3049: per-tenant ResourceQuota under multi-tenant production
     # (process ceiling still binds). Extends
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/

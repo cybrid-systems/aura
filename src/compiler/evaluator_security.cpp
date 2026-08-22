@@ -1267,15 +1267,30 @@ void Evaluator::TenantScope::release() noexcept {
     // Issue #3142 AC1: cascade-revoke SessionBound grants bound to
     // (prev_tenant_, current mid, this fiber) before restoring prior
     // principal. Prevents orphan SessionBound grants on nested scope
-    // abort / early-return. fiber_id_ captured at ctor (line 1117).
-    // Zero-cost short-circuit when capability_live_session_grants == 0
-    // (AC3 Soft happy path).
+    // abort / early-return. fiber_id_ captured at ctor.
+    // Issue #3207: Restricted/Strict always take registry mtx and restore
+    // principal under that same lock so a concurrent Evaluator cannot
+    // consume a grant after this scope's principal is visible again.
+    // Soft/Off + capability_live_session_grants == 0: zero-cost (no lock).
+    // Use _locked sibling — std::mutex is non-recursive (nested lock_guard
+    // on the public wrapper deadlocked the live-residual path).
     using namespace ::aura::core::capability;
     const auto mid = ::aura::core::current_mutation_epoch();
-    if (mid != 0) {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
-        (void)g_capability_registry().revoke_session_grants_for(prev_tenant_, mid, fiber_id_,
-                                                                "scope-dtor-cascade");
+    auto& reg = g_capability_registry();
+    auto& met = g_capability_effect_metrics();
+    const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+    const bool production =
+        mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict;
+    const bool have_live = met.capability_live_session_grants.load(std::memory_order_relaxed) != 0;
+    if (mid != 0 && (production || have_live)) {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        (void)reg.revoke_session_grants_for_locked(prev_tenant_, mid, fiber_id_,
+                                                   "scope-dtor-cascade");
+        // Restore prior principal under the same lock (#3207 happens-before).
+        ev_->set_capability_tenant_id(prev_tenant_);
+        ev_->allow_cross_tenant_ = prev_allow_cross_;
+        active_ = false;
+        return;
     }
     // Restore prior principal (name empty → keep id only).
     // Issue #2659: Evaluator-local only — no global write.
