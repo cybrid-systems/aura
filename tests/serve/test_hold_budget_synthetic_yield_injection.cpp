@@ -880,6 +880,227 @@ int run_test_hold_budget_cross_fiber_urgent_inbody_poll() {
     return failed == 0 ? 0 : 1;
 }
 
+// @reason: Issue #3254 — non-cooperative outermost body past 2×SLO
+//   force-releases without an accidental check_gc_safepoint poll.
+//   AC1: same-fiber poll_inbody_window injects synthetic yield and
+//        consumes it (dual restore + unlock + depth 0)
+//   AC2: cross-fiber force_degrade + urgent poll; holder poll consumes;
+//        foreign thread never drops unique_lock
+//   AC3: Soft observe-only
+//   AC4: abort/dual restore + canary (exit_mutation_boundary false)
+//   AC5/AC6: extend this suite + linter; no invent / docs/design
+
+int run_test_hold_budget_noncoop_force_edge() {
+    std::println("=== Issue #3254: non-cooperative inbody force-edge (I1 of #3222/#3223) ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // ac3254_1_same_fiber_poll_consumes_injected_edge
+    {
+        std::println("\n--- AC1: same-fiber poll injects+consumes without check_gc_safepoint ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3254 AC1: reject_enabled under production");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> ran{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        std::atomic<int> polled{0};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3254 AC1: fiber current");
+                f->request_hold_budget_cancel();
+                aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                // Tight non-yield body: no check_gc_safepoint / yield.
+                volatile std::uint64_t sink = 0;
+                for (int i = 0; i < 64; ++i)
+                    sink += static_cast<std::uint64_t>(i);
+                (void)sink;
+                polled.store(aura::serve::aura_hold_budget_poll_inbody_window(),
+                             std::memory_order_relaxed);
+                held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                                 std::memory_order_relaxed);
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                                  std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3254 AC1: fiber body ran");
+        CHECK(polled.load() == 1, "3254 AC1: poll exceeded bound");
+        CHECK(ok_flag.load() == 0, "3254 AC1: success flag forced false");
+        CHECK(held_after.load() == 0, "3254 AC1: workspace hold cleared");
+        CHECK(depth_after.load() == 0, "3254 AC1: depth slot == 0");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() >= 1,
+              "3254 AC1: forced_unlock_total");
+        CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() >= 1,
+              "3254 AC1: forced_fail_closed_total");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ac3254_2_cross_fiber_no_preemptive_unlock
+    {
+        std::println("\n--- AC2: cross-fiber inject; foreign thread never unlocks ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<std::uint64_t> holder_id{0};
+        std::atomic<int> ready{0};
+        std::atomic<int> go{0};
+        std::atomic<int> ran{0};
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3254 AC2: holder fiber current");
+                holder_id.store(f->id(), std::memory_order_release);
+                ready.store(1, std::memory_order_release);
+                for (int i = 0; i < 400 && go.load(std::memory_order_acquire) == 0; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                // Consume the runtime-injected edge via poll, not
+                // accidental check_gc_safepoint. Stamp arm in the past so
+                // a scheduler idle re-arm cannot shrink elapsed below bound.
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                (void)aura::serve::aura_hold_budget_poll_inbody_window();
+                held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                                 std::memory_order_relaxed);
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                                  std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ready.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK(ready.load() == 1, "3254 AC2: holder entered Guard");
+        const auto fid = holder_id.load(std::memory_order_acquire);
+        CHECK(fid != 0, "3254 AC2: holder id published");
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        aura::serve::aura_evaluator_force_degrade_outermost_holder(fid);
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3254 AC2: foreign thread did not force-unlock");
+        go.store(1, std::memory_order_release);
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3254 AC2: holder body ran");
+        CHECK(ok_flag.load() == 0, "3254 AC2: success flag forced false");
+        CHECK(held_after.load() == 0, "3254 AC2: workspace hold cleared on victim");
+        CHECK(depth_after.load() == 0, "3254 AC2: depth slot == 0");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ac3254_3_soft_observe_only
+    {
+        std::println("\n--- AC3: Soft observe-only ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3254 AC3: Soft reject_enabled false");
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_cancel_armed_fiber.store(1, std::memory_order_release);
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        CHECK(aura::serve::aura_hold_budget_poll_inbody_window() == 0,
+              "3254 AC3: Soft poll does not force");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3254 AC3: no force-unlock under Soft");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+    }
+
+    // ac3254_4_topology_dual_restore
+    {
+        std::println("\n--- AC4: force path dual-restores topology ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto pos = emb.find("void Evaluator::MutationBoundaryGuard::"
+                                  "force_release_hold_budget_inbody()");
+        CHECK(pos != std::string::npos, "3254 AC4: force_release_hold_budget_inbody impl");
+        const auto win = emb.substr(pos, 900);
+        CHECK(win.find("exit_mutation_boundary(false)") != std::string::npos,
+              "3254 AC4: abort dual-restore on force path");
+        CHECK(win.find("force_release_hold_after_cancel_") != std::string::npos,
+              "3254 AC4: unlock after restore");
+        CHECK(emb.find("if (!inbody_force_exited_)") != std::string::npos,
+              "3254 AC4: dtor does not double-exit");
+    }
+
+    // ac3254_5/6 source + linter
+    {
+        std::println("\n--- AC5/AC6: suite + linter ---");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        const auto t = read_file("tests/serve/test_hold_budget_synthetic_yield_injection.cpp");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_hold_budget_noncoop_force_edge_3254.py");
+        const auto build = read_file("build.py");
+        CHECK(mhb.find("kMutationHoldBudgetNoncoopForceEdgeIssue") != std::string::npos,
+              "3254 AC6: issue stamp");
+        CHECK(mhb.find("g_3254_") == std::string::npos, "3254 AC4: no new g_3254_* counter");
+        CHECK(fc.find("Issue #3254") != std::string::npos, "3254 AC6: poll cites #3254");
+        CHECK(t.find("ac3254_1_same_fiber_poll_consumes_injected_edge") != std::string::npos ||
+                  t.find("3254 AC1:") != std::string::npos,
+              "3254 AC5: AC1 in this suite");
+        CHECK(!lint.empty() && lint.find("3254") != std::string::npos, "3254 AC6: linter");
+        CHECK(build.find("check_hold_budget_noncoop_force_edge_3254") != std::string::npos,
+              "3254 AC6: build.py");
+        CHECK(read_file("docs/design/3254-hold-budget-noncoop-force-edge.md").empty(),
+              "3254 AC6: no docs/design/");
+        CHECK(read_file("tests/serve/test_issue_3254.cpp").empty(),
+              "3254 AC6: no invent test_issue_3254");
+        CHECK(read_file("tests/issues/test_issue_3254.cpp").empty(),
+              "3254 AC6: no tests/issues/test_issue_3254");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3254 non-cooperative inbody force-edge: {} passed, {} failed ===", passed,
+                 failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -887,6 +1108,9 @@ int main() {
     const int rc3 = run_test_hold_budget_inbody_force_release();
     const int rc4 = run_test_hold_budget_inbody_force_unlock();
     const int rc5 = run_test_hold_budget_cross_fiber_urgent_inbody_poll();
-    return rc1 != 0 ? rc1 : (rc2 != 0 ? rc2 : (rc3 != 0 ? rc3 : (rc4 != 0 ? rc4 : rc5)));
+    const int rc6 = run_test_hold_budget_noncoop_force_edge();
+    return rc1 != 0
+               ? rc1
+               : (rc2 != 0 ? rc2 : (rc3 != 0 ? rc3 : (rc4 != 0 ? rc4 : (rc5 != 0 ? rc5 : rc6))));
 }
 #endif

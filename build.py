@@ -3365,6 +3365,19 @@ def cmd_lint():
             "Issue #3253 repair-SOLVED residual linter failed — run python3 scripts/coverage/checks/check_repair_solved_residual_3253.py"
         )
         return r
+    # Issue #3254: non-cooperative outermost body past 2×SLO force-edge.
+    # Extends test_hold_budget_synthetic_yield_injection (#81967); no
+    # docs/design/ (#1655).
+    nfe_script = COVERAGE_CHECKS / "check_hold_budget_noncoop_force_edge_3254.py"
+    if not nfe_script.exists():
+        fail(f"missing {nfe_script}")
+        return 1
+    r = run([sys.executable, str(nfe_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3254 noncoop force-edge linter failed — run python3 scripts/coverage/checks/check_hold_budget_noncoop_force_edge_3254.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10593,6 +10606,21 @@ def cmd_linear_root_abort_release_3023_coverage():
         fail("linear_roots abort/reclaim (#3023) coverage contract rows failed")
         return 1
     ok("linear_roots abort/reclaim (#3023) coverage clean")
+    return 0
+
+
+def cmd_hold_budget_noncoop_force_edge_3254_coverage():
+    """Issue #3254: non-cooperative inbody force-edge (production)."""
+    print(f"{B}=== hold-budget noncoop force-edge (#3254) ==={N}")
+    script = COVERAGE_CHECKS / "check_hold_budget_noncoop_force_edge_3254.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hold-budget noncoop force-edge (#3254) coverage contract rows failed")
+        return 1
+    ok("hold-budget noncoop force-edge (#3254) coverage clean")
     return 0
 
 
@@ -18918,6 +18946,8 @@ def main():
         "hygiene-checkpoint-gen-drift-3252-coverage": cmd_hygiene_checkpoint_gen_drift_3252_coverage,
         "repair-solved-residual-3253": cmd_repair_solved_residual_3253_coverage,
         "repair-solved-residual-3253-coverage": cmd_repair_solved_residual_3253_coverage,
+        "hold-budget-noncoop-force-edge-3254": cmd_hold_budget_noncoop_force_edge_3254_coverage,
+        "hold-budget-noncoop-force-edge-3254-coverage": cmd_hold_budget_noncoop_force_edge_3254_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

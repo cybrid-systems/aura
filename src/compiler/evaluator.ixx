@@ -14773,6 +14773,9 @@ public:
         // workspace_mtx_ + depth after dual restore. Phase-5 must not
         // decrement depth or process-held a second time.
         bool cancel_force_released_ = false;
+        // Issue #3254: inbody force path already ran exit_mutation_boundary(false).
+        // Dtor must not abort-restore twice.
+        bool inbody_force_exited_ = false;
         // Issue #3249: nested abort keep-set (outer pins at nested enter).
         // Soft / outermost: empty (zero extra). Production nested fail
         // drains extras via unpin_linear_roots_except.
@@ -14927,11 +14930,11 @@ public:
         // Impl: evaluator_mutation_boundary.cpp
         MutationBoundaryGuard(MutationBoundaryGuard&& o) noexcept;
         MutationBoundaryGuard& operator=(MutationBoundaryGuard&& o) noexcept;
-        // Issue #3194 / #3222: same-fiber inbody poll force-release (reuse #3118).
-        void force_release_hold_budget_inbody() noexcept {
-            mark_failed();
-            force_release_hold_after_cancel_();
-        }
+        // Issue #3194 / #3222 / #3254: same-fiber inbody poll force-release.
+        // Dual-restores topology (abort path) then unlocks + depth 0 so a
+        // non-cooperative body cannot leave half-topology after the lock drops.
+        // Impl: evaluator_mutation_boundary.cpp
+        void force_release_hold_budget_inbody() noexcept;
 
     private:
         struct AcquireTag {};

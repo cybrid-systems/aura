@@ -2579,6 +2579,21 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
     cancel_force_released_ = true;
 }
 
+// Issue #3254: same-fiber inbody consume of a runtime-injected cooperative
+// edge. Dual-restore (abort path, same as panic/abort) then unlock + depth 0
+// so densify×steal cannot observe half-topology after the lock drops.
+// Idempotent with dtor via inbody_force_exited_ / cancel_force_released_.
+void Evaluator::MutationBoundaryGuard::force_release_hold_budget_inbody() noexcept {
+    mark_failed();
+    if (flag_)
+        *flag_ = false;
+    if (ev_ && !inbody_force_exited_) {
+        ev_->exit_mutation_boundary(false);
+        inbody_force_exited_ = true;
+    }
+    force_release_hold_after_cancel_();
+}
+
 // Issue #3194 / #3222: same-fiber inbody-window force-release. Reuses
 // #3118 force_release_hold_after_cancel_ (unlock + depth 0). Cross-fiber
 // only re-arms pending-cancel (AC2 — unique_lock is not unlocked from
@@ -3125,7 +3140,8 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
             m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);
     }
-    ev_->exit_mutation_boundary(success);
+    if (!inbody_force_exited_)
+        ev_->exit_mutation_boundary(success);
     ev_->render_fast_exit_this_boundary_ = false;
     // Issue #3118: production hold-budget cancel — lock + depth must
     // drop immediately after abort_restore_dual_topology so densify /
@@ -4721,6 +4737,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , render_fast_exit_(o.render_fast_exit_)
     , linear_enforce_strict_pushed_(o.linear_enforce_strict_pushed_)
     , cancel_force_released_(o.cancel_force_released_)
+    , inbody_force_exited_(o.inbody_force_exited_)
     , nested_linear_keep_(std::move(o.nested_linear_keep_))
     , nested_linear_keep_armed_(o.nested_linear_keep_armed_)
     , ev_(o.ev_)
@@ -4745,6 +4762,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.render_fast_exit_ = false;
     o.linear_enforce_strict_pushed_ = false; // ownership transferred; do not double-pop
     o.cancel_force_released_ = false;
+    o.inbody_force_exited_ = false;
     o.nested_linear_keep_.clear();
     o.nested_linear_keep_armed_ = false;
     o.uncaught_at_enter_ = 0;
@@ -4783,6 +4801,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         render_fast_exit_ = o.render_fast_exit_;
         linear_enforce_strict_pushed_ = o.linear_enforce_strict_pushed_;
         cancel_force_released_ = o.cancel_force_released_;
+        inbody_force_exited_ = o.inbody_force_exited_;
         nested_linear_keep_ = std::move(o.nested_linear_keep_);
         nested_linear_keep_armed_ = o.nested_linear_keep_armed_;
         ev_ = o.ev_;
@@ -4807,6 +4826,7 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         o.render_fast_exit_ = false;
         o.linear_enforce_strict_pushed_ = false;
         o.cancel_force_released_ = false;
+        o.inbody_force_exited_ = false;
         o.nested_linear_keep_.clear();
         o.nested_linear_keep_armed_ = false;
         o.uncaught_at_enter_ = 0;
