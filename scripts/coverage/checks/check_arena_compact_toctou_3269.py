@@ -15,6 +15,8 @@ Contract:
   AC5  extend test_arena_defrag; linter after #3268; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3270: exhaustive PrimId drift asserts + OpGuardShape probe i1.
 """
 
 from __future__ import annotations

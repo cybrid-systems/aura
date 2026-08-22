@@ -76,6 +76,10 @@ namespace aura::jit {
 // Used for PrimCall fast-path dispatch — skipping aura_prim_call runtime.
 enum : uint32_t {
     PrimHash = 0,
+    PrimHashLength = 1,
+    PrimHashHasKey = 2,
+    PrimHashKeys = 3,
+    PrimHashValues = 4,
     PrimStringAppend = 5,
     PrimStringLength = 6,
     PrimStringRef = 7,
@@ -118,9 +122,43 @@ enum : uint32_t {
 };
 // Compile-time lockstep with ir.ixx PrimId enum.
 // If you add/remove/reorder a PrimId entry, both sides must change together.
+// Issue #3270: exhaustive — every ir.ixx PrimId has an assert (linter
+// check_primid_drift_3270.py keeps this list complete).
+static_assert(PrimHash == 0, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimHashLength == 1, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimHashHasKey == 2, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimHashKeys == 3, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimHashValues == 4, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringAppend == 5, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringLength == 6, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringRef == 7, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimSubstring == 8, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringEq == 9, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringLt == 10, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimNumberToString == 11, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimStringToNumber == 12, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimDisplay == 13, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimWrite == 14, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimNewline == 15, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimError == 16, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimAssert == 17, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimRead == 18, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimReadFile == 19, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimWriteFile == 20, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimFileExists == 21, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimGensym == 22, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimApply == 23, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimVector == 24, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimVectorRef == 25, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimVectorSet == 26, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimVectorLength == 27, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimVectorP == 28, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimMakeVector == 29, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimImport == 30, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimCharEq == 31, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimCharLt == 32, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimCharToInteger == 33, "PrimId drift: aura_jit.cpp vs ir.ixx");
+static_assert(PrimIntegerToChar == 34, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimQuotient == 35, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimRemainder == 36, "PrimId drift: aura_jit.cpp vs ir.ixx");
 static_assert(PrimListLength == 37, "PrimId drift: aura_jit.cpp vs ir.ixx");
@@ -698,9 +736,9 @@ struct LLVMBuilder {
         // (return 1) emit deopt_inc so JIT Apply falls back observability
         // matches interpreter closure_needs_safe_fallback. Linear* ops that
         // need body-skip deopt also use begin_linear_epoch_fence.
-        auto linear_safety_probe = [&]() {
+        auto linear_safety_probe = [&]() -> llvm::Value* {
             if (inst.linear_ownership_state == 0)
-                return;
+                return nullptr; // Issue #3270: quiet path — zero extra IR
             if (inst.narrow_evidence != 0)
                 aura::compiler::jit_typed_mutation::record_linear_state_optimized();
             aura::compiler::typed_audit::capture_jit_hotpath_audit("jit-linear-optimized");
@@ -751,6 +789,10 @@ struct LLVMBuilder {
                 irb->CreateCall(llvm::FunctionCallee(fn_deopt_inc));
             irb->CreateBr(bb_ok);
             irb->SetInsertPoint(bb_ok);
+            // Issue #3270: return the runtime i1 so OpGuardShape can
+            // fail-close to bb_stale. Other sites keep deopt_inc then
+            // continue (observability). nullptr when no linear state.
+            return any_unsafe;
         };
         // Issue #1535: dual-epoch fence for Linear* ops (Move/Borrow/Drop).
         // Emits runtime call to aura_jit_linear_epoch_safety_check; on stale
@@ -1018,9 +1060,10 @@ struct LLVMBuilder {
             // matches, 0 if deopt). The IR's subsequent Branch uses
             // the result to choose specialized vs generic-trampoline.
             case OpGuardShape: {
-                // Issue #1288 / #1917: unified GuardShape + linear ownership probe
-                // (same linear_safety_probe as interpreter post-invalidate path).
-                linear_safety_probe();
+                // Issue #1288 / #1917 / #3270: unified GuardShape + linear
+                // ownership probe. Helper returns the runtime i1 unsafe
+                // predicate (nullptr when linear_ownership_state==0).
+                auto* lin_unsafe = linear_safety_probe();
                 if (metrics) {
                     metrics->critical_opcode_lowered_total.fetch_add(1, std::memory_order_relaxed);
                     if (inst.linear_ownership_state != 0)
@@ -1056,6 +1099,10 @@ struct LLVMBuilder {
                         irb->CreateCall(llvm::FunctionCallee(fn_guard_shape_epoch_check),
                                         llvm::ArrayRef<llvm::Value*>{name_ptr});
                     auto* is_stale = irb->CreateICmpNE(stale_i, zero32);
+                    // Issue #3270: linear-unsafe fail-closes to bb_stale
+                    // (store false) instead of continuing the fresh path.
+                    if (lin_unsafe)
+                        is_stale = irb->CreateOr(is_stale, lin_unsafe);
                     irb->CreateCondBr(is_stale, bb_stale, bb_ok);
                 }
 
