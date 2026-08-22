@@ -15,6 +15,9 @@ Contract:
   AC5  extend existing suites; linter after #3264; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3266: module-loader realpath-then-lstat + validate-before-lock.
+
 """
 
 from __future__ import annotations

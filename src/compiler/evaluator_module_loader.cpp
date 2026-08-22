@@ -64,17 +64,19 @@ using types::make_void;
 std::string Evaluator::resolve_module_path(const std::string& path) const {
     auto try_load = [](const std::string& full) -> std::optional<std::string> {
         for (auto candidate : {full, full + ".aura"}) {
-            struct stat st;
-            if (::stat(candidate.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+            // Issue #3266 / #1131: realpath first (no stat-then-realpath
+            // TOCTOU). Then lstat the canonical path — reject if it is
+            // not a regular file. Missing candidates: realpath returns
+            // null (zero extra).
+            char* real = ::realpath(candidate.c_str(), nullptr);
+            if (!real)
                 continue;
-            // Issue #1131: realpath fail-closed — never fall back to a
-            // non-canonical path (path traversal / symlink bypass risk).
-            if (char* real = ::realpath(candidate.c_str(), nullptr)) {
-                std::string out(real);
-                ::free(real);
-                return out;
-            }
-            // realpath failed (dangling, permission, etc.) — skip candidate.
+            std::string out(real);
+            ::free(real);
+            struct stat lst;
+            if (::lstat(out.c_str(), &lst) != 0 || !S_ISREG(lst.st_mode))
+                continue;
+            return out;
         }
         return std::nullopt;
     };
@@ -263,13 +265,10 @@ types::EvalValue Evaluator::ensure_std_host_prims(std::string_view module_path) 
 
 // ── Load module file, return module object ────────────────
 types::EvalValue Evaluator::load_module_file(const std::string& path) {
-    // Issue #1401: acquire the interlock FIRST so we serialize with
-    // compact_env_frames. load_module_file allocates fresh env_frames_
-    // and adds new closures_ to closures_; without the interlock, a
-    // concurrent compact_env_frames could miss those closures (Step 2
-    // walk) or reclaim frames the loader is about to use (Step 3 pack).
-    std::lock_guard interlock(compact_env_frames_lock_);
-    // Issue #2653: validate before resolve (H10 fail-closed).
+    // Issue #3266: validate before lock (string predicate; no shared
+    // state). Refuse path does not take compact_env_frames_lock_
+    // (zero extra). Issue #2653 H10 fail-closed. Issue #1401: lock
+    // only for env/closure insertion vs compact_env_frames.
     if (!is_plausible_module_path(path)) {
         const auto shown = truncate_path_for_log(path);
         if (path.empty())
@@ -281,6 +280,7 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
             std::println(std::cerr, "load_module_file: refuse non-module path '{}'", shown);
         return types::make_void();
     }
+    std::lock_guard interlock(compact_env_frames_lock_);
     // 1. Resolve path
     auto resolved = resolve_module_path(path);
     if (resolved.empty()) {
@@ -317,6 +317,11 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
         }
         loading_stack_.insert(resolved);
     }
+    // Issue #3266: lock released for file I/O on purpose (do not hold
+    // workspace_mtx_ across stat/ifstream). Concurrent load of the same
+    // path may see loading_stack_ and report circular-dep while this
+    // thread is in I/O; module_cache_ is populated before erase below
+    // so a late arriver can hit cache after we finish.
 
     // 4. Read file
     struct stat st;
