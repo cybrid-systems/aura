@@ -7117,6 +7117,13 @@ public:
             if (re_armed_now || graph_grew_mid_loop) {
                 rearm_observed_mid_loop = true;
             }
+            // Issue #3257: last-look armed immediately before attribution
+            // / peel. Concurrent record_dependency can set the flag after
+            // re_armed_now and after the #3168 size snapshot. One acquire;
+            // Soft + armed==0 skips the rest (zero extra lock).
+            std::size_t attr_seen_size = initial_deferred_edges_size;
+            if (want_partial && deferred_hybrid_armed_.load(std::memory_order_acquire) != 0)
+                rearm_observed_mid_loop = true;
             if (rearm_observed_mid_loop && want_partial) {
                 // Issue #3168: prefer new-edge-only mark over full fallback.
                 // Walk [initial_deferred_edges_size, current) under shared
@@ -7131,11 +7138,11 @@ public:
                 {
                     lock_order::OrderedSharedLock<std::shared_mutex> read(
                         dep_graph_mtx_, lock_order::Level::DepGraph);
-                    if (deferred_hybrid_edges_.size() > initial_deferred_edges_size) {
-                        new_edges_snapshot.reserve(deferred_hybrid_edges_.size() -
-                                                   initial_deferred_edges_size);
-                        for (std::size_t idx = initial_deferred_edges_size;
-                             idx < deferred_hybrid_edges_.size(); ++idx) {
+                    attr_seen_size = deferred_hybrid_edges_.size();
+                    if (attr_seen_size > initial_deferred_edges_size) {
+                        new_edges_snapshot.reserve(attr_seen_size - initial_deferred_edges_size);
+                        for (std::size_t idx = initial_deferred_edges_size; idx < attr_seen_size;
+                             ++idx) {
                             new_edges_snapshot.push_back(deferred_hybrid_edges_[idx]);
                         }
                     }
@@ -7171,6 +7178,32 @@ public:
                     it->second.dirty = true;
                     metrics_.partial_forced_full_by_impact_total.fetch_add(
                         1, std::memory_order_relaxed);
+                }
+            }
+            // Issue #3257: concurrent record_dependency can append after
+            // the #3168 attribution snapshot and before peel. If the tail
+            // grew, fail-closed to full (bounded once — no second walk).
+            // Distinguisher: partial_forced_full_by_impact_total.
+            // Attribution of edges that already touched this define still
+            // prefers partial (#3168). Soft + armed==0: one acquire, no
+            // extra lock.
+            if (want_partial) {
+                const bool post_attr_armed =
+                    deferred_hybrid_armed_.load(std::memory_order_acquire) != 0;
+                if (post_attr_armed) {
+                    std::size_t size_now = attr_seen_size;
+                    {
+                        lock_order::OrderedSharedLock<std::shared_mutex> read(
+                            dep_graph_mtx_, lock_order::Level::DepGraph);
+                        size_now = deferred_hybrid_edges_.size();
+                    }
+                    if (size_now > attr_seen_size) {
+                        want_partial = false;
+                        it->second.mark_all_blocks_dirty();
+                        it->second.dirty = true;
+                        metrics_.partial_forced_full_by_impact_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
             }
             if (want_partial)

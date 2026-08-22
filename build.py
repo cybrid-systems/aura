@@ -3404,6 +3404,19 @@ def cmd_lint():
             "Issue #3256 mailbox SLO hold-unify linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_unify_3256.py"
         )
         return r
+    # Issue #3257: deferred_hybrid re-arm last-look before partial peel.
+    # Extends test_cascade_decision_residual_atomic.cpp (#81967); no
+    # docs/design/ (#1655).
+    rll_script = COVERAGE_CHECKS / "check_deferred_hybrid_rearm_last_look_3257.py"
+    if not rll_script.exists():
+        fail(f"missing {rll_script}")
+        return 1
+    r = run([sys.executable, str(rll_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3257 deferred-hybrid re-arm last-look linter failed — run python3 scripts/coverage/checks/check_deferred_hybrid_rearm_last_look_3257.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10677,6 +10690,21 @@ def cmd_mailbox_defer_slo_hold_unify_3256_coverage():
         fail("mailbox defer-SLO hold unify (#3256) coverage contract rows failed")
         return 1
     ok("mailbox defer-SLO hold unify (#3256) coverage clean")
+    return 0
+
+
+def cmd_deferred_hybrid_rearm_last_look_3257_coverage():
+    """Issue #3257: deferred_hybrid re-arm last-look before partial peel."""
+    print(f"{B}=== deferred-hybrid re-arm last-look (#3257) ==={N}")
+    script = COVERAGE_CHECKS / "check_deferred_hybrid_rearm_last_look_3257.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("deferred-hybrid re-arm last-look (#3257) coverage contract rows failed")
+        return 1
+    ok("deferred-hybrid re-arm last-look (#3257) coverage clean")
     return 0
 
 
@@ -19008,6 +19036,8 @@ def main():
         "dual-dep-graph-soft-parity-partial-3255-coverage": cmd_dual_dep_graph_soft_parity_partial_3255_coverage,
         "mailbox-defer-slo-hold-unify-3256": cmd_mailbox_defer_slo_hold_unify_3256_coverage,
         "mailbox-defer-slo-hold-unify-3256-coverage": cmd_mailbox_defer_slo_hold_unify_3256_coverage,
+        "deferred-hybrid-rearm-last-look-3257": cmd_deferred_hybrid_rearm_last_look_3257_coverage,
+        "deferred-hybrid-rearm-last-look-3257-coverage": cmd_deferred_hybrid_rearm_last_look_3257_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
