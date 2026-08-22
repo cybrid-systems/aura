@@ -6,8 +6,9 @@ Contract (one row per AC):
      handoff_completed (bool) — structured fields for the held-ref export
      token + the handoff-completed marker.
   AC2 push() gate reads held_ref_token.has_value() && !handoff_completed
-     and returns PushStatus::Closed + bumps handoff_reject_total (process-wide
-     + per-mailbox local).
+     and returns PushStatus::HandoffRequired + bumps handoff_reject_total
+     (process-wide + per-mailbox local). Closed reserved for true closed /
+     linear-viol (#3212 dual-track align).
   AC3 Ordinary string payload (held_ref_token empty, default) pays zero
      cost — the gate is short-circuited by the optional<>::has_value() check
      before reading handoff_completed or bumping any counter.
@@ -64,7 +65,8 @@ def main() -> int:
     must("if (msg.held_ref_token.has_value() && !msg.handoff_completed)", "AC2", mb)
     must("g_mf_mailbox_stats.handoff_reject_total.fetch_add(1, std::memory_order_relaxed)", "AC2", mb)
     must("local_stats_.handoff_reject_total.fetch_add(1, std::memory_order_relaxed)", "AC2", mb)
-    must("return PushStatus::Closed", "AC2", mb)
+    must("return PushStatus::HandoffRequired", "AC2", mb)
+    must("return PushStatus::Closed", "AC2 true-closed / linear-viol preserved", mb)
 
     # AC3 — zero cost on ordinary string payloads
     must("held_ref_token.has_value()", "AC3", mb)

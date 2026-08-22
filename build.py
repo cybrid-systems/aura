@@ -3464,6 +3464,20 @@ def cmd_lint():
             "Issue #3013 agent_send HandoffRequired linter failed — run python3 scripts/coverage/checks/check_agent_send_handoff_required_3013.py"
         )
         return r
+    # Issue #3212: mailbox->push / broadcast_fanout unstamped held_ref
+    # returns HandoffRequired (align with agent_send). Closed reserved
+    # for true closed / linear-viol. Extends test_orch_obs_facade.cpp
+    # (#81967); no docs/design/ (#1655).
+    mhdt3212_script = COVERAGE_CHECKS / "check_mailbox_handoff_dual_track_3212.py"
+    if not mhdt3212_script.exists():
+        fail(f"missing {mhdt3212_script}")
+        return 1
+    r = run([sys.executable, str(mhdt3212_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3212 mailbox handoff dual-track linter failed — run python3 scripts/coverage/checks/check_mailbox_handoff_dual_track_3212.py"
+        )
+        return r
     # Issue #3014: surface agent body try_acquire reject on AgentHandle /
     # orch:agent-join hash (residual of #1880/#2006). Keys only on the
     # reject path. Extends test_fiber_orch_parallel_quota_batch.cpp

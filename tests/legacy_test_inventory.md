@@ -1881,7 +1881,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_observability_tier_table.cpp` (—) [obs_named, domain_suite, theme_compiler] — Issue #1670 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_occ_cache_stats_wired.cpp` (—) [domain_suite, theme_compiler] — Issue #1781 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_open_issues_meta_batch.cpp` (—) [batch_driver, domain_suite, theme_core] — Issue #514/#515/#516/#517/#520 (#1978 renamed): issue# moved from filename to header.
-- `tests/orch/test_orch_obs_facade.cpp` (—) [domain_suite, theme_orch] — tests/orch/test_orch_obs_facade.cpp
+- `tests/orch/test_orch_obs_facade.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_orch_obs_facade.cpp
 - `tests/compiler/test_panic_defer_after_densify.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no densify / no panic → free path (zero clear/rearm)
 - `tests/compiler/test_pass_contracts_hotpath_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #381/#406/#506/#571 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_pattern_structural_index_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #211/#421/#423/#547/#554 (#1978 renamed): issue# moved from filename to header.

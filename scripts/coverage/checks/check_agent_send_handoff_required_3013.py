@@ -8,8 +8,9 @@ Contract (one row per AC):
   AC2  Zero-cost fall-through when no held_ref_token / already stamped
        (no extra atomic on the ordinary string path beyond the same
        optional+bool the mailbox gate would pay).
-  AC3  Direct mailbox->push still returns Closed for unstamped held_ref
-       (#2663 defense in depth). Truly closed mailboxes still Closed.
+  AC3  Direct mailbox->push returns HandoffRequired for unstamped held_ref
+       (#3212 dual-track align; #2663 gate still rejects). Truly closed
+       mailboxes still Closed.
   AC4  New C++ sites directed to agent_send_safe (deprecation / prefer
        comment). No second orch model / no AgentRegistry.
   AC5  Additive schema-3013 on query:orch-module-stats; existing
@@ -67,8 +68,9 @@ def main() -> int:
     must("Zero-cost when no", "AC2", spawn)
     must("handoff_completed", "AC2", spawn)
 
-    # ── AC3: mailbox push still Closed ────────────────────────────
-    must("return PushStatus::Closed", "AC3", mb)
+    # ── AC3: mailbox push unstamped HandoffRequired; true closed Closed ─
+    must("return PushStatus::HandoffRequired", "AC3", mb)
+    must("return PushStatus::Closed", "AC3 true-closed preserved", mb)
     must("handoff_reject_total", "AC3", mb)
     must("if (msg.held_ref_token.has_value() && !msg.handoff_completed)", "AC3", mb)
 

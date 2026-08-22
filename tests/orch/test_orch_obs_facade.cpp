@@ -380,13 +380,13 @@ int run_test_orch_obs_facade() {
         CHECK(agent_send(h, std::move(stamped)) == PushStatus::Ok,
               "3013 AC2: already-stamped still Ok");
 
-        std::println("\n--- #3013 AC3: mailbox push still Closed (defense in depth) ---");
+        std::println("\n--- #3013 AC3 / #3212: mailbox push unstamped is HandoffRequired ---");
         MailMessage gate;
         gate.payload = "direct-push";
         gate.held_ref_token = 45;
         gate.handoff_completed = false;
-        CHECK(h.mailbox->push(std::move(gate)) == PushStatus::Closed,
-              "3013 AC3: direct mb.push unstamped still Closed");
+        CHECK(h.mailbox->push(std::move(gate)) == PushStatus::HandoffRequired,
+              "3013 AC3/#3212: direct mb.push unstamped → HandoffRequired");
 
         std::println("\n--- #3013 AC4/AC5: schema + prefer agent_send_safe ---");
         const auto spawn = read_file("src/orch/agent_spawn.h");
@@ -419,7 +419,98 @@ int run_test_orch_obs_facade() {
               "3013 AC6: no docs/design/3013-* per #1655");
     }
 
-    std::println("\n=== #2589+#2636+2884+#3013: {}/{} checks passed ===", g_passed,
+    // ── #3212: dual-track mailbox push / agent_send HandoffRequired ──
+    {
+        std::println("\n--- #3212 AC1: unstamped held_ref is HandoffRequired on both paths ---");
+        using aura::orch::agent_send;
+        using aura::orch::AgentHandle;
+        using aura::serve::mf_mailbox::g_mf_mailbox_stats;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+        AgentHandle h;
+        h.ok = true;
+        h.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        const auto reject0 =
+            g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed);
+
+        MailMessage via_send;
+        via_send.payload = "send-unstamped";
+        via_send.held_ref_token = 101;
+        via_send.handoff_completed = false;
+        CHECK(agent_send(h, std::move(via_send)) == PushStatus::HandoffRequired,
+              "3212 AC1: agent_send unstamped → HandoffRequired");
+
+        MailMessage via_push;
+        via_push.payload = "push-unstamped";
+        via_push.held_ref_token = 102;
+        via_push.handoff_completed = false;
+        CHECK(h.mailbox->push(std::move(via_push)) == PushStatus::HandoffRequired,
+              "3212 AC1: mailbox->push unstamped → HandoffRequired");
+        CHECK(g_mf_mailbox_stats.handoff_reject_total.load(std::memory_order_relaxed) >=
+                  reject0 + 1,
+              "3212 AC1: mailbox still bumps handoff_reject_total");
+
+        MailMessage via_fanout;
+        via_fanout.payload = "fanout-unstamped";
+        via_fanout.held_ref_token = 103;
+        via_fanout.handoff_completed = false;
+        CHECK(h.mailbox->broadcast_fanout(via_fanout) == PushStatus::HandoffRequired,
+              "3212 AC1: broadcast_fanout unstamped → HandoffRequired");
+
+        std::println("\n--- #3212 AC2: true closed mailbox still Closed ---");
+        h.mailbox->close();
+        MailMessage after_close;
+        after_close.payload = "after-close";
+        CHECK(h.mailbox->push(std::move(after_close)) == PushStatus::Closed,
+              "3212 AC2: true closed mailbox still Closed");
+        MailMessage closed_held;
+        closed_held.payload = "closed-held";
+        closed_held.held_ref_token = 104;
+        closed_held.handoff_completed = false;
+        // Unstamped gate fires before closed_ load — still HandoffRequired
+        // (typed miss, not "mailbox closed").
+        CHECK(h.mailbox->push(std::move(closed_held)) == PushStatus::HandoffRequired,
+              "3212 AC2: unstamped on closed mailbox is HandoffRequired (gate first)");
+
+        std::println("\n--- #3212 AC3: no held_ref stays Ok (zero extra) ---");
+        AgentHandle h2;
+        h2.ok = true;
+        h2.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        MailMessage plain;
+        plain.payload = "plain-3212";
+        CHECK(h2.mailbox->push(std::move(plain)) == PushStatus::Ok,
+              "3212 AC3: no held_ref_token still Ok");
+        CHECK(agent_send(h2, MailMessage{.payload = "plain-send"}) == PushStatus::Ok,
+              "3212 AC3: agent_send no token still Ok");
+
+        std::println("\n--- #3212 AC4/AC5: schema + source-cite ---");
+        const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(mb.find("return PushStatus::HandoffRequired") != std::string::npos,
+              "3212 AC4: mailbox push/fanout return HandoffRequired");
+        CHECK(mb.find("Issue #3212") != std::string::npos, "3212 AC4: mailbox cites #3212");
+        CHECK(spawn.find("Issue #3013 / #3212") != std::string::npos,
+              "3212 AC4: agent_send cites #3212");
+        CHECK(agent.find("schema-3212") != std::string::npos, "3212 AC5: schema-3212");
+        CHECK(agent.find("mailbox-handoff-required-wired") != std::string::npos,
+              "3212 AC5: wired key");
+        CHECK(href(cs, "schema-3212") == 3212, "3212 AC5: live schema-3212");
+        CHECK(href(cs, "mailbox-handoff-required-wired") == 1, "3212 AC5: live wired sentinel");
+        CHECK(href(cs, "schema-3013") == 3013, "3212 AC5: schema-3013 preserved");
+
+        std::println("\n--- #3212 AC6: extend suite + no invent ---");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_mailbox_handoff_dual_track_3212") != std::string::npos,
+              "3212 AC6: build.py wires linter");
+        CHECK(read_file("docs/design/3212-mailbox-handoff-dual-track.md").empty(),
+              "3212 AC6: no docs/design/3212-* per #1655");
+        CHECK(read_file("tests/orch/test_issue_3212.cpp").empty(),
+              "3212 AC6: no test_issue_3212.cpp per #81967");
+    }
+
+    std::println("\n=== #2589+#2636+2884+#3013+#3212: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
