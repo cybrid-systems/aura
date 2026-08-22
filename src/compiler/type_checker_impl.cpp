@@ -2658,8 +2658,39 @@ SolveResult ConstraintSystem::solve_delta_impl(std::vector<Constraint>* unresolv
 // No full constraint scan — only dirty worklist for local roots (or all
 // residual dirty when no local roots). Zero-cost when no dirty and no
 // pending/local roots (returns TIMEOUT so caller may full-escalate).
+// Issue #3253: production reindexes unmapped INSTANCE/SUBTYPE (densify/
+// steal remount can leave var_to_constraints_ incomplete) and refuses
+// SOLVED while unprocessed dirty remains. Soft/Off: no extra scan.
 SolveResult
 ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unresolved_out) {
+    using namespace aura::compiler::typed_audit;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard) {
+        // AC3: force residual dirty + reindex for remapped INSTANCE/SUBTYPE
+        // endpoints missing from var_to_constraints_. Soft skips (AC4).
+        const auto n = std::min(constraints_.size(), constraint_dirty_.size());
+        for (std::size_t i = 0; i < n; ++i) {
+            const auto& cons = constraints_[i];
+            if (cons.kind != Constraint::INSTANCE && cons.kind != Constraint::SUBTYPE)
+                continue;
+            auto ensure = [&](TypeId id) {
+                if (!id.valid())
+                    return;
+                const auto rep = find(id).index;
+                auto& vec = var_to_constraints_[rep];
+                if (std::find(vec.begin(), vec.end(), i) != vec.end())
+                    return;
+                vec.push_back(i);
+                if (!constraint_dirty_[i]) {
+                    constraint_dirty_[i] = true;
+                    ++dirty_count_;
+                }
+                pending_full_solve_roots_.insert(rep);
+            };
+            ensure(cons.lhs);
+            ensure(cons.rhs);
+        }
+    }
     const bool have_local_roots = !touched_roots_.empty() || !occurrence_priority_roots_.empty() ||
                                   !let_poly_dirty_roots_.empty() ||
                                   !pending_full_solve_roots_.empty();
@@ -2774,6 +2805,33 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
         return SolveResult::TIMEOUT;
     }
 
+    // Issue #3253: worklist empty is not finally SOLVED if dirty bits
+    // stayed off `seen` (re-dirtied after process, remount INSTANCE).
+    // Merge residual reps into pending_full_solve_roots_ (no silent drop).
+    bool unprocessed = false;
+    for (std::size_t i = 0; i < constraint_dirty_.size(); ++i) {
+        if (!constraint_dirty_[i])
+            continue;
+        if (i < seen.size() && seen[i])
+            continue;
+        unprocessed = true;
+        if (i >= constraints_.size())
+            continue;
+        auto note = [&](TypeId id) {
+            if (!id.valid() || !reg_.is_var(id))
+                return;
+            const auto rep = union_find_rep_index(id);
+            if (rep != UINT32_MAX)
+                pending_full_solve_roots_.insert(rep);
+        };
+        note(constraints_[i].lhs);
+        note(constraints_[i].rhs);
+        if (unresolved_out)
+            unresolved_out->push_back(constraints_[i]);
+    }
+    if (unprocessed)
+        return SolveResult::TIMEOUT;
+
     // Local cone cleared — commit dirty bits and drain pending backlog.
     mark_clean();
     pending_full_solve_roots_.clear();
@@ -2853,14 +2911,22 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
                 unresolved_out->clear();
             const SolveResult repaired = try_instance_repair_before_full(unresolved_out);
             if (repaired == SolveResult::SOLVED) {
-                c.delta_instance_repair_resolved_total.fetch_add(1, std::memory_order_relaxed);
-                if (metrics_) {
-                    static_cast<struct CompilerMetrics*>(metrics_)
-                        ->delta_instance_repair_resolved_total.fetch_add(1,
-                                                                         std::memory_order_relaxed);
+                // Issue #3253: re-sample residual dirty / pending after
+                // local cone SOLVED. Densify/steal remount or injected
+                // leftover must not stamp green. Soft never reaches here.
+                if (dirty_count_ != 0 || !pending_full_solve_roots_.empty()) {
+                    handoff_locality_residual_to_pending();
+                    // Fall through to full escalate (not finally SOLVED).
+                } else {
+                    c.delta_instance_repair_resolved_total.fetch_add(1, std::memory_order_relaxed);
+                    if (metrics_) {
+                        static_cast<struct CompilerMetrics*>(metrics_)
+                            ->delta_instance_repair_resolved_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                    }
+                    // Local repair SOLVED — no full-solve, no half-ship.
+                    return SolveResult::SOLVED;
                 }
-                // Local repair SOLVED — no full-solve, no half-ship.
-                return SolveResult::SOLVED;
             }
             if (repaired == SolveResult::CONFLICT) {
                 // Local conflict is definitive; do not half-ship.
@@ -3056,10 +3122,27 @@ ConstraintSystem::drain_pending_full_solve_before_commit(std::vector<Constraint>
     using namespace aura::compiler::typed_audit;
     const auto pending = pending_full_solve_roots_.size();
     const auto loc = last_locality_pruned_;
-    if (pending == 0 && loc == 0)
-        return SolveResult::SOLVED; // Quiet: two size reads, no extra atomics.
+    if (pending == 0 && loc == 0) {
+        if (dirty_count_ == 0)
+            return SolveResult::SOLVED; // Quiet: two size reads, no extra atomics.
+        // Issue #3253: dirty residual with empty pending/locality
+        // (repair SOLVED + remount INSTANCE, or leftover TIMEOUT dirty).
+        // Production/Full hard-reject without a second full solve (stamp
+        // gate; repair already had its chance). Soft: observe-allow.
+        const auto dirty_residual = dirty_count_;
+        const bool hard_dirty =
+            production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        if (!hard_dirty) {
+            g_pending_full_solve_residual_observe_total.fetch_add(1, std::memory_order_relaxed);
+            note_pending_full_solve_residual(dirty_residual, false);
+            return SolveResult::SOLVED;
+        }
+        g_pending_full_solve_residual_reject_total.fetch_add(1, std::memory_order_relaxed);
+        note_pending_full_solve_residual(dirty_residual > 0 ? dirty_residual : 1, true);
+        return SolveResult::TIMEOUT;
+    }
 
-    const auto residual = pending + loc;
+    const auto residual = pending + loc + dirty_count_;
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (!hard) {
         g_pending_full_solve_residual_observe_total.fetch_add(1, std::memory_order_relaxed);
