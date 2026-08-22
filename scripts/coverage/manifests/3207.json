@@ -1,0 +1,51 @@
+{
+  "issue": 3207,
+  "title": "Issue #3207: [P0][security][area:capability] dual-Evaluator concurrent grant/revoke × TenantScope cascade on shared by_tenant residual",
+  "ok": "OK: Issue #3207 P0 dual-Evaluator cascade + consume linearizability — locked revoke/stolen/steal-abort siblings; TenantScope::release holds mtx across cascade-revoke + principal restore; Soft/Off live==0 short-circuit unchanged; Restricted/Strict take mtx even at live==0 (closes TOCTOU); dual-Evaluator chaos in test_capability_single_use_consume.cpp; no new counters.",
+  "source_script": "scripts/coverage/checks/check_dual_evaluator_cascade_3207.py",
+  "checks": [
+    {
+      "ac": "AC1-3207",
+      "path": "src/core/capability_model.hh",
+      "contains": [
+        "kCapabilityDualEvaluatorCascadeIssue = 3207",
+        "revoke_session_grants_for_locked",
+        "revoke_session_grants_for_mid_locked",
+        "mark_session_bound_stolen_locked"
+      ]
+    },
+    {
+      "ac": "AC1-3207-eval",
+      "path": "src/compiler/evaluator_security.cpp",
+      "contains": [
+        "Issue #3207",
+        "revoke_session_grants_for_locked"
+      ]
+    },
+    {
+      "ac": "AC1-3207-fiber",
+      "path": "src/compiler/evaluator_fiber_mutation.cpp",
+      "contains": [
+        "mark_session_bound_stolen_locked",
+        "revoke_session_grants_on_steal_or_abort_locked"
+      ]
+    },
+    {
+      "ac": "AC5-3207-test",
+      "path": "tests/core/test_capability_single_use_consume.cpp",
+      "contains": [
+        "ac3207_1_sequential_cascade_then_require_effect_deny",
+        "ac3207_2_dual_evaluator_concurrent_chaos",
+        "ac3207_3_soft_off_zero_cost",
+        "Issue #3207"
+      ]
+    },
+    {
+      "ac": "Build-3207",
+      "path": "build.py",
+      "contains": [
+        "check_dual_evaluator_cascade_3207.py"
+      ]
+    }
+  ]
+}

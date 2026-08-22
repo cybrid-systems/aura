@@ -62,7 +62,7 @@ def main() -> int:
 
     # AC1 wire-up in evaluator_security.cpp (TenantScope::release)
     must("Issue #3142", "AC1 cite in eval_sec", eval_sec)
-    must("revoke_session_grants_for(", "AC1 wire-up in TenantScope::release", eval_sec)
+    must("revoke_session_grants_for", "AC1 wire-up in TenantScope::release", eval_sec)
     must("scope-dtor-cascade", "AC1 reason in TenantScope::release", eval_sec)
 
     # ── AC2: fiber steal marks stolen → caller check fails ──────────

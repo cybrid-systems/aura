@@ -34,6 +34,7 @@
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 
+#include <atomic>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -41,6 +42,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.evaluator;
@@ -50,6 +52,7 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::security::kEffectMacroSelfEvo;
 using aura::compiler::security::kEffectMutate;
 using aura::compiler::security::kEffectSyscall;
@@ -127,8 +130,8 @@ static void ac3142_1_nested_abort_cascade_revoke() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    const auto tenant = ev.capability_tenant_id();
-    ev.set_capability_tenant_id(42);
+    constexpr std::uint64_t tenant = 42;
+    ev.set_capability_tenant_id(tenant);
 
     EffectProvenance prov{};
     prov.epoch = 1;
@@ -140,13 +143,9 @@ static void ac3142_1_nested_abort_cascade_revoke() {
     const auto before = g_capability_registry().session_bound_entries_alive(tenant);
     CHECK(before == 1, "AC1 pre: tenant has 1 live session_bound grant");
 
-    // Simulate TenantScope::release path: revoke_session_grants_for with
-    // matching (tenant, mid, fiber_id) tuple.
-    {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
-        (void)g_capability_registry().revoke_session_grants_for(
-            tenant, prov.mutation_id, /*fiber_id=*/0, "scope-dtor-cascade");
-    }
+    // Public wrapper takes mtx (#3207: do not nest lock_guard).
+    (void)g_capability_registry().revoke_session_grants_for(tenant, prov.mutation_id,
+                                                            /*fiber_id=*/0, "scope-dtor-cascade");
 
     const auto after = g_capability_registry().session_bound_entries_alive(tenant);
     CHECK(after == 0, "AC1: cascade revoke cleared session_bound grant");
@@ -161,8 +160,8 @@ static void ac3142_2_steal_marks_no_double_consume() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    const auto tenant = ev.capability_tenant_id();
-    ev.set_capability_tenant_id(7);
+    constexpr std::uint64_t tenant = 7;
+    ev.set_capability_tenant_id(tenant);
 
     EffectProvenance prov{};
     prov.epoch = 1;
@@ -172,12 +171,9 @@ static void ac3142_2_steal_marks_no_double_consume() {
                                   prov,
                                   /*single_use=*/false, /*session_bound=*/true);
 
-    // Mark stolen (simulating fiber steal path).
-    {
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
-        (void)g_capability_registry().mark_session_bound_stolen(tenant, prov.mutation_id,
-                                                                /*fiber_id=*/0);
-    }
+    // Public wrapper takes mtx (#3207: do not nest lock_guard).
+    (void)g_capability_registry().mark_session_bound_stolen(tenant, prov.mutation_id,
+                                                            /*fiber_id=*/0);
 
     // AC2: caller-side check_and_record_effect for the same mid must FAIL
     // (stolen entry excluded from effects_for_locked, no double-consume).
@@ -211,8 +207,8 @@ static void ac3142_3_long_run_no_leak() {
     aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
     CompilerService cs;
     auto& ev = cs.evaluator();
-    const auto tenant = ev.capability_tenant_id();
-    ev.set_capability_tenant_id(99);
+    constexpr std::uint64_t tenant = 99;
+    ev.set_capability_tenant_id(tenant);
 
     EffectProvenance prov{};
     prov.epoch = 1;
@@ -222,7 +218,6 @@ static void ac3142_3_long_run_no_leak() {
         const std::string name = "mut-3142-loop-" + std::to_string(i);
         g_capability_registry().grant(tenant, name, Effect::Mutate, prov,
                                       /*single_use=*/false, /*session_bound=*/true);
-        std::lock_guard<std::mutex> lock(g_capability_registry().mtx);
         (void)g_capability_registry().revoke_session_grants_for(tenant, prov.mutation_id,
                                                                 /*fiber_id=*/0, "loop-cascade");
     }
@@ -280,6 +275,180 @@ static void ac3142_4_additive_metrics_and_source_cite() {
           "AC5: no tests/issues/test_issue_3142.cpp");
     CHECK(!std::filesystem::exists("tests/core/test_issue_3142.cpp"),
           "AC5: no tests/core/test_issue_3142.cpp");
+}
+
+// ── Issue #3207: dual-Evaluator grant_session × TenantScope cascade
+// linearizability on the process-global CapabilityRegistry. Keep global
+// registry (no per-Evaluator shard). Restricted + multi-tenant. Soft/Off
+// zero-cost. Existing counters only.
+
+static void ac3207_1_sequential_cascade_then_require_effect_deny() {
+    std::println("\n--- #3207 AC1: EvA grant_session → EvB TenantScope cascade → EvA "
+                 "require_effect fully denies ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    CHECK(mid != 0, "AC1: mutation epoch non-zero so TenantScope cascade fires");
+
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& ev_a = cs_a.evaluator();
+    auto& ev_b = cs_b.evaluator();
+    ev_a.set_effect_sandbox_mode(1);
+    ev_b.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant = 7;
+    ev_a.set_capability_tenant_id(tenant);
+    ev_b.set_capability_tenant_id(tenant);
+
+    EffectProvenance prov{};
+    prov.epoch = mid;
+    prov.mutation_id = mid;
+    prov.fiber_id = 0; // overlapping fiber (any TenantScope fiber matches)
+    g_capability_registry().grant_session(tenant, "mut-3207-seq", Effect::Mutate, prov,
+                                          /*single_use=*/true);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1,
+          "AC1 pre: live session grant");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() >= 1,
+          "AC1 pre: live_session_grants > 0");
+
+    {
+        Evaluator::TenantScope scope(ev_b, tenant);
+        (void)scope;
+    }
+
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC1: cascade cleared session_bound grant");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+          "AC1: live_session_grants == 0 after cascade (no orphan count)");
+    CHECK(!ev_a.require_effect(kEffectMutate, "3207-seq-consume"),
+          "AC1: EvA require_effect fully denies after EvB cascade (no half-consume)");
+}
+
+static void ac3207_2_dual_evaluator_concurrent_chaos() {
+    std::println("\n--- #3207 AC1 chaos: dual-Evaluator concurrent grant_session × "
+                 "TenantScope cascade × require_effect ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+
+    CompilerService cs_a;
+    CompilerService cs_b;
+    auto& ev_a = cs_a.evaluator();
+    auto& ev_b = cs_b.evaluator();
+    ev_a.set_effect_sandbox_mode(1);
+    ev_b.set_effect_sandbox_mode(1);
+    constexpr std::uint64_t tenant = 7;
+    ev_a.set_capability_tenant_id(tenant);
+    ev_b.set_capability_tenant_id(tenant);
+
+    std::atomic<int> allows{0};
+    std::atomic<int> denies{0};
+    constexpr int kIters = 400;
+    std::thread t_grant_consume([&] {
+        EffectProvenance prov{};
+        prov.epoch = mid;
+        prov.mutation_id = mid;
+        prov.fiber_id = 0;
+        for (int i = 0; i < kIters; ++i) {
+            g_capability_registry().grant_session(tenant, "mut-3207-chaos", Effect::Mutate, prov,
+                                                  /*single_use=*/true);
+            if (ev_a.require_effect(kEffectMutate, "3207-chaos-consume"))
+                allows.fetch_add(1, std::memory_order_relaxed);
+            else
+                denies.fetch_add(1, std::memory_order_relaxed);
+        }
+    });
+    std::thread t_cascade([&] {
+        for (int i = 0; i < kIters; ++i) {
+            Evaluator::TenantScope scope(ev_b, tenant);
+            (void)scope;
+        }
+    });
+    t_grant_consume.join();
+    t_cascade.join();
+
+    const auto allows_n = allows.load();
+    const auto denies_n = denies.load();
+    CHECK(allows_n + denies_n == kIters,
+          "AC1 chaos: every require_effect fully allowed or fully denied");
+    const auto alive = g_capability_registry().session_bound_entries_alive(tenant);
+    const auto live = g_capability_effect_metrics().capability_live_session_grants.load();
+    CHECK(live == alive, "AC1 chaos: live_session_grants matches session_bound_entries_alive "
+                         "(no orphan live count)");
+
+    {
+        Evaluator::TenantScope scope(ev_b, tenant);
+        (void)scope;
+    }
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC1 chaos: after quiesce, no live session grants");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+          "AC1 chaos: after quiesce, live_session_grants == 0");
+    const auto held = g_capability_registry().effects_for(tenant);
+    using aura::core::capability::has_effect;
+    CHECK(!has_effect(held, Effect::Mutate),
+          "AC1 chaos: after quiesce, effects_for has no leftover Mutate");
+    (void)allows_n;
+    (void)denies_n;
+}
+
+static void ac3207_3_soft_off_zero_cost() {
+    std::println("\n--- #3207 AC2: Soft/Off TenantScope cascade is zero-cost ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    aura::core::bump_mutation_epoch(1);
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    ev.set_capability_tenant_id(7);
+    const auto live0 = g_capability_effect_metrics().capability_live_session_grants.load();
+    CHECK(live0 == 0, "AC2 pre: no live session grants");
+    {
+        Evaluator::TenantScope scope(ev, 7);
+        (void)scope;
+    }
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+          "AC2: Soft/Off cascade leaves live_session_grants == 0");
+    CHECK(ev.require_effect(kEffectMutate, "3207-soft"),
+          "AC2: Soft/Off require_effect still allows (no extra deny)");
+}
+
+static void ac3207_4_source_cite_and_linter() {
+    std::println("\n--- #3207 AC5: source-cite + linter + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("kCapabilityDualEvaluatorCascadeIssue = 3207") != std::string::npos,
+          "AC5: capability_model.hh stamps #3207");
+    CHECK(cap.find("revoke_session_grants_for_locked") != std::string::npos,
+          "AC5: locked cascade sibling");
+    CHECK(cap.find("revoke_session_grants_for_mid_locked") != std::string::npos,
+          "AC5: locked mid-revoke sibling");
+    CHECK(cap.find("mark_session_bound_stolen_locked") != std::string::npos,
+          "AC5: locked stolen-mark sibling");
+    CHECK(cap.find("revoke_session_grants_on_steal_or_abort_locked") != std::string::npos,
+          "AC5: locked steal/abort sibling");
+    CHECK(eval_sec.find("Issue #3207") != std::string::npos,
+          "AC5: TenantScope::release cites #3207");
+    CHECK(eval_sec.find("revoke_session_grants_for_locked") != std::string::npos,
+          "AC5: TenantScope::release uses locked cascade");
+    CHECK(fiber.find("mark_session_bound_stolen_locked") != std::string::npos,
+          "AC5: steal path uses locked mark");
+    CHECK(fiber.find("revoke_session_grants_on_steal_or_abort_locked") != std::string::npos,
+          "AC5: steal path uses locked abort revoke");
+    CHECK(build.find("check_dual_evaluator_cascade_3207") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3207.cpp"),
+          "AC5: no tests/core/test_issue_3207.cpp");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3207.cpp"),
+          "AC5: no tests/issues/test_issue_3207.cpp");
+    CHECK(!std::filesystem::exists("docs/design/3207-dual-evaluator-cascade.md"),
+          "AC5: no docs/design/3207-*.md");
 }
 
 static void ac3144_1_production_wildcard_only_strip_tenant_admin() {
@@ -1274,6 +1443,10 @@ int run_test_capability_single_use_consume() {
         ac3142_2_steal_marks_no_double_consume();
         ac3142_3_long_run_no_leak();
         ac3142_4_additive_metrics_and_source_cite();
+        ac3207_1_sequential_cascade_then_require_effect_deny();
+        ac3207_2_dual_evaluator_concurrent_chaos();
+        ac3207_3_soft_off_zero_cost();
+        ac3207_4_source_cite_and_linter();
         ac3144_1_production_wildcard_only_strip_tenant_admin();
         ac3144_2_explicit_tenant_admin_no_strip();
         ac3144_3_soft_off_no_strip();

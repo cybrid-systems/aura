@@ -37,6 +37,9 @@ inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowMultiTenant = 64;
 inline constexpr std::uint64_t kDefaultGrantEpochRetainWindowRestricted = 16;
 // Issue #2529 stamp.
 inline constexpr int kGrantEpochRetainRestrictedIssue = 2529;
+// Issue #3207: dual-Evaluator cascade + consume linearizability on the
+// process-global CapabilityRegistry (no per-Evaluator shard).
+inline constexpr int kCapabilityDualEvaluatorCascadeIssue = 3207;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -640,24 +643,18 @@ struct CapabilityRegistry {
         grant(tenant, name, effects, prov, single_use, /*session_bound=*/true);
     }
 
-    // Issue #2944: revoke all live session_bound grants whose
-    // bound_mutation_id matches mid. Called from outermost
-    // MutationBoundaryGuard dtor (success or fail). Zero cost when
-    // capability_live_session_grants == 0 (AC3 Soft happy path).
-    // Returns number of grants revoked. Dual-writes audit reason
-    // (default "session-mid-exit"). Issue #3048: steal/abort hooks
-    // pass "session-mid-steal-exit" / "session-mid-abort-exit";
-    // second call after first is a no-op (already revoked / not live).
-    std::size_t revoke_session_grants_for_mid(std::uint64_t mid,
-                                              const char* reason = "session-mid-exit") {
+    // Issue #3207: caller MUST hold `mtx`. Walk/revoke body of
+    // `revoke_session_grants_for_mid` without the live==0 short-circuit
+    // or lock_guard. Steal/abort paths that already hold mtx
+    // (mark_outermost_mutation_failed) use this so stolen-mark + revoke
+    // stay one critical section w.r.t. concurrent check_and_record_effect.
+    std::size_t revoke_session_grants_for_mid_locked(std::uint64_t mid,
+                                                     const char* reason = "session-mid-exit") {
         if (mid == 0)
             return 0;
-        auto& met = g_capability_effect_metrics();
-        if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
-            return 0; // AC3 / #3048 AC4: zero extra work when no session grants
         if (!reason || reason[0] == '\0')
             reason = "session-mid-exit";
-        std::lock_guard<std::mutex> lock(mtx);
+        auto& met = g_capability_effect_metrics();
         std::size_t n = 0;
         auto ep = ::aura::core::current_mutation_epoch();
         if (ep == 0)
@@ -682,7 +679,6 @@ struct CapabilityRegistry {
                 auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
                 if (cur > 0)
                     met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
-                // SE dual-write reason for Agent audit trail.
                 record_audit(Effect::None, Effect::None, tenant, audit_prov,
                              /*denied=*/false, reason, reason);
             }
@@ -690,23 +686,43 @@ struct CapabilityRegistry {
         return n;
     }
 
-    // Issue #3142: revoke all live session_bound grants matching
-    // (tenant, mid, fiber_id) tuple. Used by TenantScope::release() to
-    // cascade-revoke inner SessionBound grants on nested scope abort /
-    // early-return. Caller MUST hold mtx (matches #3126 / #2659 patterns).
-    // Zero-cost short-circuit when capability_live_session_grants == 0
-    // (AC3 Soft happy path).
-    std::size_t revoke_session_grants_for(TenantId tenant, std::uint64_t mid,
-                                          std::uint32_t fiber_id,
-                                          const char* reason = "scope-dtor-cascade") {
-        if (mid == 0 || tenant == 0)
+    // Issue #2944: revoke all live session_bound grants whose
+    // bound_mutation_id matches mid. Called from outermost
+    // MutationBoundaryGuard dtor (success or fail). Zero cost when
+    // capability_live_session_grants == 0 (AC3 Soft happy path).
+    // Returns number of grants revoked. Dual-writes audit reason
+    // (default "session-mid-exit"). Issue #3048: steal/abort hooks
+    // pass "session-mid-steal-exit" / "session-mid-abort-exit";
+    // second call after first is a no-op (already revoked / not live).
+    // Issue #3207: Soft/Off keeps the live==0 short-circuit (no lock).
+    // Restricted/Strict always take mtx so a concurrent grant_session
+    // cannot sneak a residual past this cascade (TOCTOU on the atomic).
+    std::size_t revoke_session_grants_for_mid(std::uint64_t mid,
+                                              const char* reason = "session-mid-exit") {
+        if (mid == 0)
             return 0;
         auto& met = g_capability_effect_metrics();
-        if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
-            return 0; // AC3: zero extra work when no session grants
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const bool production =
+            (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+        if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+            return 0; // AC3 / #3048 AC4: zero extra work when no session grants
+        std::lock_guard<std::mutex> lock(mtx);
+        return revoke_session_grants_for_mid_locked(mid, reason);
+    }
+
+    // Issue #3207: caller MUST hold `mtx`. Walk/revoke body of
+    // `revoke_session_grants_for` without the live==0 short-circuit or
+    // lock_guard. TenantScope::release holds mtx across this + principal
+    // restore so a concurrent Evaluator cannot consume after restore.
+    std::size_t revoke_session_grants_for_locked(TenantId tenant, std::uint64_t mid,
+                                                 std::uint32_t fiber_id,
+                                                 const char* reason = "scope-dtor-cascade") {
+        if (mid == 0 || tenant == 0)
+            return 0;
         if (!reason || reason[0] == '\0')
             reason = "scope-dtor-cascade";
-        std::lock_guard<std::mutex> lock(mtx);
+        auto& met = g_capability_effect_metrics();
         std::size_t n = 0;
         auto ep = ::aura::core::current_mutation_epoch();
         if (ep == 0)
@@ -742,6 +758,29 @@ struct CapabilityRegistry {
         return n;
     }
 
+    // Issue #3142: revoke all live session_bound grants matching
+    // (tenant, mid, fiber_id) tuple. Used by TenantScope::release() to
+    // cascade-revoke inner SessionBound grants on nested scope abort /
+    // early-return. Public wrapper takes mtx (do not call while holding
+    // mtx — use revoke_session_grants_for_locked). Zero-cost short-circuit
+    // when capability_live_session_grants == 0 under Soft/Off (AC3).
+    // Issue #3207: Restricted/Strict always take mtx (closes live==0
+    // TOCTOU vs concurrent grant_session from another Evaluator).
+    std::size_t revoke_session_grants_for(TenantId tenant, std::uint64_t mid,
+                                          std::uint32_t fiber_id,
+                                          const char* reason = "scope-dtor-cascade") {
+        if (mid == 0 || tenant == 0)
+            return 0;
+        auto& met = g_capability_effect_metrics();
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const bool production =
+            (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+        if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+            return 0; // AC3: zero extra work when no session grants
+        std::lock_guard<std::mutex> lock(mtx);
+        return revoke_session_grants_for_locked(tenant, mid, fiber_id, reason);
+    }
+
     // Issue #3142: count live SessionBound entries for given tenant
     // (AC3 long-run chaos test: must == 0 after 1000 nested aborts).
     [[nodiscard]] std::size_t session_bound_entries_alive(TenantId tenant) const noexcept {
@@ -757,15 +796,13 @@ struct CapabilityRegistry {
         return n;
     }
 
-    // Issue #3142: mark SessionBound entry as stolen on fiber steal.
-    // Caller MUST hold mtx. Idempotent — second call on same (tenant, mid,
-    // fiber_id) is no-op. Returns true if a matching entry was found and
-    // marked stolen (caller can use to decide whether to also revoke).
-    bool mark_session_bound_stolen(TenantId tenant, std::uint64_t mid,
-                                   std::uint32_t fiber_id) noexcept {
+    // Issue #3207: caller MUST hold `mtx`. Body of mark_session_bound_stolen
+    // without the lock_guard — steal paths that already hold mtx must use
+    // this (std::mutex is non-recursive).
+    bool mark_session_bound_stolen_locked(TenantId tenant, std::uint64_t mid,
+                                          std::uint32_t fiber_id) noexcept {
         if (mid == 0 || tenant == 0)
             return false;
-        std::lock_guard<std::mutex> lock(mtx);
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return false;
@@ -783,6 +820,19 @@ struct CapabilityRegistry {
                 1, std::memory_order_relaxed);
         }
         return found;
+    }
+
+    // Issue #3142: mark SessionBound entry as stolen on fiber steal.
+    // Public wrapper takes mtx (do not call while holding mtx — use
+    // mark_session_bound_stolen_locked). Idempotent — second call on
+    // same (tenant, mid, fiber_id) is no-op. Returns true if a matching
+    // entry was found and marked stolen.
+    bool mark_session_bound_stolen(TenantId tenant, std::uint64_t mid,
+                                   std::uint32_t fiber_id) noexcept {
+        if (mid == 0 || tenant == 0)
+            return false;
+        std::lock_guard<std::mutex> lock(mtx);
+        return mark_session_bound_stolen_locked(tenant, mid, fiber_id);
     }
 
     // Issue #2055: revoke stamps revoke_epoch (WorkspaceEpoch Mutation) for audit.
@@ -1407,20 +1457,16 @@ inline CapabilityRegistry& g_capability_registry() noexcept {
     return r;
 }
 
-// Issue #3048: single steal / force-cancel / non-Guard abort entry.
-// Reuses revoke_session_grants_for_mid (no second revoke policy).
-// steal=true → SE "session-mid-steal-exit"; else "session-mid-abort-exit".
-// Zero cost when session_mid==0 or capability_live_session_grants==0 (AC4).
-// Second call is a no-op after the first (AC3, grants already revoked).
-inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session_mid,
-                                                           bool steal) noexcept {
+// Issue #3207: caller MUST hold registry mtx. Steal/abort counter bump
+// + mid revoke without taking mtx again (std::mutex is non-recursive).
+inline std::size_t revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid,
+                                                                  bool steal) noexcept {
     if (session_mid == 0)
         return 0;
     auto& met = g_capability_effect_metrics();
-    if (met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
-        return 0; // AC4: Soft / empty live residual — no lock
     const char* reason = steal ? "session-mid-steal-exit" : "session-mid-abort-exit";
-    const auto n = g_capability_registry().revoke_session_grants_for_mid(session_mid, reason);
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid_locked(session_mid, reason);
     if (n > 0) {
         if (steal)
             met.capability_session_revoke_steal_total.fetch_add(n, std::memory_order_relaxed);
@@ -1428,6 +1474,28 @@ inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session
             met.capability_session_revoke_abort_total.fetch_add(n, std::memory_order_relaxed);
     }
     return n;
+}
+
+// Issue #3048: single steal / force-cancel / non-Guard abort entry.
+// Reuses revoke_session_grants_for_mid (no second revoke policy).
+// steal=true → SE "session-mid-steal-exit"; else "session-mid-abort-exit".
+// Zero cost when session_mid==0 or capability_live_session_grants==0 (AC4)
+// under Soft/Off. Restricted/Strict take mtx even at live==0 (#3207).
+// Second call is a no-op after the first (AC3, grants already revoked).
+// Do not call while holding mtx — use the _locked sibling.
+inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session_mid,
+                                                           bool steal) noexcept {
+    if (session_mid == 0)
+        return 0;
+    auto& met = g_capability_effect_metrics();
+    auto& reg = g_capability_registry();
+    const auto mode = reg.sandbox_mode.load(std::memory_order_acquire);
+    const bool production =
+        (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+    if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
+        return 0; // AC4: Soft / empty live residual — no lock
+    std::lock_guard<std::mutex> lock(reg.mtx);
+    return revoke_session_grants_on_steal_or_abort_locked(session_mid, steal);
 }
 
 // AC1: check_and_record_effect — core enforcement entry.
@@ -1485,6 +1553,8 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
         // Skip under wildcard_ok (wildcard grants all bits; single_use grant
         // was not necessary for allow and must stay intact). Skip when
         // required is None (no effect to match grants against).
+        // Issue #3207: consume + live_session_grants fetch_sub stay under
+        // this same lock (no lock-drop vs TenantScope cascade revoke).
         if (allowed && required != Effect::None && !wildcard_ok) {
             auto it = reg.by_tenant.find(tenant);
             if (it != reg.by_tenant.end()) {

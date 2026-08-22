@@ -20,7 +20,7 @@
       "path": "src/compiler/evaluator_security.cpp",
       "contains": [
         "Issue #3142",
-        "revoke_session_grants_for(",
+        "revoke_session_grants_for",
         "scope-dtor-cascade"
       ]
     },
