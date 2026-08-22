@@ -52,6 +52,30 @@ struct AuditWalRecord {
 static_assert(sizeof(AuditWalRecord) == 8 + 8 + 8 + 4 + 4 + 4 + 48 + 2 + 2 + 8 + 8 + 8 + 1 + 7,
               "AuditWalRecord size stable for WAL format");
 
+// Issue #3242: additive typed-summary sidecar. Own magic/version so
+// AuditWalRecord replay (kAuditWalMagic / version 1) ignores these files.
+// Old readers never open typed-summary-N.wal.
+inline constexpr char kTypedSummaryWalMagic[8] = {'A', 'U', 'R', 'A', 'T', 'Y', 'S', '1'};
+inline constexpr std::uint32_t kTypedSummaryWalVersion = 1;
+inline constexpr int kTypedSummaryWalIssue = 3242;
+
+#pragma pack(push, 1)
+struct TypedSummaryWalRecord {
+    std::uint64_t mutation_id = 0;
+    std::uint64_t seq = 0;
+    std::uint64_t timestamp_ms = 0;
+    std::uint32_t nodes_changed = 0;
+    std::uint32_t target_node = 0;
+    std::uint32_t name_hash = 0; // FNV-1a of trail name (stable reason hash)
+    std::uint8_t outcome = 0;    // AuditOutcome
+    std::uint8_t kind = 0;       // MutationKind
+    std::uint8_t reserved[2]{};
+};
+#pragma pack(pop)
+
+static_assert(sizeof(TypedSummaryWalRecord) == 8 + 8 + 8 + 4 + 4 + 4 + 1 + 1 + 2,
+              "TypedSummaryWalRecord size stable for sidecar format");
+
 struct AuditWalMetrics {
     std::atomic<std::uint64_t> audit_record_persisted_total{0};
     std::atomic<std::uint64_t> audit_wal_replay_count{0};
@@ -68,6 +92,8 @@ struct AuditWalMetrics {
     // can break out single-tenant vs multi-tenant WAL pressure).
     std::atomic<std::uint64_t> audit_wal_forced_by_restricted_total{0};
     std::atomic<std::uint64_t> audit_wal_using_default_dir{0};
+    // Issue #3242: typed-summary sidecar persist (additive; struct end).
+    std::atomic<std::uint64_t> typed_summary_wal_persisted_total{0};
 };
 
 // Issue #2150 stamp (schema key on query:audit-wal-stats / capability-effect).
@@ -90,11 +116,25 @@ struct MutationAuditWal {
     std::uint32_t segment_index = 0;
     std::uint64_t last_seq_persisted = 0;
     std::uint32_t unflushed = 0;
+    // Issue #3242: typed-summary sidecar (paired segment index; own FILE*).
+    std::FILE* typed_fp = nullptr;
+    std::string typed_path;
+    std::uint64_t typed_bytes = 0;
+    std::uint32_t typed_unflushed = 0;
     // Batch fflush every N appends for <5% hot-path overhead (still
     // fflush on rotate/disable for crash recovery of recent batch).
     static constexpr std::uint32_t kFlushEvery = 32;
 
     ~MutationAuditWal() { close_unlocked(); }
+
+    void close_typed_unlocked() noexcept {
+        if (typed_fp) {
+            std::fflush(typed_fp);
+            std::fclose(typed_fp);
+            typed_fp = nullptr;
+        }
+        typed_unflushed = 0;
+    }
 
     void close_unlocked() noexcept {
         if (fp) {
@@ -103,6 +143,7 @@ struct MutationAuditWal {
             fp = nullptr;
         }
         unflushed = 0;
+        close_typed_unlocked();
     }
 
     [[nodiscard]] bool open_segment_unlocked(std::uint32_t seg) noexcept {
@@ -146,10 +187,48 @@ struct MutationAuditWal {
         return true;
     }
 
+    // Issue #3242: sidecar segment paired with audit-N.wal. Failure is
+    // non-fatal (mutation WAL still serves crash recovery).
+    [[nodiscard]] bool open_typed_segment_unlocked(std::uint32_t seg) noexcept {
+        close_typed_unlocked();
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        if (ec)
+            return false;
+        typed_path = (fs::path(dir) / ("typed-summary-" + std::to_string(seg) + ".wal")).string();
+        typed_fp = std::fopen(typed_path.c_str(), "ab+");
+        if (!typed_fp)
+            return false;
+        static char tbuf[16 * 1024];
+        std::setvbuf(typed_fp, tbuf, _IOFBF, sizeof(tbuf));
+        if (std::fseek(typed_fp, 0, SEEK_END) != 0) {
+            close_typed_unlocked();
+            return false;
+        }
+        const auto pos = std::ftell(typed_fp);
+        typed_bytes = pos > 0 ? static_cast<std::uint64_t>(pos) : 0;
+        if (typed_bytes == 0) {
+            if (std::fwrite(kTypedSummaryWalMagic, 1, 8, typed_fp) != 8) {
+                close_typed_unlocked();
+                return false;
+            }
+            const std::uint32_t ver = kTypedSummaryWalVersion;
+            if (std::fwrite(&ver, sizeof(ver), 1, typed_fp) != 1) {
+                close_typed_unlocked();
+                return false;
+            }
+            typed_bytes = 8 + sizeof(ver);
+            std::fflush(typed_fp);
+        }
+        return true;
+    }
+
     void rotate_unlocked() noexcept {
         ++segment_index;
         g_audit_wal_metrics().audit_wal_rotate_total.fetch_add(1, std::memory_order_relaxed);
         (void)open_segment_unlocked(segment_index);
+        (void)open_typed_segment_unlocked(segment_index);
     }
 
     // Enable persist under `persist_dir`. Replays existing WAL into `out_records`
@@ -211,6 +290,7 @@ struct MutationAuditWal {
             g_audit_wal_metrics().audit_wal_enabled.store(0, std::memory_order_relaxed);
             return false;
         }
+        (void)open_typed_segment_unlocked(any ? max_seg : 0);
         enabled = true;
         g_audit_wal_metrics().audit_wal_enabled.store(1, std::memory_order_relaxed);
         return true;
@@ -270,6 +350,81 @@ struct MutationAuditWal {
         g_audit_wal_metrics().audit_wal_bytes_written.fetch_add(sizeof(rec),
                                                                 std::memory_order_relaxed);
         return true;
+    }
+
+    // Issue #3242: persist compact typed summary. Same mtx + batched
+    // fflush as mutation append (AC4). Soft / WAL-off never reaches a
+    // live typed_fp (caller also gates production_defaults_active).
+    bool append_typed_summary(const TypedSummaryWalRecord& rec) noexcept {
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!enabled || !typed_fp)
+            return false;
+        if (rec.mutation_id == 0)
+            return false;
+        // Sidecar is additive: do not consume mutation-WAL inject fails
+        // or the append-fail SLO (those stay mutation-record only).
+        const auto n = std::fwrite(&rec, 1, sizeof(rec), typed_fp);
+        if (n != sizeof(rec))
+            return false;
+        typed_bytes += sizeof(rec);
+        ++typed_unflushed;
+        if (typed_unflushed >= kFlushEvery) {
+            std::fflush(typed_fp);
+            typed_unflushed = 0;
+        }
+        g_audit_wal_metrics().typed_summary_wal_persisted_total.fetch_add(
+            1, std::memory_order_relaxed);
+        g_audit_wal_metrics().audit_wal_bytes_written.fetch_add(sizeof(rec),
+                                                                std::memory_order_relaxed);
+        return true;
+    }
+
+    static std::vector<TypedSummaryWalRecord>
+    read_typed_segment_file(const std::string& path) noexcept {
+        std::vector<TypedSummaryWalRecord> out;
+        std::FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f)
+            return out;
+        char magic[8]{};
+        if (std::fread(magic, 1, 8, f) != 8 || std::memcmp(magic, kTypedSummaryWalMagic, 8) != 0) {
+            std::fclose(f);
+            return out;
+        }
+        std::uint32_t ver = 0;
+        if (std::fread(&ver, sizeof(ver), 1, f) != 1 || ver != kTypedSummaryWalVersion) {
+            std::fclose(f);
+            return out;
+        }
+        TypedSummaryWalRecord rec{};
+        while (std::fread(&rec, 1, sizeof(rec), f) == sizeof(rec))
+            out.push_back(rec);
+        std::fclose(f);
+        return out;
+    }
+
+    // Issue #3242: current + at most one prior rotate. Disabled / mid==0 → nullopt.
+    [[nodiscard]] std::optional<TypedSummaryWalRecord>
+    find_recent_typed_summary_by_mid(std::uint64_t mid, std::uint32_t max_segments = 2) noexcept {
+        if (mid == 0 || !enabled || max_segments == 0)
+            return std::nullopt;
+        std::lock_guard<std::mutex> lock(mtx);
+        if (!enabled || dir.empty())
+            return std::nullopt;
+        if (typed_fp)
+            std::fflush(typed_fp);
+        namespace fs = std::filesystem;
+        const std::uint32_t n = std::min(max_segments, segment_index + 1);
+        for (std::uint32_t i = 0; i < n; ++i) {
+            const auto seg = segment_index - i;
+            const auto path =
+                (fs::path(dir) / ("typed-summary-" + std::to_string(seg) + ".wal")).string();
+            auto recs = read_typed_segment_file(path);
+            for (auto it = recs.rbegin(); it != recs.rend(); ++it) {
+                if (it->mutation_id == mid)
+                    return *it;
+            }
+        }
+        return std::nullopt;
     }
 
     // Issue #3205: fallback mid point-query (SE WAL preferred). Current
@@ -341,6 +496,7 @@ struct MutationAuditWal {
         m.audit_wal_forced_by_multi_tenant_total.store(0, std::memory_order_relaxed);
         m.audit_wal_forced_by_restricted_total.store(0, std::memory_order_relaxed);
         m.audit_wal_using_default_dir.store(0, std::memory_order_relaxed);
+        m.typed_summary_wal_persisted_total.store(0, std::memory_order_relaxed);
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
@@ -396,6 +552,8 @@ struct AuditWalStatsSnapshot {
     std::uint64_t forced_by_multi_tenant = 0;
     std::uint64_t forced_by_restricted = 0;
     std::uint64_t using_default_dir = 0;
+    // Issue #3242: sidecar persist (struct end).
+    std::uint64_t typed_summary_persisted = 0;
 };
 
 [[nodiscard]] inline AuditWalStatsSnapshot snapshot_audit_wal_stats() noexcept {
@@ -416,6 +574,7 @@ struct AuditWalStatsSnapshot {
         m.audit_wal_forced_by_multi_tenant_total.load(std::memory_order_relaxed),
         m.audit_wal_forced_by_restricted_total.load(std::memory_order_relaxed),
         m.audit_wal_using_default_dir.load(std::memory_order_relaxed),
+        m.typed_summary_wal_persisted_total.load(std::memory_order_relaxed),
     };
 }
 

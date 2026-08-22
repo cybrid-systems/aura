@@ -4602,6 +4602,19 @@ def cmd_lint():
             "Issue #3205 evolution-audit-decision durable linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py"
         )
         return r
+    # Issue #3242: durable typed summary sidecar after typed-trail wrap.
+    # Additive kind/sidecar (AURATYS1); old mutation WAL replay ignores it.
+    # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).
+    ts3242_script = COVERAGE_CHECKS / "check_typed_summary_wal_3242.py"
+    if not ts3242_script.exists():
+        fail(f"missing {ts3242_script}")
+        return 1
+    r = run([sys.executable, str(ts3242_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3242 typed-summary WAL linter failed — run python3 scripts/coverage/checks/check_typed_summary_wal_3242.py"
+        )
+        return r
     # Issue #3115: mutate:replace-type / replace-value MacroIntroduced gate.
     # Reuse reject_structural_macro_hygiene; lockless batch rejects too.
     # Extends test_hygiene_mutate_closed_loop; no test_issue_3115.cpp.
