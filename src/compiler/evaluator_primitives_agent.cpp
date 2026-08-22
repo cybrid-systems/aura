@@ -3932,6 +3932,13 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-2229", make_int(2229)},
                 {"schema-2887", make_int(2887)},
                 {"issue-2887", make_int(2887)},
+                // Issue #3250: RestartN fuel vs skip (additive; append).
+                {"restart-attempted", make_int(static_cast<std::int64_t>(wr.restart_attempted))},
+                {"restart-skipped-no-spec",
+                 make_int(static_cast<std::int64_t>(wr.restart_skipped_no_spec))},
+                {"restart-ok", make_int(static_cast<std::int64_t>(wr.restart_ok))},
+                {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
+                {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
             };
             return build_orch_hash(kv);
         });
@@ -4015,6 +4022,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3208: capture before drop (empty join drops the slot).
             const auto join_fail_effective = scope->last_on_join_fail_effective();
             const auto join_fail_taken = scope->last_join_fail_action_taken();
+            const auto restart_attempted = scope->last_restart_attempted();
+            const auto restart_skipped = scope->last_restart_skipped_no_spec();
+            const auto restart_ok = scope->last_restart_ok();
             // ~AgentScope semantics: after join_all, scope holds no live
             // handles (drop the per-Evaluator storage slot so the next
             // scope-spawn creates a fresh scope with empty handles_).
@@ -4075,6 +4085,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"schema-3208", make_int(aura::orch::kJoinFailProductionDefaultIssue)},
                 {"issue-3208", make_int(aura::orch::kJoinFailProductionDefaultIssue)},
                 {"join-fail-production-default-wired", make_int(1)},
+                // Issue #3250: RestartN fuel vs skip (additive; append).
+                {"restart-attempted", make_int(static_cast<std::int64_t>(restart_attempted))},
+                {"restart-skipped-no-spec", make_int(static_cast<std::int64_t>(restart_skipped))},
+                {"restart-ok", make_int(static_cast<std::int64_t>(restart_ok))},
+                {"schema-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
+                {"issue-3250", make_int(aura::orch::kRestartNSpecBoundaryIssue)},
             };
             return build_orch_hash(kv);
         });
@@ -5110,12 +5126,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                   : 0;
             const auto cm_lin =
                 m ? m->orch_linear_violation_prevented_total.load(std::memory_order_relaxed) : 0;
-            // Capacity 512: #1588 + #1879/#1880/#1881 health fields + subsequent
-            // scope/directory/obs keys (#2588/#2631/#2751/…); 256 overflowed
-            // (~285 insert_kv) so later schema/wired sentinels were dropped
-            // (e.g. schema-2153 / join-drain-wired at the tail). 512 headroom
-            // keeps every schema/wired sentinel present for AC greps.
-            auto* ht = FlatHashTable::create(512);
+            // Capacity 1024: 256 overflowed (~285 insert_kv); 512 then
+            // dropped tail sentinels again as #3208/#3220/#3250 keys
+            // appended. 1024 headroom keeps schema/wired sentinels present.
+            auto* ht = FlatHashTable::create(1024);
             if (!ht)
                 return make_void();
             auto meta = ht->metadata();
@@ -5957,6 +5971,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3220", aura::orch::kReclaimedPendingLifecycleIssue);
             insert_kv("issue-3220", aura::orch::kReclaimedPendingLifecycleIssue);
             insert_kv("reclaimed-pending-lifecycle-wired", 1);
+            // Issue #3250: RestartN no-spec skip (additive; append, no
+            // insert in the middle of prior restart keys).
+            insert_kv("agent-restart-skipped-no-spec-total",
+                      static_cast<std::int64_t>(
+                          os.agent_restart_skipped_no_spec_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3250", aura::orch::kRestartNSpecBoundaryIssue);
+            insert_kv("issue-3250", aura::orch::kRestartNSpecBoundaryIssue);
+            insert_kv("restart-n-spec-boundary-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);
