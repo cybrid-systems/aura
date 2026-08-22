@@ -415,6 +415,9 @@ struct JoinPolicy {
 // this deadline once when must_wait_reclaimed && the caller did not
 // pass :wait-reclaimed-ms.
 inline constexpr std::uint64_t kProductionWaitReclaimedMsDefault = 50;
+// Issue #3206: short drain after residual cancel / join-drain (existing
+// join path recycles reservation/mailbox; #2661 no early free).
+inline constexpr std::uint64_t kResidualJoinDrainMs = 50;
 
 // Same probe mailbox / runtime ABI already use (strong def in
 // typed_mutation_audit_hooks.cpp). Avoid importing evaluator from orch.
@@ -811,6 +814,11 @@ struct OrchModuleStats {
     // still live (must_wait_reclaimed, no second wait). Additive at
     // struct end (#2906). Soft never bumps (auto-wait gated).
     std::atomic<std::uint64_t> host_forget_reclaimed_risk_total{0};
+    // Issue #3206: production + explicit residual preference action
+    // (CancelOnResidual / JoinDrainOnResidual). Soft / Report stay 0.
+    // Appended at struct end (#2906).
+    std::atomic<std::uint64_t> workflow_residual_cancel_total{0};
+    std::atomic<std::uint64_t> workflow_residual_join_drain_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -3541,14 +3549,19 @@ to_agent_policy(const serve::parallel_orch::ParallelPolicy& pp) noexcept {
 // Non-goals: durable saga log; changing #2661 hard-reclaim mechanics;
 // automatic cross-scope RestartN (still scope-local).
 //
-// Residual preference is advisory for hosts — it does NOT alter
-// complete_agent_join_cleanup / Scheduler::note_orphan_fiber. Hosts may
-// observe residual-reclaim-under-policy-total when residual is seen under
-// a composed policy (AC2).
+// Residual preference: Soft / Report / Defer stay observe-only (do NOT
+// alter complete_agent_join_cleanup / Scheduler::note_orphan_fiber).
+// Production + explicit Cancel / JoinDrain run cancel_all + short
+// join_all (existing join path; #2661 no early free). Hosts observe
+// residual-reclaim-under-policy-total plus residual-action.
 enum class ResidualReclaimPreference : std::uint8_t {
-    Report = 0, // default: observe residual only (#2661 cleanup unchanged)
-    Cancel = 1, // prefer host-level cancel-on-residual (still #2661 reclaim)
-    Defer = 2,  // prefer deferred cleanup path (#2661 already defers)
+    Report = 0, // default / Soft: observe residual only (#2661 unchanged)
+    ObserveOnly = Report,
+    Cancel = 1, // production + explicit: cancel_all + short join drain
+    CancelOnResidual = Cancel,
+    Defer = 2,     // still observe; #2661 deferred cleanup already applies
+    JoinDrain = 3, // production + explicit: join_all short drain (no cancel)
+    JoinDrainOnResidual = JoinDrain,
 };
 
 struct WorkflowFailurePolicy {
@@ -3562,7 +3575,8 @@ struct WorkflowFailurePolicy {
     // Supervision phase (AgentScope::watch_all) — filled by compose via
     // to_agent_policy (#2539). Callers may override after compose.
     AgentFailurePolicy agent_policy{};
-    // Residual / reclaim preference (advisory; #2661 contract preserved).
+    // Residual / reclaim preference. Soft / Report / Defer: observe-only
+    // (#2661 preserved). Production + Cancel / JoinDrain: explicit action.
     ResidualReclaimPreference residual = ResidualReclaimPreference::Report;
 };
 
@@ -3573,6 +3587,9 @@ inline constexpr int kWorkflowComposeAuraIssue = 2843;
 // Issue #2974: multi-stage workflow primitive (ordered stages over
 // parallel_intend + optional scope watch + residual observe-only).
 inline constexpr int kWorkflowRunIssue = 2974;
+// Issue #3206: residual preference can cancel / join-drain under production
+// when explicitly set. Soft / Report stay observe-only.
+inline constexpr int kWorkflowResidualActionIssue = 3206;
 
 // Compose from batch FailurePolicy (+ residual preference). Maps agent
 // via the #2539 bridge so FailFast→Cancel, RetryN→RestartN, etc.
@@ -3638,12 +3655,16 @@ to_parallel_policy(const WorkflowFailurePolicy& w) noexcept {
     return w.agent_policy;
 }
 
-// Residual preference helpers (advisory; do not change #2661 reclaim).
+// Residual preference helpers. Cancel/JoinDrain still #2661 reclaim
+// (join path); they only select the action when production-armed.
 [[nodiscard]] inline bool residual_prefers_cancel(const WorkflowFailurePolicy& w) noexcept {
     return w.residual == ResidualReclaimPreference::Cancel;
 }
 [[nodiscard]] inline bool residual_prefers_defer(const WorkflowFailurePolicy& w) noexcept {
     return w.residual == ResidualReclaimPreference::Defer;
+}
+[[nodiscard]] inline bool residual_prefers_join_drain(const WorkflowFailurePolicy& w) noexcept {
+    return w.residual == ResidualReclaimPreference::JoinDrain;
 }
 
 // Issue #2843: string names for Aura hash projection (parity with C++ table).
@@ -3681,9 +3702,24 @@ failure_policy_name(serve::parallel_orch::FailurePolicy p) noexcept {
             return "cancel";
         case ResidualReclaimPreference::Defer:
             return "defer";
+        case ResidualReclaimPreference::JoinDrain:
+            return "join-drain";
         case ResidualReclaimPreference::Report:
         default:
             return "report";
+    }
+}
+// Issue #3206: Agent-facing residual-action (observe / cancel / join-drain).
+[[nodiscard]] inline const char* residual_action_name(ResidualReclaimPreference r) noexcept {
+    switch (r) {
+        case ResidualReclaimPreference::Cancel:
+            return "cancel";
+        case ResidualReclaimPreference::JoinDrain:
+            return "join-drain";
+        case ResidualReclaimPreference::Defer:
+        case ResidualReclaimPreference::Report:
+        default:
+            return "observe";
     }
 }
 // Bump Aura-side compose counter (prim path). C++ compose_workflow_policy
@@ -3731,6 +3767,8 @@ struct ApplyWorkflowResult {
     int scope_done = 0;
     bool scope_watch_called = false;
     bool residual_observed = false;
+    bool residual_acted = false; // Issue #3206
+    const char* residual_action = "observe";
 };
 
 // Issue #2852: apply_workflow definition is in agent_scope.h (after the
@@ -3764,6 +3802,8 @@ struct WorkflowRunResult {
     std::uint32_t stages_ok = 0;
     std::uint32_t stages_failed = 0;
     bool residual_observed = false;
+    bool residual_acted = false; // Issue #3206
+    const char* residual_action = "observe";
     std::uint32_t stopped_at = 0; // 0 = completed all; 1-based stop index
 };
 
