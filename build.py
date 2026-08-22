@@ -4502,6 +4502,20 @@ def cmd_lint():
             "Issue #3220 reclaimed-pending lifecycle linter failed — run python3 scripts/coverage/checks/check_reclaimed_pending_lifecycle_3220.py"
         )
         return r
+    # Issue #3245: C++ long-lived hosts adopt ensure_reclaimed_cleanup
+    # after production auto-wait Timeout. Moving a still-pending handle
+    # re-bumps host_forget_reclaimed_risk_total. Extends
+    # test_join_drain_reclaim (#81967); no docs/design/ (#1655).
+    erc3245_script = COVERAGE_CHECKS / "check_ensure_reclaimed_cleanup_adoption_3245.py"
+    if not erc3245_script.exists():
+        fail(f"missing {erc3245_script}")
+        return 1
+    r = run([sys.executable, str(erc3245_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3245 ensure_reclaimed_cleanup adoption linter failed — run python3 scripts/coverage/checks/check_ensure_reclaimed_cleanup_adoption_3245.py"
+        )
+        return r
     # Issue #3148: cross-Evaluator lifecycle close via HandoffToken
     # (join_via_handoff C++ helper + orch:join-via-token Aura prim).
     # Closes the gap left by #3089 (proxy has no join/wait_reclaimed

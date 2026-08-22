@@ -853,6 +853,19 @@ struct OrchModuleStats {
 // by the linker).
 inline OrchModuleStats g_orch_module_stats{};
 
+// Issue #3245: long-lived C++ hosts that keep AgentHandle after
+// production auto-wait Timeout MUST call ensure_reclaimed_cleanup
+// (or wait_reclaimed_body) before name reuse / second supervision.
+// Moving a still-pending handle (vector / hand-off) re-bumps the
+// existing host_forget_reclaimed_risk_total so hosts that only saw
+// the join-time bump still get a hold-path signal. Soft: must_wait
+// is false → one bool check, no extra atomic.
+inline constexpr int kEnsureReclaimedCleanupAdoptionIssue = 3245;
+inline void note_reclaimed_pending_hold(bool pending) noexcept {
+    if (!pending)
+        return;
+    g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(1, std::memory_order_relaxed);
+}
 
 // or Fiber dtor abandon. Idempotent on zero (caller checks start_ns!=0).
 inline void note_residual_body_age_ms(std::uint64_t age_ms) noexcept {
@@ -1339,6 +1352,9 @@ struct AgentHandle {
         , must_wait_reclaimed(o.must_wait_reclaimed)
         , last_join_status(o.last_join_status)
         , body_acquire_rejected_slot(std::move(o.body_acquire_rejected_slot)) {
+        // Issue #3245: hold-path signal when a still-pending handle is
+        // stored (vector / another component). Soft: pending=false.
+        note_reclaimed_pending_hold(o.must_wait_reclaimed);
         o.id = 0;
         o.fiber = nullptr;
         o.ok = false;
@@ -1400,6 +1416,7 @@ struct AgentHandle {
             must_wait_reclaimed = o.must_wait_reclaimed;
             last_join_status = o.last_join_status;
             body_acquire_rejected_slot = std::move(o.body_acquire_rejected_slot);
+            note_reclaimed_pending_hold(o.must_wait_reclaimed);
             o.id = 0;
             o.fiber = nullptr;
             o.ok = false;
@@ -2487,6 +2504,11 @@ struct JoinViaTokenResult {
 // delegates here so the wait logic lives in one place. Same shape as
 // WorkspaceIsolationPolicy::grant_cross_tenant / try_grant_cross_tenant_privileged
 // post-#3086 and CapabilityRegistry::grant_macro_self_evo post-#3029.
+//
+// Issue #3245: production contract — if must_wait_reclaimed after the
+// 50ms auto-wait Timeout, the host MUST call this (or wait_reclaimed_body)
+// before name reuse / second supervision. Soft / explicit wait_reclaimed_ms:
+// must_wait is false → this stays a no-op. Timeout keeps #2661 no-early-free.
 [[nodiscard]] inline WaitReclaimedResult ensure_reclaimed_cleanup(AgentHandle& h) noexcept {
     // AC: zero-cost when Soft/Off or explicit wait already ran (the
     // production gate is the must_wait_reclaimed flag set in join_agent;
