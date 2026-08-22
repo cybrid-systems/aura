@@ -3391,6 +3391,19 @@ def cmd_lint():
             "Issue #3255 Soft dual-graph parity partial linter failed — run python3 scripts/coverage/checks/check_dual_dep_graph_soft_parity_partial_3255.py"
         )
         return r
+    # Issue #3256: mailbox under-boundary SLO unifies with hold-budget
+    # force path. Extends test_mailbox_recv_mutation_boundary (#81967);
+    # no docs/design/ (#1655).
+    mhu_script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_unify_3256.py"
+    if not mhu_script.exists():
+        fail(f"missing {mhu_script}")
+        return 1
+    r = run([sys.executable, str(mhu_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3256 mailbox SLO hold-unify linter failed — run python3 scripts/coverage/checks/check_mailbox_defer_slo_hold_unify_3256.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10649,6 +10662,21 @@ def cmd_dual_dep_graph_soft_parity_partial_3255_coverage():
         fail("dual-dep-graph Soft parity partial (#3255) coverage contract rows failed")
         return 1
     ok("dual-dep-graph Soft parity partial (#3255) coverage clean")
+    return 0
+
+
+def cmd_mailbox_defer_slo_hold_unify_3256_coverage():
+    """Issue #3256: mailbox SLO unifies with hold-budget force path."""
+    print(f"{B}=== mailbox defer-SLO hold unify (#3256) ==={N}")
+    script = COVERAGE_CHECKS / "check_mailbox_defer_slo_hold_unify_3256.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mailbox defer-SLO hold unify (#3256) coverage contract rows failed")
+        return 1
+    ok("mailbox defer-SLO hold unify (#3256) coverage clean")
     return 0
 
 
@@ -18978,6 +19006,8 @@ def main():
         "hold-budget-noncoop-force-edge-3254-coverage": cmd_hold_budget_noncoop_force_edge_3254_coverage,
         "dual-dep-graph-soft-parity-partial-3255": cmd_dual_dep_graph_soft_parity_partial_3255_coverage,
         "dual-dep-graph-soft-parity-partial-3255-coverage": cmd_dual_dep_graph_soft_parity_partial_3255_coverage,
+        "mailbox-defer-slo-hold-unify-3256": cmd_mailbox_defer_slo_hold_unify_3256_coverage,
+        "mailbox-defer-slo-hold-unify-3256-coverage": cmd_mailbox_defer_slo_hold_unify_3256_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
