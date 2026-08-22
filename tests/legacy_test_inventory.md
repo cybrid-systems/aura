@@ -1566,7 +1566,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_linear_ownership_occurrence_predicate_mutate.cpp` (—) [domain_suite, theme_compiler] — test_linear_ownership_occurrence_predicate_mutate.cpp — Issue #747:
 - `tests/compiler/test_linear_ownership_refcount_inc.cpp` (—) [domain_suite, theme_compiler] — AC1: source inspects operands[2]; cites #2829; inc metric
 - `tests/compiler/test_linear_partial_revalidate.cpp` (—) [domain_suite, theme_compiler] — AC1: Dirty linear ownership fail path surfaces during partial under
-- `tests/compiler/test_linear_pin_moving_compact.cpp` (—) [domain_suite, theme_compiler] — linear pin contract). Issue #2293 — AOT JIT path registers linear
+- `tests/compiler/test_linear_pin_moving_compact.cpp` (—) [large, domain_suite, theme_compiler] — linear pin contract). Issue #2293 — AOT JIT path registers linear
 - `tests/compiler/test_linear_runtime_violation.cpp` (—) [small, domain_suite, theme_compiler] — Issue #2067 — Linear Ownership runtime enforcement test.
 - `tests/compiler/test_linear_state_stamp_apply.cpp` (—) [domain_suite, theme_compiler] — AC1: mangle_aot_name stamps _lN when linear_state != 0 (host tracks)
 - `tests/compiler/test_linear_synth_violation.cpp` (—) [domain_suite, theme_compiler] — AC1: Double-move / can_move fail path is first-class (note_linear_synth
