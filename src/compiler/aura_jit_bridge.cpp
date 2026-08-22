@@ -2330,9 +2330,11 @@ extern "C" std::uint64_t aura_post_steal_aot_revalidate_total(void) {
 //   ev_ptr        - Evaluator* (may be nullptr for module-unaware call
 //                   sites; falls back to file-level atomic bump).
 //   cloned_marker - std::uint64_t cast of aura::ast::SyntaxMarker
-//                   (reserved for future marker-specific routing; current
-//                   bump path is unconditional — every macro clone in the
+//                   (reserved for future marker-specific routing; repin
+//                   bump is unconditional — every macro clone in the
 //                   MacroIntroduced path is a repin candidate per #1908 AC).
+//   was_violation - Issue #3260: non-zero only when a hygiene violation
+//                   was actually rejected. clone_macro_body passes 0.
 static std::atomic<std::uint64_t> g_1908_repin_fallback_total{0};
 static std::atomic<std::uint64_t> g_1908_hygiene_prevented_fallback_total{0};
 // Issue #2177: AOT-side MacroIntroduced marker observability (refine #2100
@@ -2351,13 +2353,28 @@ static std::atomic<std::uint64_t> g_2177_aot_macro_marker_stripped_total{0};
 // in light stubs that do not link fiber mutation.
 extern "C" int aura_evaluator_bump_macro_provenance_repin_on_steal(void* ev_ptr) noexcept;
 
+// Issue #3260: SSOT file-level bumpers. Per-eval steal/flush/panic sites
+// call these so C-API totals match CompilerMetrics. clone hook uses them
+// too (repin always; hygiene only on was_violation).
+extern "C" void aura_bump_macro_provenance_repin_on_steal_total(std::uint64_t n) {
+    if (n == 0)
+        return;
+    g_1908_repin_fallback_total.fetch_add(n, std::memory_order_relaxed);
+}
+extern "C" void aura_bump_hygiene_violation_prevented_on_boundary_total(std::uint64_t n) {
+    if (n == 0)
+        return;
+    g_1908_hygiene_prevented_fallback_total.fetch_add(n, std::memory_order_relaxed);
+}
 
-extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker) {
+extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t cloned_marker,
+                                                    int was_violation) {
     (void)cloned_marker; // reserved for future marker-specific routing
-    // File-level atomic fallback always bumps (unified process-wide surface
-    // for external API consumers + module-unaware call sites).
-    g_1908_repin_fallback_total.fetch_add(1, std::memory_order_relaxed);
-    g_1908_hygiene_prevented_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    // File-level repin always (unified process-wide surface).
+    // Issue #3260 Bug 1: hygiene only when an actual violation was rejected.
+    aura_bump_macro_provenance_repin_on_steal_total(1);
+    if (was_violation)
+        aura_bump_hygiene_violation_prevented_on_boundary_total(1);
     // Issue #2810: dual-write per-CompilerMetrics when Evaluator is wired.
     // Contract:
     //   ev_ptr != nullptr → bump that Evaluator's
