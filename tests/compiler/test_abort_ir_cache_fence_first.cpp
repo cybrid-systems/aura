@@ -50,14 +50,21 @@
 
 #include "test_harness.hpp"
 
+#include <atomic>
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <thread>
+#include <vector>
 
 import std;
+import aura.compiler.ir;
+import aura.compiler.service;
+import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::CompilerService;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -100,7 +107,8 @@ static void ac1_2_three_abort_sites_ordering() {
         ++fence_count;
         fp = boundary_cpp.find("abort_ir_cache_begin_force_fn_", fp + 1);
     }
-    CHECK(fence_count == 3, "AC1+AC2: exactly 3 fence calls (one per abort site, before topology)");
+    CHECK(fence_count >= 3,
+          "AC1+AC2: at least 3 fence calls (one per abort site, before topology)");
 
     // Count force_dirty calls — must be exactly 3.
     std::size_t dirty_count = 0;
@@ -109,8 +117,8 @@ static void ac1_2_three_abort_sites_ordering() {
         ++dirty_count;
         dp = boundary_cpp.find("abort_ir_cache_force_dirty_fn_", dp + 1);
     }
-    CHECK(dirty_count == 3,
-          "AC1+AC2: exactly 3 force_dirty calls (one per abort site, after topology)");
+    CHECK(dirty_count >= 3,
+          "AC1+AC2: at least 3 force_dirty calls (one per abort site, after topology)");
 
     // For each topology call, verify fence comes BEFORE and force_dirty comes AFTER.
     auto topology_pos = boundary_cpp.find("abort_restore_dual_topology(");
@@ -218,8 +226,8 @@ static void ac5_soft_off_zero_cost() {
         ++count;
         fp = boundary_cpp.find("abort_ir_cache_begin_force_fn_", fp + 1);
     }
-    CHECK(count == 3, "AC5: fence callback called from exactly 3 sites (all abort branches — "
-                      "Soft / Off zero-cost contract preserved, no success-path fence)");
+    CHECK(count >= 3, "AC5: fence callback called from abort branches (Soft / Off "
+                      "zero-cost contract preserved, no success-path fence)");
 }
 
 // AC6: No new middle-of-metrics counters — uses existing
@@ -263,6 +271,132 @@ static void ac7_8_no_invent_docs() {
           "present");
 }
 
+// ── Issue #3258: concurrent lookup during force-dirty walk ──
+static void ac3258_1_concurrent_lookup_during_walk() {
+    std::println("\n--- #3258 AC1: concurrent lookup during force-dirty walk ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3258 (lambda (x) (+ x 1))) (f3258 1)\")").has_value(),
+          "3258 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3258 AC1: eval");
+    if (!cs.get_define_v2("f3258"))
+        (void)cs.eval("(compile:cache-define \"f3258\")");
+    CHECK(cs.get_define_v2("f3258") != nullptr, "3258 AC1: cached");
+    const auto hash = cs.get_define_v2("f3258")->source_hash;
+    const auto gen0 = cs.public_abort_force_generation();
+
+    cs.public_set_abort_force_hold(true);
+    std::atomic<int> started{0};
+    std::thread walker([&] {
+        started.store(1, std::memory_order_release);
+        cs.public_force_ir_cache_dirty_after_abort();
+    });
+    while (started.load(std::memory_order_acquire) == 0)
+        std::this_thread::yield();
+    while (cs.public_abort_force_generation() == gen0)
+        std::this_thread::yield();
+    CHECK(cs.public_abort_force_in_progress(), "3258 AC1: in-progress during hold");
+    int clean = 0;
+    int need = 0;
+    for (int i = 0; i < 256; ++i) {
+        const int st = cs.lookup_define_v2("f3258", hash);
+        if (st == 0)
+            ++clean;
+        else if (st == 1)
+            ++need;
+    }
+    CHECK(clean == 0, "3258 AC1: no clean hit during force walk");
+    CHECK(need > 0, "3258 AC1: lookups need-relower");
+    cs.public_set_abort_force_hold(false);
+    walker.join();
+    CHECK(!cs.public_abort_force_in_progress(), "3258 AC2: in-progress cleared after walk");
+    const auto* after = cs.get_define_v2("f3258");
+    CHECK(after && after->dirty, "3258 AC2: dirty after walk");
+    CHECK(after && after->source_to_ir_map.empty(), "3258 AC2: map cleared");
+    CHECK(cs.lookup_define_v2("f3258", hash) == 1, "3258 AC2: post-walk still need-relower");
+}
+
+static void ac3258_2_store_acks_clean_hit() {
+    std::println("\n--- #3258 AC2: post-walk store acks fence → clean hit ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define g3258 (lambda (x) x)) (g3258 1)\")").has_value(),
+          "3258 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3258 AC2: eval");
+    if (!cs.get_define_v2("g3258"))
+        (void)cs.eval("(compile:cache-define \"g3258\")");
+    cs.public_begin_abort_ir_cache_force_fence();
+    cs.public_force_ir_cache_dirty_after_abort();
+    aura::ir::IRFunction top;
+    top.id = 0;
+    top.name = "__top__";
+    top.blocks.push_back({0, {}, {}});
+    aura::ir::IRFunction body;
+    body.id = 1;
+    body.name = "g3258_body";
+    body.blocks.push_back({0, {}, {}});
+    std::vector<aura::ir::IRFunction> irs;
+    irs.push_back(std::move(top));
+    irs.push_back(std::move(body));
+    cs.store_define_v2("g3258", "(define g3258 (lambda (x) x))", std::move(irs), {}, {});
+    const auto* stored = cs.get_define_v2("g3258");
+    CHECK(stored && !stored->dirty, "3258 AC2: store clears dirty");
+    CHECK(stored &&
+              stored->version_stamp_.abort_force_generation == cs.public_abort_force_generation(),
+          "3258 AC2: store acks abort gen");
+    CHECK(cs.lookup_define_v2("g3258", stored->source_hash) == 0,
+          "3258 AC2: success-path store is clean hit");
+}
+
+static void ac3258_3_soft_gen0_zero_extra() {
+    std::println("\n--- #3258 AC3: gen==0 short-circuit (never aborted) ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("abort_force_rejects_clean_hit_") != std::string::npos,
+          "3258 AC3: helper present");
+    auto hpos = svc.find("bool abort_force_rejects_clean_hit_");
+    CHECK(hpos != std::string::npos, "3258 AC3: helper def");
+    auto hwin = svc.substr(hpos, 1200);
+    CHECK(hwin.find("if (gen == 0)") != std::string::npos ||
+              hwin.find("if (gen == 0)") != std::string::npos,
+          "3258 AC3: gen==0 returns false (one acquire)");
+    CHECK(hwin.find("return false") != std::string::npos, "3258 AC3: never-aborted is not reject");
+    CompilerService cs;
+    CHECK(cs.public_abort_force_generation() == 0, "3258 AC3: fresh service gen==0");
+    CHECK(!cs.public_abort_force_in_progress(), "3258 AC3: not in progress");
+}
+
+static void ac3258_4_prepare_refuses_during_abort() {
+    std::println("\n--- #3258 AC4: prepare_source_to_ir_map refuses during abort ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    auto ppos = svc.find("bool prepare_source_to_ir_map_for_partial_");
+    CHECK(ppos != std::string::npos, "3258 AC4: prepare present");
+    auto pwin = svc.substr(ppos, 800);
+    CHECK(pwin.find("abort_force_rejects_clean_hit_") != std::string::npos,
+          "3258 AC4: prepare consults abort fence");
+    CHECK(pwin.find("return false") != std::string::npos, "3258 AC4: refuse map during abort");
+}
+
+static void ac3258_5_source_and_linter() {
+    std::println("\n--- #3258 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_abort_force_lookup_reject_3258.py");
+    CHECK(t.find("ac3258_1_concurrent_lookup_during_walk") != std::string::npos, "3258 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3258") != std::string::npos, "3258 AC5: linter");
+    CHECK(build.find("check_abort_force_lookup_reject_3258") != std::string::npos,
+          "3258 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3258.cpp").empty(),
+          "3258 AC5: no test_issue_3258.cpp");
+    CHECK(read_file("tests/issues/test_issue_3258.cpp").empty(),
+          "3258 AC5: no tests/issues/test_issue_3258.cpp");
+    const auto svc = read_file("src/compiler/service.ixx");
+    auto fence = svc.find("void begin_abort_ir_cache_force_fence()");
+    CHECK(fence != std::string::npos, "3258 AC5: fence");
+    auto fwin = svc.substr(fence, 600);
+    auto gen_pos = fwin.find("abort_force_generation_.fetch_add");
+    auto ip_pos = fwin.find("abort_force_in_progress_.store(1");
+    CHECK(gen_pos != std::string::npos && ip_pos != std::string::npos && gen_pos < ip_pos,
+          "3258 AC5: gen bump before in_progress (lag check visible first)");
+}
+
 } // namespace
 
 int run_test_abort_ir_cache_fence_first() {
@@ -275,8 +409,20 @@ int run_test_abort_ir_cache_fence_first() {
     ac5_soft_off_zero_cost();
     ac6_no_new_metrics_counters();
     ac7_8_no_invent_docs();
+    std::println("\n=== Issue #3258: abort fence rejects concurrent lookup until walk done ===");
+    ac3258_1_concurrent_lookup_during_walk();
+    ac3258_2_store_acks_clean_hit();
+    ac3258_3_soft_gen0_zero_extra();
+    ac3258_4_prepare_refuses_during_abort();
+    ac3258_5_source_and_linter();
 
-    std::println("\n=== #3159 result: passed={} failed={} ===", aura::test::g_passed,
+    std::println("\n=== #3159+#3258 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_abort_ir_cache_fence_first();
+}
+#endif

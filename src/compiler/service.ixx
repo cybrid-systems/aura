@@ -4917,11 +4917,12 @@ public:
         const auto cur_bridge = bridge_epoch();
         const auto cur_defuse = evaluator_.defuse_version();
         const auto cur_soa_gen = it->second.live_soa_generation();
-        // Issue #3069: abort-in-progress fence. One acquire of 0 when
-        // never aborted. Mid-loop: return 1 without reading a half-forced
-        // entry (in_progress is published before the walk).
+        // Issue #3069 / Issue #3258: abort-force fence. gen==0: one acquire,
+        // never aborted (Soft/Off zero extra). Else: in_progress OR this
+        // entry's abort_force_generation lagging live gen → needs-relower.
+        // Do not serve pre-abort IR or consult source_to_ir_map.
         const auto abort_gen0 = abort_force_generation_.load(std::memory_order_acquire);
-        if (abort_gen0 != 0 && abort_force_in_progress_.load(std::memory_order_acquire) != 0)
+        if (abort_force_rejects_clean_hit_(it->second, abort_gen0))
             return 1;
         std::uint32_t reasons = 0;
         const bool need = should_relower(source_hash, it->second.source_hash, it->second.dirty,
@@ -4954,11 +4955,10 @@ public:
             }
             return 1;
         }
-        // Issue #3069: abort may have started after the first check.
+        // Issue #3069 / Issue #3258: abort may have started after the first check.
         const auto abort_gen1 = abort_force_generation_.load(std::memory_order_acquire);
-        if (abort_gen1 != 0 && (abort_force_in_progress_.load(std::memory_order_acquire) != 0 ||
-                                abort_gen0 != abort_gen1 ||
-                                it->second.version_stamp_.abort_force_generation < abort_gen1))
+        if (abort_force_rejects_clean_hit_(it->second, abort_gen1) ||
+            (abort_gen1 != 0 && abort_gen0 != abort_gen1))
             return 1;
         // Issue #1915: clean hit with matching source_hash — no re-lower.
         metrics_.invalidate_early_exit_clean_total.fetch_add(1, std::memory_order_relaxed);
@@ -5205,6 +5205,11 @@ public:
     [[nodiscard]] bool prepare_source_to_ir_map_for_partial_(IRCacheEntry& entry) {
         if (entry.irs.empty())
             return true;
+        // Issue #3258: never consult a mix of cleared / uncleared maps
+        // while the abort force-dirty walk is in progress, or if this
+        // entry has not acked the live abort gen.
+        if (abort_force_rejects_clean_hit_(entry))
+            return false;
         if (entry.abort_map_invalid)
             return false;
         ensure_source_to_ir_map_(entry);
@@ -5290,12 +5295,30 @@ public:
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
     }
 
-    // Issue #3117: publish abort-force fence *before* dual-topology restore
-    // so a concurrent lookup_define_v2 cannot serve pre-abort IR as clean
-    // while FlatAST / pool / MacroIntroduced are still mid-restore.
+    // Issue #3258: gen==0 never-aborted lookup is one acquire. After the
+    // first abort, in_progress OR abort_force_generation lag rejects a
+    // clean hit (do not serve pre-abort IR / map).
+    [[nodiscard]] bool abort_force_rejects_clean_hit_(const IRCacheEntry& entry) const noexcept {
+        return abort_force_rejects_clean_hit_(
+            entry, abort_force_generation_.load(std::memory_order_acquire));
+    }
+    [[nodiscard]] bool abort_force_rejects_clean_hit_(const IRCacheEntry& entry,
+                                                      std::uint64_t gen) const noexcept {
+        if (gen == 0)
+            return false;
+        if (abort_force_in_progress_.load(std::memory_order_acquire) != 0)
+            return true;
+        return entry.version_stamp_.abort_force_generation < gen;
+    }
+
+    // Issue #3117 / Issue #3258: publish abort-force fence *before* dual-topology
+    // restore. Bump generation first so a concurrent lookup that observes
+    // gen!=0 also applies the lag check even if in_progress is not yet
+    // visible (release/acquire). Then set in_progress for the walk.
     void begin_abort_ir_cache_force_fence() {
-        abort_force_in_progress_.store(1, std::memory_order_release);
+        // Issue #3258: bump gen first so lag check is visible.
         abort_force_generation_.fetch_add(1, std::memory_order_release);
+        abort_force_in_progress_.store(1, std::memory_order_release);
     }
 
     // Issue #3033 / #3069 / #3117: dual-topology abort force-dirty.
@@ -12117,6 +12140,8 @@ public:
     void public_set_abort_force_hold(bool on) {
         abort_force_hold_.store(on ? 1 : 0, std::memory_order_release);
     }
+    // Issue #3159 AC4 alias (set_abort_force_hold_for_test).
+    void set_abort_force_hold_for_test(bool on) { public_set_abort_force_hold(on); }
     [[nodiscard]] std::uint64_t public_abort_force_generation() const noexcept {
         return abort_force_generation_.load(std::memory_order_acquire);
     }
