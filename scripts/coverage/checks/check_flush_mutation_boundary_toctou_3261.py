@@ -16,6 +16,9 @@ Contract:
   AC5  extend test_clone_provenance_per_evaluator; linter after #3260; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3262: GC safepoint restamp-after-unlock + audit acquire-load.
+
 """
 
 from __future__ import annotations
