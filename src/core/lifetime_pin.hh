@@ -1076,15 +1076,18 @@ inline LinearRootSnapshot linear_root_snapshot() noexcept {
     return s;
 }
 
-// Issue #3023: leftover linear_roots unpin after abort / mutate-fail /
+// Issue #3023 / #3249: leftover linear_roots unpin after abort / mutate-fail /
 // fiber reclaim. Responsibility (single audit face — no second model):
 //   post-join:    Fiber::release_orphan_roots (JoinStatus::Reclaimed)
 //   post-abort:   enforce_linear_post_failure (outermost Guard fail)
+//                 + unpin_linear_roots_except (nested Guard abort)
+//   steal hard-fail: same unpin_all as post-join (abandoned mid-Guard)
 //   post-densify: verify_linear_pins_under_moving_compact only
 //                 verifies pin-or-remap; it NEVER unpins.
 // Soft: empty registry is one lock + empty check (no extra pin walks).
 inline std::atomic<std::uint64_t> g_linear_root_abort_release_total{0};
 inline constexpr int kLinearRootAbortReleaseIssue = 3023;
+inline constexpr int kLinearNestedAbortDrainIssue = 3249;
 
 // Reset for tests only. Production leaves linear_roots alone (the
 // live linear bindings are the source of truth).
@@ -1104,6 +1107,35 @@ inline std::size_t unpin_all_linear_roots() noexcept {
     if (n == 0)
         return 0;
     roots.clear();
+    g_linear_unpin_total.fetch_add(n, std::memory_order_relaxed);
+    g_linear_root_abort_release_total.fetch_add(1, std::memory_order_relaxed);
+    return n;
+}
+
+// Issue #3249: nested abort keeps outer Guard pins (keep snapshot at
+// nested enter) and drains extras pinned under the nested Guard.
+// Empty registry: one lock + empty check (Soft quiet path).
+inline void snapshot_linear_roots(std::unordered_set<void*>& out) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    out = linear_roots();
+}
+
+inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& keep) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    auto& roots = linear_roots();
+    if (roots.empty())
+        return 0;
+    std::size_t n = 0;
+    for (auto it = roots.begin(); it != roots.end();) {
+        if (keep.find(*it) == keep.end()) {
+            it = roots.erase(it);
+            ++n;
+        } else {
+            ++it;
+        }
+    }
+    if (n == 0)
+        return 0;
     g_linear_unpin_total.fetch_add(n, std::memory_order_relaxed);
     g_linear_root_abort_release_total.fetch_add(1, std::memory_order_relaxed);
     return n;

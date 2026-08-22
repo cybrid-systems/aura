@@ -2309,6 +2309,13 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // Outermost enter is unchanged (Soft observe / persist-on-success).
     if (!outermost)
         ev_->note_type_export_inflight();
+    // Issue #3249: production nested enter snapshots live linear roots so
+    // nested abort can drain extras without unpinning the outer set.
+    // Soft / outermost: skip (zero extra).
+    if (!outermost && typed_audit::production_defaults_active()) {
+        aura::core::lifetime::snapshot_linear_roots(nested_linear_keep_);
+        nested_linear_keep_armed_ = true;
+    }
     // Issue #2944: capture Mutation epoch mid for session-grant revoke on
     // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
     if (outermost) {
@@ -3186,6 +3193,12 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     std::optional<gc_coord::Scope> boundary_gc_coord;
     if (outermost)
         boundary_gc_coord.emplace(gc_coord::Path::Boundary);
+    else if (!success && nested_linear_keep_armed_) {
+        // Issue #3249: nested abort — drain extras vs enter snapshot.
+        // Outer still-live pins stay in the registry (no silent leftover
+        // of nested-only roots). Soft never arms the snapshot.
+        (void)aura::core::lifetime::unpin_linear_roots_except(nested_linear_keep_);
+    }
     if (outermost) {
         if (render_fast) {
             // Issue #3006: Production/Full + !linear_fast_path_ok cannot
@@ -4708,6 +4721,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , render_fast_exit_(o.render_fast_exit_)
     , linear_enforce_strict_pushed_(o.linear_enforce_strict_pushed_)
     , cancel_force_released_(o.cancel_force_released_)
+    , nested_linear_keep_(std::move(o.nested_linear_keep_))
+    , nested_linear_keep_armed_(o.nested_linear_keep_armed_)
     , ev_(o.ev_)
     , flag_(o.flag_)
     , lock_(std::move(o.lock_))
@@ -4730,6 +4745,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.render_fast_exit_ = false;
     o.linear_enforce_strict_pushed_ = false; // ownership transferred; do not double-pop
     o.cancel_force_released_ = false;
+    o.nested_linear_keep_.clear();
+    o.nested_linear_keep_armed_ = false;
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;
@@ -4766,6 +4783,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         render_fast_exit_ = o.render_fast_exit_;
         linear_enforce_strict_pushed_ = o.linear_enforce_strict_pushed_;
         cancel_force_released_ = o.cancel_force_released_;
+        nested_linear_keep_ = std::move(o.nested_linear_keep_);
+        nested_linear_keep_armed_ = o.nested_linear_keep_armed_;
         ev_ = o.ev_;
         flag_ = o.flag_;
         lock_ = std::move(o.lock_);
@@ -4788,6 +4807,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         o.render_fast_exit_ = false;
         o.linear_enforce_strict_pushed_ = false;
         o.cancel_force_released_ = false;
+        o.nested_linear_keep_.clear();
+        o.nested_linear_keep_armed_ = false;
         o.uncaught_at_enter_ = 0;
         o.ev_ = nullptr;
         o.flag_ = nullptr;

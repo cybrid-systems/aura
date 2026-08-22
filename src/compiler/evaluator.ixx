@@ -14770,6 +14770,11 @@ public:
         // workspace_mtx_ + depth after dual restore. Phase-5 must not
         // decrement depth or process-held a second time.
         bool cancel_force_released_ = false;
+        // Issue #3249: nested abort keep-set (outer pins at nested enter).
+        // Soft / outermost: empty (zero extra). Production nested fail
+        // drains extras via unpin_linear_roots_except.
+        std::unordered_set<void*> nested_linear_keep_;
+        bool nested_linear_keep_armed_ = false;
 
     public:
         // Issue #1254: true only for the lock-owning outermost guard.
