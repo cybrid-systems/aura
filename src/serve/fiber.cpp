@@ -379,13 +379,15 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
             f->inject_synthetic_mutation_boundary_yield();
         }
     }
-    // Issue #3194 / #3222: past inbody window, same-fiber
-    // force-releases workspace hold + depth (reuse #3118/#3035).
-    // Cross-fiber helper only re-arms pending-cancel (AC2 — no
-    // preemptive mutex drop while the other fiber's Guard is live).
-    // #3222: Fiber::check_gc_safepoint also polls so a live same-fiber
-    // body hits this without waiting for scheduler idle (idle is
-    // always cross-fiber). Soft already returned.
+    // Issue #3194 / #3222 / Issue #3254: past inbody window, same-fiber
+    // injects a synthetic MutationBoundary yield then consumes it
+    // (dual restore + depth 0 + drop hold). Body need not accidentally
+    // poll check_gc_safepoint. Cross-fiber helper only re-arms
+    // pending-cancel + injects so the victim's next edge matches
+    // same-fiber (foreign thread never drops the holder mutex). Soft
+    // already returned.
+    if (auto* cur = g_current_fiber; cur && cur->id() == fid)
+        cur->inject_synthetic_mutation_boundary_yield();
     aura_evaluator_force_release_outermost_holder(fid);
     return 1;
 }
@@ -832,7 +834,9 @@ void Fiber::check_gc_safepoint() {
     // only). Same-fiber inbody poll from this edge force-releases
     // hold + depth past the bound so steal/GC are not starved until
     // dtor. Issue #3223: cross-fiber force_degrade sets urgent inbody
-    // poll so this edge still runs after an early consume. Soft:
+    // poll so this edge still runs after an early consume. Issue #3254:
+    // poll injects a synthetic yield and consumes it on the holder so
+    // a non-cooperative body need not accidentally call this. Soft:
     // poll is metric-only. Poll first while the cancel-arm timestamp
     // is still live.
     if (auto* cur = g_current_fiber) {

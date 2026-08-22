@@ -463,6 +463,14 @@ inline constexpr int kMutationHoldBudgetInbodyForceUnlockIssue = 3222;
 // Does not unlock from the foreign thread. Reuses cross-fiber fired /
 // consumed + forced_unlock_total — no new counters.
 inline constexpr int kMutationHoldBudgetCrossFiberUrgentInbodyPollIssue = 3223;
+// Issue #3254: I1 residual of #3222/#3223 — a non-cooperative outermost
+// body that never hits check_gc_safepoint / yield / Phase-5 must still
+// force-release within 2×SLO. The runtime injects a synthetic
+// MutationBoundary yield and consumes it on the holder (dual restore +
+// unlock + depth 0). Cross-fiber never drops unique_lock; it only
+// injects so the victim's next edge matches same-fiber. Soft: observe
+// only. Reuses forced_unlock_total + forced_fail_closed_total.
+inline constexpr int kMutationHoldBudgetNoncoopForceEdgeIssue = 3254;
 // Issue #3073: production soak readiness gate (residual-zero ×
 // hold-after-cancel max). Wired sentinel only — no extra hot-path work.
 // Soak abort lives in the chaos harness; Agents read schema-3073.
