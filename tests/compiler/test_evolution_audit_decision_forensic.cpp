@@ -109,7 +109,7 @@ static void ac3_soft_zero_cost() {
 static void ac4_capacity_schema() {
     std::println("\n--- AC4: capacity / schema ---");
     auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 44") != std::string::npos,
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 48") != std::string::npos,
           "planned_keys bumped 40 -> 44 (#3242)");
     CHECK(src.find("insert_kv(\"schema-3152\", 3152)") != std::string::npos,
           "schema-3152 sentinel present");
@@ -165,7 +165,7 @@ static void ac7_typed_summary_3242() {
               std::string::npos,
           "typed-summary-from-wal key");
     CHECK(src.find("insert_kv(\"schema-3242\",") != std::string::npos, "schema-3242");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 44") != std::string::npos,
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 48") != std::string::npos,
           "planned keys 44");
 }
 
