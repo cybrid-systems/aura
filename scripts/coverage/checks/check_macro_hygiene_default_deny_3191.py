@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
-"""Issue #3191: post-#3131 default-deny residual on lockless tweak-literal
-+ mutate:sv-add-coverpoint / mutate:sv-weaken-property.
+"""Issue #3191: post-#3131 default-deny residual on lockless tweak-literal.
 
-Production contract: no MacroIntroduced path escapes the default-deny
-(soft observe-only). Three gates close the residual: tweak-literal
-(lockless batch table), sv-add-coverpoint, sv-weaken-property.
-Global (hygiene:set-allow-macro-mutate! #t) still unlocks all three.
-Soft/Off: zero extra cost on non-macro target (single atomic load).
+Issue #3239 retired mutate:sv-add-coverpoint / mutate:sv-weaken-property.
+This linter now covers the remaining tweak-literal lockless gate only.
+Global (hygiene:set-allow-macro-mutate! #t) still unlocks. Soft/Off:
+zero extra cost on non-macro target (single atomic load).
 
 Contract:
   AC1 tweak-literal on MacroIntroduced → reject (no mutation log entry)
-  AC2 sv-add-coverpoint / sv-weaken-property on MacroIntroduced → reject
-  AC3 global allow_macro_mutate still unlocks all three
+  AC2 SV mutate prims not registered (retired #3239)
+  AC3 global allow_macro_mutate still unlocks tweak-literal
   AC4 Soft / Off: zero extra cost on non-macro (single atomic load)
   AC5 existing #3027 / #3115 / #3131 scalar prims non-regression
   AC6 extend hygiene_mutate_closed_loop; no docs/design / invent;
@@ -40,6 +38,10 @@ def main() -> int:
         if n not in hay:
             fails.append(f"{label}: missing {n!r}")
 
+    def must_not(n: str, label: str, hay: str) -> None:
+        if n in hay:
+            fails.append(f"{label}: unexpected {n!r}")
+
     flat = _read("src/compiler/evaluator_eval_flat.cpp")
     mut = _read("src/compiler/evaluator_primitives_mutate.cpp")
     t = _read("tests/compiler/test_hygiene_mutate_closed_loop.cpp")
@@ -52,23 +54,15 @@ def main() -> int:
     must("cannot tweak-literal MacroIntroduced", "AC1", flat)
     must("record_hygiene_violation_attempt()", "AC1", flat)
 
-    # AC2 — sv-add-coverpoint / sv-weaken-property default-deny gates.
-    must("Issue #3191", "AC2", mut)
-    must("sv-add-coverpoint cannot", "AC2", mut)
-    must("sv-weaken-property cannot", "AC2", mut)
-    must("ev.get_allow_macro_mutate()", "AC2", mut)
-    must("ev.record_hygiene_violation_attempt()", "AC2", mut)
+    # AC2 — SV mutate prims retired (#3239).
+    must_not('add_mutate("mutate:sv-add-coverpoint"', "AC2", mut)
+    must_not('add_mutate("mutate:sv-weaken-property"', "AC2", mut)
 
-    # AC3 — global allow still unlocks (existing parity with #3115 / #3027).
-    must("set-allow-macro-mutate", "AC3", flat)  # noqa: irrelevant, but surfaces intent
-    # The lockless batch has no :allow-macro? — global flag only, parity
-    # with #3115 sv / #3027 structural prims.
+    # AC3 — global allow still unlocks tweak-literal.
+    must("get_allow_macro_mutate()", "AC3", flat)
 
-    # AC4 — Soft / Off: single atomic load on non-macro (zero extra cost).
-    # The pattern is: is_macro_introduced(load) + get_allow_macro_mutate(load),
-    # both relaxed atomic loads. No extra metric / counter on the happy path.
+    # AC4 — Soft / Off: is_macro_introduced on non-macro (zero extra parse).
     must("is_macro_introduced", "AC4", flat)
-    must("is_macro_introduced", "AC4", mut)
 
     # AC5 — existing #3027 / #3076 / #3115 / #3131 surfaces preserved.
     must("reject_structural_macro_hygiene", "AC5", mut)
@@ -76,8 +70,7 @@ def main() -> int:
     must("Issue #3027", "AC5", mut)
     must("Issue #3131", "AC5", mut)
 
-    # AC6 — tests extend existing suite (no new test_issue_3191.cpp), no
-    # docs/design/3191-* per #1655, linter wired into build.py.
+    # AC6 — tests extend existing suite.
     must("ac3191_1_default_reject", "AC6", t)
     must("ac3191_2_sv_default_reject", "AC6", t)
     must("ac3191_3_global_allow_unlocks", "AC6", t)

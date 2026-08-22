@@ -869,7 +869,7 @@ int run_verify_dirty_1840() {
                 while (!stop.load(std::memory_order_relaxed)) {
                     auto s = flat.snapshot_verify_dirty_totals();
                     // Fresh flat: all zero; any non-zero would be a bug.
-                    if (s.assertion | s.coverage | s.sva | s.formal_cex)
+                    if (s.assertion | s.coverage | s.formal_cex)
                         stop.store(true, std::memory_order_relaxed);
                     reads.fetch_add(1, std::memory_order_relaxed);
                     (void)flat.verify_coverage_dirty_total();
@@ -882,8 +882,7 @@ int run_verify_dirty_1840() {
         for (auto& t : thr)
             t.join();
         auto final = flat.snapshot_verify_dirty_totals();
-        CHECK(final.assertion == 0 && final.coverage == 0 && final.sva == 0 &&
-                  final.formal_cex == 0,
+        CHECK(final.assertion == 0 && final.coverage == 0 && final.formal_cex == 0,
               "fresh snapshot remains zeros");
         CHECK(reads.load() > 0, std::format("concurrent readers ran (n={})", reads.load()));
     }

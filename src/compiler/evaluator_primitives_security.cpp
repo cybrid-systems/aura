@@ -2232,18 +2232,15 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         default:
                             break;
                     }
-                    if ((ws->verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0)
-                        ++sva_dirty;
+                    // Issue #3239: kSvaDirty retired — sva_dirty stays 0.
                 }
             }
             const auto* m =
                 static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
             const std::uint64_t mutate_hits =
                 m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t sv_attempts =
-                ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
-            const std::uint64_t sv_success =
-                ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_success_total() : 0;
+            const std::uint64_t sv_attempts = 0; // Issue #3239
+            const std::uint64_t sv_success = 0;
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"property-count", make_int(static_cast<std::int64_t>(property_count))},
                 {"sequence-count", make_int(static_cast<std::int64_t>(sequence_count))},
@@ -2337,10 +2334,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t pattern_denom = pattern_hits + pattern_misses + 1;
             const std::int64_t struct_hit_rate_pct =
                 static_cast<std::int64_t>((pattern_hits * 100) / pattern_denom);
-            const std::uint64_t sv_attempts =
-                ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
-            const std::uint64_t sv_success =
-                ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_success_total() : 0;
+            const std::uint64_t sv_attempts = 0; // Issue #3239
+            const std::uint64_t sv_success = 0;
             const std::uint64_t structured_hits =
                 m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t dirty_props = ev.get_verify_tool_dirty_propagations_total();
@@ -2350,8 +2345,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 ev.workspace_flat() ? ev.workspace_flat()->verify_assertion_dirty_total() : 0;
             const std::uint64_t coverage_dirty =
                 ev.workspace_flat() ? ev.workspace_flat()->verify_coverage_dirty_total() : 0;
-            const std::uint64_t sva_dirty =
-                ev.workspace_flat() ? ev.workspace_flat()->verify_sva_dirty_total() : 0;
+            const std::uint64_t sva_dirty = 0; // Issue #3239: kSvaDirty retired
             const std::uint64_t emit_ok =
                 m ? m->sv_emit_parse_success_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t emit_fail =
@@ -2451,7 +2445,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t coverage_feedback =
                 ws ? ws->verification_coverage_feedback_total() : 0;
             const std::uint64_t assert_failures = ws ? ws->verification_assert_failure_total() : 0;
-            const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+            const std::uint64_t sv_success = 0; // Issue #3239
             const std::uint64_t cex_dirty = ws ? ws->verify_formal_cex_dirty_total() : 0;
             const std::uint64_t reverify =
                 m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
@@ -2573,17 +2567,14 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     default:
                         break;
                 }
-                if ((ws->verify_dirty(id) & aura::ast::FlatAST::kSvaDirty) != 0)
-                    ++sv_dirty;
+                // Issue #3239: kSvaDirty retired — sv_dirty stays 0.
             }
         }
         const auto* m = static_cast<const aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t mutate_hits =
             m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-        const std::uint64_t sv_attempts =
-            ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_attempts_total() : 0;
-        const std::uint64_t sv_success =
-            ev.workspace_flat() ? ev.workspace_flat()->sv_mutate_success_total() : 0;
+        const std::uint64_t sv_attempts = 0; // Issue #3239
+        const std::uint64_t sv_success = 0;
         const std::uint64_t sv_node_total = interface_count + modport_count + property_count +
                                             sequence_count + assert_count + covergroup_count +
                                             coverpoint_count + constraint_count + class_count;

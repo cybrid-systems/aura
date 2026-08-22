@@ -401,20 +401,6 @@ namespace {
         return walk(walk, root);
     }
 
-    // Issue #469 / #1683: SV hardware closed-loop after structural mutate.
-    // Pin workspace_flat_ + workspace_pool_ for the multi-call window so a
-    // concurrent COW cannot swap ws under us while pool is re-read later.
-    // If this fiber already holds MutationBoundaryGuard's unique lock,
-    // skip shared acquire (std::shared_mutex is not recursive).
-    void maybe_sv_hardware_closedloop(Evaluator& ev, aura::ast::NodeId node) {
-        // Issue #1968 / #4.3: SV commercial closed-loop hook retired with the
-        // aura.compiler.sv_ir module. Function kept as a no-op so the 5 caller
-        // sites in this TU compile unchanged; the work that used to live here
-        // (reemit_sv_node / validate_sv_emit / emit_sv_diff) is gone.
-        (void)ev;
-        (void)node;
-    }
-
     bool define_needs_precise_invalidation(const aura::ast::FlatAST& flat,
                                            aura::ast::NodeId define_id) {
         if (define_id == aura::ast::NULL_NODE || define_id >= flat.size())
@@ -6924,172 +6910,8 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         return make_bool(true);
     });
 
-    // Issue #469: (mutate:sv-add-coverpoint covergroup-id
-    //   coverpoint-name [bins-string])
-    // — structured SV mutate that adds a new coverpoint to
-    // an existing covergroup in the workspace.
-    //
-    // P0 scope-limited ship:
-    //   - Validates covergroup-id is in-bounds.
-    //   - Increments sv_mutate_attempts_total_ (always).
-    //   - Increments sv_mutate_success_total_ (on success).
-    //   - Adds a MutationRecord to the workspace log.
-    //   - Does NOT actually construct a real
-    //     CoverpointIR record (the SV records are
-    //     Aura-side hardware IR records, not AST
-    //     nodes). The follow-up wire the covergroup
-    //     records into the workspace AST so the
-    //     primitive can mutate the actual record.
-    //   - Returns #t on success, #f on bad args.
-    // Issue #1704: MutationBoundaryGuard + live-node check (was raw
-    // unlocked workspace_flat access, no Guard — sibling of #1683).
-    add_mutate("mutate:sv-add-coverpoint", [&ev, safe_str, mev](const auto& a) -> EvalValue {
-        bool ok = true;
-        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
-        if (!guard_r) {
-            return make_bool(false);
-        }
-        auto guard = std::move(*guard_r);
-        if (ev.workspace_read_only_) {
-            ok = false;
-            return make_bool(false);
-        }
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) {
-            ok = false;
-            return make_bool(false);
-        }
-        // Guard holds unique workspace lock — re-read under Guard.
-        auto* ws = ev.workspace_flat();
-        if (!ws) {
-            ok = false;
-            return make_bool(false);
-        }
-        auto cg_id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        // Live target (not is_valid_in mid-path — restamp not expected;
-        // free-list still requires is_live_node). Provenance capture for audit.
-        if (cg_id == aura::ast::NULL_NODE || cg_id >= ws->size() || !ws->is_live_node(cg_id)) {
-            ok = false;
-            return make_bool(false);
-        }
-        // Issue #3191: sv-add-coverpoint cannot touch MacroIntroduced
-        // without global allow_macro_mutate. Issue #3218: reject via
-        // reject_structural_macro_hygiene (merr "hygiene") so Agent replay
-        // matches structural prims. Soft/Off: helper short-circuits on
-        // non-macro (one is_macro_introduced load). No :allow-macro? parse
-        // on this prim (non-goal); get_allow_macro_mutate() still unlocks.
-        if (auto err = reject_structural_macro_hygiene(ev, *ws, cg_id, ev.get_allow_macro_mutate(),
-                                                       "sv-add-coverpoint", mev)) {
-            ok = false;
-            return *err;
-        }
-        // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
-        StableNodeRef cref = ws->make_ref_layout(cg_id);
-        ev.stamp_stable_ref(cref);
-        cg_id = cref.id;
-
-        std::string threw;
-        if (!guard->run_or_rollback(
-                [&] {
-                    ws->bump_sv_mutate_attempt();
-                    // Add a mutation record (so the change is visible
-                    // in the workspace log + trigger mark_dirty_upward).
-                    ws->add_mutation(cg_id, "sv-add-coverpoint", "covergroup",
-                                     "covergroup+coverpoint",
-                                     "added coverpoint via #469 closed-loop");
-                    ws->apply_verification_dirty_bits(cg_id,
-                                                      aura::ast::FlatAST::kCoverageFeedbackDirty);
-                    ws->apply_verify_dirty_bits(cg_id, aura::ast::FlatAST::kSvaDirty);
-                    ws->mark_ppa_dirty(cg_id, aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
-                    ws->mark_dirty_upward(cg_id, aura::ast::FlatAST::kGeneralDirty,
-                                          aura::ast::FlatAST::PpaDirtyReason::kAreaDirty);
-                    maybe_sv_hardware_closedloop(ev, cg_id);
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                        m->sv_verification_structure_mutate_hits_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    ws->bump_sv_mutate_success();
-                },
-                &threw)) {
-            ok = false;
-            return make_bool(false);
-        }
-        return make_bool(true);
-    });
-
-    // Issue #469: (mutate:sv-weaken-property property-id
-    //   "disable-clause-string")
-    // — structured SV mutate that prepends a disable-iff
-    // clause to an SVA property to weaken it (e.g. for
-    // debugging a known-failing assertion).
-    //
-    // P0 scope-limited ship: mirrors
-    // (mutate:sv-add-coverpoint) — increments counters,
-    // adds a mutation record, returns #t / #f.
-    // Issue #1704 / #1705: same Guard + live-node contract as
-    // sv-add-coverpoint (this issue locks the weaken-property sibling).
-    add_mutate("mutate:sv-weaken-property", [&ev, safe_str, mev](const auto& a) -> EvalValue {
-        bool ok = true;
-        // Issue #2124: force try_acquire (quota + metrics); no legacy ctor.
-        auto guard_r = aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &ok);
-        if (!guard_r) {
-            return make_bool(false);
-        }
-        auto guard = std::move(*guard_r);
-        if (ev.workspace_read_only_) {
-            ok = false;
-            return make_bool(false);
-        }
-        if (a.size() < 2 || !is_int(a[0]) || !is_string(a[1])) {
-            ok = false;
-            return make_bool(false);
-        }
-        auto* ws = ev.workspace_flat();
-        if (!ws) {
-            ok = false;
-            return make_bool(false);
-        }
-        auto pid = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        if (pid == aura::ast::NULL_NODE || pid >= ws->size() || !ws->is_live_node(pid)) {
-            ok = false;
-            return make_bool(false);
-        }
-        // Issue #3191: sv-weaken-property cannot touch MacroIntroduced
-        // without global allow_macro_mutate. Issue #3218: same
-        // reject_structural_macro_hygiene merr("hygiene") face as
-        // sv-add-coverpoint. Soft/Off: helper short-circuits on non-macro.
-        if (auto err = reject_structural_macro_hygiene(ev, *ws, pid, ev.get_allow_macro_mutate(),
-                                                       "sv-weaken-property", mev)) {
-            ok = false;
-            return *err;
-        }
-        // Issue #2759: layout + Evaluator stamp for SV mutate target handle.
-        StableNodeRef pref = ws->make_ref_layout(pid);
-        ev.stamp_stable_ref(pref);
-        pid = pref.id;
-
-        std::string threw;
-        if (!guard->run_or_rollback(
-                [&] {
-                    ws->bump_sv_mutate_attempt();
-                    ws->add_mutation(pid, "sv-weaken-property", "property", "property+disable-iff",
-                                     "weakened property via #469 closed-loop");
-                    ws->apply_verification_dirty_bits(pid, aura::ast::FlatAST::kAssertFailureDirty);
-                    ws->apply_verify_dirty_bits(pid, aura::ast::FlatAST::kSvaDirty);
-                    ws->mark_ppa_dirty(pid, aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
-                    ws->mark_dirty_upward(pid, aura::ast::FlatAST::kGeneralDirty,
-                                          aura::ast::FlatAST::PpaDirtyReason::kTimingDirty);
-                    maybe_sv_hardware_closedloop(ev, pid);
-                    if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                        m->sv_verification_structure_mutate_hits_total.fetch_add(
-                            1, std::memory_order_relaxed);
-                    ws->bump_sv_mutate_success();
-                },
-                &threw)) {
-            ok = false;
-            return make_bool(false);
-        }
-        return make_bool(true);
-    });
+    // Issue #3239: mutate:sv-add-coverpoint / mutate:sv-weaken-property
+    // retired with the residual EDA/SV surface (post-#1968 sv_ir).
 
     // ── Issue #2099: HygieneCheckpoint save / restore primitives ───
     // Lightweight Agent-visible primitives for what-if / self-evo
@@ -7142,8 +6964,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // Canonical surface for the 6 core mutate ops. Existing mutate:*
     // names remain registered (thin aliases, PrimMeta.deprecated) and
     // are invoked via lookup so behavior stays identical.
-    // EDA/SV (mutate:sv-*, eda:*) stay registered but are flagged as
-    // extension-scope (not part of the 6-op kernel surface).
+    // Issue #3239: EDA/SV mutate:sv-* aliases retired (not registered).
     // GUARD_EXEMPT: dispatcher-only — delegates to named mutate:* prims (#2986).
     // PrimMeta.guard_exempt.
     add("mutate", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
@@ -7288,9 +7109,6 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             "mutate:extract-function",
             // #2628: mutate:validate-against-schema removed (stats_impl + :validate)
             "mutate:atomic-batch",
-            // SV/EDA flagged as extension-scope (stay registered; not kernel surface)
-            "mutate:sv-add-coverpoint",
-            "mutate:sv-weaken-property",
         };
         for (const char* name : kCoreMutateAliases) {
             const auto slot = ev.primitives_.slot_for_name(name);
@@ -7301,12 +7119,7 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (meta.category.empty() || meta.category == "general")
                 meta.category = "deprecated";
             std::string hint;
-            if (std::string_view(name).starts_with("mutate:sv-") ||
-                std::string_view(name).starts_with("eda:")) {
-                hint = std::string("DEPRECATED (#1436): EDA/SV extension surface — prefer "
-                                   "extensions/eda (not kernel); was ") +
-                       name;
-            } else {
+            {
                 // Map to :op hint
                 std::string op = "…";
                 if (std::string_view(name) == "mutate:rebind")

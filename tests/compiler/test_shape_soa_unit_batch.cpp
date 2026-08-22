@@ -45,7 +45,6 @@ int run_437_verify_dirty_reason_smoke() {
           "kAssertionDirty == 0x01");
     CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kCoverageDirty) == 0x02,
           "kCoverageDirty == 0x02");
-    CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kSvaDirty) == 0x04, "kSvaDirty == 0x04");
     CHECK(static_cast<std::uint8_t>(aura::ast::FlatAST::kFormalCounterexampleDirty) == 0x08,
           "kFormalCounterexampleDirty == 0x08");
     CompilerService cs;

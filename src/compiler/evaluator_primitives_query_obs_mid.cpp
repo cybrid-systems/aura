@@ -3400,8 +3400,8 @@ void register_query_obs_mid_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 ev->get_verify_tool_feedback_mutate_success_total();
             const std::uint64_t structured_hits =
                 m ? m->sva_structured_mutate_hits_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
-            const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+            const std::uint64_t sv_attempts = 0; // Issue #3239: retired
+            const std::uint64_t sv_success = 0;
             const std::uint64_t stable_ref = ev->get_verify_tool_stable_ref_hits_total();
             const std::uint64_t dirty_props = ev->get_verify_tool_dirty_propagations_total();
             const std::uint64_t coverage = ws ? ws->verification_coverage_feedback_total() : 0;

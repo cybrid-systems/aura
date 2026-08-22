@@ -53,38 +53,10 @@ struct PrimitiveSkeleton {
 
 namespace primitives_meta_detail {
 
-    inline bool contains_ci(std::string_view hay, std::string_view needle) {
-        if (needle.empty() || hay.size() < needle.size())
-            return false;
-        const auto lower = [](char c) {
-            return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        };
-        for (std::size_t i = 0; i + needle.size() <= hay.size(); ++i) {
-            bool match = true;
-            for (std::size_t j = 0; j < needle.size(); ++j) {
-                if (lower(hay[i + j]) != lower(needle[j])) {
-                    match = false;
-                    break;
-                }
-            }
-            if (match)
-                return true;
-        }
-        return false;
-    }
-
     inline std::string detect_category(std::string_view desc) {
-        if (contains_ci(desc, "coverpoint") || contains_ci(desc, "covergroup"))
-            return std::string(kPrimCategorySva);
-        if (contains_ci(desc, "property") || contains_ci(desc, "assert") ||
-            contains_ci(desc, "sequence") || contains_ci(desc, "sva"))
-            return std::string(kPrimCategorySva);
-        if (contains_ci(desc, "verification") || contains_ci(desc, "feedback") ||
-            contains_ci(desc, "coverage"))
-            return std::string(kPrimCategoryVerification);
-        if (contains_ci(desc, "interface") || contains_ci(desc, "modport") ||
-            contains_ci(desc, "eda") || contains_ci(desc, "hardware"))
-            return std::string(kPrimCategoryEda);
+        (void)desc;
+        // Issue #3239: eda/sva/verification auto-category retired with
+        // the residual SV mutate surface. New registrations default general.
         return std::string(kPrimCategoryGeneral);
     }
 

@@ -543,14 +543,11 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     //     coverage-hole marks applied)
     //   - verification_assert_failure_total_  (# of
     //     assert-failure marks applied)
-    //   - sv_mutate_attempts_total_  (total structured
-    //     SV mutates called)
-    //   - sv_mutate_success_total_  (successful SV
-    //     mutates)
     //   - verify_loop_cycles_total_  (manual loop ticks
     //     from the AI Agent)
+    // Issue #3239: sv_mutate_attempts/success retired.
     //
-    // P0: returns an integer = sum of all 5 counters.
+    // P0: returns an integer = sum of remaining counters.
     // Follow-up: returns a 5-tuple so the AI Agent can
     // compute mutate_success_rate + coverage_delta
     // independently.
@@ -565,10 +562,8 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                 return make_int(0);
             const std::uint64_t cov = ws->verification_coverage_feedback_total();
             const std::uint64_t ass = ws->verification_assert_failure_total();
-            const std::uint64_t att = ws->sv_mutate_attempts_total();
-            const std::uint64_t suc = ws->sv_mutate_success_total();
             const std::uint64_t cyc = ws->verify_loop_cycles_total();
-            return make_int(static_cast<std::int64_t>(cov + ass + att + suc + cyc));
+            return make_int(static_cast<std::int64_t>(cov + ass + cyc));
         });
 
     // Issue #510: query:eda-verification-stats. Hash view of commercial
@@ -634,8 +629,8 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
                 m ? m->commercial_simulator_runs_total.load(std::memory_order_relaxed) : 0;
             const std::uint64_t loop_success =
                 m ? m->verification_loop_success_total.load(std::memory_order_relaxed) : 0;
-            const std::uint64_t sv_attempts = ws ? ws->sv_mutate_attempts_total() : 0;
-            const std::uint64_t sv_success = ws ? ws->sv_mutate_success_total() : 0;
+            const std::uint64_t sv_attempts = 0; // Issue #3239: retired
+            const std::uint64_t sv_success = 0;
             const std::uint64_t success_rate_pct =
                 sv_attempts > 0 ? (100 * sv_success / sv_attempts) : (sv_success > 0 ? 100 : 0);
             const std::uint64_t total =
@@ -669,7 +664,6 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
     //   - dirty_upward_fast_fixed_point_hits_ (FlatAST, #336)
     //   - verify_assertion_dirty_total_   (FlatAST, #437)
     //   - verify_coverage_dirty_total_    (FlatAST, #437)
-    //   - verify_sva_dirty_total_         (FlatAST, #437)
     //   - verify_formal_cex_dirty_total_  (FlatAST, #437)
     //   - verification_coverage_feedback_total_ (FlatAST, #469)
     //   - verification_assert_failure_total_  (FlatAST, #469)
@@ -696,9 +690,9 @@ void register_query_tail_primitives(PrimRegistrar add, std::pmr::vector<Pair>& p
             const std::uint64_t upward_calls = ws->mark_dirty_upward_call_count();
             const std::uint64_t upward_nodes = ws->mark_dirty_total_nodes();
             const std::uint64_t fast_hits = ws->dirty_upward_fast_fixed_point_count();
-            const std::uint64_t verify =
-                ws->verify_assertion_dirty_total() + ws->verify_coverage_dirty_total() +
-                ws->verify_sva_dirty_total() + ws->verify_formal_cex_dirty_total();
+            const std::uint64_t verify = ws->verify_assertion_dirty_total() +
+                                         ws->verify_coverage_dirty_total() +
+                                         ws->verify_formal_cex_dirty_total();
             const std::uint64_t feedback = ws->verification_coverage_feedback_total() +
                                            ws->verification_assert_failure_total();
             return make_int(static_cast<std::int64_t>(upward_calls + upward_nodes + fast_hits +

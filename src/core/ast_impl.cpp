@@ -545,8 +545,6 @@ void FlatAST::apply_verify_dirty_bits(NodeId id, std::uint8_t verify_reasons) {
         verify_assertion_dirty_total_.fetch_add(1, std::memory_order_relaxed);
     if (newly_set & kCoverageDirty)
         verify_coverage_dirty_total_.fetch_add(1, std::memory_order_relaxed);
-    if (newly_set & kSvaDirty)
-        verify_sva_dirty_total_.fetch_add(1, std::memory_order_relaxed);
     if (newly_set & kFormalCounterexampleDirty)
         verify_formal_cex_dirty_total_.fetch_add(1, std::memory_order_relaxed);
     mark_dirty(id, static_cast<std::uint8_t>(kGeneralDirty));
@@ -1188,20 +1186,7 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
     // Full tree BFS only behind AURA_DIRTY_LEGACY_TREE_WALK=1.
     const bool legacy = dirty_legacy_tree_walk_enabled();
 
-    // Issue #693: SV structural / SVA feedback nodes propagate
-    // verify_dirty_ upward for targeted sv_ir re-emit hints.
-    bool propagate_sva_verify = false;
-    if (id < tag_.size()) {
-        const auto src_tag = tag_[id];
-        propagate_sva_verify = (src_tag == NodeTag::Interface || src_tag == NodeTag::Modport ||
-                                src_tag == NodeTag::Property || src_tag == NodeTag::Sequence ||
-                                src_tag == NodeTag::Assert || src_tag == NodeTag::Covergroup ||
-                                src_tag == NodeTag::Coverpoint || src_tag == NodeTag::Constraint ||
-                                src_tag == NodeTag::Class);
-    }
-    // Issue #2440: use locked atomic accessor (not raw column).
-    if (!propagate_sva_verify)
-        propagate_sva_verify = (verify_dirty(id) & kSvaDirty) != 0;
+    // Issue #3239: SVA verify-dirty cascade retired with kSvaDirty.
     std::uint64_t touched = 0;
     bool truncated = false;
 
@@ -1229,8 +1214,6 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
             }
             mark_dirty(cur, reasons);
             apply_ppa_dirty_bits(cur, ppa_reasons);
-            if (propagate_sva_verify)
-                apply_verify_dirty_bits(cur, kSvaDirty);
             ++touched;
             auto p = parent_[cur];
             if (p == NULL_NODE)
@@ -1267,8 +1250,6 @@ void FlatAST::mark_dirty_upward(const NodeId id, std::uint8_t reasons, std::uint
             queue.pop_front();
             mark_dirty(nid, reasons);
             apply_ppa_dirty_bits(nid, ppa_reasons);
-            if (propagate_sva_verify)
-                apply_verify_dirty_bits(nid, kSvaDirty);
             ++touched;
             auto p = parent_[nid];
             if (p != NULL_NODE)
