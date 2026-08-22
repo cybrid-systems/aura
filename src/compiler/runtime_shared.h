@@ -258,6 +258,10 @@ extern "C" void aura_test_reset_reemit_success_sync_covered_state() noexcept;
 // Issue #2128: test / host hooks for MustDeoptBeforeNextCall flag.
 extern "C" void aura_closure_set_must_deopt(std::int64_t closure_id, int v);
 extern "C" int aura_closure_get_must_deopt(std::int64_t closure_id);
+// Issue #3247: sticky observe (does **not** clear). Agent must not treat
+// this as consume. Clear is remount success / remap / alloc /
+// aura_closure_call force-deopt (exclusive + #2472).
+extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id);
 
 // Issue #2092: legacy name-fallback toggle. Off by default (AC3) —
 // wired hosts opt in only when they want pre-#2092 behavior for

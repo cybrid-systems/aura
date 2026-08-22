@@ -12500,6 +12500,27 @@ def cmd_closure_call_must_deopt_toctou_coverage():
     return 0
 
 
+def cmd_must_deopt_getter_sticky_3247_coverage():
+    """Issue #3247: getter is sticky observe, not clear-on-read.
+
+    aura_get_closure_must_deopt_before_next_call returns the flag and
+    does not clear. Consume is remount/remap/alloc/aura_closure_call
+    exclusive force-deopt (#2472). Extends test_must_deopt_before_next_call
+    (#81967); no docs/design/ (#1655).
+    """
+    print(f"{B}=== must_deopt getter sticky coverage (#3247) ==={N}")
+    script = COVERAGE_CHECKS / "check_must_deopt_getter_sticky_3247.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("must_deopt getter sticky (#3247) coverage contract rows failed")
+        return 1
+    ok("must_deopt getter sticky (#3247) coverage clean")
+    return 0
+
+
 def cmd_gc_closures_mtx_flush_sweep_coverage():
     """Issue #2473: flush_gc_roots / compact_sweep take closures_mtx_.
 

@@ -739,6 +739,11 @@ extern "C" __attribute__((weak)) void aura_closure_set_must_deopt(std::int64_t /
 extern "C" __attribute__((weak)) int aura_closure_get_must_deopt(std::int64_t /*id*/) {
     return 0;
 }
+// Issue #3247: sticky observe stub (does not clear; production is read-only).
+extern "C" __attribute__((weak)) int
+aura_get_closure_must_deopt_before_next_call(std::int64_t /*id*/) {
+    return 0;
+}
 extern "C" __attribute__((weak)) std::uint64_t
 aura_remap_live_closures_after_reemit(const std::uint32_t* /*stable_ids*/, std::size_t /*n*/,
                                       std::uint64_t /*new_bridge_epoch*/) {

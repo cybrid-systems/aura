@@ -172,6 +172,61 @@ static void ac4_source_cite() {
     }
 }
 
+// ── Issue #3247: getter is sticky observe (Option A), not consume ──
+static void ac3247_getter_sticky() {
+    std::println("\n--- #3247 AC1: N consecutive getter probes stay 1 ---");
+    aura_reset_runtime();
+    auto cid = aura_alloc_closure(/*func_id=*/4247);
+    CHECK(cid >= 0, "3247: alloc");
+    aura_closure_set_must_deopt(cid, 1);
+    for (int i = 0; i < 5; ++i) {
+        CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1,
+              "ac3247_1_sticky: getter returns 1 on consecutive probes");
+    }
+    CHECK(aura_closure_get_must_deopt(cid) == 1,
+          "ac3247_1_sticky: flag still set after N getter probes");
+    aura_free_closure(cid);
+
+    std::println("\n--- #3247 AC2: remount/remap/alloc heal → getter 0 ---");
+    cid = aura_alloc_closure(/*func_id=*/4248);
+    aura_closure_set_must_deopt(cid, 1);
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1, "3247: armed");
+    aura_closure_set_must_deopt(cid, 0);
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 0,
+          "ac3247_2_heal: remount/remap/alloc clear → getter 0");
+    aura_free_closure(cid);
+
+    std::println("\n--- #3247 AC2: aura_closure_call still consumes ---");
+    cid = aura_alloc_closure(/*func_id=*/4249);
+    aura_closure_set_must_deopt(cid, 1);
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1, "3247: armed before call");
+    const auto deopt0 = aura_deopt_count();
+    std::int64_t args[1] = {0};
+    (void)aura_closure_call(cid, args, 0);
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 0,
+          "ac3247_2_call: force-deopt still clears under exclusive");
+    CHECK(aura_deopt_count() > deopt0, "3247: deopt advanced (call path unchanged)");
+    aura_free_closure(cid);
+
+    std::println("\n--- #3247 AC3: free+realloc — getter does not clear new flag ---");
+    cid = aura_alloc_closure(/*func_id=*/111);
+    CHECK(cid >= 0, "3247 realloc: orig alloc");
+    aura_closure_set_must_deopt(cid, 1);
+    CHECK(aura_get_closure_must_deopt_before_next_call(cid) == 1,
+          "3247 realloc: orig getter 1 (no consume)");
+    aura_free_closure(cid);
+    auto nid = aura_alloc_closure(/*func_id=*/222);
+    CHECK(nid >= 0, "3247 realloc: new alloc");
+    aura_closure_set_must_deopt(nid, 1);
+    CHECK(aura_get_closure_must_deopt_before_next_call(nid) == 1,
+          "ac3247_3_realloc: new identity flag set");
+    CHECK(aura_get_closure_must_deopt_before_next_call(nid) == 1,
+          "ac3247_3_realloc: getter does not clear new closure");
+    CHECK(aura_closure_get_must_deopt(nid) == 1,
+          "ac3247_3_realloc: new flag still sticky (#2472 parity)");
+    aura_free_closure(nid);
+}
+
 // ── AC5: gate wiring ──
 static void ac5_gate() {
     std::println("\n--- #2472 AC5: test + gate wiring ---");
@@ -211,6 +266,7 @@ int run_test_closure_call_must_deopt_toctou() {
     ac1b_freed_path();
     ac2_reverify_order();
     ac4_source_cite();
+    ac3247_getter_sticky();
     ac5_gate();
     std::println("\n=== #2472 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
