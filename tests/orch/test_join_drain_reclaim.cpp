@@ -3098,6 +3098,190 @@ int run_test_join_drain_reclaim() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3245: C++ long-lived hosts must call ensure_reclaimed_cleanup
+    // after production auto-wait Timeout. Moving a still-pending handle
+    // re-bumps host_forget_reclaimed_risk_total. Soft / explicit wait:
+    // zero extra. #2661 Timeout no-early-free preserved.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::AgentScope;
+        using aura::orch::AgentSpec;
+        using aura::orch::ensure_reclaimed_cleanup;
+        using aura::orch::kEnsureReclaimedCleanupAdoptionIssue;
+        using aura::orch::note_reclaimed_pending_hold;
+        using aura::serve::FiberState;
+        using aura::serve::JoinStatus;
+        using aura::serve::Scheduler;
+
+        std::println("\n--- #3245 AC1: Soft / explicit wait — no hold-path bump ---");
+        {
+            apply_dev_audit_defaults();
+            set_mode(SandboxMode::Off);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 512;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(!h.must_wait_reclaimed, "3245 AC1: Soft no must_wait_reclaimed");
+            const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            std::vector<AgentHandle> held;
+            held.push_back(std::move(h));
+            CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                      std::memory_order_relaxed) == risk0,
+                  "ac3245_1_soft: Soft move does not bump host_forget");
+            note_reclaimed_pending_hold(false);
+            CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                      std::memory_order_relaxed) == risk0,
+                  "3245 AC1: note_reclaimed_pending_hold(false) is a no-op");
+            if (fiber_owned) {
+                fiber_owned->set_state(FiberState::Done);
+                fiber_owned->note_body_exit_if_reclaimed();
+            }
+        }
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 256;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            policy.wait_reclaimed_ms = 1;
+            (void)join_agent(h, policy);
+            CHECK(!h.must_wait_reclaimed, "3245 AC1: explicit wait_reclaimed_ms no must_wait");
+            const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            AgentHandle stored = std::move(h);
+            CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                      std::memory_order_relaxed) == risk0,
+                  "3245 AC1: explicit-wait move does not bump host_forget");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            stored.finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3245 AC2: production Reclaimed + body exit in 50ms ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(!h.must_wait_reclaimed,
+                  "ac3245_2_ok: auto-wait Ok → must_wait=false, reservation recycled");
+            CHECK(h.reserved_memory_bytes == 0 || !h.reclaimed_deferred_cleanup,
+                  "3245 AC2: cleanup completed on Ok auto-wait");
+            const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            std::vector<AgentHandle> held;
+            held.push_back(std::move(h));
+            CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                      std::memory_order_relaxed) == risk0,
+                  "3245 AC2: Ok-path move does not bump host_forget");
+        }
+
+        std::println("\n--- #3245 AC3: Timeout → ensure second close / hold bump ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "ac3245-pending";
+            spec.body = [] {};
+            auto& named = scope.spawn(spec);
+            CHECK(named.ok && named.fiber != nullptr, "3245 AC3: spawn ok");
+            named.fiber->mark_reclaimed();
+            named.reserved_memory_bytes = 1024;
+            JoinPolicy np{};
+            np.primary_ms = 1;
+            np.drain_ms = 0;
+            (void)join_agent(named, np);
+            CHECK(named.must_wait_reclaimed, "3245 AC3: named Timeout retains must_wait");
+            auto snap = scope.directory_snapshot();
+            CHECK(!snap.entries.empty() && snap.entries[0].lifecycle == "reclaimed-pending",
+                  "3245 AC3: name-table find during pending → reclaimed-pending");
+            if (named.fiber) {
+                named.fiber->set_state(FiberState::Done);
+                named.fiber->note_body_exit_if_reclaimed();
+            }
+
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            CHECK(h.must_wait_reclaimed, "3245 AC3: Timeout retains must_wait");
+            CHECK(h.reserved_memory_bytes == 2048, "3245 AC3: #2661 no early free");
+            const auto risk1 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            std::vector<AgentHandle> held;
+            held.push_back(std::move(h));
+            CHECK(held[0].must_wait_reclaimed, "3245 AC3: pending flag survives move");
+            CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                      std::memory_order_relaxed) > risk1,
+                  "ac3245_3_hold: storing pending handle re-bumps host_forget");
+            auto wr_to = ensure_reclaimed_cleanup(held[0]);
+            CHECK(wr_to.status == JoinStatus::Timeout, "3245 AC3: ensure Timeout while body live");
+            CHECK(held[0].must_wait_reclaimed, "3245 AC3: Timeout keeps must_wait");
+            CHECK(held[0].reserved_memory_bytes == 2048,
+                  "3245 AC3: still held after ensure Timeout");
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            const auto wr_ok = ensure_reclaimed_cleanup(held[0]);
+            CHECK(wr_ok.status == JoinStatus::Ok && wr_ok.cleanup_completed,
+                  "3245 AC3: ensure second close after body exit");
+            CHECK(!held[0].must_wait_reclaimed, "3245 AC3: Ok ensure clears must_wait");
+            CHECK(held[0].reserved_memory_bytes == 0, "3245 AC3: reservation released");
+        }
+
+        std::println("\n--- #3245 AC5: source-cite + linter + no invent ---");
+        {
+            CHECK(kEnsureReclaimedCleanupAdoptionIssue == 3245, "3245 stamp");
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto build = read_file("build.py");
+            CHECK(spawn.find("note_reclaimed_pending_hold") != std::string::npos,
+                  "3245 AC5: hold-path helper");
+            CHECK(spawn.find("MUST call this") != std::string::npos ||
+                      spawn.find("MUST call ensure_reclaimed_cleanup") != std::string::npos,
+                  "3245 AC5: production contract on ensure_reclaimed_cleanup");
+            CHECK(build.find("check_ensure_reclaimed_cleanup_adoption_3245") != std::string::npos,
+                  "3245 AC5: build.py wires linter");
+            CHECK(read_file("docs/design/3245-ensure-reclaimed-cleanup.md").empty(),
+                  "3245 AC5: no docs/design per #1655");
+            CHECK(read_file("tests/orch/test_issue_3245.cpp").empty(),
+                  "3245 AC5: no test_issue_3245.cpp per #81967");
+        }
+
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
