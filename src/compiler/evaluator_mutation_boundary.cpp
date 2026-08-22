@@ -4651,10 +4651,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (max_n > 0)
                 aura_pure_anon_bg_remount_drain(max_n);
         }
-        // Issue #3026: observe-only residual-force stale watchdog.
-        // Soft / Off is one production_defaults load. Never reemits.
-        aura_hot_update_observe_residual_force_stale();
     }
+    // Issue #3248 / #3026: residual-force stale watchdog on any
+    // outermost exit (success or fail). Failure-dominated mutate must
+    // still age toward #3096 auto-heal. Remount / drain stay
+    // success-only above. Soft / Off is one production_defaults load.
+    // Playbook stays observe-only.
+    if (outermost)
+        aura_hot_update_observe_residual_force_stale();
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale
     // steals cannot observe a previous evaluator. Only outermost
     // guards own the id (nested guards inherit it); clear happens at
