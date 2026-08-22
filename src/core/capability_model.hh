@@ -43,6 +43,9 @@ inline constexpr int kCapabilityDualEvaluatorCascadeIssue = 3207;
 // Issue #3209: steal × nested abort × resume session-grant quiesce
 // (mark_stolen → revoke_for_mid; mid clear is commutative no-op after).
 inline constexpr int kCapabilitySessionQuiesceIssue = 3209;
+// Issue #3241: concurrent outermost sharing process Mutation epoch as
+// session_mid — revoke key is (mid, fiber); fiber=0 is legacy mid-only.
+inline constexpr int kCapabilitySessionPeerFiberIssue = 3241;
 
 // First-class effects (layout-stable uint16_t bitflags).
 enum class Effect : std::uint16_t {
@@ -652,7 +655,8 @@ struct CapabilityRegistry {
     // (mark_outermost_mutation_failed) use this so stolen-mark + revoke
     // stay one critical section w.r.t. concurrent check_and_record_effect.
     std::size_t revoke_session_grants_for_mid_locked(std::uint64_t mid,
-                                                     const char* reason = "session-mid-exit") {
+                                                     const char* reason = "session-mid-exit",
+                                                     std::uint32_t fiber_id = 0) {
         if (mid == 0)
             return 0;
         if (!reason || reason[0] == '\0')
@@ -670,6 +674,12 @@ struct CapabilityRegistry {
                 if (g.revoked || !g.session_bound)
                     continue;
                 if (g.bound_mutation_id != mid)
+                    continue;
+                // Issue #3241: concurrent outermost sharing epoch mid.
+                // Skip peer fiber when both ids are known and differ.
+                // fiber_id=0 → legacy mid-only (unknown / single-fiber).
+                // grant_fiber_id=0 is legacy and still matches.
+                if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
                     continue;
                 g.revoked = true;
                 g.effects = Effect::None;
@@ -689,7 +699,7 @@ struct CapabilityRegistry {
         return n;
     }
 
-    // Issue #2944: revoke all live session_bound grants whose
+    // Issue #2944: revoke live session_bound grants whose
     // bound_mutation_id matches mid. Called from outermost
     // MutationBoundaryGuard dtor (success or fail). Zero cost when
     // capability_live_session_grants == 0 (AC3 Soft happy path).
@@ -700,8 +710,11 @@ struct CapabilityRegistry {
     // Issue #3207: Soft/Off keeps the live==0 short-circuit (no lock).
     // Restricted/Strict always take mtx so a concurrent grant_session
     // cannot sneak a residual past this cascade (TOCTOU on the atomic).
+    // Issue #3241: optional fiber_id narrows the sweep to (mid, fiber).
+    // fiber_id=0 is the legacy mid-only key (unknown / single-fiber).
     std::size_t revoke_session_grants_for_mid(std::uint64_t mid,
-                                              const char* reason = "session-mid-exit") {
+                                              const char* reason = "session-mid-exit",
+                                              std::uint32_t fiber_id = 0) {
         if (mid == 0)
             return 0;
         auto& met = g_capability_effect_metrics();
@@ -711,7 +724,7 @@ struct CapabilityRegistry {
         if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
             return 0; // AC3 / #3048 AC4: zero extra work when no session grants
         std::lock_guard<std::mutex> lock(mtx);
-        return revoke_session_grants_for_mid_locked(mid, reason);
+        return revoke_session_grants_for_mid_locked(mid, reason, fiber_id);
     }
 
     // Issue #3207: caller MUST hold `mtx`. Walk/revoke body of
@@ -1501,7 +1514,7 @@ revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid, bool s
     // live grant bound to this mid.
     (void)reg.mark_session_bound_stolen_for_mid_locked(session_mid, fiber_id);
     const char* reason = steal ? "session-mid-steal-exit" : "session-mid-abort-exit";
-    const auto n = reg.revoke_session_grants_for_mid_locked(session_mid, reason);
+    const auto n = reg.revoke_session_grants_for_mid_locked(session_mid, reason, fiber_id);
     if (n > 0) {
         if (steal)
             met.capability_session_revoke_steal_total.fetch_add(n, std::memory_order_relaxed);
@@ -1518,8 +1531,8 @@ revoke_session_grants_on_steal_or_abort_locked(std::uint64_t session_mid, bool s
 // under Soft/Off. Restricted/Strict take mtx even at live==0 (#3207).
 // Second call is a no-op after the first (AC3, grants already revoked).
 // Do not call while holding mtx — use the _locked sibling.
-inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session_mid,
-                                                           bool steal) noexcept {
+inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session_mid, bool steal,
+                                                           std::uint32_t fiber_id = 0) noexcept {
     if (session_mid == 0)
         return 0;
     auto& met = g_capability_effect_metrics();
@@ -1530,7 +1543,7 @@ inline std::size_t revoke_session_grants_on_steal_or_abort(std::uint64_t session
     if (!production && met.capability_live_session_grants.load(std::memory_order_relaxed) == 0)
         return 0; // AC4: Soft / empty live residual — no lock
     std::lock_guard<std::mutex> lock(reg.mtx);
-    return revoke_session_grants_on_steal_or_abort_locked(session_mid, steal, /*fiber_id=*/0);
+    return revoke_session_grants_on_steal_or_abort_locked(session_mid, steal, fiber_id);
 }
 
 // AC1: check_and_record_effect — core enforcement entry.

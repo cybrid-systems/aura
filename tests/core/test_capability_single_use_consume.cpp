@@ -590,6 +590,140 @@ static void ac3209_5_soft_zero_cost_and_source() {
     CHECK(!std::filesystem::exists("docs/design/3209-session-quiesce.md"), "AC5: no docs/design");
 }
 
+// ── Issue #3241: concurrent outermost sharing epoch mid must not
+// over-revoke a peer fiber's session_bound grants. Same revoke policy
+// as TenantScope (fiber filter); fiber=0 remains legacy mid-only.
+
+static bool ac3241_grant_live(std::uint64_t tenant, std::string_view name) {
+    CapabilityGrant g;
+    if (!g_capability_registry().find_grant(tenant, name, g))
+        return false;
+    return !g.revoked && g.session_bound;
+}
+
+static void ac3241_grant(std::uint64_t tenant, std::string_view name, std::uint64_t mid,
+                         std::uint32_t fiber) {
+    EffectProvenance prov{};
+    prov.epoch = mid;
+    prov.mutation_id = mid;
+    prov.fiber_id = fiber;
+    g_capability_registry().grant_session(tenant, name, Effect::Mutate, prov, /*single_use=*/false);
+}
+
+static bool ac3241_consume(std::uint64_t tenant, std::uint64_t mid, std::uint32_t fiber) {
+    EffectProvenance prov{};
+    prov.epoch = mid;
+    prov.mutation_id = mid;
+    prov.fiber_id = fiber;
+    return check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, tenant, "3241-consume",
+                                   false, true);
+}
+
+// AC6: Restricted + multi-tenant production defaults (hard fiber isolation).
+// Do not call apply_production_security_defaults here: AURA_SANDBOX=off in
+// unit tests would force Soft. Consume-before-revoke is omitted because
+// provenance_ok walks every live grant and a peer fiber mismatches.
+static void ac3241_arm_restricted_multi_tenant() {
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    g_capability_registry().set_hard_fiber_isolation(true);
+}
+
+static void ac3241_1_peer_fiber_not_over_revoked() {
+    std::println("\n--- #3241 AC1: Fiber A exit does not revoke Fiber B session grant ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 41;
+    constexpr std::uint32_t fiber_a = 101;
+    constexpr std::uint32_t fiber_b = 202;
+    ac3241_grant(tenant, "mut-A", mid, fiber_a);
+    ac3241_grant(tenant, "mut-B", mid, fiber_b);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 2, "AC1: both live");
+    const auto n =
+        g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_a);
+    CHECK(n >= 1, "AC1: Fiber A mid-exit revokes >=1");
+    CHECK(!ac3241_grant_live(tenant, "mut-A"), "AC1: mut-A revoked");
+    CHECK(ac3241_grant_live(tenant, "mut-B"), "AC1: mut-B still live session_bound");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1, "AC1: B residual 1");
+    CHECK(ac3241_consume(tenant, mid, fiber_b), "AC1: Fiber B require_effect still allowed");
+    CHECK(!ac3241_consume(tenant, mid, fiber_a), "AC1: Fiber A consume denies after exit");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid, "session-mid-exit", fiber_b);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "AC1: B exit clears");
+}
+
+static void ac3241_2_steal_a_does_not_touch_b() {
+    std::println("\n--- #3241 AC2: steal/abort of A clears A only; B unaffected ---");
+    reset_all();
+    ac3241_arm_restricted_multi_tenant();
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 42;
+    constexpr std::uint32_t fiber_a = 111;
+    constexpr std::uint32_t fiber_b = 222;
+    ac3241_grant(tenant, "mut-A", mid, fiber_a);
+    ac3241_grant(tenant, "mut-B", mid, fiber_b);
+    const auto n = aura::core::capability::revoke_session_grants_on_steal_or_abort(
+        mid, /*steal=*/true, fiber_a);
+    CHECK(n >= 1, "AC2: steal A revokes A");
+    CHECK(!ac3241_grant_live(tenant, "mut-A"), "AC2: A session grant gone (no sticky residual)");
+    CHECK(ac3241_grant_live(tenant, "mut-B"), "AC2: B unaffected by A steal");
+    CHECK(ac3241_consume(tenant, mid, fiber_b), "AC2: B consume still allowed");
+    CHECK(!ac3241_consume(tenant, mid, fiber_a), "AC2: A resume consume denies");
+    const auto n2 = aura::core::capability::revoke_session_grants_on_steal_or_abort(
+        mid, /*steal=*/false, fiber_b);
+    CHECK(n2 >= 1, "AC2: abort B clears B");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0, "AC2: both cleared");
+}
+
+static void ac3241_3_soft_zero_and_legacy_mid_only() {
+    std::println("\n--- #3241 AC3/AC4: Soft zero-cost; fiber=0 still mid-only ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    const auto n0 =
+        g_capability_registry().revoke_session_grants_for_mid(88, "session-mid-exit", 7);
+    CHECK(n0 == 0, "AC3: Soft empty live → no lock/work");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 43;
+    ac3241_grant(tenant, "mut-A", mid, 101);
+    ac3241_grant(tenant, "mut-B", mid, 202);
+    const auto n = g_capability_registry().revoke_session_grants_for_mid(mid); // fiber=0 legacy
+    CHECK(n >= 2, "AC3: fiber=0 still mid-only (both revoked)");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC3: legacy mid-only clears both");
+}
+
+static void ac3241_4_source_cite_and_linter() {
+    std::println("\n--- #3241 AC5/AC6: source-cite + linter + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto eval_sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("kCapabilitySessionPeerFiberIssue = 3241") != std::string::npos,
+          "AC5: stamp #3241");
+    CHECK(cap.find("Issue #3241") != std::string::npos, "AC5: registry cites #3241");
+    CHECK(cap.find("grant_fiber_id != fiber_id") != std::string::npos,
+          "AC5: mid-revoke fiber filter");
+    CHECK(bound.find("Issue #3241") != std::string::npos, "AC5: outermost dtor cites #3241");
+    CHECK(bound.find("revoke_session_grants_for_mid_locked") != std::string::npos,
+          "AC5: dtor still uses mid helper");
+    CHECK(steal.find("revoke_session_grants_on_steal_or_abort_locked") != std::string::npos,
+          "AC5: steal/abort still locked helper");
+    CHECK(eval_sec.find("revoke_session_grants_for_locked") != std::string::npos,
+          "AC5: TenantScope cascade unchanged");
+    CHECK(build.find("check_session_grant_peer_fiber_3241") != std::string::npos,
+          "AC6: build.py wires linter");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3241.cpp"), "AC6: no invent");
+    CHECK(!std::filesystem::exists("docs/design/3241-session-grant-peer-fiber.md"),
+          "AC6: no docs/design/");
+}
+
 static void ac3144_1_production_wildcard_only_strip_tenant_admin() {
     std::println(
         "\n--- #3144 AC1: production + kCapWildcard (no explicit TenantAdmin) → strip ---");
@@ -1591,6 +1725,10 @@ int run_test_capability_single_use_consume() {
         ac3209_3_steal_no_double_consume();
         ac3209_4_composed_chaos();
         ac3209_5_soft_zero_cost_and_source();
+        ac3241_1_peer_fiber_not_over_revoked();
+        ac3241_2_steal_a_does_not_touch_b();
+        ac3241_3_soft_zero_and_legacy_mid_only();
+        ac3241_4_source_cite_and_linter();
         ac3144_1_production_wildcard_only_strip_tenant_admin();
         ac3144_2_explicit_tenant_admin_no_strip();
         ac3144_3_soft_off_no_strip();
