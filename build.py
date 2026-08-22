@@ -3484,6 +3484,19 @@ def cmd_lint():
             "Issue #3262 GC safepoint restamp-lock linter failed — run python3 scripts/coverage/checks/check_gc_safepoint_restamp_lock_3262.py"
         )
         return r
+    # Issue #3263: quote_lambda samples marker once; drop dead stripped
+    # bump on nullptr current_flat. Extends test_jit_macro_deopt_hygiene.cpp
+    # (#81967); no docs/design/ (#1655).
+    qlm_script = COVERAGE_CHECKS / "check_quote_lambda_marker_once_3263.py"
+    if not qlm_script.exists():
+        fail(f"missing {qlm_script}")
+        return 1
+    r = run([sys.executable, str(qlm_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3263 quote-lambda marker-once linter failed — run python3 scripts/coverage/checks/check_quote_lambda_marker_once_3263.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10847,6 +10860,21 @@ def cmd_gc_safepoint_restamp_lock_3262_coverage():
         fail("GC safepoint restamp-lock (#3262) coverage contract rows failed")
         return 1
     ok("GC safepoint restamp-lock (#3262) coverage clean")
+    return 0
+
+
+def cmd_quote_lambda_marker_once_3263_coverage():
+    """Issue #3263: quote_lambda marker sample-once + drop dead stripped bump."""
+    print(f"{B}=== quote-lambda marker-once (#3263) ==={N}")
+    script = COVERAGE_CHECKS / "check_quote_lambda_marker_once_3263.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("quote-lambda marker-once (#3263) coverage contract rows failed")
+        return 1
+    ok("quote-lambda marker-once (#3263) coverage clean")
     return 0
 
 
@@ -19190,6 +19218,8 @@ def main():
         "flush-mutation-boundary-toctou-3261-coverage": cmd_flush_mutation_boundary_toctou_3261_coverage,
         "gc-safepoint-restamp-lock-3262": cmd_gc_safepoint_restamp_lock_3262_coverage,
         "gc-safepoint-restamp-lock-3262-coverage": cmd_gc_safepoint_restamp_lock_3262_coverage,
+        "quote-lambda-marker-once-3263": cmd_quote_lambda_marker_once_3263_coverage,
+        "quote-lambda-marker-once-3263-coverage": cmd_quote_lambda_marker_once_3263_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

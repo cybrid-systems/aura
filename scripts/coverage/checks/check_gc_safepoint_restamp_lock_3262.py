@@ -17,6 +17,9 @@ Contract:
   AC5  extend existing suites; linter after #3261; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3263: quote_lambda marker sample-once + drop dead stripped bump.
+
 """
 
 from __future__ import annotations
