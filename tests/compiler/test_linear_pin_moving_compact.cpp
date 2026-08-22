@@ -27,6 +27,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/mutation_concurrency_health.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/lifetime_pin.hh"
 
 #include <atomic>
@@ -39,9 +41,11 @@
 #include <unordered_set>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::core::lifetime::g_linear_pin_miss_total;
 using aura::core::lifetime::g_linear_pin_total;
 using aura::core::lifetime::g_linear_unpin_total;
@@ -75,6 +79,7 @@ namespace {
 void* const kRootA = reinterpret_cast<void*>(0x1000);
 void* const kRootB = reinterpret_cast<void*>(0x2000);
 void* const kRootC = reinterpret_cast<void*>(0x3000);
+void* const kRootD = reinterpret_cast<void*>(0x4000);
 void* const kOldAddr1 = reinterpret_cast<void*>(0x9000);
 void* const kOldAddr2 = reinterpret_cast<void*>(0xA000);
 
@@ -343,6 +348,143 @@ int run_test_linear_pin_moving_compact() {
             CHECK(roots.count(kRootA) == 0, "AC6.14: RootA drained via bridge");
             CHECK(roots.count(kRootB) == 1, "AC6.15: RootB remains via inline pin");
         }
+    }
+
+    // ── Issue #3249: nested abort drains extras; outer pins stay ──
+    {
+        std::println("\n--- #3249 AC1: nested abort drain extras, outer pins remain ---");
+        // Densify-pin batch members leave densify-fail health that would
+        // reject production try_acquire. Hermetic clean snapshot (same
+        // pattern as #2985 / #3235).
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::MutationConcurrencyHealthSnapshot clean_health;
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean_health);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootA);
+        CompilerService cs;
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        auto& ev = cs.evaluator();
+        bool outer_ok = true;
+        auto og = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &outer_ok);
+        if (!og.has_value())
+            CHECK(false, std::format("ac3249_1_nested: outer acquire ({})", og.error().message));
+        else
+            CHECK(true, "ac3249_1_nested: outer acquire");
+        {
+            bool nest_ok = true;
+            auto ng = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &nest_ok);
+            if (!ng.has_value())
+                CHECK(false,
+                      std::format("ac3249_1_nested: nested acquire ({})", ng.error().message));
+            else
+                CHECK(true, "ac3249_1_nested: nested acquire");
+            pin_linear_root(kRootD); // extra under nested Guard (after enter snapshot)
+            CHECK(linear_root_snapshot().live_count == 2, "ac3249_1_nested: outer+nested pins");
+            nest_ok = false; // nested abort
+        }
+        CHECK(linear_root_snapshot().live_count == 1,
+              "ac3249_1_nested: nested abort drained extra, outer pin remains");
+        {
+            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            auto& roots = aura::core::lifetime::linear_roots();
+            CHECK(roots.count(kRootA) == 1, "ac3249_1_nested: outer root stays");
+            CHECK(roots.count(kRootD) == 0, "ac3249_1_nested: nested extra drained");
+        }
+        outer_ok = true; // outer success does not unpin_all
+        if (og.has_value())
+            og.value().reset();
+        CHECK(linear_root_snapshot().live_count == 1,
+              "ac3249_1_nested: outer success keeps remaining pin");
+        const auto rel0 = linear_root_abort_release_total_v_read();
+        bool fail_ok = true;
+        auto fg = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &fail_ok);
+        if (!fg.has_value())
+            CHECK(false,
+                  std::format("ac3249_1_nested: outermost fail acquire ({})", fg.error().message));
+        else
+            CHECK(true, "ac3249_1_nested: outermost fail acquire");
+        fail_ok = false;
+        if (fg.has_value())
+            fg.value().reset();
+        CHECK(linear_root_snapshot().live_count == 0, "ac3249_1_nested: outermost fail drains");
+        CHECK(linear_root_abort_release_total_v_read() > rel0,
+              "ac3249_4_soak: abort-release total advanced");
+
+        std::println("\n--- #3249 AC5: Soft nested abort does not drain ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootA);
+        bool s_outer = true;
+        auto sg = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &s_outer);
+        CHECK(sg.has_value(), "ac3249_5_soft: outer acquire");
+        {
+            bool s_nest = true;
+            auto ng = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &s_nest);
+            CHECK(ng.has_value(), "ac3249_5_soft: nested acquire");
+            pin_linear_root(kRootD); // extra under nested; Soft must not drain
+            s_nest = false;
+        }
+        CHECK(linear_root_snapshot().live_count == 2,
+              "ac3249_5_soft: Soft nested abort leaves leftovers (zero extra)");
+        s_outer = true;
+        if (sg.has_value())
+            sg.value().reset();
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+
+        std::println("\n--- #3249 AC3: densify verify never unpins; abort drains leftover ---");
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootB);
+        std::unordered_set<void*> empty;
+        CHECK(verify_linear_pins_under_moving_compact(empty), "ac3249_3_densify: verify ok");
+        CHECK(linear_root_snapshot().live_count == 1,
+              "ac3249_3_densify: densify never unpins leftover");
+        CHECK(unpin_all_linear_roots() == 1, "ac3249_3_densify: abort drain leftover");
+
+        std::println("\n--- #3249 AC4 soak: 32 nested abort extras, outer pin remains ---");
+        reset_linear_roots_for_test();
+        pin_linear_root(kRootA);
+        bool soak_ok = true;
+        auto sog = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &soak_ok);
+        CHECK(sog.has_value(), "ac3249_4_soak: outer acquire");
+        for (int i = 0; i < 32; ++i) {
+            bool n_ok = true;
+            auto ng = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &n_ok);
+            pin_linear_root(reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xC000 + i * 8)));
+            if (ng.has_value())
+                n_ok = false;
+        }
+        CHECK(linear_root_snapshot().live_count == 1,
+              "ac3249_4_soak: live_count==1 after nested aborts");
+        soak_ok = true;
+        if (sog.has_value())
+            sog.value().reset();
+
+        auto read_src = [](const char* path) -> std::string {
+            for (const auto& p :
+                 {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+                std::ifstream in(p);
+                if (!in)
+                    continue;
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }
+            return {};
+        };
+        const auto bound = read_src("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto fibm = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto lp = read_src("src/core/lifetime_pin.hh");
+        CHECK(bound.find("unpin_linear_roots_except") != std::string::npos,
+              "ac3249_2: nested abort uses except-keep drain");
+        CHECK(fibm.find("unpin_all_linear_roots") != std::string::npos,
+              "ac3249_2: steal hard-fail shares unpin_all");
+        CHECK(lp.find("kLinearNestedAbortDrainIssue = 3249") != std::string::npos,
+              "ac3249_2: stamp 3249");
+        CHECK(lp.find("this verify never unpins") != std::string::npos,
+              "ac3249_3_densify: densify never owns unpin");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        reset_linear_roots_for_test();
     }
 
     // ── AC5: query schema — reachability + sentinels ──

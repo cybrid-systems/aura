@@ -3729,7 +3729,11 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
             }
         }
     }
-    (void)hard_failed; // reserved for future post-gate steps
+    // Issue #3249: steal mid-Guard hard-fail abandons the victim stack.
+    // Same drain entry as post-join release_orphan_roots (unpin_all).
+    // Happy-path steal: fiber still live — Guard dtor owns drain.
+    if (hard_failed)
+        (void)aura::core::lifetime::unpin_all_linear_roots();
 
     // Issue #3111: post-steal re-validate held_ref messages in this fiber's
     // mailbox. Under production + a stolen fiber that owns (or is attached

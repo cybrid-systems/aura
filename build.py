@@ -4055,6 +4055,20 @@ def cmd_lint():
             "Issue #3023 linear_roots abort/reclaim linter failed — run python3 scripts/coverage/checks/check_linear_root_abort_release_3023.py"
         )
         return r
+    # Issue #3249: nested Guard abort drains leftover linear_roots
+    # (extras vs enter snapshot). Steal hard-fail shares unpin_all with
+    # post-join. Extends test_linear_pin_moving_compact (#81967);
+    # no docs/design/ (#1655).
+    lnad_script = COVERAGE_CHECKS / "check_linear_nested_abort_drain_3249.py"
+    if not lnad_script.exists():
+        fail(f"missing {lnad_script}")
+        return 1
+    r = run([sys.executable, str(lnad_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3249 nested abort linear drain linter failed — run python3 scripts/coverage/checks/check_linear_nested_abort_drain_3249.py"
+        )
+        return r
     # Issue #3024: production pure-anon bg overflow → MustDeopt
     # (close residual native-hole after #2950/#2850). Soft / budget=0
     # overflow-counter only. Extends
@@ -10527,6 +10541,25 @@ def cmd_linear_root_abort_release_3023_coverage():
         fail("linear_roots abort/reclaim (#3023) coverage contract rows failed")
         return 1
     ok("linear_roots abort/reclaim (#3023) coverage clean")
+    return 0
+
+
+def cmd_linear_nested_abort_drain_3249_coverage():
+    """Issue #3249: nested Guard abort drains leftover linear_roots.
+
+    Production nested fail drains extras vs enter snapshot; outer pins
+    stay. Steal hard-fail shares unpin_all with post-join. Soft skip.
+    """
+    print(f"{B}=== nested abort linear drain coverage (#3249) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_nested_abort_drain_3249.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("nested abort linear drain (#3249) coverage contract rows failed")
+        return 1
+    ok("nested abort linear drain (#3249) coverage clean")
     return 0
 
 
@@ -18759,6 +18792,8 @@ def main():
         "ffi-opaque-pin-or-remap-3057-coverage": cmd_ffi_opaque_pin_or_remap_3057_coverage,
         "linear-root-abort-release-3023": cmd_linear_root_abort_release_3023,
         "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
+        "linear-nested-abort-drain-3249": cmd_linear_nested_abort_drain_3249_coverage,
+        "linear-nested-abort-drain-3249-coverage": cmd_linear_nested_abort_drain_3249_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,

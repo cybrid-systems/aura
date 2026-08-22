@@ -94,6 +94,7 @@ using ::aura::core::lifetime::verify_pins_under_moving_compact;
 
 // Linear roots
 using ::aura::core::lifetime::g_linear_root_abort_release_total;
+using ::aura::core::lifetime::kLinearNestedAbortDrainIssue;
 using ::aura::core::lifetime::kLinearRootAbortReleaseIssue;
 using ::aura::core::lifetime::linear_root_abort_release_total_v_read;
 using ::aura::core::lifetime::linear_root_snapshot;
@@ -102,8 +103,10 @@ using ::aura::core::lifetime::linear_roots_mtx;
 using ::aura::core::lifetime::LinearRootSnapshot;
 using ::aura::core::lifetime::pin_linear_root;
 using ::aura::core::lifetime::reset_linear_roots_for_test;
+using ::aura::core::lifetime::snapshot_linear_roots;
 using ::aura::core::lifetime::unpin_all_linear_roots;
 using ::aura::core::lifetime::unpin_linear_root;
+using ::aura::core::lifetime::unpin_linear_roots_except;
 
 // General-object pin protocol
 using ::aura::core::lifetime::collect_pinned_ptrs_for_arena;
