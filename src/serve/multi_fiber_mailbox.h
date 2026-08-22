@@ -24,6 +24,9 @@
 //        (or open-window age / throttle). Complements #2947 schedule gate
 //        (deny new admits) by force-degrading the live outermost holder.
 //        Soft: observe-only. Under-SLO / no open defer: early return.
+// #3256: p99/SLO arm uses the same hold-budget force path as
+//        #2701/#2720/#3254 (force_degrade on live fiber_id, then
+//        poll_inbody_window). No second unlock. Soft still observe-only.
 // #3002: fill_mailbox_hold_slo_live_ + this sample share p99/throttle/SLO
 //        (no second hist walk). Production + mailbox_hold_slo_signal +
 //        live holder → one-shot cancel (reuse #2958 CAS; no double-arm).
@@ -563,7 +566,17 @@ inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
         // Cleared when window closes (1→0).
         return;
     }
-    if (aura_fiber_request_hold_budget_cancel(holder.fiber_id) != 0) {
+    // Issue #3256: unify mailbox under-boundary SLO with mutation
+    // hold-budget. Order: mailbox SLO (this helper) → hold arm
+    // (force_degrade on g_mutation_hold_live_fiber_id: cancel +
+    // force-safepoint + urgent inbody poll; reuse holder_degrade_* /
+    // cancel_fired) → existing force path (poll_inbody_window /
+    // #3254). Do not invent a second unlock path. Delivery still
+    // returns Backpressure (caller). Soft already returned above.
+    aura_evaluator_force_degrade_outermost_holder(holder.fiber_id);
+    const int armed = aura_fiber_request_hold_budget_cancel(holder.fiber_id);
+    (void)aura_hold_budget_poll_inbody_window();
+    if (armed != 0) {
         g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.fetch_add(1,
                                                                          std::memory_order_relaxed);
     } else {

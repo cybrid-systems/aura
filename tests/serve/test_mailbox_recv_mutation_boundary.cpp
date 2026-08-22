@@ -32,6 +32,7 @@
 #include "serve/scheduler.h"
 #include "serve/steal_safety.h"
 #include "orch/security_schedule_gate.h"
+#include "compiler/mutation_hold_budget.h"
 #include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
@@ -1825,6 +1826,152 @@ static void ac3002_5_source_and_linter() {
     CHECK(read_file("tests/serve/test_issue_3002.cpp").empty(), "AC5: no invent test file");
 }
 
+// ── Issue #3256: mailbox SLO arm unifies with hold-budget force path ──
+// Residual of #2958: p99/SLO only requested Fiber cancel; the live
+// outermost holder kept workspace_mtx_ until a separate poll edge.
+// #3256: production SLO → force_degrade(live fiber_id) + poll_inbody
+// (same bound as #3254). Soft: observe-only. Residual hard-AND
+// (#2987) unchanged. Reuse mailbox_defer_slo_hold_cancel_total +
+// holder_degrade_* / cancel_fired. No new public query key.
+
+static void ac3256_1_production_slo_force_degrades_holder() {
+    std::println("\n--- #3256 AC1: production SLO arms hold-budget force_degrade ---");
+    using aura::compiler::g_mutation_hold_budget_holder_degrade_total;
+    using aura::compiler::mutation_hold_live_note_enter;
+    using aura::compiler::mutation_hold_live_note_exit;
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample;
+
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+
+    const auto deg0 = g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed);
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto noh0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+
+    constexpr std::uint64_t kHolder = 3256;
+    mutation_hold_live_note_enter(kHolder, /*start_ns=*/1, /*depth=*/1);
+    note_mailbox_under_boundary_wait_sample(/*us=*/50'000, /*dropped=*/false);
+
+    const auto deg1 = g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed);
+    const auto cancel1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto noh1 =
+        g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.load(std::memory_order_relaxed);
+    CHECK(deg1 > deg0, "3256 AC1: force_degrade on live holder (holder_degrade_total)");
+    CHECK(cancel1 > cancel0 || noh1 > noh0,
+          "3256 AC1: mailbox cancel or no-holder (reuse #2958 counters)");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) ==
+              soft0,
+          "3256 AC1: production does not bump soft_observe");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_breach_observe_total.load(
+              std::memory_order_relaxed) >= 1,
+          "3256 AC1: breach observed");
+
+    mutation_hold_live_note_exit(kHolder);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+}
+
+static void ac3256_2_force_path_order_no_second_unlock() {
+    std::println("\n--- #3256 AC2: mailbox SLO → hold arm → existing force path ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    auto fn = mb.find("inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {");
+    CHECK(fn != std::string::npos, "3256 AC2: helper present");
+    auto win = mb.substr(fn, 5000);
+    CHECK(win.find("Issue #3256") != std::string::npos, "3256 AC2: helper cites #3256");
+    CHECK(win.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "3256 AC2: hold arm via force_degrade");
+    CHECK(win.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "3256 AC2: hold-budget cancel retained");
+    CHECK(win.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+          "3256 AC2: existing #3254 inbody poll paired");
+    const auto deg_pos = win.find("aura_evaluator_force_degrade_outermost_holder");
+    const auto poll_pos = win.find("aura_hold_budget_poll_inbody_window");
+    CHECK(deg_pos != std::string::npos && poll_pos != std::string::npos && deg_pos < poll_pos,
+          "3256 AC2: order force_degrade then poll_inbody (no second unlock)");
+}
+
+static void ac3256_3_residual_hard_and_preserved() {
+    std::println("\n--- #3256 AC3: residual hard-AND preserved; SLO additive ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    CHECK(mb.find("mailbox_delivery_safety_transaction") != std::string::npos,
+          "3256 AC3: #2987 residual helper retained");
+    CHECK(mb.find("note_mailbox_delivery_safety") != std::string::npos,
+          "3256 AC3: delivery-safety face retained");
+    auto push_pos = mb.find("if (note_mailbox_deferred_under_boundary(&local_stats_))");
+    auto safety_pos = mb.find("if (note_mailbox_delivery_safety(");
+    CHECK(push_pos != std::string::npos && safety_pos != std::string::npos && push_pos < safety_pos,
+          "3256 AC3: SLO/defer path stays before residual; residual still consulted");
+}
+
+static void ac3256_4_soft_observe_only() {
+    std::println("\n--- #3256 AC4: Soft observe-only (no force_degrade arm) ---");
+    using aura::compiler::g_mutation_hold_budget_holder_degrade_total;
+    using aura::serve::mf_mailbox::g_mailbox_defer_slo_hold_cancel_armed;
+    using aura::serve::mf_mailbox::note_mailbox_under_boundary_wait_sample;
+
+    while (g_mf_mailbox_stats.mailbox_deferred_depth.load(std::memory_order_relaxed) > 0)
+        note_mailbox_push_ok_drain_progress();
+    g_mailbox_defer_slo_hold_cancel_armed.store(0, std::memory_order_relaxed);
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US", "1000", 1);
+
+    const auto deg0 = g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed);
+    const auto cancel0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed);
+    const auto soft0 =
+        g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed);
+    note_mailbox_under_boundary_wait_sample(/*us=*/50'000, /*dropped=*/false);
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_soft_observe_total.load(std::memory_order_relaxed) >
+              soft0,
+          "3256 AC4: Soft bumps soft_observe");
+    CHECK(g_mf_mailbox_stats.mailbox_defer_slo_hold_cancel_total.load(std::memory_order_relaxed) ==
+              cancel0,
+          "3256 AC4: Soft does not bump cancel_total");
+    CHECK(g_mutation_hold_budget_holder_degrade_total.load(std::memory_order_relaxed) == deg0,
+          "3256 AC4: Soft does not force_degrade");
+
+    ::unsetenv("AURA_MAILBOX_UNDER_BOUNDARY_WAIT_SLO_US");
+}
+
+static void ac3256_5_source_and_linter() {
+    std::println("\n--- #3256 AC5: source-cite + linter; no invent / no design ---");
+    const auto mb = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto t = read_file("tests/serve/test_mailbox_recv_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mailbox_defer_slo_hold_unify_3256.py");
+    CHECK(mb.find("Issue #3256") != std::string::npos, "3256 AC5: mailbox cites #3256");
+    CHECK(mb.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "3256 AC5: force_degrade");
+    CHECK(mb.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+          "3256 AC5: poll_inbody");
+    CHECK(t.find("ac3256_1_production_slo_force_degrades_holder") != std::string::npos,
+          "3256 AC5: AC1");
+    CHECK(t.find("ac3256_2_force_path_order_no_second_unlock") != std::string::npos,
+          "3256 AC5: AC2");
+    CHECK(t.find("ac3256_3_residual_hard_and_preserved") != std::string::npos, "3256 AC5: AC3");
+    CHECK(t.find("ac3256_4_soft_observe_only") != std::string::npos, "3256 AC5: AC4");
+    CHECK(!lint.empty() && lint.find("Issue #3256") != std::string::npos, "3256 AC5: linter");
+    CHECK(build.find("check_mailbox_defer_slo_hold_unify_3256") != std::string::npos,
+          "3256 AC5: build.py");
+    CHECK(read_file("docs/design/3256-mailbox-defer-slo-hold-unify.md").empty(),
+          "3256 AC5: no docs/design/3256-* per #1655");
+    CHECK(read_file("tests/serve/test_issue_3256.cpp").empty(),
+          "3256 AC5: no invent test file per #81967");
+    CHECK(read_file("tests/issues/test_issue_3256.cpp").empty(),
+          "3256 AC5: no tests/issues/test_issue_3256.cpp");
+}
+
 } // namespace
 
 int run_test_mailbox_recv_mutation_boundary() {
@@ -1899,6 +2046,12 @@ int run_test_mailbox_recv_mutation_boundary() {
     ac3036_3_shared_steal_bits();
     ac3036_4_schema();
     ac3036_5_source_linter_chaos();
+    std::println("\n=== Issue #3256: mailbox SLO unifies with hold-budget force path ===");
+    ac3256_1_production_slo_force_degrades_holder();
+    ac3256_2_force_path_order_no_second_unlock();
+    ac3256_3_residual_hard_and_preserved();
+    ac3256_4_soft_observe_only();
+    ac3256_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
