@@ -2167,7 +2167,7 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 orch_agent_body_exit_provenance();
             } else {
                 // Issue #3014 / #3251: per-handle reject class (join hash).
-                // acq==2 schedule-gate; else try-acquire. Success does not store.
+                // acq==2 schedule-gate; else try-acquire. Success path does not store.
                 if (body_acq_rej) {
                     const auto cls =
                         (acq == 2) ? AgentDenyClass::ScheduleGate : AgentDenyClass::TryAcquire;

@@ -49,8 +49,8 @@ def main() -> int:
     must("Issue #3014", "AC1", spawn)
     must("body_acquire_rejected_slot", "AC1", spawn)
     must("body_acquire_rejected()", "AC1", spawn)
-    must("body_acq_rej->store(true", "AC1", spawn)
-    must("std::make_shared<std::atomic<bool>>", "AC1", spawn)
+    must("body_acq_rej->store(", "AC1", spawn)
+    must("std::make_shared<std::atomic<std::uint8_t>>", "AC1", spawn)
 
     # ── AC2: join hash keys only on reject ─────────────────────────
     must("body-acquire-rejected", "AC2", agent)
@@ -68,10 +68,10 @@ def main() -> int:
 
     # ── AC3: success path does not store ───────────────────────────
     acq = spawn.find("if (acq == 0)")
-    store = spawn.find("body_acq_rej->store(true")
+    store = spawn.find("body_acq_rej->store(")
     else_pos = spawn.find("} else {", acq) if acq >= 0 else -1
     if acq < 0 or store < 0 or else_pos < 0 or not (acq < else_pos < store):
-        fails.append("AC3: store(true) must be on reject else only (no extra atomic on acq==0)")
+        fails.append("AC3: store must be on reject else only (no extra atomic on acq==0)")
     must("Success path does not store", "AC3", spawn)
 
     # ── AC4: no registry; Reclaimed contract untouched ─────────────
