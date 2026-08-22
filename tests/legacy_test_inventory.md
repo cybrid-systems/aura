@@ -1211,7 +1211,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_capability_string_matrix_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: Registry-only grant mutate → has_capability("mutate") true
 - `tests/compiler/test_capability_unified.cpp` (—) [domain_suite, theme_compiler] — AC1: has_capability("mutate") under Strict consults the effect matrix,
 - `tests/compiler/test_cascade_bfs_invalidate_after_guard.cpp` (—) [domain_suite, theme_compiler] — AC1: cascade enqueues precise defines; Guard dtor drains after unlock
-- `tests/compiler/test_cascade_decision_residual_atomic.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3135 in service.ixx — cascade_decision_mtx_
+- `tests/compiler/test_cascade_decision_residual_atomic.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #3135 in service.ixx — cascade_decision_mtx_
 - `tests/compiler/test_cascade_skip_metrics.cpp` (—) [domain_suite, theme_compiler] — AC1: summary-dirty cascade skip → cascade_skip_subtree_total via metrics
 - `tests/compiler/test_castop_density_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft path — no gate reject; optional force-JIT only under HARD
 - `tests/core/test_clear_macro_dirty_concurrent.cpp` (—) [domain_suite, theme_core] — AC1: concurrent clear_macro_dirty_all + macro_dirty(id) no torn reads

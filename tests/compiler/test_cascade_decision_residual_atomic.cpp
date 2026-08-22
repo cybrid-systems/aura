@@ -19,13 +19,16 @@
 //        test_dep_graph_hybrid_cascade.
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 
+#include <atomic>
 #include <cstdint>
 #include <format>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 
 import std;
 import aura.compiler.evaluator;
@@ -58,7 +61,118 @@ static void must_inline(const std::string& hay, const std::string& needle, const
     }
 }
 
+using aura::compiler::CompilerMetrics;
+using aura::compiler::CompilerService;
+
+// ── Issue #3257: last-look re-arm before peel ──
+static void ac3257_1_last_look_source() {
+    std::println("\n--- #3257 AC1: last-look armed / size before peel ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+    CHECK(pos != std::string::npos, "3257 AC1: relower present");
+    auto block = ixx.substr(pos, 14000);
+    CHECK(block.find("Issue #3257") != std::string::npos, "3257 AC1: relower cites #3257");
+    CHECK(block.find("post_attr_armed") != std::string::npos ||
+              block.find("attr_seen_size") != std::string::npos,
+          "3257 AC1: last-look size vs attribution snapshot");
+    CHECK(block.find("size_now > attr_seen_size") != std::string::npos,
+          "3257 AC1: fail-closed when tail grew after snapshot");
+    CHECK(block.find("cascade_rearm_new_edge_only_total") != std::string::npos,
+          "3257 AC1: attribution distinguisher retained");
+    CHECK(block.find("partial_forced_full_by_impact_total") != std::string::npos,
+          "3257 AC1: forced-full distinguisher retained");
+}
+
+static void ac3257_2_attribution_prefers_partial() {
+    std::println("\n--- #3257 AC2: new-edge attribution still prefers partial ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #3168: prefer new-edge-only mark over full fallback") !=
+              std::string::npos,
+          "3257 AC2: #3168 attribution preserved");
+    CHECK(ixx.find("metrics_.cascade_rearm_new_edge_only_total.fetch_add") != std::string::npos,
+          "3257 AC2: new-edge-only counter still bumped");
+    auto pos = ixx.find("Issue #3257: concurrent record_dependency can append after");
+    CHECK(pos != std::string::npos, "3257 AC2: last-look block present");
+    auto win = ixx.substr(pos, 1800);
+    CHECK(win.find("want_partial = false") != std::string::npos,
+          "3257 AC2: last-look fail-closed only when tail grew");
+}
+
+static void ac3257_3_soft_zero_extra() {
+    std::println("\n--- #3257 AC3: Soft + armed==0 last-look is acquire-only ---");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("Issue #3257: last-look armed immediately before attribution");
+    CHECK(pos != std::string::npos, "3257 AC3: last-look cite");
+    auto win = ixx.substr(pos, 900);
+    CHECK(win.find("deferred_hybrid_armed_.load(std::memory_order_acquire)") != std::string::npos,
+          "3257 AC3: acquire load of armed");
+    CHECK(ixx.find("const bool need_lock =") != std::string::npos,
+          "3257 AC3: need_lock gate preserved (Soft skips cascade lock)");
+}
+
+static void ac3257_4_concurrent_rearm_soak() {
+    std::println("\n--- #3257 AC4: concurrent stale-reject during relower ---");
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda () (B)))
+")")
+              .has_value(),
+          "3257 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3257 AC4: eval");
+    cs.public_record_dependency("A", "B");
+    auto& m = cs.metrics();
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto attr0 = m.cascade_rearm_new_edge_only_total.load(std::memory_order_relaxed);
+    std::atomic<int> stop{0};
+    std::thread bumper([&] {
+        for (int i = 0; i < 80 && !stop.load(std::memory_order_relaxed); ++i) {
+            cs.public_note_stale_dep_reject("A", "B");
+            cs.public_record_dependency("A", "B");
+        }
+    });
+    for (int i = 0; i < 16; ++i) {
+        cs.public_mark_define_dirty("A");
+        cs.public_mark_define_dirty("B");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+    }
+    stop.store(1, std::memory_order_relaxed);
+    bumper.join();
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3257 AC4: graphs consistent after soak");
+    auto ra = cs.eval("(A)");
+    CHECK(ra.has_value(), "3257 AC4: (A) evals after soak (never silent stale peel)");
+    CHECK(m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >= forced0,
+          "3257 AC4: forced-full distinguisher non-decreasing");
+    CHECK(m.cascade_rearm_new_edge_only_total.load(std::memory_order_relaxed) >= attr0,
+          "3257 AC4: new-edge-only distinguisher non-decreasing");
+}
+
+static void ac3257_5_source_and_linter() {
+    std::println("\n--- #3257 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_cascade_decision_residual_atomic.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_deferred_hybrid_rearm_last_look_3257.py");
+    CHECK(t.find("ac3257_1_last_look_source") != std::string::npos, "3257 AC5: AC1");
+    CHECK(t.find("ac3257_4_concurrent_rearm_soak") != std::string::npos, "3257 AC5: soak");
+    CHECK(!lint.empty() && lint.find("Issue #3257") != std::string::npos, "3257 AC5: linter");
+    CHECK(build.find("check_deferred_hybrid_rearm_last_look_3257") != std::string::npos,
+          "3257 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3257.cpp").empty(),
+          "3257 AC5: no test_issue_3257.cpp");
+    CHECK(read_file("tests/issues/test_issue_3257.cpp").empty(),
+          "3257 AC5: no tests/issues/test_issue_3257.cpp");
+}
+
 } // namespace
+
+static void ac3168_1_production_rearm_new_edge_only();
+static void ac3168_2_soft_zero_extra();
+static void ac3168_3_partial_peel_preserved();
+static void ac3168_4_existing_3067_3097_3135_preserved();
+static void ac3168_5_source_and_linter();
 
 int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
@@ -215,6 +329,12 @@ int run_test_cascade_decision_residual_atomic_3135() {
     ac3168_3_partial_peel_preserved();
     ac3168_4_existing_3067_3097_3135_preserved();
     ac3168_5_source_and_linter();
+    std::println("\n=== Issue #3257: deferred_hybrid re-arm last-look before peel ===");
+    ac3257_1_last_look_source();
+    ac3257_2_attribution_prefers_partial();
+    ac3257_3_soft_zero_extra();
+    ac3257_4_concurrent_rearm_soak();
+    ac3257_5_source_and_linter();
 
     std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
@@ -313,7 +433,7 @@ static void ac3168_3_partial_peel_preserved() {
     auto pos_attr = ixx.find("Issue #3168: prefer new-edge-only mark over full fallback");
     CHECK(pos_attr != std::string::npos, "3168 AC3: attribution block present");
     if (pos_attr != std::string::npos) {
-        const auto attr_block = ixx.substr(pos_attr, 2400);
+        const auto attr_block = ixx.substr(pos_attr, 4000);
         CHECK(attr_block.find("metrics_.cascade_rearm_new_edge_only_total.fetch_add") !=
                   std::string::npos,
               "3168 AC3: attribution bumps cascade_rearm_new_edge_only_total");
