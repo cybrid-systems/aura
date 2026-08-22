@@ -20,6 +20,10 @@
 //   #3265 AC3: tl_arena_alloc reuses aligned (no aligned2)
 //   #3265 AC4: mark stack restores offset after intervening alloc
 //   #3265 AC5: linter after #3264; no invent
+//   #3270 AC1: exhaustive PrimId static_assert vs ir.ixx
+//   #3270 AC2: OpGuardShape ORs linear_safety_probe i1 into bb_stale
+//   #3270 AC3: quiet nullptr; Capture/Apply still call probe
+//   #3270 AC4/5: linter after #3269; no invent
 
 #include "compiler/aura_jit.h"
 #include "compiler/runtime_shared.h"
@@ -535,6 +539,54 @@ static void ac3265_4_mark_stack_intervening_alloc() {
     tl_arena_destroy(&a);
 }
 
+static void ac3270_1_exhaustive_primid_asserts() {
+    std::println("\n--- #3270 AC1: exhaustive PrimId static_assert ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto ir = read_file("src/compiler/ir.ixx");
+    CHECK(jit.find("Issue #3270: exhaustive") != std::string::npos, "3270 AC1: cite");
+    CHECK(jit.find("static_assert(PrimHash == 0") != std::string::npos, "3270 AC1: PrimHash");
+    CHECK(jit.find("static_assert(PrimHashLength == 1") != std::string::npos,
+          "3270 AC1: PrimHashLength (was gap)");
+    CHECK(jit.find("static_assert(PrimError == 16") != std::string::npos,
+          "3270 AC1: PrimError (was 16-34 gap)");
+    CHECK(jit.find("static_assert(PrimNullP == 43") != std::string::npos, "3270 AC1: last id");
+    CHECK(ir.find("kPrimNames must have exactly one entry per PrimId") != std::string::npos,
+          "3270 AC1: ir.ixx names");
+}
+
+static void ac3270_2_guardshape_uses_probe() {
+    std::println("\n--- #3270 AC2: OpGuardShape uses linear_safety_probe i1 ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("auto* lin_unsafe = linear_safety_probe()") != std::string::npos,
+          "3270 AC2: capture return");
+    CHECK(jit.find("is_stale = irb->CreateOr(is_stale, lin_unsafe)") != std::string::npos,
+          "3270 AC2: OR into bb_stale");
+    CHECK(jit.find("return nullptr; // Issue #3270: quiet path") != std::string::npos,
+          "3270 AC2: quiet zero extra");
+}
+
+static void ac3270_3_quiet_and_other_sites() {
+    std::println("\n--- #3270 AC3: other sites still call probe; quiet skip ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("linear_safety_probe();") != std::string::npos,
+          "3270 AC3: Capture/Apply still call");
+    CHECK(jit.find("irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok)") != std::string::npos,
+          "3270 AC3: #3186 branch kept");
+}
+
+static void ac3270_4_source_and_linter() {
+    std::println("\n--- #3270 AC4/AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_jit_macro_introduced_preserve.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_primid_drift_3270.py");
+    CHECK(t.find("ac3270_1_exhaustive_primid_asserts") != std::string::npos, "3270 AC5: AC1");
+    CHECK(t.find("ac3270_2_guardshape_uses_probe") != std::string::npos, "3270 AC5: AC2");
+    CHECK(!lint.empty() && lint.find("Issue #3270") != std::string::npos, "3270 AC5: linter");
+    CHECK(build.find("check_primid_drift_3270") != std::string::npos, "3270 AC5: build.py");
+    CHECK(read_file("docs/design/3270-primid-drift.md").empty(), "3270 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3270.cpp").empty(), "3270 AC5: no invent");
+}
+
 static void ac3265_5_source_and_linter() {
     std::println("\n--- #3265 AC5: linter + no invent ---");
     const auto t = read_file("tests/compiler/test_jit_macro_introduced_preserve.cpp");
@@ -577,9 +629,15 @@ int main() {
     ac3265_3_alloc_no_aligned2();
     ac3265_4_mark_stack_intervening_alloc();
     ac3265_5_source_and_linter();
+    std::println("\n=== Issue #3270: PrimId exhaustive drift + GuardShape probe ===");
+    ac3270_1_exhaustive_primid_asserts();
+    ac3270_2_guardshape_uses_probe();
+    ac3270_3_quiet_and_other_sites();
+    ac3270_4_source_and_linter();
     if (g_failed)
         return 1;
-    std::println("jit MacroIntroduced preserve (#2022) + #2176 unstamp + #3064: OK ({} passed)",
+    std::println("jit MacroIntroduced preserve (#2022) + #2176 unstamp + #3064/#3265/#3270: OK ({} "
+                 "passed)",
                  g_passed);
     return 0;
 }

@@ -3574,6 +3574,18 @@ def cmd_lint():
             "Issue #3269 arena-compact-TOCTOU linter failed — run python3 scripts/coverage/checks/check_arena_compact_toctou_3269.py"
         )
         return r
+    # Issue #3270: exhaustive PrimId drift asserts + OpGuardShape
+    # linear_safety_probe i1. Extends
+    # test_jit_macro_introduced_preserve.cpp (#81967); no docs/design/
+    # (#1655).
+    pid_script = COVERAGE_CHECKS / "check_primid_drift_3270.py"
+    if not pid_script.exists():
+        fail(f"missing {pid_script}")
+        return 1
+    r = run([sys.executable, str(pid_script)], cwd=ROOT)
+    if r != 0:
+        fail("Issue #3270 PrimId-drift linter failed — run python3 scripts/coverage/checks/check_primid_drift_3270.py")
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -11042,6 +11054,21 @@ def cmd_arena_compact_toctou_3269_coverage():
         fail("arena compact TOCTOU (#3269) coverage contract rows failed")
         return 1
     ok("arena compact TOCTOU (#3269) coverage clean")
+    return 0
+
+
+def cmd_primid_drift_3270_coverage():
+    """Issue #3270: exhaustive PrimId drift asserts + OpGuardShape probe i1."""
+    print(f"{B}=== PrimId drift (#3270) ==={N}")
+    script = COVERAGE_CHECKS / "check_primid_drift_3270.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("PrimId drift (#3270) coverage contract rows failed")
+        return 1
+    ok("PrimId drift (#3270) coverage clean")
     return 0
 
 
@@ -19399,6 +19426,8 @@ def main():
         "guard-flag-atomic-ref-3268-coverage": cmd_guard_flag_atomic_ref_3268_coverage,
         "arena-compact-toctou-3269": cmd_arena_compact_toctou_3269_coverage,
         "arena-compact-toctou-3269-coverage": cmd_arena_compact_toctou_3269_coverage,
+        "primid-drift-3270": cmd_primid_drift_3270_coverage,
+        "primid-drift-3270-coverage": cmd_primid_drift_3270_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
