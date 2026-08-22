@@ -1927,6 +1927,8 @@ public:
     // Wave1 B-09: unique workspace lock that adopts an outer Guard's exclusive
     // hold (no re-lock). Use for write primitives that may run under
     // MutationBoundaryGuard (nested unique would EDEADLK).
+    // Issue #3269: arena compact/defrag primitives take this after a TLS
+    // skip so in-flight Guards drain and new Guards cannot enter.
     //
     // Issue #2738: adopt only when *this thread* holds Guard (TLS depth
     // slot via any_active_mutation_boundary). mutation_boundary_held_ is
@@ -5909,6 +5911,9 @@ private:
     // Issue #264: yield-boundary + compaction observability.
     std::atomic<std::uint64_t> mutation_yield_count_{0};
     std::atomic<std::uint64_t> compaction_paused_by_boundary_{0};
+    // Issue #3269: unique-lock workspace after TLS skip still saw
+    // mutation_boundary_held_ (should stay 0; non-zero = missed exclusive).
+    std::atomic<std::uint64_t> compaction_boundary_raced_after_check_{0};
     std::atomic<std::uint64_t> cross_fiber_rollback_count_{0};
     // Issue #417: cross-TU MutationBoundaryGuard + per-fiber
     // stack / depth-slot invariant drift (stack.empty() vs
@@ -13907,6 +13912,9 @@ public:
     }
     [[nodiscard]] std::uint64_t compaction_paused_by_boundary() const noexcept {
         return compaction_paused_by_boundary_.load(std::memory_order_relaxed);
+    }
+    [[nodiscard]] std::uint64_t compaction_boundary_raced_after_check() const noexcept {
+        return compaction_boundary_raced_after_check_.load(std::memory_order_relaxed);
     }
     [[nodiscard]] std::uint64_t cross_fiber_rollback_count() const noexcept {
         return cross_fiber_rollback_count_.load(std::memory_order_relaxed);

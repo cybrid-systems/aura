@@ -449,44 +449,65 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
         return make_int(static_cast<std::int64_t>(reclaimed));
     });
 
+    // Issue #3269: close check-then-act TOCTOU on arena compact/defrag.
+    // TLS any_active_mutation_boundary skips same-fiber compact-under-Guard
+    // (workspace unique is non-recursive). Otherwise unique-lock workspace
+    // so in-flight Guards drain and new Guards cannot enter during compact.
+    // Uncontended unique is one atomic (quiet path zero extra vs racing).
+    // Re-check mutation_boundary_held_ after the lock; non-zero raced
+    // counter means exclusive was missed (should stay 0).
+    auto with_arena_compact_idle = [&](auto&& body) -> EvalValue {
+        if (ev.any_active_mutation_boundary()) {
+            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        Evaluator::WorkspaceUniqueIfNeeded compact_hold(ev);
+        (void)compact_hold;
+        if (ev.mutation_boundary_held()) {
+            ev.compaction_boundary_raced_after_check_.fetch_add(1, std::memory_order_relaxed);
+            return make_int(0);
+        }
+        return body();
+    };
+
     // (arena:compact) — Issue #187 (P0): conservative arena buffer
     // compaction. Reclaims the unused tail of the main arena's pmr
     // buffer by rebuilding it at used-size + 25% headroom. Returns
     // the number of bytes reclaimed. Use (arena:compact-all) to
     // compact every per-module arena above the configured threshold.
-    add("arena:compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_int(0);
-        // Issue #264: defer compaction while any fiber holds an
-        // active MutationBoundaryGuard on this evaluator.
-        if (ev.any_active_mutation_boundary()) {
-            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        return make_int(static_cast<std::int64_t>(ev.arena_->compact()));
-    });
+    add("arena:compact",
+        [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
+            if (!ev.arena_)
+                return make_int(0);
+            // Issue #264 / #3269: defer same-fiber Guard; exclusive workspace
+            // serializes other fibers' Guards across compact.
+            return with_arena_compact_idle(
+                [&] { return make_int(static_cast<std::int64_t>(ev.arena_->compact())); });
+        });
     // (arena:defrag) — Issue #300 (P1): sliding-reclaim the
     // unused tail of the arena's buffer. Same underlying
     // mechanism as compact() (no live-object move), but counted
     // as a defrag attempt via stats_.defrag_attempted_count /
     // last_defrag_saved. See ASTArena::defrag() comment for the
     // pool-backed follow-up scope.
-    sink_arena_prim("arena:defrag", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_int(0);
-        if (ev.any_active_mutation_boundary()) {
-            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        // Explicit Agent call always runs (soft-gate only applies to auto-compact #1320).
-        auto saved = static_cast<std::int64_t>(ev.arena_->defrag());
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->arena_defrag_attempted_total.fetch_add(1, std::memory_order_relaxed);
-            m->arena_defrag_saved_bytes_total.fetch_add(
-                static_cast<std::uint64_t>(saved > 0 ? saved : 0), std::memory_order_relaxed);
-        }
-        return make_int(saved);
-    });
+    sink_arena_prim("arena:defrag",
+                    [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
+                        if (!ev.arena_)
+                            return make_int(0);
+                        return with_arena_compact_idle([&] {
+                            // Explicit Agent call always runs (soft-gate only applies to
+                            // auto-compact #1320).
+                            auto saved = static_cast<std::int64_t>(ev.arena_->defrag());
+                            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                                m->arena_defrag_attempted_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                m->arena_defrag_saved_bytes_total.fetch_add(
+                                    static_cast<std::uint64_t>(saved > 0 ? saved : 0),
+                                    std::memory_order_relaxed);
+                            }
+                            return make_int(saved);
+                        });
+                    });
     // (arena:request-defrag) — Issue #300 Phase 3 + #1397 atomic
     // CAS semantics: set the defrag_requested flag on the main
     // arena. The actual defrag runs when something observes the
@@ -534,53 +555,63 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // ── Issue #1320 Phase 1: explicit live-defrag policy primitive ──
     // (arena:defrag-now) — always run defrag (even during render soft-gate
     // soft-gate is only for auto path; Agent explicit call always acts).
-    sink_arena_prim("arena:defrag-now", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_int(0);
-        if (ev.any_active_mutation_boundary()) {
-            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        auto saved = static_cast<std::int64_t>(ev.arena_->defrag());
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->arena_defrag_now_calls.fetch_add(1, std::memory_order_relaxed);
-            m->arena_defrag_attempted_total.fetch_add(1, std::memory_order_relaxed);
-            m->arena_defrag_saved_bytes_total.fetch_add(
-                static_cast<std::uint64_t>(saved > 0 ? saved : 0), std::memory_order_relaxed);
-        }
-        return make_int(saved);
-    });
+    sink_arena_prim("arena:defrag-now",
+                    [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
+                        if (!ev.arena_)
+                            return make_int(0);
+                        return with_arena_compact_idle([&] {
+                            auto saved = static_cast<std::int64_t>(ev.arena_->defrag());
+                            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                                m->arena_defrag_now_calls.fetch_add(1, std::memory_order_relaxed);
+                                m->arena_defrag_attempted_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                m->arena_defrag_saved_bytes_total.fetch_add(
+                                    static_cast<std::uint64_t>(saved > 0 ? saved : 0),
+                                    std::memory_order_relaxed);
+                            }
+                            return make_int(saved);
+                        });
+                    });
 
     // Issue #1518: (arena:live-compact) — mark + freelist relocate + deopt-coord.
     // Explicit Agent call always runs (force=true). Returns live objects marked.
-    sink_arena_prim("arena:live-compact", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_)
-            return make_int(0);
-        if (ev.any_active_mutation_boundary()) {
-            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->arena_compact_soft_gated_boundary_total.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        const auto marked = static_cast<std::int64_t>(ev.arena_->live_compact(/*force=*/true));
-        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
-            m->arena_live_relocate_total.store(
-                aura::core::arena_policy::live_relocate_total.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
-            m->arena_compact_deopt_triggered_total.store(
-                aura::core::arena_policy::compact_deopt_triggered_total.load(
-                    std::memory_order_relaxed),
-                std::memory_order_relaxed);
-            m->arena_compact_deopt_throttled_total.store(
-                aura::core::arena_policy::compact_deopt_throttled_total.load(
-                    std::memory_order_relaxed),
-                std::memory_order_relaxed);
-            m->arena_frag_post_compact_bp.store(
-                aura::core::arena_policy::frag_post_compact_bp.load(std::memory_order_relaxed),
-                std::memory_order_relaxed);
-        }
-        return make_int(marked);
-    });
+    sink_arena_prim("arena:live-compact",
+                    [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
+                        if (!ev.arena_)
+                            return make_int(0);
+                        if (ev.any_active_mutation_boundary()) {
+                            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                                m->arena_compact_soft_gated_boundary_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                        }
+                        return with_arena_compact_idle([&] {
+                            const auto marked =
+                                static_cast<std::int64_t>(ev.arena_->live_compact(/*force=*/true));
+                            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                                // Issue #3269: best-effort snapshot — process counters may
+                                // advance between load and store (lag of a few increments).
+                                // Refresh on the next live-compact. Not a pairing; relaxed
+                                // is enough.
+                                m->arena_live_relocate_total.store(
+                                    aura::core::arena_policy::live_relocate_total.load(
+                                        std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+                                m->arena_compact_deopt_triggered_total.store(
+                                    aura::core::arena_policy::compact_deopt_triggered_total.load(
+                                        std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+                                m->arena_compact_deopt_throttled_total.store(
+                                    aura::core::arena_policy::compact_deopt_throttled_total.load(
+                                        std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+                                m->arena_frag_post_compact_bp.store(
+                                    aura::core::arena_policy::frag_post_compact_bp.load(
+                                        std::memory_order_relaxed),
+                                    std::memory_order_relaxed);
+                            }
+                            return make_int(marked);
+                        });
+                    });
     // Issue #2935: (arena:recover-moving-sticky-densify [retry?])
     // Agent recovery after sticky densify-off: re-register known roots,
     // clear sticky, optionally one-shot Moving densify. Optional bool arg
@@ -1019,15 +1050,15 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
                                                     return make_bool(false);
                                                 return make_bool(ev.arena_->defrag_requested());
                                             });
-    sink_arena_prim("arena:compact-all", [&ev, destroy_defuse_index](const auto&) -> EvalValue {
-        if (!ev.arena_group_)
-            return make_int(0);
-        if (ev.any_active_mutation_boundary()) {
-            ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-            return make_int(0);
-        }
-        return make_int(static_cast<std::int64_t>(ev.arena_group_->auto_compact()));
-    });
+    sink_arena_prim("arena:compact-all",
+                    [&ev, destroy_defuse_index, with_arena_compact_idle](const auto&) -> EvalValue {
+                        if (!ev.arena_group_)
+                            return make_int(0);
+                        return with_arena_compact_idle([&] {
+                            return make_int(
+                                static_cast<std::int64_t>(ev.arena_group_->auto_compact()));
+                        });
+                    });
     // (arena:adaptive-compact [name]) — Issue #335: adaptive
     // variant of compact-all that uses the per-module
     // savings-EMA to lower the trigger threshold when
@@ -1036,21 +1067,24 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // compacted. When omitted, all modules are checked
     // individually. Returns total bytes reclaimed.
     sink_arena_prim(
-        "arena:adaptive-compact", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
+        "arena:adaptive-compact",
+        [&ev, destroy_defuse_index, with_arena_compact_idle](const auto& a) -> EvalValue {
             if (!ev.arena_group_)
                 return make_int(0);
-            if (ev.any_active_mutation_boundary()) {
-                ev.compaction_paused_by_boundary_.fetch_add(1, std::memory_order_relaxed);
-                return make_int(0);
-            }
             if (a.size() == 1 && is_string(a[0])) {
                 auto idx = as_string_idx(a[0]);
                 if (idx >= ev.string_heap_.size())
                     return make_int(0);
-                const auto& name = ev.string_heap_[idx];
-                return make_int(static_cast<std::int64_t>(ev.arena_group_->adaptive_compact(name)));
             }
-            return make_int(static_cast<std::int64_t>(ev.arena_group_->adaptive_compact_all()));
+            return with_arena_compact_idle([&] {
+                if (a.size() == 1 && is_string(a[0])) {
+                    auto idx = as_string_idx(a[0]);
+                    const auto& name = ev.string_heap_[idx];
+                    return make_int(
+                        static_cast<std::int64_t>(ev.arena_group_->adaptive_compact(name)));
+                }
+                return make_int(static_cast<std::int64_t>(ev.arena_group_->adaptive_compact_all()));
+            });
         });
     // (arena:compact-with-policy name policy) — Issue #430:
     // manual policy override. policy is one of:
@@ -1065,28 +1099,32 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
     // memory-pressure watchdog that has decided the
     // adaptive threshold is too lax for the current
     // workload.
-    add("arena:compact-with-policy", [&ev, destroy_defuse_index](const auto& a) -> EvalValue {
-        if (!ev.arena_group_)
-            return make_int(0);
-        if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
-            return make_void(); // bad-arg signal; same shape as other primitives in this file
-        auto nidx = as_string_idx(a[0]);
-        auto pidx = as_string_idx(a[1]);
-        if (nidx >= ev.string_heap_.size() || pidx >= ev.string_heap_.size())
-            return make_int(0);
-        const auto& name = ev.string_heap_[nidx];
-        const auto& policy = ev.string_heap_[pidx];
-        aura::ast::ArenaGroup::CompactPolicy p;
-        if (policy == "force")
-            p = aura::ast::ArenaGroup::CompactPolicy::Force;
-        else if (policy == "auto")
-            p = aura::ast::ArenaGroup::CompactPolicy::Auto;
-        else if (policy == "skip")
-            p = aura::ast::ArenaGroup::CompactPolicy::Skip;
-        else
-            return make_void(); // unknown policy → no-op (no arena state change)
-        return make_int(static_cast<std::int64_t>(ev.arena_group_->compact_with_policy(name, p)));
-    });
+    add("arena:compact-with-policy",
+        [&ev, destroy_defuse_index, with_arena_compact_idle](const auto& a) -> EvalValue {
+            if (!ev.arena_group_)
+                return make_int(0);
+            if (a.size() < 2 || !is_string(a[0]) || !is_string(a[1]))
+                return make_void(); // bad-arg signal; same shape as other primitives in this file
+            auto nidx = as_string_idx(a[0]);
+            auto pidx = as_string_idx(a[1]);
+            if (nidx >= ev.string_heap_.size() || pidx >= ev.string_heap_.size())
+                return make_int(0);
+            const auto& name = ev.string_heap_[nidx];
+            const auto& policy = ev.string_heap_[pidx];
+            aura::ast::ArenaGroup::CompactPolicy p;
+            if (policy == "force")
+                p = aura::ast::ArenaGroup::CompactPolicy::Force;
+            else if (policy == "auto")
+                p = aura::ast::ArenaGroup::CompactPolicy::Auto;
+            else if (policy == "skip")
+                p = aura::ast::ArenaGroup::CompactPolicy::Skip;
+            else
+                return make_void(); // unknown policy → no-op (no arena state change)
+            return with_arena_compact_idle([&] {
+                return make_int(
+                    static_cast<std::int64_t>(ev.arena_group_->compact_with_policy(name, p)));
+            });
+        });
     // (arena:should-auto-compact? name) — Issue #335: cheap
     // O(1) probe that returns #t when the per-module
     // fragmentation ratio is at or above the adaptive

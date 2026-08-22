@@ -15,6 +15,8 @@ Contract:
   AC5  extend test_mutation_guard_unit_batch; linter after #3267; no invent
 
 Exit 0 = all rows satisfied.
+
+Follow-up #3269: arena compact/defrag TOCTOU — unique workspace after TLS skip.
 """
 
 from __future__ import annotations
