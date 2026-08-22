@@ -6387,6 +6387,12 @@ public:
     // code can opt in via (hygiene:set-allow-macro-mutate!).
     [[nodiscard]] bool get_allow_macro_mutate() const noexcept { return allow_macro_mutate_; }
     void set_allow_macro_mutate(bool v) noexcept { allow_macro_mutate_ = v; }
+    // Issue #373 / #3213: parse `:allow-macro? #t` from mutate:* args
+    // (public prims via thin wrap + lockless atomic-batch). Conservative
+    // false if the keyword is missing or the value is not a bool. Callers
+    // OR with get_allow_macro_mutate(); C++ `||` skips this scan when
+    // the global flag is already true (AC5 zero extra parse).
+    [[nodiscard]] bool parse_allow_macro_opt_out(std::span<const types::EvalValue> args) const;
     // Issue #1780: per-Evaluator InlinePass respect-macro-hygiene policy.
     [[nodiscard]] bool get_inline_respect_macro_hygiene() const noexcept {
         return inline_respect_macro_hygiene_.load(std::memory_order_acquire);

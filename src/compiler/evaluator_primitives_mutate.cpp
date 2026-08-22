@@ -640,30 +640,11 @@ namespace {
     // Format: `:allow-macro? <bool>`. If `<bool>` is
     // missing or not a boolean, the kwarg is treated as
     // absent (conservative — #f).
+    // Issue #3213: thin-wrap the Evaluator member so lockless
+    // eval_flat_apply_mutate_* share the same parse (zero public
+    // prim call-site churn).
     static bool parse_allow_macro_opt_out(Evaluator& ev, std::span<const EvalValue> args) {
-        const auto& kt = ev.keyword_table();
-        // Find the index of ":allow-macro?" in the keyword table.
-        // Linear scan is fine — the table has ~10-30 entries and
-        // this runs once per mutate call (not on the hot path).
-        std::size_t target_idx = std::string::npos;
-        for (std::size_t i = 0; i < kt.size(); ++i) {
-            if (kt[i] == ":allow-macro?") {
-                target_idx = i;
-                break;
-            }
-        }
-        if (target_idx == std::string::npos)
-            return false;
-        for (std::size_t i = 0; i + 1 < args.size(); ++i) {
-            if (!is_keyword(args[i]))
-                continue;
-            if (as_keyword_idx(args[i]) != target_idx)
-                continue;
-            if (is_bool(args[i + 1]))
-                return as_bool(args[i + 1]);
-            return false;
-        }
-        return false;
+        return ev.parse_allow_macro_opt_out(args);
     }
 
     // Issue #3027: residual structural-prim MacroIntroduced gate.
