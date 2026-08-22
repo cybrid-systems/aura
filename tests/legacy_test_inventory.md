@@ -32,7 +32,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 252 | 252 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 104 | 104 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 84 | 84 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 56 | 56 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -1072,13 +1072,13 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (88)
+### `arena_compaction` — Arena / compaction / GC (89)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (88)
+#### domain/ (89)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
@@ -1143,6 +1143,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_issue_1993.cpp` (#1993) [domain_suite, theme_serve] — test_issue_1993.cpp — Issue #1993 (D-001): (gc-heap) direct-clear
 - `tests/compiler/test_layout_stamp.cpp` (—) [domain_suite, theme_compiler] — API for cross-subsystem epoch coherence (P1, MemorySafety-Review,
 - `tests/compiler/test_memo_goal_epoch_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Two successive queries without mutate return identical epoch
+- `tests/compiler/test_module_path_refuse.cpp` (—) [domain_suite, theme_compiler] — AC1: empty path refused (no crash; not "cannot resolve ''")
 - `tests/compiler/test_move_node_partial_failure_no_dangling.cpp` (—) [domain_suite, theme_compiler] — AC1: public + lockless cite #2803; try_move_child; metric on FlatAST
 - `tests/core/test_moving_compact.cpp` (—) [large, domain_suite, theme_core] — Issue #2342 (Refine #2166): sharded LifetimePin registry (Option 1
 - `tests/core/test_moving_densify_fail_closed.cpp` (—) [large, domain_suite, theme_core] — AC1: Untracked live pointer + Moving densify of its referent → contract
@@ -1942,13 +1943,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (57)
+### `uncategorized` — Uncategorized / mixed (56)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (57)
+#### domain/ (56)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1976,7 +1977,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_module_export_display.cpp` (—) [domain_suite, theme_compiler] — AC1: issue repro — (require) + multi-display export prints prefix + arg
 - `tests/compiler/test_module_load_tail_export.cpp` (—) [domain_suite, theme_compiler] — AC1: tail defines always export after require
 - `tests/compiler/test_module_loader_dead_heap_circular.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1692 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_module_path_refuse.cpp` (—) [domain_suite, theme_compiler] — AC1: empty path refused (no crash; not "cannot resolve ''")
 - `tests/compiler/test_module_prefix_dead_heap.cpp` (—) [domain_suite, theme_compiler] — Issue #1488/#1693 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_node_meta_bounds.cpp` (—) [domain_suite, theme_core] — AC1: meta(NodeTag{}) returns well-defined sentinel (no UB)
 - `tests/compiler/test_open_issues_phase1_batch.cpp` (—) [phase_slice, batch_driver, domain_suite, theme_compiler] — test_open_issues_phase1_batch.cpp — legacy alias for the domain suite.

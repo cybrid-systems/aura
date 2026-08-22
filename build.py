@@ -3523,6 +3523,18 @@ def cmd_lint():
             "Issue #3265 JIT fn-marker atomic linter failed — run python3 scripts/coverage/checks/check_jit_fn_marker_atomic_3265.py"
         )
         return r
+    # Issue #3266: module-loader realpath-then-lstat + validate-before-lock.
+    # Extends test_module_path_refuse.cpp (#81967); no docs/design/ (#1655).
+    mrt_script = COVERAGE_CHECKS / "check_module_realpath_toctou_3266.py"
+    if not mrt_script.exists():
+        fail(f"missing {mrt_script}")
+        return 1
+    r = run([sys.executable, str(mrt_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3266 module realpath-TOCTOU linter failed — run python3 scripts/coverage/checks/check_module_realpath_toctou_3266.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.
@@ -10931,6 +10943,21 @@ def cmd_jit_fn_marker_atomic_3265_coverage():
         fail("JIT fn-marker atomic (#3265) coverage contract rows failed")
         return 1
     ok("JIT fn-marker atomic (#3265) coverage clean")
+    return 0
+
+
+def cmd_module_realpath_toctou_3266_coverage():
+    """Issue #3266: module-loader realpath-then-lstat + lock granularity."""
+    print(f"{B}=== module realpath-TOCTOU (#3266) ==={N}")
+    script = COVERAGE_CHECKS / "check_module_realpath_toctou_3266.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("module realpath-TOCTOU (#3266) coverage contract rows failed")
+        return 1
+    ok("module realpath-TOCTOU (#3266) coverage clean")
     return 0
 
 
@@ -19280,6 +19307,8 @@ def main():
         "cascade-dep-graph-atomic-3264-coverage": cmd_cascade_dep_graph_atomic_3264_coverage,
         "jit-fn-marker-atomic-3265": cmd_jit_fn_marker_atomic_3265_coverage,
         "jit-fn-marker-atomic-3265-coverage": cmd_jit_fn_marker_atomic_3265_coverage,
+        "module-realpath-toctou-3266": cmd_module_realpath_toctou_3266_coverage,
+        "module-realpath-toctou-3266-coverage": cmd_module_realpath_toctou_3266_coverage,
         "pure-anon-bg-overflow-must-deopt-3024": cmd_pure_anon_bg_overflow_must_deopt_3024,
         "pure-anon-bg-overflow-must-deopt-3024-coverage": cmd_pure_anon_bg_overflow_must_deopt_3024_coverage,
         "reemit-owner-required-prod-multi-3025": cmd_reemit_owner_required_prod_multi_3025,
