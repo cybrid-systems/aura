@@ -702,6 +702,91 @@ export inline int moving_compact_enabled() noexcept {
     return moving_compact_feature_enabled();
 }
 
+// Issue #3210: process-wide temporary live-ptr canary inventory.
+// Not a second pin/remap registry — observe-only values drained into
+// post_moving_live_canaries_ at Moving densify entry (live_compact +
+// register_known_moving_densify_root_slots). Mutex + vector (not TLS)
+// so aarch64 SHARED aura_test_objects does not TLSLE-fail. Soft / Off /
+// !moving_compact_enabled: note is one atomic + return (zero mutex).
+namespace moving_temp_canary_detail {
+    struct Inventory {
+        std::mutex mtx;
+        std::vector<void*> ptrs;
+        std::atomic<std::uint32_t> live{0};
+    };
+    inline Inventory g_inventory{};
+} // namespace moving_temp_canary_detail
+
+export inline void note_temporary_moving_live_ptr(void* p) noexcept {
+    if (!p)
+        return;
+    if (!moving_compact_enabled())
+        return;
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    {
+        std::lock_guard<std::mutex> lock(inv.mtx);
+        inv.ptrs.push_back(p);
+        inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+    }
+    aura::core::densify_consistency::g_moving_temporary_canary_noted_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+export inline void unnote_temporary_moving_live_ptr(void* p) noexcept {
+    if (!p)
+        return;
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    if (inv.live.load(std::memory_order_acquire) == 0)
+        return;
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    auto it = std::find(inv.ptrs.begin(), inv.ptrs.end(), p);
+    if (it != inv.ptrs.end()) {
+        *it = inv.ptrs.back();
+        inv.ptrs.pop_back();
+    }
+    inv.live.store(static_cast<std::uint32_t>(inv.ptrs.size()), std::memory_order_release);
+}
+
+export inline std::size_t snapshot_temporary_moving_live_ptrs(std::vector<void*>& out) noexcept {
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    if (inv.live.load(std::memory_order_acquire) == 0) {
+        out.clear();
+        return 0;
+    }
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    out.assign(inv.ptrs.begin(), inv.ptrs.end());
+    return out.size();
+}
+
+export inline void reset_temporary_moving_live_ptrs_for_test() noexcept {
+    auto& inv = moving_temp_canary_detail::g_inventory;
+    std::lock_guard<std::mutex> lock(inv.mtx);
+    inv.ptrs.clear();
+    inv.live.store(0, std::memory_order_release);
+}
+
+// RAII for stack/temp EnvFrame/Closure/JIT/FFI live ptrs that cannot be
+// lasting void** slots (unordered_map rehash / vector realloc). Ctor
+// no-op when !moving_compact_enabled (Soft / Off / sticky).
+export struct TemporaryMovingLivePtrCanary {
+    void* p_ = nullptr;
+    TemporaryMovingLivePtrCanary() noexcept = default;
+    explicit TemporaryMovingLivePtrCanary(void* p) noexcept {
+        if (!p || !moving_compact_enabled())
+            return;
+        p_ = p;
+        note_temporary_moving_live_ptr(p_);
+    }
+    ~TemporaryMovingLivePtrCanary() noexcept {
+        if (p_)
+            unnote_temporary_moving_live_ptr(p_);
+    }
+    TemporaryMovingLivePtrCanary(const TemporaryMovingLivePtrCanary&) = delete;
+    TemporaryMovingLivePtrCanary& operator=(const TemporaryMovingLivePtrCanary&) = delete;
+    TemporaryMovingLivePtrCanary(TemporaryMovingLivePtrCanary&&) = delete;
+    TemporaryMovingLivePtrCanary& operator=(TemporaryMovingLivePtrCanary&&) = delete;
+};
+
 // Issue #2256: Adaptive-on-threshold policy. When fragmentation
 // ratio crosses kAutoMovingCompactThreshold and no compact has
 // run in the last kAdaptiveCompactCooldownMs, Moving compact is
@@ -1332,6 +1417,21 @@ public:
         post_moving_live_canaries_.push_back(p);
     }
 
+    // Issue #3210: drain the process-wide temporary live-ptr inventory
+    // into this arena's observe-only canary list. Empty inventory /
+    // Soft callers: one atomic load, no vector. Not a slot rewrite
+    // (no cover #3017); stay on LifetimePin SSOT + existing canary list.
+    void note_temporary_moving_live_canaries() noexcept {
+        auto& inv = moving_temp_canary_detail::g_inventory;
+        if (inv.live.load(std::memory_order_acquire) == 0)
+            return;
+        std::vector<void*> temps;
+        if (snapshot_temporary_moving_live_ptrs(temps) == 0)
+            return;
+        for (void* p : temps)
+            note_post_moving_live_ptr_canary(p); // observe-only; LifetimePin SSOT unchanged
+    }
+
     // Issue #1546 / #1481: optional resource-quota owner for allocate_raw.
     // When set, allocate_raw consults allow_fn(owner, size) before
     // allocating; false → return nullptr (no allocation). Orphan arenas
@@ -1894,6 +1994,12 @@ public:
             // external / untracked candidates behind. failure-closed →
             // set moving_incomplete_remap + clear pin_contract_held.
             std::size_t untracked_kept_local = 0;
+            // Issue #3210: drain stack/temp EnvFrame/Closure/JIT/FFI live
+            // ptrs into post_moving_live_canaries_ BEFORE relocate so
+            // objects_moved>0 ∧ canary still a last_object_remap_ key
+            // fail-closes (existing #3055/#3182 gate). Empty inventory:
+            // one atomic load (Soft / no temps never take the mutex).
+            note_temporary_moving_live_canaries();
             result.objects_moved = relocate_tracked_objects_for_moving_(&untracked_kept_local);
             result.untracked_kept_count = untracked_kept_local;
             result.moved_live_objects = result.objects_moved > 0;
@@ -3217,6 +3323,20 @@ public:
             if (arena)
                 arena->note_post_moving_live_ptr_canary(p);
         }
+    }
+
+    // Issue #3210: drain process-wide temporary live ptrs onto every
+    // arena in the group (Evaluator densify-entry inventory). Empty
+    // list: one atomic, no arenas_mtx_ walk.
+    void note_temporary_moving_live_canaries_all() noexcept {
+        auto& inv = moving_temp_canary_detail::g_inventory;
+        if (inv.live.load(std::memory_order_acquire) == 0)
+            return;
+        std::vector<void*> temps;
+        if (snapshot_temporary_moving_live_ptrs(temps) == 0)
+            return;
+        for (void* p : temps)
+            note_post_moving_live_ptr_canary_all(p);
     }
 
     // Issue #187 (P0): compact a specific module's arena. Returns
