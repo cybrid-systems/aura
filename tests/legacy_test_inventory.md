@@ -36,8 +36,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 252 | 252 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 104 | 104 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
-| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 57 | 57 | P1 — domain hygiene suite exists |
-| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 85 | 85 | P2 — link-profile heavy; migrate AC smoke first |
+| `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 58 | 58 | P1 — domain hygiene suite exists |
+| `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 84 | 84 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
@@ -1575,13 +1575,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_linear_commit_health.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2897 — query:type-linear-evolution-snapshot single atomic
 - `tests/core/test_type_registry_ownership.cpp` (—) [small, domain_suite, theme_core] — Issue #1835/#1837 (#1978 renamed): issue# moved from filename to header.
 
-### `edsl_hygiene` — EDSL / macro hygiene / reflect (57)
+### `edsl_hygiene` — EDSL / macro hygiene / reflect (58)
 
 **Target:** tests/core/test_macro_reflect_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain hygiene suite exists
 
-#### domain/ (57)
+#### domain/ (58)
 
 - `tests/reflect/test_ast_pod_reflect_b3.cpp` (—) [domain_suite, theme_reflect] — Wave B3: small AST public PODs via auto_serialize / to_json.
 - `tests/reflect/test_cache_header_magic_a2.cpp` (—) [small, domain_suite, theme_reflect] — Wave A2: CacheHeader::magic[8] round-trips via auto_serialize;
@@ -1598,6 +1598,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/reflect/test_ir_pod_phase4.cpp` (—) [phase_slice, domain_suite, theme_reflect] — Issue #2291 — Phase 4 kickoff: pure-POD IR types via reflection.
 - `tests/reflect/test_issue_178.cpp` (#178) [small, early_issue, domain_suite, theme_reflect] — test_issue_178.cpp — Issue #178 / #268: production NodeView
 - `tests/reflect/test_issue_178_reflect.cpp` (#178) [early_issue, domain_suite, theme_reflect] — Non-module TU: P2996 reflection (Issue #268).
+- `tests/compiler/test_jit_macro_deopt_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2764 — residual IR/JIT/AOT source_marker + respect_macro_hygiene_
 - `tests/compiler/test_macro_cross_flat_hygiene.cpp` (—) [domain_suite, theme_compiler] — warning. Single-flat path stays zero-overhead (AC4 contract
 - `tests/compiler/test_macro_fiber_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2097 + FiberHygieneStats + get_fiber_hygiene_metrics
 - `tests/compiler/test_macro_hygiene_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_macro_hygiene_batch.cpp — thematic multi-TU batch
@@ -1641,13 +1642,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_symbol_eq.cpp` (—) [domain_suite, theme_compiler] — AC1: (eq? 'commit 'commit) → #t  (interned short-str cache)
 - `tests/compiler/test_unquote_splicing_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — AC1: pre_scan cites #2807; unquote-splicing boundary + metric
 
-### `jit_incremental` — JIT / AOT / incremental relower (85)
+### `jit_incremental` — JIT / AOT / incremental relower (84)
 
 **Target:** domain suite for incremental_*; keep heavy JIT in issue bundles
 
 **Priority:** P2 — link-profile heavy; migrate AC smoke first
 
-#### domain/ (85)
+#### domain/ (84)
 
 - `tests/compiler/test_adaptive_cascade_depth_partial_thr.cpp` (—) [domain_suite, theme_compiler] — AC1: After enough samples, high cascade-depth raises the threshold.
 - `tests/compiler/test_adaptive_partial_relower_threshold.cpp` (—) [domain_suite, theme_compiler] — AC1: Cold-start stays at default 8 until enough samples
@@ -1702,7 +1703,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_jit_dual_string_heap.cpp` (—) [domain_suite, theme_compiler] — AC1: (display (string-append "A" "B")) → AB under default JIT
 - `tests/compiler/test_jit_full_opcode_coverage.cpp` (—) [domain_suite, theme_compiler] — Issue #1289/#1512/#1658/#427/#532 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_jit_interpreter_equivalence_oracle.cpp` (—) [domain_suite, theme_compiler] — AC1: Oracle is zero-cost when disabled (mode 0/2).
-- `tests/compiler/test_jit_macro_deopt_hygiene.cpp` (—) [large, domain_suite, theme_compiler] — Issue #2764 — residual IR/JIT/AOT source_marker + respect_macro_hygiene_
 - `tests/compiler/test_jit_macro_introduced_preserve.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2022; side-table + FunctionMeta + FlatFunction fields
 - `tests/compiler/test_jit_metrics.cpp` (—) [domain_suite, theme_compiler] — test_jit_metrics.cpp — Issue #114 JIT observability + per-function cache tests
 - `tests/compiler/test_jit_metrics_stub.cpp` (—) [small, domain_suite, theme_compiler] — test_jit_metrics_stub.cpp — Stub for the JIT test.

@@ -26,12 +26,12 @@ namespace aura::compiler {
 using namespace aura::ir;
 using namespace aura::ast;
 
-// Issue #2177: C-linkage helper (defined in aura_jit_bridge.cpp) that
-// bumps the AOT marker-propagated counter (when a marker is successfully
-// propagated to the IRFunction) or the marker-stripped counter (when an
-// AOT pass observes a MacroIntroduced marker but the propagation path
-// is unavailable). Forward-declared here so the lowering pass can call
-// it without dragging in the full aura_jit_bridge.h.
+// Issue #2177 / #3263: C-linkage helper (defined in aura_jit_bridge.cpp)
+// that bumps the AOT marker-propagated counter when a MacroIntroduced
+// marker is copied onto IRFunction. quote_lambda samples marker once
+// and records propagated=1; nullptr current_flat is an invariant, not
+// "stripped". Forward-declared so lowering can call it without
+// aura_jit_bridge.h.
 extern "C" void aura_2177_record_aot_marker_propagated(int propagated) noexcept;
 
 // Issue #684: thread-local snapshot of the last dual-emit lower.
@@ -1336,28 +1336,18 @@ static std::uint32_t lower_flat_expr(
             } else {
                 fid = state.module.add_function(std::move(func));
             }
-            // Issue #246: propagate the SyntaxMarker from the
-            // source Lambda node into the IRFunction. The
-            // inliner consults this to apply macro-hygiene
-            // policy (skip inlining into/from macro-introduced
-            // code by default).
+            // Issue #3263: propagate SyntaxMarker from the source Lambda
+            // node into the IRFunction (#246 / #2177). Sample marker once
+            // (no TOCTOU / double lookup). quote_lambda marker copy
+            // requires current_flat; the old else bumped stripped on
+            // nullptr — unreachable and a lie (no-flat is not stripped).
+            // Full: contract_assert. Soft/Off: skip (zero extra).
+            contract_assert(state.current_flat != nullptr);
             if (state.current_flat) {
-                state.module.functions[fid].marker =
-                    static_cast<std::uint8_t>(state.current_flat->marker(v.id));
-                // Issue #2177: bump AOT marker-propagated counter when the
-                // source node was MacroIntroduced (the parity case the
-                // issue cares about). Other markers are not counted —
-                // propagated counter specifically tracks the macro path.
-                if (state.current_flat->marker(v.id) == aura::ast::SyntaxMarker::MacroIntroduced) {
+                const auto m = state.current_flat->marker(v.id);
+                state.module.functions[fid].marker = static_cast<std::uint8_t>(m);
+                if (m == aura::ast::SyntaxMarker::MacroIntroduced)
                     aura_2177_record_aot_marker_propagated(1);
-                }
-            } else {
-                // Issue #2177: guard metric — MacroIntroduced source but no
-                // current_flat context means the marker can't be propagated.
-                // A future pass that strips markers should bump the stripped
-                // counter here (currently no caller triggers it; reserved
-                // for future AOT pass audits).
-                aura_2177_record_aot_marker_propagated(0);
             }
             // Store bridge data for tree-walker compatibility
             if (state.current_flat && state.current_pool) {

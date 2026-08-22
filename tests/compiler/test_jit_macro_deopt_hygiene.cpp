@@ -19,6 +19,12 @@
 //   #2764 AC4: non-macro IR path zero regression
 //   #2764 AC5: schema-2764 + additive keys; prior surfaces preserved
 //   #2764 AC6: source-cite + coverage linter
+//
+//   #3263 AC1: quote_lambda samples marker(v.id) once
+//   #3263 AC2: no-flat is invariant, not stripped (no record(0))
+//   #3263 AC3: MacroIntroduced still record(1); hook signature kept
+//   #3263 AC4: non-macro lambda zero extra stripped
+//   #3263 AC5: linter after #3262; no invent
 
 #include "test_harness.hpp"
 
@@ -521,6 +527,78 @@ static void ac2764_5_observability() {
           "AC5: live multi-eval total");
 }
 
+static void ac3263_1_marker_sampled_once() {
+    std::println("\n--- #3263 AC1: quote_lambda samples marker once ---");
+    const auto lo = read_file("src/compiler/lowering_impl.cpp");
+    auto pos = lo.find("Issue #3263: propagate SyntaxMarker");
+    CHECK(pos != std::string::npos, "3263 AC1: cite");
+    auto end = lo.find("if (state.current_flat && state.current_pool)", pos);
+    auto win = end > pos ? lo.substr(pos, end - pos) : std::string{};
+    CHECK(win.find("const auto m = state.current_flat->marker(v.id)") != std::string::npos,
+          "3263 AC1: sampled once");
+    std::size_t n = 0;
+    for (std::size_t i = 0; (i = win.find("marker(v.id)", i)) != std::string::npos; i += 12)
+        ++n;
+    CHECK(n == 1, "3263 AC1: one marker(v.id) lookup");
+}
+
+static void ac3263_2_no_stripped_on_null_flat() {
+    std::println("\n--- #3263 AC2: no-flat is invariant, not stripped ---");
+    const auto lo = read_file("src/compiler/lowering_impl.cpp");
+    auto pos = lo.find("Issue #3263: propagate SyntaxMarker");
+    auto end = lo.find("if (state.current_flat && state.current_pool)", pos);
+    auto win = end > pos ? lo.substr(pos, end - pos) : std::string{};
+    CHECK(win.find("contract_assert(state.current_flat != nullptr)") != std::string::npos,
+          "3263 AC2: contract_assert");
+    CHECK(win.find("aura_2177_record_aot_marker_propagated(0)") == std::string::npos,
+          "3263 AC2: no record(0)");
+}
+
+static void ac3263_3_keep_2177_record_one() {
+    std::println("\n--- #3263 AC3: MacroIntroduced still record(1) ---");
+    const auto lo = read_file("src/compiler/lowering_impl.cpp");
+    auto pos = lo.find("Issue #3263: propagate SyntaxMarker");
+    auto end = lo.find("if (state.current_flat && state.current_pool)", pos);
+    auto win = end > pos ? lo.substr(pos, end - pos) : std::string{};
+    CHECK(win.find("aura_2177_record_aot_marker_propagated(1)") != std::string::npos,
+          "3263 AC3: record(1)");
+    CHECK(win.find("SyntaxMarker::MacroIntroduced") != std::string::npos, "3263 AC3: macro path");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(br.find("void aura_2177_record_aot_marker_propagated(int propagated)") !=
+              std::string::npos,
+          "3263 AC3: hook signature kept");
+}
+
+static void ac3263_4_quiet_zero_extra() {
+    std::println("\n--- #3263 AC4: non-macro lambda zero extra stripped ---");
+    const auto s0 = aura_2177_aot_macro_marker_stripped_total();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define (h x) ((lambda (y) (+ y 1)) x)) (h 2)\")").has_value(),
+          "3263 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3263 AC4: eval");
+    const auto s1 = aura_2177_aot_macro_marker_stripped_total();
+    CHECK(s1 == s0, "3263 AC4: quiet path zero extra stripped");
+}
+
+static void ac3263_5_source_and_linter() {
+    std::println("\n--- #3263 AC5: linter + no invent ---");
+    const auto t = read_file("tests/compiler/test_jit_macro_deopt_hygiene.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_quote_lambda_marker_once_3263.py");
+    CHECK(t.find("ac3263_1_marker_sampled_once") != std::string::npos, "3263 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3263") != std::string::npos, "3263 AC5: linter");
+    CHECK(build.find("check_quote_lambda_marker_once_3263") != std::string::npos,
+          "3263 AC5: build.py");
+    {
+        std::ifstream f("tests/compiler/test_issue_3263.cpp");
+        CHECK(!f.good(), "3263 AC5: no test_issue_3263.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3263-quote-lambda-marker.md");
+        CHECK(!f.good(), "3263 AC5: no docs/design");
+    }
+}
+
 static void ac2764_6_source_and_linter() {
     std::println("\n--- #2764 AC6: source-cite + linter ---");
     const auto low = read_file("src/compiler/lowering.ixx");
@@ -561,6 +639,12 @@ int run_test_jit_macro_deopt_hygiene() {
     ac2764_4_non_macro_quiet();
     ac2764_5_observability();
     ac2764_6_source_and_linter();
+    std::println("\n=== Issue #3263: quote_lambda marker sample-once ===");
+    ac3263_1_marker_sampled_once();
+    ac3263_2_no_stripped_on_null_flat();
+    ac3263_3_keep_2177_record_one();
+    ac3263_4_quiet_zero_extra();
+    ac3263_5_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
