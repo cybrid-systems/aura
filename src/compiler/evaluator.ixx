@@ -14991,10 +14991,15 @@ public:
         void force_release_hold_after_cancel_() noexcept;
 
         Evaluator* ev_;
+        // Heap-mutate auto-guard (#3235) heap-allocates the Guard past the
+        // acquire frame. A stack bool UAR's in ~Guard (asan-verify). When
+        // try_acquire gets nullptr, flag_ points here (same lifetime as Guard).
+        bool owned_flag_{true};
         // Issue #3268: caller-owned success flag. Must be (i) fiber-local,
-        // (ii) alive until this dtor, (iii) not concurrently written as a
-        // plain bool. Public API stays bool*. Guard accesses use
-        // atomic_ref (exchange on fail-close).
+        // (ii) alive until this dtor (or owned_flag_ when the pointer is
+        // null), (iii) not concurrently written as a plain bool. Public
+        // API stays bool*. Guard accesses use atomic_ref (exchange on
+        // fail-close).
         bool* flag_;
         // Issue #233 / #2121:
         //   GlobalExclusive: unique_lock(workspace_mtx_) in lock_

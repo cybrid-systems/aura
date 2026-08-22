@@ -176,6 +176,11 @@ static void ac3235_4_source() {
     CHECK(eix.find("Issue #3235") != std::string::npos, "3235 AC4: evaluator cite");
     CHECK(vec.find("alloc_storage_lock_") != std::string::npos, "3235 AC4: vector-set! lock");
     CHECK(mb.find("maybe_auto_guard_heap_mutate") != std::string::npos, "3235 AC4: helper");
+    CHECK(mb.find("nullptr → owned_flag_") != std::string::npos ||
+              mb.find("owned_flag_ on the Guard") != std::string::npos,
+          "3235 AC4: heap-mutate flag outlives acquire frame");
+    CHECK(eix.find("bool owned_flag_{true}") != std::string::npos,
+          "3235 AC4: Guard-owned flag for heap-mutate");
     CHECK(build.find("check_container_mutate_guard_3235") != std::string::npos,
           "3235 AC4: build.py");
     CHECK(read_file("docs/design/3235-container-mutate.md").empty(), "3235 AC4: no docs/design");

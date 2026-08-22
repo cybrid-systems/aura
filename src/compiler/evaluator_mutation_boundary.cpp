@@ -604,8 +604,11 @@ Evaluator::HeapMutateGuardHandle Evaluator::maybe_auto_guard_heap_mutate(bool& o
     ok = true;
     if (any_active_mutation_boundary())
         return {};
-    bool flag = true;
-    auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, &flag);
+    // Guard is heap-allocated and dropped after the primitive body
+    // (HeapMutateGuardHandle). A stack success flag dies at this return
+    // → asan-verify stack-use-after-return in ~Guard (hash-set! / vector-set!).
+    // nullptr → owned_flag_ on the Guard object (alive until handle drop).
+    auto gr = MutationBoundaryGuard::try_acquire(*this, /*pending=*/1, nullptr);
     if (!gr) {
         ok = false;
         return {};
@@ -2248,7 +2251,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     std::optional<std::uint64_t> region_key) noexcept
     : fine_rollback_(fine_rollback)
     , ev_(&ev)
-    , flag_(success_flag)
+    , owned_flag_(true)
+    , flag_(success_flag ? success_flag : &owned_flag_)
     ,
     // Issue #233 + #236 follow-up: the unique_lock is
     // now a MEMBER of the guard (was previously a local
@@ -4737,7 +4741,8 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , nested_linear_keep_(std::move(o.nested_linear_keep_))
     , nested_linear_keep_armed_(o.nested_linear_keep_armed_)
     , ev_(o.ev_)
-    , flag_(o.flag_)
+    , owned_flag_(o.owned_flag_)
+    , flag_(o.flag_ == &o.owned_flag_ ? &owned_flag_ : o.flag_)
     , lock_(std::move(o.lock_))
     , shared_lock_(std::move(o.shared_lock_))
     // Issue #3268: unique_lock is move-only. Copy would not compile
@@ -4808,7 +4813,8 @@ Evaluator::MutationBoundaryGuard::operator=(MutationBoundaryGuard&& o) noexcept 
         nested_linear_keep_ = std::move(o.nested_linear_keep_);
         nested_linear_keep_armed_ = o.nested_linear_keep_armed_;
         ev_ = o.ev_;
-        flag_ = o.flag_;
+        owned_flag_ = o.owned_flag_;
+        flag_ = (o.flag_ == &o.owned_flag_) ? &owned_flag_ : o.flag_;
         lock_ = std::move(o.lock_);
         shared_lock_ = std::move(o.shared_lock_);
         region_lock_ = std::move(o.region_lock_);
