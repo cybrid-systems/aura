@@ -5,8 +5,8 @@ module;
 
 #include "runtime_shared.h"
 #include "observability_metrics.h"
-#include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
-#include "aura_jit_bridge.h" // Issue #2091: aura_set_aot_live_env_frame_version / linear_state_fingerprint
+#include "gc_coord_scope.h"  // Issue #2131: pin → cascade → audit
+#include "aura_jit_bridge.h" // Issue #2091 / #3267: live env/linear + combined bridge state
 #include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
 #include "core/densify_consistency_report.h"  // Issue #2368: DensifyRemapPairingResult
 #include "serve/fiber.h" // Issue #2498: orphan_root_release registration on fiber context
@@ -63,16 +63,25 @@ using types::make_closure;
 using types::make_error;
 using types::make_float;
 
-// Issue #2091: publish hook used at env_generation_ bump sites
-// (member function so it sees env_frames_ directly without
+// Issue #2091 / #3267: publish hook used at env_generation_ bump
+// sites (member function so it sees env_frames_ directly without
 // needing a public view accessor). Captures both env_frame_version
 // + linear_state_fingerprint in one shot so the AOT bridge sees
 // a consistent pair. O(n*m) over active EnvFrames but
 // env_generation_ bumps are rare (compact / truncate / rollback)
 // — the scan is acceptable. The C-linkage bridge hooks come
 // from aura_jit_bridge.h (included in the global module fragment).
+//
+// Issue #3267: env_frames_mtx_ is non-recursive. Unlocked callers
+// (post-restore) take shared_lock here. compact / truncate already
+// hold unique_lock and must call the holding-lock sibling — a
+// nested shared_lock would deadlock.
 void Evaluator::publish_live_env_linear_to_bridge() const noexcept {
-    aura_set_aot_live_env_frame_version(env_generation_);
+    std::shared_lock<std::shared_mutex> env_rlock(env_frames_mtx_);
+    publish_live_env_linear_to_bridge_holding_env_lock();
+}
+
+void Evaluator::publish_live_env_linear_to_bridge_holding_env_lock() const noexcept {
     std::uint8_t max_lin = 0;
     for (const auto& fr : env_frames_) {
         for (auto v : fr.bindings_linear_ownership_state_) {
@@ -80,11 +89,19 @@ void Evaluator::publish_live_env_linear_to_bridge() const noexcept {
                 max_lin = v;
         }
     }
-    aura_set_aot_live_linear_state_fingerprint(max_lin);
+    // Issue #3267: one packed store so readers cannot observe
+    // env_generation_ bumped with a stale max_lin (or the reverse).
+    aura_set_aot_live_bridge_state(env_generation_, max_lin);
 }
 
 // Issue #1365 / #2129: stamp bridge_epoch + aggregate linear_state.
 void Evaluator::stamp_closure_bridge_epoch(Closure& cl) const noexcept {
+    // Issue #3267: cl.bridge_epoch is a closure-creation timestamp,
+    // not coupled to the env_frames_ sample below. Read
+    // current_bridge_epoch() before env_frames_mtx_ on purpose —
+    // is_bridge_stale compares this stamp to the live epoch,
+    // independent of max_lin. Moving the read inside the lock
+    // would change concurrent staleness detection.
     cl.bridge_epoch = current_bridge_epoch();
     // Aggregate max linear ownership from captured EnvFrame bindings.
     std::uint8_t max_lin = 0;
@@ -125,6 +142,10 @@ bool Evaluator::is_bridge_stale(std::uint64_t bridge_epoch, std::uint64_t curren
         // Issue #1365 / #2930: production fail-closed for unstamped.
         aura::compiler::bridge_epoch_zero::note_observed();
         // Soft fixtures: AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores trust.
+        // Issue #3267: read once at first is_bridge_stale call (C++11
+        // function-local static; init is thread-safe, not a race) and
+        // not refreshed. Late setenv after first call is ignored —
+        // tests that need trust must set the env var at process start.
         static const bool legacy_trust = []() noexcept {
             if (const char* e = std::getenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST"))
                 return e[0] != '0' && e[0] != '\0';
@@ -2102,10 +2123,10 @@ std::size_t Evaluator::truncate_env_frames_to_checkpoint() {
     // Actually reclaim memory / cap growth
     env_frames_.resize(checkpoint_size);
     ++env_generation_;
-    // Issue #2091: publish live env_frame_version + linear_state
-    // fingerprint so the AOT bridge can stamp `_eN_lN` on the
-    // next emit / reemit / registration call.
-    publish_live_env_linear_to_bridge();
+    // Issue #2091 / #3267: publish under the unique_lock already
+    // held here. env_frames_mtx_ is non-recursive — do not call
+    // publish_live_env_linear_to_bridge() (takes shared_lock).
+    publish_live_env_linear_to_bridge_holding_env_lock();
     // Issue #1927 / #1955: dual-epoch lockstep with compact_env_frames —
     // defuse_version_ (EnvFrame freshness) + bridge_epoch (closure).
     defuse_version_.fetch_add(1, std::memory_order_release);
@@ -2448,11 +2469,10 @@ std::size_t Evaluator::compact_env_frames() {
     // (JIT will not see "fresh epoch + dangling env_id" race).
     defuse_version_.fetch_add(1, std::memory_order_release);
     ++env_generation_;
-    // Issue #2091: publish live env_frame_version + linear_state
-    // fingerprint to the AOT bridge (compact_env_frames path —
-    // captured-env remap + dual-epoch bump must reach every
-    // subsequent emit).
-    publish_live_env_linear_to_bridge();
+    // Issue #2091 / #3267: publish under the unique_lock already
+    // held here. env_frames_mtx_ is non-recursive — do not call
+    // publish_live_env_linear_to_bridge() (takes shared_lock).
+    publish_live_env_linear_to_bridge_holding_env_lock();
     const bool bumped_via_hook = bridge_epoch_bump_fn_ && compiler_service_;
     if (bumped_via_hook)
         bridge_epoch_bump_fn_(compiler_service_);

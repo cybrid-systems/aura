@@ -573,6 +573,12 @@ std::uint64_t aura_closure_get_env_gen(std::int64_t closure_id);
 std::uint64_t aura_get_aot_live_env_frame_version(void);
 void aura_set_aot_live_linear_state_fingerprint(std::uint8_t v);
 std::uint8_t aura_get_aot_live_linear_state_fingerprint(void);
+// Issue #3267: paired publish of env_frame_version + linear
+// fingerprint as one packed release store. Existing getters/setters
+// stay (tests / AOT stamp); they CAS the same packed word so a
+// single-field write cannot tear the other field. Null out_* ok.
+void aura_set_aot_live_bridge_state(std::uint64_t version, std::uint8_t max_lin);
+void aura_get_aot_live_bridge_state(std::uint64_t* out_version, std::uint8_t* out_lin);
 
 // Issue #2091: C-linkage bridge for the aot_mangle.h force flag.
 void aura_aot_set_force_env_linear_suffix(int v);
