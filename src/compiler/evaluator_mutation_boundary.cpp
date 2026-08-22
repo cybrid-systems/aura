@@ -48,6 +48,7 @@ module;
 #include "observability_metrics.h"
 #include "workspace_concurrent_policy.hh" // Issue #2990 ConcurrentMutationPolicy
 #include "lock_order_audit.h"
+#include <atomic>           // Issue #3268: atomic_ref on caller-owned success flag
 #include "gc_coord_scope.h" // Issue #2131: pin → cascade → audit
 #include "core/gc_hooks.h"
 #include "core/resource_quota.hh"
@@ -2278,14 +2279,12 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         if (auto err = ev.check_mutation_quota(1)) {
             (void)err;
             inert_ = true;
-            if (flag_)
-                *flag_ = false;
+            success_flag_store(flag_, false);
             return;
         }
         ev.mutation_quota_used_.fetch_add(1, std::memory_order_relaxed);
     }
-    if (flag_)
-        *flag_ = true; // optimistic default
+    success_flag_store(flag_, true); // optimistic default
     // Issue #1897: capture exception depth so dtor auto-rollback
     // works even if a nested helper throws past a missed catch.
     uncaught_at_enter_ = std::uncaught_exceptions();
@@ -2352,8 +2351,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // fiber rebind remains safe while eval holds the pin for FlatAST walks.
     if (outermost && Evaluator::eval_current_holds_shared_pin()) {
         inert_ = true;
-        if (flag_)
-            *flag_ = false;
+        success_flag_store(flag_, false);
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
         }
@@ -2587,9 +2585,7 @@ void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexce
 // so densify×steal cannot observe half-topology after the lock drops.
 // Idempotent with dtor via inbody_force_exited_ / cancel_force_released_.
 void Evaluator::MutationBoundaryGuard::force_release_hold_budget_inbody() noexcept {
-    mark_failed();
-    if (flag_)
-        *flag_ = false;
+    mark_failed(); // Issue #3268: exchange-false via atomic_ref
     if (ev_ && !inbody_force_exited_) {
         ev_->exit_mutation_boundary(false);
         inbody_force_exited_ = true;
@@ -2651,8 +2647,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // exception is unwinding through the Guard and the caller did
     // not mark_failed / set flag=false. Without this, dtor would
     // commit_panic_checkpoint on a partially-mutated workspace.
-    if (flag_ && *flag_ && std::uncaught_exceptions() > uncaught_at_enter_) {
-        *flag_ = false;
+    if (std::uncaught_exceptions() > uncaught_at_enter_ && success_flag_exchange_false(flag_)) {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
             m->mutation_guard_uncaught_auto_rollback_total.fetch_add(1, std::memory_order_relaxed);
             m->mutation_guard_exception_total.fetch_add(1, std::memory_order_relaxed);
@@ -2707,8 +2702,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // Issue #3118: consume is production/hard-env only.
                     // After exit_mutation_boundary(false) restores
                     // topology, force-release lock + depth immediately.
-                    if (flag_ && *flag_) {
-                        *flag_ = false; // dtor takes ResidualPolicy fail + unlock
+                    // Issue #3268: single exchange so a shared flag cannot
+                    // stay true for another fiber after we fail-close.
+                    if (success_flag_exchange_false(flag_)) {
                         g_mutation_hold_budget_forced_fail_closed_total.fetch_add(
                             1, std::memory_order_relaxed);
                     }
@@ -2718,7 +2714,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
         }
     }
-    bool success = cancel_forced_fail ? false : (flag_ ? *flag_ : true);
+    bool success = cancel_forced_fail ? false : success_flag_load(flag_);
     // Issue #2944: outermost MutationBoundary exit revokes mutation-session
     // grants bound to session_mid_at_enter_ (success or fail). Nested
     // guards skip (session_mid_at_enter_==0). Zero cost when no live
@@ -2783,8 +2779,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             if (hard) {
                 // Production reject: do not commit half-green type surface.
                 success = false;
-                if (flag_)
-                    *flag_ = false;
+                success_flag_store(flag_, false);
             }
             // Soft: observe only — success unchanged.
         }
@@ -2944,8 +2939,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // Must also re-sync `success` (captured earlier from *flag_)
                 // so rollback + linear post-failure enforce actually run.
                 if (b.force_fail) {
-                    if (flag_)
-                        *flag_ = false;
+                    success_flag_store(flag_, false);
                     success = false;
                     m->long_mutation_forced_abort_total.fetch_add(1, std::memory_order_relaxed);
                 }
@@ -2984,8 +2978,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     if (!mutation_hold_slo_soft_mode()) {
                         // Production default: fail mutation so agents cannot ship
                         // while spinning a long Guard (GC/steal tail bound).
-                        if (flag_)
-                            *flag_ = false;
+                        success_flag_store(flag_, false);
                         success = false;
                     }
                     // Soft: counter only; success may remain true (AC2).
@@ -3050,8 +3043,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // event on shape mismatch. Mirrors the SLO
                     // circuit-breaker rollback pattern at the same
                     // site (force-flag + success=false + audit event).
-                    if (flag_)
-                        *flag_ = false;
+                    success_flag_store(flag_, false);
                     success = false;
                     aura::compiler::typed_audit::capture_audit_event_forced(
                         /*mutation_id=*/0, schema_err,
@@ -4132,8 +4124,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     // ev_->outermost_mutation_success_flag_ was already
                     // cleared earlier in Phase 5. #2932 may already have
                     // flipped it — both reasons compose.
-                    if (flag_)
-                        *flag_ = false;
+                    success_flag_store(flag_, false);
                     ev_->mark_outermost_mutation_failed();
                 }
             }
@@ -4749,6 +4740,9 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     , flag_(o.flag_)
     , lock_(std::move(o.lock_))
     , shared_lock_(std::move(o.shared_lock_))
+    // Issue #3268: unique_lock is move-only. Copy would not compile
+    // and a copyable wrapper would double-unlock on both dtors.
+    // Moved-from owns nothing; source dtor is a no-op.
     , region_lock_(std::move(o.region_lock_)) {
     o.had_panic_checkpoint_ = false;
     o.fine_rollback_ = false;
@@ -4773,6 +4767,10 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(MutationBoundaryGuard&& 
     o.uncaught_at_enter_ = 0;
     o.ev_ = nullptr;
     o.flag_ = nullptr;
+    // region_lock_ already moved-from (owns_lock()==false); source dtor no-op.
+    // Issue #3268: TLS rebind after member moves + source reset. Safe
+    // because this ctor is noexcept; a throwing member move would leave
+    // g_tls_outermost_guard pointing at the source. Keep noexcept.
     if (is_outermost_ && !inert_)
         g_tls_outermost_guard = this;
 }

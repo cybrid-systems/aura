@@ -412,7 +412,7 @@ bool Evaluator::restore_panic_checkpoint() {
 void Evaluator::restore_panic_checkpoint_on_fiber_resume_if_needed() noexcept {
     if (!has_panic_checkpoint() || !outermost_mutation_success_flag_)
         return;
-    if (*outermost_mutation_success_flag_)
+    if (MutationBoundaryGuard::success_flag_load(outermost_mutation_success_flag_))
         return;
     if (!panic_auto_rollback_)
         return;
