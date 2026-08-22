@@ -3257,6 +3257,21 @@ def cmd_lint():
             "Issue #3209 session-grant quiesce linter failed — run python3 scripts/coverage/checks/check_session_grant_quiesce_3209.py"
         )
         return r
+    # Issue #3241: concurrent outermost sharing epoch mid must not
+    # over-revoke a peer fiber's session_bound grants. Outermost dtor
+    # and steal/abort pass (mid, fiber); fiber=0 stays legacy mid-only.
+    # Extends test_capability_single_use_consume.cpp (#81967); no
+    # docs/design/ (#1655).
+    sgpf3241_script = COVERAGE_CHECKS / "check_session_grant_peer_fiber_3241.py"
+    if not sgpf3241_script.exists():
+        fail(f"missing {sgpf3241_script}")
+        return 1
+    r = run([sys.executable, str(sgpf3241_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3241 session-grant peer-fiber linter failed — run python3 scripts/coverage/checks/check_session_grant_peer_fiber_3241.py"
+        )
+        return r
     # Issue #3049: per-tenant ResourceQuota under multi-tenant production
     # (process ceiling still binds). Extends
     # test_tenant_isolation_enforcement.cpp (#81967); no docs/design/

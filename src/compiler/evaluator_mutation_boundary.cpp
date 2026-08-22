@@ -2710,7 +2710,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                 mode == ::aura::core::capability::EffectSandboxMode::Strict;
         if (production || met.capability_live_session_grants.load(std::memory_order_relaxed) != 0) {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_);
+            // Issue #3241: (mid, fiber) so a peer outermost sharing epoch
+            // mid is not collateral. fiber=0 (off-fiber) stays mid-only.
+            const auto fid = static_cast<std::uint32_t>(aura_fiber_current_id());
+            (void)reg.revoke_session_grants_for_mid_locked(session_mid_at_enter_,
+                                                           "session-mid-exit", fid);
             aura::serve::clear_current_fiber_session_mid();
             if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
                 session_mid_at_enter_) {
