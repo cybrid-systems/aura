@@ -16,9 +16,12 @@
 //   AC5: query:hygiene-checkpoint-stats reports save_total / restore_success_total
 //        / restore_fail_total / cross_fiber_reject_total / pending_count +
 //        schema=2099 markers.
+//   Issue #3252: production gen-drift refuse restamps live MacroIntroduced
+//        + invariant check; topology restore still refused. Soft unchanged.
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <chrono>
@@ -290,19 +293,108 @@ static void ac5_query_hygiene_checkpoint_stats_reports(CompilerService& cs) {
     CHECK(href_int(cs, "post_abort_invariant_soft_observed_total") >= 0,
           "AC5: #3095 post_abort_invariant_soft_observed_total surfaces");
     CHECK(href_int(cs, "lineage-3095") == 3095, "AC5: #3095 lineage-3095 marker present");
+    CHECK(href_int(cs, "schema-3252") == 3252, "3252: schema-3252");
+    CHECK(href_int(cs, "hygiene-checkpoint-gen-drift-wired") == 1, "3252: wired");
+}
+
+static void ac3252_prod_gen_drift_restamp_homology() {
+    std::println("\n--- #3252: production gen-drift refuse restamps MacroIntroduced ---");
+    // Hermetic service + RAII audit restore so later batch members do not
+    // inherit production_defaults_active / QueryEpoch strict leftover.
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(), "set-code 3252");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval 3252");
+
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "3252: workspace_flat");
+    auto* m = metrics_of(cs);
+    struct ProdScope {
+        ProdScope() { aura::compiler::typed_audit::apply_production_audit_defaults(); }
+        ~ProdScope() { aura::compiler::typed_audit::apply_dev_audit_defaults(); }
+    } prod;
+
+    aura::ast::NodeId victim = 0;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id)) {
+            victim = id;
+            break;
+        }
+    }
+    CHECK(victim != aura::ast::NULL_NODE, "3252: live node");
+    const auto pre_size = flat->size();
+    const auto restamp0 = flat->macro_restamp_after_flat_total();
+    const auto fail0 =
+        m ? m->hygiene_checkpoint_restore_fail_total.load(std::memory_order_relaxed) : 0;
+    const auto succ0 =
+        m ? m->hygiene_checkpoint_restore_success_total.load(std::memory_order_relaxed) : 0;
+
+    auto h = ev.save_hygiene_checkpoint_handle();
+    CHECK(h != 0, "3252: save");
+    flat->set_marker(victim, SyntaxMarker::MacroIntroduced);
+    CHECK(flat->is_macro_introduced(victim), "3252: victim MacroIntroduced");
+    flat->bump_generation();
+
+    ev.clear_last_mutate_error();
+    const bool restored = ev.restore_hygiene_checkpoint_handle(h);
+    CHECK(!restored, "3252: gen-drift still refuses topology restore");
+    CHECK(flat->size() == pre_size, "3252: topology size unchanged");
+    CHECK(flat->is_macro_introduced(victim), "3252: live MacroIntroduced kept (homology)");
+    CHECK(flat->validate_macro_hygiene_invariants() == 0, "3252: invariant after restamp");
+    CHECK(flat->macro_restamp_after_flat_total() > restamp0, "3252: restamp ran");
+    CHECK(ev.last_mutate_error().find("hygiene-checkpoint-gen-drift") != std::string::npos,
+          "3252: stable reason");
+    if (m) {
+        CHECK(m->hygiene_checkpoint_restore_fail_total.load(std::memory_order_relaxed) == fail0 + 1,
+              "3252: restore_fail_total +1");
+        CHECK(m->hygiene_checkpoint_restore_success_total.load(std::memory_order_relaxed) == succ0,
+              "3252: success total unchanged");
+    }
+}
+
+static void ac3252_soft_gen_drift_zero_extra() {
+    std::println("\n--- #3252: Soft gen-drift refuse is metric-only ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 1)\")").has_value(), "set-code 3252 soft");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval 3252 soft");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "3252 soft: workspace_flat");
+
+    aura::ast::NodeId victim = 0;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id)) {
+            victim = id;
+            break;
+        }
+    }
+    const auto restamp0 = flat->macro_restamp_after_flat_total();
+    auto h = ev.save_hygiene_checkpoint_handle();
+    CHECK(h != 0, "3252 soft: save");
+    flat->set_marker(victim, SyntaxMarker::MacroIntroduced);
+    flat->bump_generation();
+    ev.clear_last_mutate_error();
+    CHECK(!ev.restore_hygiene_checkpoint_handle(h), "3252 soft: refuse");
+    CHECK(flat->macro_restamp_after_flat_total() == restamp0, "3252 soft: no restamp");
+    CHECK(ev.last_mutate_error().find("hygiene-checkpoint-gen-drift") == std::string::npos,
+          "3252 soft: no gen-drift intern");
 }
 
 } // namespace
 
 int run_test_hygiene_checkpoint() {
     CompilerService cs;
-    std::print("[test_hygiene_checkpoint] running 5 ACs\n");
+    std::print("[test_hygiene_checkpoint] running 5 ACs + #3252\n");
 
     ac1_save_restore_rolls_back_partial_dirty(cs);
     ac2_nested_under_mutation_boundary_preserves_topology(cs);
     ac3_zero_overhead_when_no_save(cs);
     ac4_cross_fiber_restore_rejected(cs);
     ac5_query_hygiene_checkpoint_stats_reports(cs);
+    ac3252_prod_gen_drift_restamp_homology();
+    ac3252_soft_gen_drift_zero_extra();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
 
     std::print("[test_hygiene_checkpoint] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
