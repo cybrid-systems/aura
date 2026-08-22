@@ -673,7 +673,10 @@ void HotUpdateRegistry::reset_residual_force_observe_for_test() noexcept {
 
 // Issue #3026: production-only residual-age observe. Soft / Off is one
 // production_defaults load. Never reemits. Rate-limit: bump every 32
-// BoundaryExits with unchanged residual bits.
+// outermost BoundaryExits with unchanged residual bits.
+// Issue #3248: age on any outermost exit (success or fail) — not
+// success-only. Auto-heal still gated by attempts_left==0 / !storm /
+// one-shot-per-mask.
 //
 // Issue #3096: production-only bounded auto-heal. After
 // kAutoHealExits=256 BoundaryExits with residual_force_mask != 0 AND

@@ -253,8 +253,10 @@ public:
     // counters stay at 0 under Soft / Off (zero-cost contract).
     [[nodiscard]] std::uint64_t residual_force_auto_heal_total() const noexcept;
     [[nodiscard]] std::uint64_t residual_force_auto_heal_last_mask() const noexcept;
-    // Production-only observe: age residual bits across BoundaryExits.
-    // Soft / idle residual==0 → one/two loads, no counter. Never reemits.
+    // Production-only observe: age residual bits across outermost
+    // BoundaryExits (success or fail — Issue #3248). Soft / idle
+    // residual==0 → one/two loads, no counter. Never reemits from
+    // the observe itself; #3096 auto-heal is a separate gated pass.
     void observe_residual_force_stale() noexcept;
     void reset_residual_force_observe_for_test() noexcept;
     // Issue #3096 test isolation: stamp force-JIT mask / exhaust retry

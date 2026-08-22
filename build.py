@@ -4096,6 +4096,19 @@ def cmd_lint():
             "Issue #3026 residual force agent-actionable linter failed — run python3 scripts/coverage/checks/check_residual_force_agent_actionable_3026.py"
         )
         return r
+    # Issue #3248: residual-force auto-heal ages on outermost fail
+    # exits (not success-only). Remount/drain stay success-only.
+    # Extends test_reload_recovery_query (#81967); no docs/design/ (#1655).
+    rffa_script = COVERAGE_CHECKS / "check_residual_force_fail_exit_age_3248.py"
+    if not rffa_script.exists():
+        fail(f"missing {rffa_script}")
+        return 1
+    r = run([sys.executable, str(rffa_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3248 residual-force fail-exit age linter failed — run python3 scripts/coverage/checks/check_residual_force_fail_exit_age_3248.py"
+        )
+        return r
     # Issue #2885: per-join still-running SLA on Reclaimed path
     # (orch:agent-join hash additive keys: still-running, reclaim-age-ms,
     # deferred-cleanup). Surface change only on the Reclaimed branch —
@@ -10612,6 +10625,25 @@ def cmd_residual_force_agent_actionable_3026_coverage():
         fail("residual force agent-actionable (#3026) coverage contract rows failed")
         return 1
     ok("residual force agent-actionable (#3026) coverage clean")
+    return 0
+
+
+def cmd_residual_force_fail_exit_age_3248_coverage():
+    """Issue #3248: residual-force auto-heal ages on outermost fail exits.
+
+    Observe was success-only; failure-dominated mutate never reached
+    kAutoHealExits. Remount/drain stay success-only. Playbook observe-only.
+    """
+    print(f"{B}=== residual-force fail-exit age coverage (#3248) ==={N}")
+    script = COVERAGE_CHECKS / "check_residual_force_fail_exit_age_3248.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("residual-force fail-exit age (#3248) coverage contract rows failed")
+        return 1
+    ok("residual-force fail-exit age (#3248) coverage clean")
     return 0
 
 
@@ -18733,6 +18765,8 @@ def main():
         "reemit-owner-required-prod-multi-3025-coverage": cmd_reemit_owner_required_prod_multi_3025_coverage,
         "residual-force-agent-actionable-3026": cmd_residual_force_agent_actionable_3026,
         "residual-force-agent-actionable-3026-coverage": cmd_residual_force_agent_actionable_3026_coverage,
+        "residual-force-fail-exit-age-3248": cmd_residual_force_fail_exit_age_3248_coverage,
+        "residual-force-fail-exit-age-3248-coverage": cmd_residual_force_fail_exit_age_3248_coverage,
         "workflow-run-2974": cmd_workflow_run_2974_coverage,
         "workflow-run-2974-coverage": cmd_workflow_run_2974_coverage,
         "agent-scope-concurrency-2976": cmd_agent_scope_concurrency_2976_coverage,

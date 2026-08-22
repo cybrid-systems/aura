@@ -26,11 +26,13 @@
 
 import std;
 import aura.compiler.service;
+import aura.compiler.evaluator;
 import aura.compiler.value;
 
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -1444,10 +1446,118 @@ static void ac3026_5_source_and_linter() {
           "3026 AC5: no invent test per #81967");
 }
 
+// ── Issue #3248: age residual force on outermost fail exits ──
+static int drive_outermost_fail_exits(Evaluator& ev, int n) {
+    int acquired = 0;
+    for (int i = 0; i < n; ++i) {
+        bool ok = true;
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &ok);
+        if (gr.has_value()) {
+            ++acquired;
+            // Ctor stamps optimistic success; force the fail-exit path.
+            ok = false;
+        }
+    }
+    return acquired;
+}
+
+static void ac3248_1_fail_exits_auto_heal() {
+    std::println("\n--- #3248 AC1: 256 outermost fail exits age auto-heal ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura_hot_update_reset_residual_force_observe_for_test();
+    reg.reset_deopt_storm_state_for_test();
+    reg.force_jit_stamp_for_test(0x1);
+    reg.exhaust_retry_for_test();
+    CHECK(reg.residual_force_mask() != 0, "3248 AC1: residual live");
+    const auto heal0 = reg.residual_force_auto_heal_total();
+    auto& ev = cs.evaluator();
+    const auto acquired = drive_outermost_fail_exits(ev, 256);
+    CHECK(acquired == 256, "ac3248_1_fail: 256 outermost fail Guards acquired");
+    CHECK(reg.residual_force_auto_heal_total() >= heal0 + 1,
+          "ac3248_1_fail: 256 fail exits auto-heal once");
+    const auto heal1 = reg.residual_force_auto_heal_total();
+    (void)drive_outermost_fail_exits(ev, 256);
+    CHECK(reg.residual_force_auto_heal_total() == heal1,
+          "ac3248_1_fail: same mask does not double-heal");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+    aura_hot_update_reset_residual_force_observe_for_test();
+}
+
+static void ac3248_2_soft_fail_zero_extra() {
+    std::println("\n--- #3248 AC2: Soft fail exits do not age ---");
+    auto& reg = aura::compiler::hot_update_registry();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    CompilerService cs;
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    clear_recovery_idle(reg);
+    reg.reset_force_jit_repromote_for_test();
+    aura_hot_update_reset_residual_force_observe_for_test();
+    reg.force_jit_stamp_for_test(0x2);
+    const auto stale0 = reg.residual_force_stale_observe_total();
+    const auto heal0 = reg.residual_force_auto_heal_total();
+    CHECK(drive_outermost_fail_exits(cs.evaluator(), 40) == 40,
+          "ac3248_2_soft: 40 Soft fail Guards acquired");
+    CHECK(reg.residual_force_stale_observe_total() == stale0,
+          "ac3248_2_soft: Soft fail exits do not bump stale-observe");
+    CHECK(reg.residual_force_auto_heal_total() == heal0,
+          "ac3248_2_soft: Soft fail exits do not auto-heal");
+    clear_recovery_idle(reg);
+    aura_hot_update_reset_residual_force_observe_for_test();
+}
+
+static void ac3248_3_source_and_linter() {
+    std::println("\n--- #3248 AC3: call site + remount stays success-only ---");
+    const auto bnd = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto cpp = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_force_fail_exit_age_3248.py");
+    CHECK(bnd.find("Issue #3248") != std::string::npos, "3248 AC3: BoundaryExit cites #3248");
+    CHECK(cpp.find("Issue #3248") != std::string::npos, "3248 AC3: observe cites #3248");
+    CHECK(hh.find("Issue #3248") != std::string::npos, "3248 AC3: header cites #3248");
+    const auto obs = bnd.find("aura_hot_update_observe_residual_force_stale");
+    CHECK(obs != std::string::npos, "3248 AC3: observe still hooked");
+    if (obs != std::string::npos) {
+        const auto win = bnd.substr(obs > 400 ? obs - 400 : 0, 500);
+        CHECK(win.find("if (outermost)") != std::string::npos,
+              "3248 AC3: observe gated by outermost (not success-only)");
+        CHECK(win.find("if (outermost && success)") == std::string::npos ||
+                  win.find("Remount / drain stay") != std::string::npos,
+              "3248 AC3: observe moved out of success-only remount block");
+    }
+    const auto remount = bnd.find("aura_residual_live_closure_remount_tick(b)");
+    CHECK(remount != std::string::npos, "3248 AC3: remount still present");
+    if (remount != std::string::npos) {
+        const auto rwin = bnd.substr(remount > 500 ? remount - 500 : 0, 600);
+        CHECK(rwin.find("if (outermost && success)") != std::string::npos,
+              "3248 AC3: remount/drain stay success-only");
+    }
+    CHECK(build.find("check_residual_force_fail_exit_age_3248") != std::string::npos,
+          "3248 AC5: linter in build.py");
+    CHECK(!lint.empty() && lint.find("3248") != std::string::npos, "3248 AC5: check script");
+    CHECK(read_file("docs/design/3248-residual-force-fail-exit.md").empty(),
+          "3248 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3248.cpp").empty(),
+          "3248 AC5: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_reload_recovery_query() {
     std::println("test_reload_recovery_query");
+    // #3248 fail-exit soak first — leftover engine:metrics SIGSEGV later
+    // in this member (AC1 query) must not skip the call-site residual.
+    std::println("\n=== Issue #3248: residual force ages on outermost fail ===");
+    ac3248_1_fail_exits_auto_heal();
+    ac3248_2_soft_fail_zero_extra();
+    ac3248_3_source_and_linter();
     ac1_soft_empty();
     ac2_force_jit_exhaustion();
     ac3_success_clears();
@@ -1497,7 +1607,7 @@ int run_test_reload_recovery_query() {
         return 1;
     std::println(
         "reload recovery query #2367 + #2753 + #2776 + #2845 + #2927 + #2953 + #2982 + #3025 + "
-        "#3026: OK "
+        "#3026 + #3248: OK "
         "({} "
         "passed)",
         g_passed);
