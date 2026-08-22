@@ -24,8 +24,13 @@
 //
 // Issue #2947: mailbox_hold_slo is lowest priority among deny reasons so
 // it never masks commit_not_ready / deny_storm / mid_fallback_slo /
-// posture_degraded. #2587 mutate reject sites remain independent
-// defense-in-depth (not weakened).
+// posture_degraded / wal_append_fail_breach (#3211). #2587 mutate reject
+// sites remain independent defense-in-depth (not weakened).
+//
+// Issue #3211: production WAL append-fail SLO would_arm_degraded
+// (`wal-append-fail-breach`) hard-denies the next mutate. #3056 only
+// armed posture; this residual closes admit. Soft / WAL-off never
+// hard-deny. Overflow ring (#3109) stays process-local remedy.
 //
 // Issue #3002: fill_mailbox_hold_slo_live_ is the SSOT live sample for
 // p99 + throttle (#2958 cancel reuses the same loads via
@@ -38,6 +43,8 @@
 #include "core/audit_wal_metrics.h"                // #2076 wal_off posture gauge
 #include "core/capability_model.hh"                // #2534 capability deny storm window
 #include "core/mutation_audit_wal.hh"              // audit_wal_enabled (#2076)
+#include "core/security_event_wal.hh"              // #3211 SE WAL fail/persisted loads
+#include "core/wal_append_fail_slo.h"              // #3211 would_arm_degraded
 #include "compiler/audit_mid_fallback_slo.h"       // #2594 mid-fallback SLO
 #include "compiler/mutation_concurrency_health.hh" // #2903/#2947 wait SLO
 #include "compiler/typed_mutation_audit.h" // #2553 commit_readiness; production_defaults_active
@@ -53,6 +60,8 @@ namespace aura::orch {
 
 // Issue #2947: mailbox under-boundary wait / starvation throttle face.
 inline constexpr int kSecurityScheduleMailboxHoldSloIssue = 2947;
+// Issue #3211: production WAL append-fail SLO → schedule deny.
+inline constexpr int kSecurityScheduleWalAppendFailIssue = 3211;
 
 // ── Decision types ───────────────────────────────────────────────
 enum class SecurityScheduleForceReason : std::uint8_t {
@@ -61,7 +70,8 @@ enum class SecurityScheduleForceReason : std::uint8_t {
     deny_storm = 2,
     mid_fallback_slo = 3,
     posture_degraded = 4,
-    mailbox_hold_slo = 5, // #2947 under-boundary wait p99 / throttle
+    mailbox_hold_slo = 5,       // #2947 under-boundary wait p99 / throttle
+    wal_append_fail_breach = 6, // #3211 production WAL append-fail SLO
 };
 
 [[nodiscard]] inline std::string_view
@@ -79,6 +89,8 @@ security_schedule_force_reason_name(SecurityScheduleForceReason r) noexcept {
             return "posture-degraded";
         case SecurityScheduleForceReason::mailbox_hold_slo:
             return "mailbox-hold-slo";
+        case SecurityScheduleForceReason::wal_append_fail_breach:
+            return "wal-append-fail-breach";
     }
     return "unknown";
 }
@@ -111,6 +123,10 @@ struct SecurityScheduleInput {
     bool production_mode = false;
     // Soft mode: AURA_SECURITY_SOFT or sandbox=off → observe only.
     bool soft_mode = false;
+    // Issue #3211: decide_wal_append_fail_slo.would_arm_degraded
+    // (production + WAL enabled + consecutive/rate SLO). Soft never
+    // arms. Live fill uses existing g_* SLO counters (no extra bus).
+    bool wal_append_fail_would_arm = false;
 };
 
 // Issue #2947 / #3002: pure predicate — p99 ≥ SLO (SLO>0) or throttle flag.
@@ -127,7 +143,8 @@ struct SecurityScheduleInput {
 //   2. deny-storm         (capability_deny_storm && production && !soft)
 //   3. mid-fallback-slo   (mid_fallback_slo_breach && production && !soft)
 //   4. posture-degraded   (posture_wal_off_restricted && production && !soft)
-//   5. mailbox-hold-slo   (p99≥SLO || throttle; #2947 — never masks 1–4)
+//   5. wal-append-fail-breach (#3211 would_arm_degraded && production && !soft)
+//   6. mailbox-hold-slo   (p99≥SLO || throttle; #2947 — never masks 1–5)
 //   else: ok / allow
 [[nodiscard]] inline SecurityScheduleDecision
 decide_security_schedule(const SecurityScheduleInput& in) noexcept {
@@ -153,6 +170,14 @@ decide_security_schedule(const SecurityScheduleInput& in) noexcept {
         d.force_reason = SecurityScheduleForceReason::posture_degraded;
         return d;
     }
+    // Issue #3211: production WAL append-fail SLO would_arm_degraded.
+    // Soft / WAL-off never set the input true (live helper). Does not
+    // mask 1–4. Mailbox wait stays below this forensic stop.
+    if (enforce && in.wal_append_fail_would_arm) {
+        d.would_allow_new_mutate = false;
+        d.force_reason = SecurityScheduleForceReason::wal_append_fail_breach;
+        return d;
+    }
     // Issue #2947: lowest priority so commit_not_ready etc. always win.
     if (enforce && mailbox_hold_slo_signal(in)) {
         d.would_allow_new_mutate = false;
@@ -173,6 +198,8 @@ struct OrchSecurityScheduleCounters {
     std::atomic<std::uint64_t> deny_posture_degraded_total{0};
     // Issue #2947: production deny face for under-boundary wait / throttle.
     std::atomic<std::uint64_t> deny_mailbox_hold_slo_total{0};
+    // Issue #3211: production deny face for WAL append-fail SLO breach.
+    std::atomic<std::uint64_t> deny_wal_append_fail_breach_total{0};
     std::atomic<std::int64_t> last_force_reason_code{0};
     std::atomic<std::int64_t> last_would_allow{1}; // 1=allow, 0=deny
 };
@@ -209,6 +236,9 @@ evaluate_security_schedule(const SecurityScheduleInput& in) noexcept {
             case SecurityScheduleForceReason::mailbox_hold_slo:
                 c.deny_mailbox_hold_slo_total.fetch_add(1, std::memory_order_relaxed);
                 break;
+            case SecurityScheduleForceReason::wal_append_fail_breach:
+                c.deny_wal_append_fail_breach_total.fetch_add(1, std::memory_order_relaxed);
+                break;
             default:
                 break;
         }
@@ -230,6 +260,7 @@ inline void reset_orch_security_schedule_counters_for_test() noexcept {
     c.deny_mid_fallback_slo_total.store(0, std::memory_order_relaxed);
     c.deny_posture_degraded_total.store(0, std::memory_order_relaxed);
     c.deny_mailbox_hold_slo_total.store(0, std::memory_order_relaxed);
+    c.deny_wal_append_fail_breach_total.store(0, std::memory_order_relaxed);
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.last_would_allow.store(1, std::memory_order_relaxed);
 }
@@ -316,6 +347,29 @@ inline void fill_mailbox_hold_slo_live_(SecurityScheduleInput& in) noexcept {
         aura::serve::mf_mailbox::maybe_mailbox_defer_slo_hold_cancel();
 }
 
+// Issue #3211: live WAL append-fail SLO would_arm_degraded.
+// Quiet / WAL-off / no-fail: two relaxed loads on SLO counters then
+// return false (AC5). After a real append miss, load existing WAL
+// fail/persisted totals + pure decide_wal_append_fail_slo (no extra
+// bus; does not bump SLO checks_total — query:security-posture owns
+// that evaluate). Soft_mode → would_arm_degraded stays false.
+inline bool wal_append_fail_would_arm_live(bool production_defaults, bool soft_mode) noexcept {
+    auto& c = aura::core::wal_slo::g_wal_append_fail_slo_counters;
+    if (c.consecutive.load(std::memory_order_relaxed) == 0 &&
+        c.combined_fail_total.load(std::memory_order_relaxed) == 0)
+        return false;
+    const auto& am = aura::core::audit_wal::g_audit_wal_metrics();
+    const auto& sm = aura::core::security_event_wal::g_security_event_wal_metrics();
+    const auto d = aura::core::wal_slo::decide_wal_append_fail_slo(
+        aura::core::wal_slo::make_wal_append_fail_slo_input(
+            am.audit_wal_append_fail_total.load(std::memory_order_relaxed),
+            sm.security_event_wal_append_fail_total.load(std::memory_order_relaxed),
+            am.audit_record_persisted_total.load(std::memory_order_relaxed),
+            sm.security_event_persisted_total.load(std::memory_order_relaxed),
+            /*wal_enabled=*/true, production_defaults, soft_mode));
+    return d.would_arm_degraded;
+}
+
 inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval_sandbox_mode,
                                                                bool production_defaults,
                                                                bool soft_mode) noexcept {
@@ -330,6 +384,8 @@ inline SecurityScheduleInput make_security_schedule_input_live(std::uint8_t eval
     in.posture_wal_off_restricted = posture_wal_off_restricted_live(eval_sandbox_mode);
     // Issue #2947: mailbox under-boundary wait / throttle into same gate.
     fill_mailbox_hold_slo_live_(in);
+    // Issue #3211: WAL append-fail SLO would_arm → schedule deny.
+    in.wal_append_fail_would_arm = wal_append_fail_would_arm_live(production_defaults, soft_mode);
     return in;
 }
 

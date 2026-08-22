@@ -357,6 +357,22 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 {"deny-mailbox-hold-slo-total",
                  make_int(static_cast<std::int64_t>(
                      c.deny_mailbox_hold_slo_total.load(std::memory_order_relaxed)))},
+                // Issue #3211: production WAL append-fail SLO → schedule deny.
+                {"deny-wal-append-fail-breach-total",
+                 make_int(static_cast<std::int64_t>(
+                     c.deny_wal_append_fail_breach_total.load(std::memory_order_relaxed)))},
+                {"wal-append-fail-breach",
+                 make_int(
+                     reason == static_cast<std::int64_t>(
+                                   aura::orch::SecurityScheduleForceReason::wal_append_fail_breach)
+                         ? 1
+                         : 0)},
+                {"would-deny-admit", make_int(allow == 0 ? 1 : 0)},
+                {"security-schedule-wal-append-fail-wired", make_int(1)},
+                {"schema-3211", make_int(static_cast<std::int64_t>(
+                                    aura::orch::kSecurityScheduleWalAppendFailIssue))},
+                {"issue-3211", make_int(static_cast<std::int64_t>(
+                                   aura::orch::kSecurityScheduleWalAppendFailIssue))},
                 {"security-schedule-gate-wired", make_int(1)},
                 {"schema-2590", make_int(2590)},
                 {"issue-2590", make_int(2590)},

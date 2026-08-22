@@ -1935,6 +1935,8 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
     // are now wired — previously the inputs were hardcoded to false
     // so the gate never actually denied in production. See
     // src/orch/security_schedule_gate.h::make_security_schedule_input_live.
+    // Issue #3211: WAL append-fail SLO would_arm_degraded is filled by
+    // the same live helper (wal_append_fail_would_arm_live).
     {
         const auto prod = typed_audit::production_defaults_active();
         const auto in = aura::orch::make_security_schedule_input_live(ev.effect_sandbox_mode(),

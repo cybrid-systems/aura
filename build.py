@@ -4099,6 +4099,19 @@ def cmd_lint():
             "Issue #2947 mailbox hold SLO security-schedule linter failed — run python3 scripts/coverage/checks/check_mailbox_hold_slo_security_schedule_2947.py"
         )
         return r
+    # Issue #3211: production WAL append-fail SLO → security-schedule-gate
+    # deny (residual of #3056 posture-only). Extends
+    # test_security_schedule_gate (#81967); no docs/design/ (#1655).
+    wafs3211_script = COVERAGE_CHECKS / "check_wal_append_fail_schedule_3211.py"
+    if not wafs3211_script.exists():
+        fail(f"missing {wafs3211_script}")
+        return 1
+    r = run([sys.executable, str(wafs3211_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3211 WAL append-fail schedule linter failed — run python3 scripts/coverage/checks/check_wal_append_fail_schedule_3211.py"
+        )
+        return r
     # Issue #2948: SSOT resolve_bp_threshold for spawn admit + watch
     # on_backpressure (refine #2591/#2887). Spec-0 always-reject vs
     # policy-0 process default; shared load_mailbox_bp_recent. Extends
@@ -8349,6 +8362,31 @@ def cmd_mailbox_hold_slo_security_schedule_2947_coverage():
         return 1
     ok("mailbox hold SLO security-schedule (#2947) coverage clean")
     return 0
+
+
+def cmd_wal_append_fail_schedule_3211_coverage():
+    """Issue #3211: production WAL append-fail SLO → schedule deny (static)."""
+    print(f"{B}=== wal append-fail schedule coverage (#3211) ==={N}")
+    script = COVERAGE_CHECKS / "check_wal_append_fail_schedule_3211.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("wal append-fail schedule (#3211) coverage contract rows failed")
+        return 1
+    ok("wal append-fail schedule (#3211) coverage clean")
+    return 0
+
+
+def cmd_wal_append_fail_schedule_3211():
+    """Issue #3211: production WAL append-fail breach hard-denies next mutate.
+
+    security-schedule-gate consumes decide_wal_append_fail_slo.would_arm_degraded.
+    Soft / WAL-off never hard-deny. Existing #3056 posture keys unchanged.
+    """
+    print(f"{B}=== wal append-fail schedule (#3211) ==={N}")
+    return cmd_wal_append_fail_schedule_3211_coverage()
 
 
 def cmd_bp_threshold_ssot_2948_coverage():
@@ -18528,6 +18566,8 @@ def main():
         "mid-fallback-refuse-se-3054-coverage": cmd_mid_fallback_refuse_se_3054_coverage,
         "wal-append-fail-slo-3056": cmd_wal_append_fail_slo_3056,
         "wal-append-fail-slo-3056-coverage": cmd_wal_append_fail_slo_3056_coverage,
+        "wal-append-fail-schedule-3211": cmd_wal_append_fail_schedule_3211,
+        "wal-append-fail-schedule-3211-coverage": cmd_wal_append_fail_schedule_3211_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,
