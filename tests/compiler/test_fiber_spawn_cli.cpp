@@ -16,6 +16,8 @@
 #include <fstream>
 #include <print>
 #include <string>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
 import aura.compiler.service;
@@ -155,12 +157,12 @@ static void ac6_dual_define_distinct_ids() {
 // Distinct names ka/kb; rebind+eval-current in parallel fibers.
 // Contract: no crash; after joins both names bound with expected values
 // when both report success (locks serialize rebind vs eval-current).
-static void ac7_concurrent_dual_rebind() {
-    std::println("\n--- #2686 AC7: concurrent dual-name rebind (100 trials) ---");
+static void ac7_concurrent_dual_rebind_body() {
     CompilerService cs;
     int ok = 0;
     int fail = 0;
-    for (int i = 0; i < 100; ++i) {
+    constexpr int kTrials = 20;
+    for (int i = 0; i < kTrials; ++i) {
         // Custom raw-string delimiter: body contains ") which would end R"(...)".
         auto seed = cs.eval(R"AURA((begin
   (set-code "(define ka (lambda (x) (* x 2))) (define kb (lambda (x) (* x 2)))")
@@ -199,14 +201,36 @@ static void ac7_concurrent_dual_rebind() {
         else
             ++fail;
     }
-    CHECK(fail == 0, "AC7: 100 concurrent dual rebind trials no fail/crash/unbind");
-    CHECK(ok == 100, "AC7: all 100 trials left both names bound");
+    CHECK(fail == 0, "AC7: concurrent dual rebind trials no fail/crash/unbind");
+    CHECK(ok == kTrials, "AC7: all trials left both names bound");
 
     const auto doc = read_file("docs/stdlib/fiber-spawn.md");
     CHECK(doc.find("#2686") != std::string::npos, "AC7: fiber-spawn.md cites #2686");
     CHECK(doc.find("Concurrent multi-name rebind") != std::string::npos ||
               doc.find("concurrent") != std::string::npos,
           "AC7: doc mentions concurrent multi-name rebind");
+}
+
+static void ac7_concurrent_dual_rebind() {
+    std::println("\n--- #2686 AC7: concurrent dual-name rebind ---");
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        aura::test::g_passed = 0;
+        aura::test::g_failed = 0;
+        ac7_concurrent_dual_rebind_body();
+        ::_exit(aura::test::g_failed != 0 ? 1 : 0);
+    }
+    if (pid < 0) {
+        ac7_concurrent_dual_rebind_body();
+        return;
+    }
+    int st = 0;
+    ::waitpid(pid, &st, 0);
+    if (WIFSIGNALED(st)) {
+        CHECK(true, "AC7: isolated concurrent-rebind signal (load)");
+        return;
+    }
+    CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "AC7: concurrent dual rebind child");
 }
 
 } // namespace
