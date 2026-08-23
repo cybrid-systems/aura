@@ -47,14 +47,19 @@ bool aura_runtime_require_production_abi() noexcept {
         fail_bits |= 1ull << 2;
     if (aura_abi_strong_mutation_depth_from_ptr_v() == 0)
         fail_bits |= 1ull << 3;
+    // Issue #3275: tenant-scope resume ABI must be strong in production
+    // (weak no-op would skip fiber-resume principal rebind silently).
+    if (aura_abi_strong_tenant_scope_resume_v() == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitTenantScope;
 
     if (fail_bits != 0) {
         g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
         g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
         std::fprintf(stderr,
-                     "FATAL: production ABI self-check failed (#2955) fail_bits=0x%llx — "
+                     "FATAL: production ABI self-check failed (#2955/#3275) fail_bits=0x%llx — "
                      "multi-worker must link strong steal-complete / fiber evaluator_id / "
-                     "mutation boundary held / depth-from-ptr (not fiber_bridge weak no-ops)\n",
+                     "mutation boundary held / depth-from-ptr / tenant-scope resume (not "
+                     "fiber_bridge weak no-ops)\n",
                      static_cast<unsigned long long>(fail_bits));
         std::fflush(stderr);
         std::abort();
@@ -98,6 +103,12 @@ bool aura_runtime_require_production_multi_worker() noexcept {
         fail_bits |= 1ull << 2;
     if (aura_abi_strong_mutation_depth_from_ptr_v() == 0)
         fail_bits |= 1ull << 3;
+
+    // Issue #3275: tenant-scope resume ABI must be strong under
+    // multi-worker production (weak no-op would silently run fiber
+    // resumes under the worker's ambient principal).
+    if (aura_abi_strong_tenant_scope_resume_v() == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitTenantScope;
 
     // Issue #3195: residual-zero sticky wiring must be present. Header
     // sentinels are 1 unless a mis-link / test store(0) wiped them.

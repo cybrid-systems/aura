@@ -22,6 +22,7 @@
 
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
+#include "core/gc_hooks.h" // Issue #3275: tenant_scope_resume_missing_total accessors
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
@@ -549,6 +550,91 @@ static void ac2942_node_id_mandate_cross_cite() {
     CHECK(!invent.good(), "2942: no test_issue_2942.cpp (forbidden per #81967)");
 }
 
+// ── #3275: production link gate for the tenant-scope resume ABI. ──
+// The weak no-op in fiber_bridge.cpp must never silently resolve under
+// production multi-tenant (fiber resumes would run under the worker's
+// ambient capability_tenant_id_, skipping principal rebind). Gate is the
+// #2955 startup self-check: aura_abi_strong_tenant_scope_resume_v() == 1
+// required (new fail bit 6), plus the weak bodies themselves abort under
+// the production lock (#2377 pattern) and bump an additive missing counter
+// on the Soft path. Soft / AURA_SANDBOX=off / light-link unchanged.
+static void ac3275_1_link_gate_source_cite() {
+    std::println("\n--- #3275 AC1: strong marker + fail bit + weak abort source ---");
+    const auto fb = read_file("src/compiler/fiber_bridge.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto rab = read_file("src/serve/runtime_production_abi.cpp");
+    const auto rah = read_file("src/serve/runtime_production_abi.h");
+    const auto gc = read_file("src/core/gc_hooks.h");
+    CHECK(fb.find("aura_abi_strong_tenant_scope_resume_v") != std::string::npos,
+          "3275 AC1: weak strong-marker stub in fiber_bridge");
+    CHECK(fm.find("aura_abi_strong_tenant_scope_resume_v") != std::string::npos,
+          "3275 AC1: strong marker def in evaluator_fiber_mutation");
+    CHECK(fb.find("steal_snapshot_soft_production_locked()") != std::string::npos,
+          "3275 AC1: weak install body production-lock aware");
+    CHECK(fb.find("std::abort()") != std::string::npos,
+          "3275 AC1: weak bodies abort under production lock");
+    CHECK(fb.find("bump_tenant_scope_resume_missing_total") != std::string::npos,
+          "3275 AC1: Soft path bumps missing counter");
+    CHECK(gc.find("g_tenant_scope_resume_missing_total") != std::string::npos,
+          "3275 AC1: additive missing counter in gc_hooks");
+    CHECK(rah.find("kProductionAbiSelfcheckFailBitTenantScope") != std::string::npos,
+          "3275 AC1: tenant-scope fail bit constant");
+    CHECK(rab.find("aura_abi_strong_tenant_scope_resume_v") != std::string::npos,
+          "3275 AC1: self-check consults the marker");
+}
+
+static void ac3275_2_production_lock_roundtrip() {
+    std::println("\n--- #3275 AC2: production lock round-trip + counter accessors ---");
+    const bool saved = aura::serve::steal_snapshot_soft_production_locked();
+    aura::serve::set_steal_snapshot_soft_production_locked(true);
+    CHECK(aura::serve::steal_snapshot_soft_production_locked(), "3275 AC2: lock on");
+    aura::serve::set_steal_snapshot_soft_production_locked(false);
+    CHECK(!aura::serve::steal_snapshot_soft_production_locked(), "3275 AC2: lock off");
+    aura::serve::set_steal_snapshot_soft_production_locked(saved);
+    const auto before = aura::gc_hooks::tenant_scope_resume_missing_total();
+    aura::gc_hooks::bump_tenant_scope_resume_missing_total();
+    CHECK(aura::gc_hooks::tenant_scope_resume_missing_total() == before + 1,
+          "3275 AC2: missing counter accessor round-trip");
+}
+
+static void ac3275_3_soft_no_abort_path() {
+    std::println("\n--- #3275 AC3: Soft / off keeps weak no-op (no forced abort) ---");
+    const auto fb = read_file("src/compiler/fiber_bridge.cpp");
+    // The abort is gated on the production lock — Soft / sandbox=off never
+    // engages it, so light-link binaries keep the no-op contract.
+    const auto abort_pos = fb.find("std::abort()");
+    CHECK(abort_pos != std::string::npos, "3275 AC3: abort present");
+    const auto lock_pos = fb.find("steal_snapshot_soft_production_locked()");
+    CHECK(lock_pos != std::string::npos && lock_pos < abort_pos,
+          "3275 AC3: abort is gated behind the production lock");
+    const auto rah = read_file("src/serve/runtime_production_abi.h");
+    CHECK(rah.find("Soft /") != std::string::npos || rah.find("sandbox=off") != std::string::npos,
+          "3275 AC3: self-check Soft bypass documented");
+}
+
+static void ac3275_4_linter_and_no_invent() {
+    std::println("\n--- #3275 AC4: linter wired + no invent ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_tenant_scope_link_gate_3275.py");
+    CHECK(!lint.empty() && lint.find("Issue #3275") != std::string::npos,
+          "3275 AC4: linter file present");
+    CHECK(build.find("check_tenant_scope_link_gate_3275") != std::string::npos,
+          "3275 AC4: build.py wires linter");
+    std::ifstream invent("tests/compiler/test_issue_3275.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_3275.cpp");
+    CHECK(!invent.good(), "3275 AC4: no test_issue_3275.cpp (forbidden per #81967)");
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3275-") == std::string::npos,
+                  std::string("3275 AC4: no docs/design/") + name + " (#1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_tenant_scope_fiber_mandate() {
@@ -575,6 +661,11 @@ int run_test_tenant_scope_fiber_mandate() {
     ac2883_6_source_and_no_invent();
     std::println("=== Issue #2942: NodeId side-effect mandate ===");
     ac2942_node_id_mandate_cross_cite();
+    std::println("=== Issue #3275: production link gate for tenant-scope resume ABI ===");
+    ac3275_1_link_gate_source_cite();
+    ac3275_2_production_lock_roundtrip();
+    ac3275_3_soft_no_abort_path();
+    ac3275_4_linter_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
