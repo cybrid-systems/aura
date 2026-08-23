@@ -6692,8 +6692,15 @@ def _retry_issue_colder(targets: list[str] | None, first_jobs: int, r: int) -> i
     )
 
 
-def cmd_build():
-    """CMake 构建 (Ninja)"""
+@dataclass
+class _BuildCtx:
+    nproc: int
+    t_all: float
+    overlap_main: list[str]
+
+
+def _begin_build() -> tuple[int, _BuildCtx | None]:
+    """Configure + aura + ICE-isolated bins (test_ir). None ctx = done or fail."""
     print(f"{B}═══ Build ═══{N}")
     BUILD.mkdir(parents=True, exist_ok=True)
     nproc = _build_jobs()
@@ -6703,7 +6710,7 @@ def cmd_build():
     r = run(_cmake_configure_args(), cwd=ROOT)
     _phase("cmake configure", t0)
     if r != 0:
-        return r
+        return r, None
 
     # aura, then test_ir (own FILE_SET .ixx): a single ninja of
     # aura+test_ir races ast.ixx and can ICE GCC 16 ealias under -O2.
@@ -6724,7 +6731,7 @@ def cmd_build():
         remaining = [t for t in remaining if t != "aura"]
         r = _build_named_targets(["aura"], nproc, fatal=True)
         if r != 0:
-            return r
+            return r, None
 
     # Aura-only builds (deployment-health) skip the issue matrix unless
     # AURA_ISSUE_BUILD=all is forced.
@@ -6735,14 +6742,22 @@ def cmd_build():
     ):
         ok("build OK (aura-only; issue matrix skipped)")
         _phase("total build", t_all)
-        return 0
+        return 0, None
 
     ice_targets = [t for t in remaining if t in _MODULE_ICE_ISOLATE]
     overlap_main = [t for t in remaining if t not in _MODULE_ICE_ISOLATE]
     for target in ice_targets:
         r = _build_named_targets([target], nproc, fatal=True)
         if r != 0:
-            return r
+            return r, None
+
+    return 0, _BuildCtx(nproc=nproc, t_all=t_all, overlap_main=overlap_main)
+
+
+def _finish_overlap_issues(ctx: _BuildCtx) -> int:
+    """Ninja test_concurrent + issue matrix. Issue link flakes are non-fatal."""
+    nproc = ctx.nproc
+    overlap_main = ctx.overlap_main
 
     # Build test_issue_* targets. Full tier uses the aggregate
     # (profile bundles + true standalones; dual standalones that
@@ -6840,9 +6855,17 @@ def cmd_build():
         else:
             os.environ["AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS"] = saved_limit
 
-    _phase("build total", t_all)
+    _phase("build total", ctx.t_all)
     ok("build OK")
     return 0
+
+
+def cmd_build():
+    """CMake 构建 (Ninja)"""
+    rc, ctx = _begin_build()
+    if ctx is None:
+        return rc
+    return _finish_overlap_issues(ctx)
 
 
 def cmd_clean():
@@ -7746,11 +7769,16 @@ def _run_suite(label: str, fn) -> tuple[str, int, float]:
     return label, rc, elapsed
 
 
-def _summarize_test_results(results: dict[str, int]) -> int:
+def _summarize_test_results(results: dict[str, int], *, heading: str | None = None) -> int:
     print(f"\n{'═' * 50}")
+    if heading:
+        print(heading)
     all_ok = all(v == 0 for v in results.values())
     total = len(results)
     bad = total - sum(1 for v in results.values() if v == 0)
+    if total == 0:
+        print(f"{Y}No test suites in this slice{N}")
+        return 0
     if bad == 0:
         print(f"{G}All {total} test suites passed{N}")
     else:
@@ -7787,25 +7815,30 @@ def _cap_inner_jobs(live_suites: int) -> dict[str, str]:
     return applied
 
 
-def cmd_test(suite_names: list[str]):
+def cmd_test(suite_names: list[str], *, waves: tuple[str, ...] | None = None):
     """Run test suites in cheap → medium → heavy → stress waves.
 
     Inner AURA_SUITE_JOBS / AURA_ISSUES_JOBS / AURA_CASE_JOBS are capped to
     nproc // live_suites so overlapping heavies cannot oversubscribe the host.
+    ``waves`` limits which waves run (cmd_ci overlaps cheap/medium with ninja).
     """
     items = _expand_suite_names(suite_names)
     if not items:
         warn("no test suites to run")
         return 1
 
+    wave_set = set(waves) if waves else None
     jobs = _test_jobs()
     results: dict[str, int] = {}
+    heading = f"Waves {', '.join(waves)}" if waves else None
 
     if jobs <= 1:
         for label, fn in items:
+            if wave_set is not None and _suite_wave(label) not in wave_set:
+                continue
             name, rc, _elapsed = _run_suite(label, fn)
             results[name] = rc
-        return _summarize_test_results(results)
+        return _summarize_test_results(results, heading=heading)
 
     by_wave: dict[str, list[tuple[str, object]]] = {w: [] for w in _SUITE_WAVES}
     for label, fn in items:
@@ -7814,6 +7847,8 @@ def cmd_test(suite_names: list[str]):
     saved_inner = {k: os.environ.get(k) for k in ("AURA_SUITE_JOBS", "AURA_ISSUES_JOBS", "AURA_CASE_JOBS")}
     try:
         for wave in _SUITE_WAVES:
+            if wave_set is not None and wave not in wave_set:
+                continue
             batch = by_wave[wave]
             if not batch:
                 continue
@@ -7843,7 +7878,7 @@ def cmd_test(suite_names: list[str]):
             else:
                 os.environ[k] = v
 
-    return _summarize_test_results(results)
+    return _summarize_test_results(results, heading=heading)
 
 
 def cmd_primitive_surface():
@@ -18904,8 +18939,45 @@ def cmd_ci():
 
     Honors AURA_ISSUE_BUILD=none (skip issue binary matrix + issues suite)
     for PR path-filter when only scripts/lib tooling changed.
+
+    After aura + test_ir, cheap/medium suites (need those two bins) run
+    alongside the remaining ninja (test_concurrent + issue farm). Heavy
+    (issues) and stress (concurrent) wait until that ninja finishes.
     """
-    return cmd_build() or cmd_test(["ci"])
+    rc, ctx = _begin_build()
+    if ctx is None:
+        return rc
+
+    saved_jobs = os.environ.get("AURA_TEST_JOBS")
+    # Cap suite fan-out while ninja is live so 4-vCPU CI does not stack
+    # 4 aura workers on top of issue_jobs. Local AURA_TEST_JOBS=1 stays 1.
+    if _test_jobs() > 2:
+        os.environ["AURA_TEST_JOBS"] = "2"
+        info("ci overlap: AURA_TEST_JOBS=2 while remaining ninja runs")
+
+    print(
+        f"{B}═══ Overlap: cheap/medium tests ‖ test_concurrent+issue ninja ═══{N}",
+        flush=True,
+    )
+    link_rc = 0
+    early_rc = 0
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            fut_link = pool.submit(_finish_overlap_issues, ctx)
+            fut_early = pool.submit(lambda: cmd_test(["ci"], waves=("cheap", "medium")))
+            link_rc = fut_link.result()
+            early_rc = fut_early.result()
+    except Exception as exc:  # noqa: BLE001 — surface overlap failures
+        fail(f"ci overlap: {exc}")
+        return 1
+    finally:
+        if saved_jobs is None:
+            os.environ.pop("AURA_TEST_JOBS", None)
+        else:
+            os.environ["AURA_TEST_JOBS"] = saved_jobs
+
+    late_rc = cmd_test(["ci"], waves=("heavy", "stress"))
+    return 1 if (link_rc or early_rc or late_rc) else 0
 
 
 def cmd_list():
