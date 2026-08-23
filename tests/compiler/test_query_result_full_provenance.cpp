@@ -322,6 +322,40 @@ void test_ac3231_production_as_query_result() {
     apply_dev_audit_defaults();
 }
 
+void test_ac3286_production_bare_list_auto_upgraded() {
+    std::print("AC3286 -- production bare match list auto-upgrades to schema-2 hash\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::is_hash;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    expect_true("set-code", cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value());
+    expect_true("eval", cs.eval("(eval-current)").has_value());
+    // Issue #3286: bare match list (no :as-query-result) under production
+    // must NOT be handed to Agent memory as schema-1 — the shared
+    // end_query_epoch_maybe_result finish auto-upgrades to the schema-2
+    // stamped hash (stamp_query_result_full_provenance) or returns a
+    // structured error; never a green schema-1 list.
+    auto qr = cs.eval("(query :find \"f\")");
+    expect_true("bare find returns", qr.has_value());
+    expect_true("production bare list is hash (schema-2 auto-upgrade, not layout-only)",
+                is_hash(*qr));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3286_soft_bare_list_unchanged() {
+    std::print("AC3286 -- Soft bare match list stays layout-only (zero-cost)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::is_hash;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("set-code", cs.eval("(set-code \"(define g (lambda (x) 2))\")").has_value());
+    expect_true("eval", cs.eval("(eval-current)").has_value());
+    auto qr = cs.eval("(query :find \"g\")");
+    expect_true("Soft bare find returns", qr.has_value());
+    expect_true("Soft bare list is NOT a hash (layout-only path preserved)", !is_hash(*qr));
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -335,6 +369,8 @@ int main() {
     test_ac8_schema2_validator_stale_on_mutate();
     test_ac3231_schema2_marker_and_source();
     test_ac3231_production_as_query_result();
-    std::print("All #3103 + #3137 + #3231 AC tests PASSED\n");
+    test_ac3286_production_bare_list_auto_upgraded();
+    test_ac3286_soft_bare_list_unchanged();
+    std::print("All #3103 + #3137 + #3231 + #3286 AC tests PASSED\n");
     return 0;
 }

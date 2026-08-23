@@ -393,6 +393,17 @@ void register_workspace_query_primitives(
         // Propagate query-epoch-stale errors unchanged.
         if (is_error(finished))
             return finished;
+        // Issue #3286: under production defaults, a bare (schema-1) match
+        // list must not be handed to Agent memory as durable — an Agent
+        // holding NodeId+gen pairs can survive a mutate without detecting
+        // tenant/fiber/cow invalidation (multi-round memory hole, I6).
+        // Force the schema-2 full-provenance QueryResult hash path
+        // (stamp_query_result_full_provenance inside make_query_result_hash;
+        // stamp failure → structured restamp-lag / query-result-layout-only
+        // error, never a green schema-1 result). Soft/Off / sandbox=off
+        // keeps the cheap layout-only bare path (AC3 zero-cost).
+        if (!as_query_result && aura::compiler::typed_audit::production_defaults_active())
+            as_query_result = true; // auto-upgrade → stamped hash or error
         if (!as_query_result)
             return finished;
         return make_query_result_hash(start, finished, pinned);
