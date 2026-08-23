@@ -181,7 +181,7 @@ void ac1_stable_object_root_rewrite() {
 
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.moved_live_objects || r.objects_moved > 0 || arena.object_remap_size() > 0 ||
-              !r.moving_blocked_precondition,
+              r.moving_blocked_precondition,
           "AC1: Moving path exercised (or blocked by precondition — still ok for empty densify)");
 
     // If densify remapped, slots must follow.

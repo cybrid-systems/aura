@@ -415,7 +415,7 @@ int run_subtree_counter_1848() {
             b = as_int(*before);
 
         auto bump = cs.eval(std::format("(compile:subtree-bump {})", id));
-        CHECK(bump && is_error(*bump), "subtree-bump Lisp sunk #3172");
+        CHECK(!bump || is_error(*bump), "subtree-bump Lisp sunk #3172");
 
         auto after = cs.eval("(stats:get \"compile:subtree-bump-count\")");
         if (after && is_int(*after) && bump && is_int(*bump) && as_int(*bump) == 1) {

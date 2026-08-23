@@ -5,9 +5,11 @@
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
+#include "compiler/lock_order_audit.h"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 
+#include <cstdlib>
 #include <exception>
 #include <print>
 
@@ -20,6 +22,11 @@ static void reset_member_face() {
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+    aura::compiler::lock_order::force_audit_mode_for_test(1);
+    // #2936 / #3201: production_defaults or AURA_IR_DIRTY_BATCH_ONLY=1
+    // abort on residual multi-via-single. Issue members that need the
+    // hard abort setenv 1 themselves (test_batch_dirty_discipline).
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
 }
 
 extern int run_test_adt_exhaustiveness_audit();
@@ -631,5 +638,6 @@ int main() {
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);
+    reset_member_face();
     return members_failed ? 1 : 0;
 }

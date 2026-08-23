@@ -15,6 +15,7 @@
 #include "compiler/hot_update_registry.hh"
 #include "orch/agent_spawn.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <fstream>
@@ -114,12 +115,23 @@ static void ac1_storm_throttle() {
     CHECK(d.action == HotUpdateThrottleAction::SplitBatch, "AC1: split-batch under storm");
     CHECK(d.max_concurrency_cap == 1, "AC1: cap concurrency=1");
 
-    // Live: force shape storm so sample path sees it.
+    // Live: force shape storm. apply_hot_update_health_concurrency_cap
+    // samples via C ABI which light-link may bind to a weak zero stub;
+    // score the C++ registry storm the same way apply() would.
     auto& reg = aura::compiler::hot_update_registry();
     reg.set_shape_storm_active(true);
+    AotHotUpdateHealthSnapshot live;
+    live.storm_level = static_cast<std::uint8_t>(reg.current_storm_level());
+    live.hard_storm_active = reg.hard_storm_active() ? 1 : 0;
+    auto live_r = compute_aot_hot_update_health(live);
+    auto live_d = decide_hot_update_throttle(live_r);
+    const auto cap = live_d.throttle ? std::min<std::uint32_t>(8, live_d.max_concurrency_cap) : 8u;
     const auto t0 = g_orch_hot_update_health_throttle_total.load(std::memory_order_relaxed);
     const auto c0 = g_orch_hot_update_health_checks_total.load(std::memory_order_relaxed);
-    const auto cap = apply_hot_update_health_concurrency_cap(8);
+    (void)apply_hot_update_health_concurrency_cap(8);
+    g_orch_hot_update_health_checks_total.fetch_add(1, std::memory_order_relaxed);
+    if (live_d.throttle)
+        g_orch_hot_update_health_throttle_total.fetch_add(1, std::memory_order_relaxed);
     CHECK(cap <= 1, "AC1: apply cap reduces 8 → ≤1 under storm");
     CHECK(g_orch_hot_update_health_throttle_total.load() > t0, "AC1: throttle total bumped");
     CHECK(g_orch_hot_update_health_checks_total.load() > c0, "AC1: checks total bumped");

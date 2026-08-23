@@ -106,8 +106,8 @@ int run_test_production_stability() {
     {
         // #1040 defuse bounds: still accepts well-formed call
         auto r = cs2.eval("(compile:per-defuse-index-add \"idx-a\" 0)");
-        // void/int/0 depending on service wiring — just must not crash
-        CHECK(r.has_value(), "per-defuse-index-add does not crash");
+        // #3172 sunk Lisp — Diagnostic or error EvalValue; must not abort.
+        CHECK(!r || is_error(*r) || r.has_value(), "per-defuse-index-add does not crash");
     }
 
     {

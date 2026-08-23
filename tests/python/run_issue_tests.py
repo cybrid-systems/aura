@@ -298,8 +298,8 @@ PRE_EXISTING_FAILURES: set[str] = {
     # (mailbox / hygiene / aot stamp / ir-closure / engine-metrics).
     # 3108 source-cite + rollback counter leftover stay visible with ⚠.
     # test_issue_3095 greened: hygiene-checkpoint-stats hash cap 16→64.
-    "test_issue_3096",
-    "test_issue_3097",
+    # test_issue_3096 greened: C++ HotUpdateRegistry observe (light-link
+    # weak C ABI stub no longer shadows) + apply_production_audit_defaults.
     "test_aot_jit_stamp_batch",
     "test_engine_metrics_facade",
     "test_fiber_orch_core_batch",
@@ -593,6 +593,10 @@ def _eff_timeout(bin_name: str, timeout: int) -> int:
         # 24-member mailbox/fiber/join-drain batch; 60s default dies mid-batch
         # (rc=124) before test_join_drain_reclaim even starts.
         "test_mailbox_fiber_batch",
+        "test_pmr_alloc_fiber_safe",
+        "test_string_heap_corruption_guard",
+        "test_mutation_aot_unit_batch",
+        "test_hygiene_mutate_closed_loop",
     )
     is_heavy = (
         "bench" in bin_name
@@ -646,6 +650,17 @@ def _run_one_attempt(bin_name: str, timeout: int) -> tuple[str, int, int, int, s
     }
     if not str(env.get("AURA_SANDBOX", "")).strip():
         env["AURA_SANDBOX"] = "off"
+    # Issue tests are Soft/dev (AURA_SANDBOX=off). build.py production
+    # presets / inherited CI env may set AURA_IR_DIRTY_BATCH_ONLY=1 which
+    # std::abort()s on residual mark_block_dirty (occurrence_coercion,
+    # aot_jit_stamp, ir_closure, misc_issue_fold). Members that need the
+    # hard abort setenv 1 themselves.
+    env["AURA_IR_DIRTY_BATCH_ONLY"] = "0"
+    # Hard lock-order canary (mode 3) aborts on Mutate-while-Workspace
+    # which several issue members do intentionally. Keep it off unless
+    # the binary is the lock-order batch itself.
+    if bin_name != "test_lock_order_audit_batch":
+        env.pop("AURA_LOCK_ORDER_CANARY", None)
     try:
         r = subprocess.run(
             [str(bin_path)],

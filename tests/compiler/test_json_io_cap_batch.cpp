@@ -4,9 +4,17 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
+
 #include <print>
 
 import std;
+
+static void reset_member_face() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
 
 extern int run_test_channel_rendezvous();
 extern int run_test_command_line_cap_io_read();
@@ -28,6 +36,7 @@ int main() {
     std::println("=== test_json_io_cap_batch (11 members) ===");
 
     std::println("\n──── test_channel_rendezvous ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_channel_rendezvous() != 0 || g_failed != 0) {
@@ -39,6 +48,7 @@ int main() {
     }
 
     std::println("\n──── test_command_line_cap_io_read ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_command_line_cap_io_read() != 0 || g_failed != 0) {
@@ -50,6 +60,7 @@ int main() {
     }
 
     std::println("\n──── test_eval_current_no_auto_fix ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_eval_current_no_auto_fix() != 0 || g_failed != 0) {
@@ -61,6 +72,7 @@ int main() {
     }
 
     std::println("\n──── test_json_parse_number_exception ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_json_parse_number_exception() != 0 || g_failed != 0) {
@@ -72,6 +84,7 @@ int main() {
     }
 
     std::println("\n──── test_json_parse_object_grow ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_json_parse_object_grow() != 0 || g_failed != 0) {

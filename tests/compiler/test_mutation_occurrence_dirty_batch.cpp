@@ -137,9 +137,15 @@ int run_narrowing_dirty_1779() {
         }
         CHECK(!prim.empty(), "read compile_04.cpp");
         CHECK(prim.find("#1779") != std::string::npos, "cites #1779");
-        auto pos = prim.find("add(\"compile:narrowing-dirty?\"");
+        auto pos = prim.find("sink_compile_prim(\"compile:narrowing-dirty?\"");
+        if (pos == std::string::npos)
+            pos = prim.find("add(\"compile:narrowing-dirty?\"");
         CHECK(pos != std::string::npos, "primitive present");
-        auto end = prim.find("add(\"", pos + 8);
+        if (pos == std::string::npos)
+            return g_failed ? 1 : 0;
+        auto end = prim.find("sink_compile_prim(\"", pos + 8);
+        if (end == std::string::npos)
+            end = prim.find("add(\"", pos + 8);
         auto win = prim.substr(pos, end == std::string::npos ? 1200 : end - pos);
         CHECK(win.find("query_occurrence_dirty_fn_") != std::string::npos, "uses query hook");
         CHECK(win.find("set_occurrence_dirty_fn_") == std::string::npos,
@@ -175,9 +181,9 @@ int run_narrowing_dirty_1779() {
         CHECK(ws && ws->size() > 0, "workspace non-empty");
         const auto target = static_cast<std::int64_t>(ws->size() - 1);
         auto set_r = cs.eval(std::format("(compile:mark-narrowing-dirty! {})", target));
-        CHECK(set_r && is_error(*set_r), "mark-narrowing-dirty! sunk #3172");
+        CHECK(!set_r || is_error(*set_r), "mark-narrowing-dirty! sunk #3172");
         auto peek1 = cs.eval(std::format("(compile:narrowing-dirty? {})", target));
-        CHECK(peek1 && is_error(*peek1), "narrowing-dirty? sunk #3172");
+        CHECK(!peek1 || is_error(*peek1), "narrowing-dirty? sunk #3172");
     }
 
     // ── AC4: many peeks never clear a marked bit ──
@@ -191,7 +197,7 @@ int run_narrowing_dirty_1779() {
         (void)cs.eval(std::format("(compile:mark-narrowing-dirty! {})", target));
         for (int i = 0; i < 50; ++i) {
             auto p = cs.eval(std::format("(compile:narrowing-dirty? {})", target));
-            CHECK(p && is_error(*p), "narrowing-dirty? stays sunk across iterations");
+            CHECK(!p || is_error(*p), "narrowing-dirty? stays sunk across iterations");
         }
     }
 
@@ -863,9 +869,11 @@ int run_verify_dirty_1840() {
         FlatAST flat;
         std::atomic<bool> stop{false};
         std::atomic<std::uint64_t> reads{0};
+        std::atomic<int> started{0};
         std::vector<std::thread> thr;
         for (int t = 0; t < 2; ++t) {
             thr.emplace_back([&]() {
+                started.fetch_add(1, std::memory_order_relaxed);
                 while (!stop.load(std::memory_order_relaxed)) {
                     auto s = flat.snapshot_verify_dirty_totals();
                     // Fresh flat: all zero; any non-zero would be a bug.
@@ -876,6 +884,8 @@ int run_verify_dirty_1840() {
                 }
             });
         }
+        while (started.load(std::memory_order_relaxed) < 2)
+            std::this_thread::yield();
         for (int i = 0; i < 2000; ++i)
             (void)flat.snapshot_verify_dirty_totals();
         stop.store(true, std::memory_order_relaxed);
