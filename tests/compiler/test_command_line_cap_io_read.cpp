@@ -10,7 +10,9 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 
 #include <cstdint>
@@ -47,8 +49,24 @@ static void grant_io_cap(CompilerService& cs, const char* cap) {
 }
 
 // #3174: command-line is a std/process host prim, not core boot.
+// ensure_std_host_prims("std/process") requires kEffectExec when any
+// sandbox is already armed (CompilerService ctor may start Restricted).
+// Drop the effect sandbox for the install, then each AC re-arms.
 static void install_process_prims(CompilerService& cs) {
-    (void)cs.evaluator().ensure_std_host_prims("std/process");
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    (void)ev.ensure_std_host_prims("std/process");
+}
+
+// Deferred host prims are not in the typecheck env / IR prim table, so
+// cs.eval("(command-line)") can return UnboundVariable Diagnostic even
+// when the prim is registered. Invoke the deny_io body directly.
+static aura::compiler::EvalResult invoke_command_line(CompilerService& cs) {
+    auto& ev = cs.evaluator();
+    auto p = ev.primitives().lookup("command-line");
+    if (p)
+        return aura::compiler::EvalResult((*p)({}));
+    return cs.eval("(command-line)");
 }
 
 static std::string read_file(const char* path) {
@@ -63,8 +81,14 @@ static std::string read_file(const char* path) {
 }
 
 // ── AC1: deny without io-read under sandbox ──
+static void reset_eval_face() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 static void ac1_denied_without_cap() {
     std::println("\n--- #2478 AC1: sandbox without io-read → denied ---");
+    reset_eval_face();
     CompilerService cs;
     auto& ev = cs.evaluator();
     install_process_prims(cs);
@@ -73,7 +97,7 @@ static void ac1_denied_without_cap() {
     CHECK(ev.sandbox_mode(), "AC1: sandbox active");
     // No io-read / io / wildcard grants.
     const auto den0 = ev.capability_denial_count();
-    auto r = cs.eval("(command-line)");
+    auto r = invoke_command_line(cs);
     CHECK(r.has_value(), "AC1: eval returns a value");
     CHECK(r && is_error(*r), "AC1: capability denied error");
     CHECK(ev.capability_denial_count() > den0, "AC1: denial counter bumped");
@@ -82,13 +106,14 @@ static void ac1_denied_without_cap() {
 // ── AC2: allow with io-read ──
 static void ac2_allowed_with_io_read() {
     std::println("\n--- #2478 AC2: sandbox + io-read → allowed ---");
+    reset_eval_face();
     CompilerService cs;
     auto& ev = cs.evaluator();
     install_process_prims(cs);
     ev.set_effect_sandbox_mode(2);
     grant_io_cap(cs, kCapIoRead);
     const auto den0 = ev.capability_denial_count();
-    auto r = cs.eval("(command-line)");
+    auto r = invoke_command_line(cs);
     CHECK(r.has_value(), "AC2: eval returns a value");
     CHECK(r && !is_error(*r), "AC2: not capability-denied error");
     // Result is void (empty cmdline after argv0) or pair list.
@@ -99,36 +124,39 @@ static void ac2_allowed_with_io_read() {
 // ── AC2b: kCapIo parent also allows ──
 static void ac2b_allowed_with_io() {
     std::println("\n--- #2478 AC2b: sandbox + kCapIo → allowed ---");
+    reset_eval_face();
     CompilerService cs;
     auto& ev = cs.evaluator();
     install_process_prims(cs);
     ev.set_effect_sandbox_mode(2);
     grant_io_cap(cs, kCapIo);
-    auto r = cs.eval("(command-line)");
+    auto r = invoke_command_line(cs);
     CHECK(r.has_value() && !is_error(*r), "AC2b: kCapIo allows");
 }
 
 // ── AC2c: wildcard allows ──
 static void ac2c_allowed_with_wildcard() {
     std::println("\n--- #2478 AC2c: sandbox + wildcard → allowed ---");
+    reset_eval_face();
     CompilerService cs;
     auto& ev = cs.evaluator();
     install_process_prims(cs);
     ev.set_effect_sandbox_mode(2);
     grant_io_cap(cs, kCapWildcard);
-    auto r = cs.eval("(command-line)");
+    auto r = invoke_command_line(cs);
     CHECK(r.has_value() && !is_error(*r), "AC2c: wildcard allows");
 }
 
 // ── AC3: sandbox off → allowed without grant ──
 static void ac3_sandbox_off() {
     std::println("\n--- #2478 AC3: sandbox off → allowed ---");
+    reset_eval_face();
     CompilerService cs;
     auto& ev = cs.evaluator();
     install_process_prims(cs);
     ev.set_effect_sandbox_mode(0); // Off → sandbox_mode_ false
     CHECK(!ev.sandbox_mode(), "AC3: sandbox off");
-    auto r = cs.eval("(command-line)");
+    auto r = invoke_command_line(cs);
     CHECK(r.has_value() && !is_error(*r), "AC3: allowed when sandbox off");
 }
 

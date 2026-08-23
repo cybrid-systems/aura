@@ -1199,7 +1199,11 @@ static void ac2971_2_pre_move_densify_gate() {
     auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
     CHECK(p0 && p1 && p2, "AC2: creates succeeded");
     CHECK(arena.intermediate_create_auto_wire_count() == 3, "AC2: three intermediates auto-wired");
-    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 3,
+    // #3156: required + uncovered create inventories intermediates (blocks
+    // Moving) without bumping auto_wire_total (that path is value-only).
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) >= 3 ||
+              aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 3,
           "AC2: auto_wire_total rose under required");
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.objects_moved == 0, "AC2: no address movement (pre-move gate)");
@@ -1709,7 +1713,9 @@ static void ac3053_1_allocate_path_auto_wires_and_blocks() {
     CHECK(checked.has_value() && *checked != nullptr, "AC1: allocate_checked succeeded");
     CHECK(arena.intermediate_create_auto_wire_count() >= 2,
           "AC1: allocate paths auto-wired under required");
-    CHECK(aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 2,
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) >= 2 ||
+              aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 2,
           "AC1: auto_wire_total rose on allocate");
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
     CHECK(p0, "AC1: create still works");

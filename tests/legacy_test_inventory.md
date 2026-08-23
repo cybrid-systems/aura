@@ -1338,7 +1338,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_mutation_typed_audit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_typed_audit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutator_dispatch_stats_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1849 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_occurrence_abort_restore.cpp` (—) [domain_suite, theme_compiler] — write (zero-cost contract preserved).
-- `tests/compiler/test_occurrence_coercion_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_occurrence_coercion_batch.cpp — thematic multi-TU batch
+- `tests/compiler/test_occurrence_coercion_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_occurrence_coercion_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_occurrence_dirty_blame_post_mutate.cpp` (—) [domain_suite, theme_compiler] — test_occurrence_dirty_blame_post_mutate.cpp — restored standalone (AC drift under batch co-link)
 - `tests/compiler/test_occurrence_dirty_key_authority.cpp` (—) [domain_suite, theme_compiler] — AC1: cond shape path + cache key miss wiring present
 - `tests/compiler/test_occurrence_goal_vacuous_solve_prevent.cpp` (—) [domain_suite, theme_compiler] — AC1: Seed live goal; mark_clean (dirty=0) → solve_delta_occurrence

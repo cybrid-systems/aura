@@ -32,6 +32,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <print>
@@ -117,10 +118,12 @@ static void ac4_existing_counters_preserved(CompilerService& cs) {
 int run_test_issue_3097() {
     CompilerService cs;
     std::print("[test_issue_3097] running 4 ACs\n");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
 
     ac1_helper_counts_pending_edges(cs);
     ac4_existing_counters_preserved(cs);
 
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     std::print("[test_issue_3097] passed={} failed={}\n", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

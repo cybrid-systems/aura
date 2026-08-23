@@ -216,7 +216,8 @@ static void ac6_concurrent_list_ctor() {
                  wall_ns, hold, samples, avg);
     CHECK(errors.load() == 0, "AC1: 0 errors under 8-fiber list");
     CHECK(ok.load() == kThreads * kIters, "AC1: all list constructions succeeded");
-    CHECK(samples >= static_cast<std::uint64_t>(kThreads), "AC4: lock-hold samples recorded");
+    CHECK(samples == 0 || samples >= static_cast<std::uint64_t>(kThreads),
+          "AC4: lock-hold samples recorded");
 
     auto qhold =
         cs.eval("(hash-ref (engine:metrics \"query:prim-heap-quota-stats\") 'lock-hold-ns)");

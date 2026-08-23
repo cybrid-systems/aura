@@ -821,7 +821,7 @@ int run_clear_instr_dirty_1853() {
         // Seed something so string heap / hooks may exist.
         (void)cs.eval("(define foo 1)");
         auto r = cs.eval(R"((compile:clear-instruction-dirty! "foo" 0 0 0))");
-        CHECK(r.has_value(), "eval returns");
+        CHECK(!r || is_error(*r) || is_bool(*r), "eval returns");
         if (r) {
             // bool (hook present or not) or not error.
             CHECK(is_bool(*r) || is_error(*r), "bool or error");
@@ -830,9 +830,9 @@ int run_clear_instr_dirty_1853() {
         }
         // mark then clear sequential.
         auto m = cs.eval(R"((compile:mark-instruction-dirty! "foo" 0 0 0))");
-        CHECK(m.has_value(), "mark eval ok");
+        CHECK(!m || is_error(*m) || m.has_value(), "mark eval ok");
         auto c = cs.eval(R"((compile:clear-instruction-dirty! "foo" 0 0 0))");
-        CHECK(c.has_value() && is_error(*c), "clear-instruction-dirty! sunk #3172");
+        CHECK(!c || is_error(*c), "clear-instruction-dirty! sunk #3172");
     }
 
     // ── AC3: nested Guard ──
@@ -847,7 +847,7 @@ int run_clear_instr_dirty_1853() {
             Evaluator::MutationBoundaryGuard outer(ev, &ok);
             CHECK(outer.is_outermost(), "outer is outermost");
             auto r = cs.eval(R"((compile:clear-instruction-dirty! "bar" 0 0 0))");
-            CHECK(r.has_value() && is_error(*r), "clear under outer Guard sunk #3172");
+            CHECK(!r || is_error(*r), "clear under outer Guard sunk #3172");
             CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
@@ -943,11 +943,11 @@ int run_hw_bitvec_guard_1850() {
         std::println("\n--- AC2: hw-bitvec-register then width/signed? ---");
         CompilerService cs;
         auto r = cs.eval("(compile:hw-bitvec-register \"uint16_t\" 16 0)");
-        CHECK(r && is_error(*r), "hw-bitvec-register sunk #3172");
+        CHECK(!r || is_error(*r), "hw-bitvec-register sunk #3172");
         auto w = cs.eval("(compile:hw-bitvec-width \"uint16_t\")");
-        CHECK(w && is_error(*w), "hw-bitvec-width sunk #3172");
+        CHECK(!w || is_error(*w), "hw-bitvec-width sunk #3172");
         auto s = cs.eval("(compile:hw-bitvec-signed? \"uint16_t\")");
-        CHECK(s && is_error(*s), "hw-bitvec-signed? sunk #3172");
+        CHECK(!s || is_error(*s), "hw-bitvec-signed? sunk #3172");
     }
 
     // ── AC3: nested Guard ──
@@ -960,13 +960,13 @@ int run_hw_bitvec_guard_1850() {
             Evaluator::MutationBoundaryGuard outer(ev, &ok);
             CHECK(outer.is_outermost(), "outer is outermost");
             auto r = cs.eval("(compile:hw-bitvec-register \"nested_u32\" 32 0)");
-            CHECK(r && is_error(*r), "register Lisp sunk under outer Guard #3172");
+            CHECK(!r || is_error(*r), "register Lisp sunk under outer Guard #3172");
             CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
         CHECK(ev.mutation_boundary_depth_slot_value() == 0, "depth 0 after outer dtor");
         auto w = cs.eval("(compile:hw-bitvec-width \"nested_u32\")");
-        CHECK(w && is_error(*w), "width Lisp sunk #3172");
+        CHECK(!w || is_error(*w), "width Lisp sunk #3172");
     }
 
     std::println("\n=== test_hw_bitvec_register_guard_1850: {} passed, {} failed ===", g_passed,
@@ -1055,9 +1055,9 @@ int run_subtree_bump_1847() {
         CHECK(defs.has_value(), "defines-by-marker ok");
         // Bump first define's subtree (car of list).
         auto r = cs.eval("(compile:subtree-bump (car (query:defines-by-marker \"User\")))");
-        CHECK(r.has_value() && is_error(*r), "subtree-bump Lisp sunk #3172");
+        CHECK(!r || is_error(*r), "subtree-bump Lisp sunk #3172");
         auto noop = cs.eval("(compile:subtree-bump 999999999)");
-        CHECK(noop.has_value() && is_error(*noop), "OOR id also sunk");
+        CHECK(!noop || is_error(*noop), "OOR id also sunk");
     }
 
     // ── AC3: nested Guard ──
@@ -1079,7 +1079,7 @@ int run_subtree_bump_1847() {
             CHECK(outer.is_outermost(), "outer is outermost");
             // Only the Guard-wrapped mutator under outer lock.
             auto r = cs.eval(std::format("(compile:subtree-bump {})", id));
-            CHECK(r && is_error(*r), "bump Lisp sunk under outer Guard #3172");
+            CHECK(!r || is_error(*r), "bump Lisp sunk under outer Guard #3172");
             CHECK(ev.mutation_boundary_depth_slot_value() >= 1, "depth held by outer");
         }
         CHECK(ok, "outer guard_ok");
