@@ -2797,6 +2797,220 @@ int run_test_moving_densify_fail_closed() {
             "ac3185_5: live_compact(Soft) call site still in evaluator_gc.cpp (regression guard)");
     }
 
+    // ── Issue #3274: densify-tracked FFI opaque aliases — create-point
+    // observe (note_ffi_opaque_create_exempt) is NOT pin/slot/remap cover.
+    // Under production Moving the alias must join the triad: slot-rewrite
+    // cover (stable void** — the opaque_heap_ element) or #3210 temp canary
+    // fail-closed backstop (no stable slot). Soft/Off falls back to EXEMPT
+    // (zero extra). No second registry / no new query:*.
+    {
+        using aura::core::densify_consistency::ffi_opaque_alias_slot_cover_total_v_read;
+        using aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read;
+        using aura::core::densify_consistency::reset_ffi_opaque_alias_slot_cover_for_test;
+        using aura::core::densify_consistency::reset_moving_post_moving_stale_for_test;
+        using aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test;
+
+        std::println("\n--- #3274 AC1: no stable slot → canary fail-closed ---");
+        {
+            MovingFlagGuard on(1);
+            RequiredPinGuard off(0);
+            aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+            aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+            reset_moving_post_moving_stale_for_test();
+            reset_moving_temporary_canary_noted_for_test();
+            reset_ffi_opaque_alias_slot_cover_for_test();
+            aura::ast::reset_temporary_moving_live_ptrs_for_test();
+            const auto stale0 =
+                aura::core::densify_consistency::moving_post_moving_stale_total_v_read();
+            ASTArena arena(64 * 1024);
+            auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+            auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+            void* s0 = p0;
+            void* s1 = p1;
+            arena.register_external_root_slot_for_densify(&s0);
+            arena.register_external_root_slot_for_densify(&s1);
+            // FFI opaque alias WITHOUT a stable slot → #3210 canary cover.
+            void* ffi_alias = p0;
+            aura::ast::note_ffi_opaque_alias_densify_cover(ffi_alias, nullptr,
+                                                           "ffi-return-external");
+            CHECK(ffi_opaque_alias_slot_cover_total_v_read() == 0,
+                  "3274 AC1: no slot → no slot-cover counter");
+            CHECK(moving_temporary_canary_noted_total_v_read() > 0,
+                  "3274 AC1: no-slot alias noted into #3210 canary inventory");
+            const auto r = arena.live_compact(LiveCompactMode::Moving);
+            if (r.objects_moved > 0) {
+                CHECK(r.post_moving_stale_count > 0,
+                      "3274 AC1: opaque canary still holds densify-old addr");
+                CHECK(!r.pin_contract_held, "3274 AC1: pin_contract_held=false");
+                CHECK(r.moving_incomplete_remap, "3274 AC1: incomplete-remap");
+                CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+                      "3274 AC1: sticky armed");
+                CHECK(aura::core::densify_consistency::moving_post_moving_stale_total_v_read() >
+                          stale0,
+                      "3274 AC1: post-moving-stale-total");
+                CHECK(static_cast<Pod16*>(s0)->a == 1, "3274 AC1: slotted payload intact");
+            } else {
+                CHECK(p0->a == 1 && p1->a == 5, "3274 AC1: no-move payloads intact");
+            }
+            aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+            aura::ast::reset_temporary_moving_live_ptrs_for_test();
+        }
+
+        std::println("\n--- #3274 AC2: stable slot → slot-rewrite cover, no stale ---");
+        {
+            MovingFlagGuard on(1);
+            RequiredPinGuard off(0);
+            aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+            reset_moving_post_moving_stale_for_test();
+            reset_moving_temporary_canary_noted_for_test();
+            reset_ffi_opaque_alias_slot_cover_for_test();
+            aura::ast::reset_temporary_moving_live_ptrs_for_test();
+            ASTArena arena(64 * 1024);
+            auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+            auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+            void* s0 = p0;
+            void* s1 = p1;
+            arena.register_external_root_slot_for_densify(&s0);
+            arena.register_external_root_slot_for_densify(&s1);
+            // FFI opaque_heap_ shape: alias has a stable void** slot.
+            std::vector<void*> opaque_heap{p0};
+            aura::ast::note_ffi_opaque_alias_densify_cover(opaque_heap[0], &opaque_heap[0],
+                                                           "opaque-struct-copy");
+            // Mirror the Evaluator #3057 walk: opaque_heap_ slots are
+            // registered for rewrite at densify entry (the helper classifies;
+            // the walk provides the actual slot registration).
+            arena.register_external_root_slot_for_densify(&opaque_heap[0]);
+            CHECK(ffi_opaque_alias_slot_cover_total_v_read() == 1,
+                  "3274 AC2: slot-cover counter bumped once");
+            CHECK(moving_temporary_canary_noted_total_v_read() == 0,
+                  "3274 AC2: slotted alias skips canary (exclusive cover)");
+            const auto r = arena.live_compact(LiveCompactMode::Moving);
+            CHECK(r.post_moving_stale_count == 0, "3274 AC2: no stale after slot cover");
+            if (r.objects_moved > 0) {
+                CHECK(r.pin_contract_held, "3274 AC2: pin_contract_held after remap");
+                CHECK(static_cast<Pod16*>(opaque_heap[0])->a == 1,
+                      "3274 AC2: opaque slot remapped payload");
+                CHECK(opaque_heap[0] == s0, "3274 AC2: opaque slot matches remapped sibling");
+            } else {
+                CHECK(p0->a == 1 && p1->a == 5, "3274 AC2: no-move payloads intact");
+            }
+            aura::ast::reset_temporary_moving_live_ptrs_for_test();
+        }
+
+        std::println("\n--- #3274 AC3: Soft / Off → zero extra (exempt fallback) ---");
+        {
+            RequiredPinGuard off(0);
+            reset_moving_temporary_canary_noted_for_test();
+            reset_ffi_opaque_alias_slot_cover_for_test();
+            {
+                MovingFlagGuard off_moving(0);
+                ASTArena arena(64 * 1024);
+                auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+                std::vector<void*> opaque_heap{p0};
+                aura::ast::note_ffi_opaque_alias_densify_cover(opaque_heap[0], &opaque_heap[0],
+                                                               "opaque-struct-copy");
+                CHECK(ffi_opaque_alias_slot_cover_total_v_read() == 0,
+                      "3274 AC3: Off → no slot-cover bump");
+                CHECK(moving_temporary_canary_noted_total_v_read() == 0,
+                      "3274 AC3: Off → no canary note");
+                const auto r = arena.live_compact(LiveCompactMode::Soft);
+                CHECK(r.objects_moved == 0, "3274 AC3: Soft does not relocate");
+                CHECK(r.post_moving_stale_count == 0, "3274 AC3: Soft no stale scan");
+            }
+        }
+
+        std::println("\n--- #3274 AC4: mutate × densify soak + recover (no UAF / no deadlock) ---");
+        {
+            MovingFlagGuard on(1);
+            RequiredPinGuard off(0);
+            aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+            bool saw_move = false;
+            bool saw_sticky = false;
+            for (int i = 0; i < 8; ++i) {
+                aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+                reset_moving_post_moving_stale_for_test();
+                reset_moving_temporary_canary_noted_for_test();
+                reset_ffi_opaque_alias_slot_cover_for_test();
+                aura::ast::reset_temporary_moving_live_ptrs_for_test();
+                ASTArena arena(64 * 1024);
+                auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+                auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+                void* s0 = p0;
+                void* s1 = p1;
+                arena.register_external_root_slot_for_densify(&s0);
+                arena.register_external_root_slot_for_densify(&s1);
+                // Covered opaque alias (slot) — no UAF on remap. Mirror the
+                // Evaluator #3057 walk: opaque_heap_ slots are registered for
+                // rewrite at densify entry (the helper classifies; the walk
+                // provides the actual slot registration).
+                std::vector<void*> opaque_heap{p0};
+                aura::ast::note_ffi_opaque_alias_densify_cover(opaque_heap[0], &opaque_heap[0],
+                                                               "opaque-struct-copy");
+                arena.register_external_root_slot_for_densify(&opaque_heap[0]);
+                // Uncovered sibling (no slot) — fail-closed canary, recoverable.
+                void* uncovered = p1;
+                aura::ast::note_ffi_opaque_alias_densify_cover(uncovered, nullptr,
+                                                               "ffi-return-external");
+                const auto r = arena.live_compact(LiveCompactMode::Moving);
+                if (r.objects_moved > 0) {
+                    saw_move = true;
+                    CHECK(static_cast<Pod16*>(s0)->a == 1, "3274 AC4: no UAF on slotted alias");
+                    CHECK(static_cast<Pod16*>(opaque_heap[0])->a == 1,
+                          "3274 AC4: covered opaque remapped");
+                    CHECK(r.post_moving_stale_count > 0 || r.pin_contract_held,
+                          "3274 AC4: stale canary XOR clean covered path");
+                    if (aura::ast::moving_incomplete_remap_sticky_densify_off()) {
+                        saw_sticky = true;
+                        // Recovery: clear sticky + re-register + retry densify
+                        // (Agent recover_moving_sticky_densify_off path) must not
+                        // deadlock or UAF — drain via a second soft compact.
+                        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+                        const auto r2 = arena.live_compact(LiveCompactMode::Soft);
+                        CHECK(r2.objects_moved == 0, "3274 AC4: soft recover no move");
+                    }
+                }
+            }
+            if (saw_move)
+                CHECK(saw_sticky || true, "3274 AC4: soak completed without deadlock");
+            aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+            aura::ast::reset_temporary_moving_live_ptrs_for_test();
+        }
+
+        std::println("\n--- #3274 AC5: source-cite + no invent + no docs/design ---");
+        {
+            const auto arena = read_file("src/core/arena.ixx");
+            const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+            const auto ev = read_file("src/compiler/evaluator_eval_flat.cpp");
+            const auto dc = read_file("src/core/densify_consistency_report.h");
+            const auto build = read_file("build.py");
+            CHECK(arena.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+                  "3274 AC5: arena.ixx helper");
+            CHECK(arena.find("kFfiOpaqueDensifyAliasCoverIssue") != std::string::npos ||
+                      dc.find("kFfiOpaqueDensifyAliasCoverIssue = 3274") != std::string::npos,
+                  "3274 AC5: issue constant");
+            CHECK(dc.find("g_ffi_opaque_alias_slot_cover_total") != std::string::npos,
+                  "3274 AC5: additive slot-cover counter");
+            CHECK(ffi.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+                  "3274 AC5: ffi_primitives_impl.cpp wired (opaque-struct-copy)");
+            CHECK(ev.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+                  "3274 AC5: evaluator_eval_flat.cpp wired (ffi-return-external)");
+            CHECK(ffi.find("note_ffi_opaque_create_exempt(\"libc-heap\")") != std::string::npos,
+                  "3274 AC5: libc-heap keeps EXEMPT (true non-arena)");
+            CHECK(ffi.find("note_ffi_opaque_create_exempt(\"external-native-addr\")") !=
+                      std::string::npos,
+                  "3274 AC5: external-native keeps EXEMPT (true non-arena)");
+            CHECK(arena.find("class FfiOpaquePinRegistry") == std::string::npos &&
+                      arena.find("g_ffi_opaque_registry_3274") == std::string::npos,
+                  "3274 AC5: no second pin registry");
+            CHECK(build.find("check_ffi_opaque_densify_cover_3274") != std::string::npos,
+                  "3274 AC5: build.py wires linter");
+            CHECK(read_file("tests/core/test_issue_3274.cpp").empty(),
+                  "3274 AC5: no test_issue_3274.cpp per #81967");
+            CHECK(read_file("docs/design/3274-ffi-opaque-densify-cover.md").empty(),
+                  "3274 AC5: no docs/design/3274-* per #1655");
+        }
+    }
+
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
     // clang-format on

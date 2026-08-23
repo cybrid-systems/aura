@@ -787,6 +787,41 @@ export struct TemporaryMovingLivePtrCanary {
     TemporaryMovingLivePtrCanary& operator=(TemporaryMovingLivePtrCanary&&) = delete;
 };
 
+// Issue #3274: densify-tracked FFI opaque / native alias create must join
+// the pin / slot / EXEMPT triad — create-point observe
+// (note_ffi_opaque_create_exempt) is NOT remap cover. Under production
+// Moving, the alias either gets slot-rewrite cover (caller has a stable
+// void** — the opaque_heap_ element) or, when no stable slot exists, is
+// noted into the process-wide temporary canary inventory (#3210) so ANY
+// Moving densify (boundary walk OR arena auto-arm at live_compact(Moving))
+// drains it and fail-closes if the object moved (stale canary →
+// incomplete_remap / sticky / pin_contract_held=false) before any consumer
+// can observe the old address. Slot and canary are EXCLUSIVE for the same
+// pointer — a canary on a slotted pointer would false-positive the
+// post-Moving stale gate after a successful rewrite (canary holds the old
+// address, which is a last_object_remap_ key). Soft / Off / unset: falls
+// back to note_ffi_opaque_create_exempt(reason) — zero extra pin cost
+// (AC3). No extra pin registry; no new query:* (AC4).
+export inline void note_ffi_opaque_alias_densify_cover(void* p, void** slot,
+                                                       const char* reason) noexcept {
+    if (!p)
+        return;
+    if (!moving_compact_enabled()) {
+        aura::core::lifetime::note_ffi_opaque_create_exempt(reason);
+        return;
+    }
+    if (slot != nullptr && *slot != nullptr) {
+        // Slot-rewrite cover: next Moving densify rewrites *slot via
+        // last_object_remap_ when *slot is a key. No canary — the slot IS
+        // the cover (canary on the same pointer would false-positive stale).
+        aura::core::densify_consistency::g_ffi_opaque_alias_slot_cover_total.fetch_add(
+            1, std::memory_order_relaxed);
+        return;
+    }
+    // No stable void** — fail-closed canary backstop (#3210 inventory).
+    note_temporary_moving_live_ptr(p);
+}
+
 // Issue #2256: Adaptive-on-threshold policy. When fragmentation
 // ratio crosses kAutoMovingCompactThreshold and no compact has
 // run in the last kAdaptiveCompactCooldownMs, Moving compact is

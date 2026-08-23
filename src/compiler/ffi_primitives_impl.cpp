@@ -17,6 +17,7 @@ module aura.compiler.ffi_primitives;
 
 import std;
 import aura.compiler.value;
+import aura.core.arena; // Issue #3274: note_ffi_opaque_alias_densify_cover (slot+canary triad)
 import aura.core.lifetime_pin; // Issue #2005: (ffi:pin-buffer)
 
 // (Issue #131 / #1354 / #1560).
@@ -308,8 +309,14 @@ void FFIRuntime::register_primitives(RegisterFn add, std::pmr::vector<std::strin
             std::memcpy(&ptr, base + offset, sizeof(ptr));
             auto ni = oh->size();
             oh->push_back(ptr);
-            // Issue #3022 / #3057: GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
-            aura::core::lifetime::note_ffi_opaque_create_exempt("opaque-struct-copy");
+            // Issue #3022 / #3057 / #3274: opaque-struct-copy may alias an
+            // arena-tracked object (densify-tracked). Under production Moving
+            // the alias joins the pin/slot/EXEMPT triad via slot-rewrite cover
+            // (the opaque_heap_ element is a stable void**) + #3210 canary
+            // fail-closed backstop; Soft/Off falls back to EXEMPT (zero extra).
+            // GENERAL_OBJECT_PIN_EXEMPT: opaque-struct-copy
+            aura::ast::note_ffi_opaque_alias_densify_cover(
+                ptr, ni < oh->size() ? &(*oh)[ni] : nullptr, "opaque-struct-copy");
             return types::make_opaque(ni);
         }
         return make_int(0);
