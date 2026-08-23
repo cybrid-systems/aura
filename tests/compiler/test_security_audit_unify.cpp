@@ -32,7 +32,9 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <fstream>
 #include <print>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -161,6 +163,24 @@ void reset_process() {
     reset_for_test();
     reset_security_event_ring_for_test();
     set_mode(SandboxMode::Off);
+}
+
+// Local file-read helper (test_2098 pattern): resolves against the repo
+// root from either the repo root or build/ cwd.
+static std::string read_file(const char* path) {
+    std::ifstream f(path);
+    if (f) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
+    }
+    std::ifstream f2((std::string("../") + path).c_str());
+    if (f2) {
+        std::stringstream ss;
+        ss << f2.rdbuf();
+        return ss.str();
+    }
+    return {};
 }
 
 } // namespace
@@ -913,6 +933,129 @@ int run_test_security_audit_unify() {
               "ac3242_3_mid0: no invented Success summary");
         cs.evaluator().disable_mutation_audit_wal();
         fs::remove_all(dir, ec);
+    }
+
+    // ── Issue #3280: invariant / boundary deny dual-writes SecurityEvent(InvariantFail) ──
+    // record_invariant_audit_result (fail) + record_boundary_deny_after_restore
+    // only stamped the Typed trail; SE-primary surfaces (query:security-audit /
+    // query:evolution-audit-decision) never saw type/linear/ADT force-rollbacks.
+    // Shared emit_invariant_deny_se helper adds the InvariantFail SE under
+    // production / Full only (Soft/Sampled zero-cost), one SE per deny (TLS
+    // mid-keyed guard), #3217 restore-before-stamp order preserved.
+    {
+        std::println("\n--- #3280 AC1: invariant fail → SE InvariantFail + trail join ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        aura::compiler::typed_audit::InvariantAuditResult r;
+        r.type_ok = false; // type invariant fail
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_invariant_audit_result(
+            9000, "structural", r, /*before=*/1, /*after=*/2, /*node=*/0, /*fiber=*/5,
+            /*tenant=*/7);
+        const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq1 > seq0, "3280 AC1: invariant fail advanced SE ring");
+        const auto& e = g_security_event_ring().ring[(seq1 - 1) % kSecurityEventRingSize];
+        CHECK(e.kind == SecurityEventKind::InvariantFail, "3280 AC1: kind InvariantFail");
+        CHECK(e.denied == true, "3280 AC1: denied=true");
+        CHECK(e.mutation_id == 9000, "3280 AC1: SE mid == trail mid");
+        CHECK(std::string_view(e.reason).find("invariant-denied: type tenant=7 op=structural") !=
+                  std::string_view::npos,
+              "3280 AC1: stable non-empty reason (invariant-denied: <kind> tenant=<id> op=<op>)");
+        TypedMutationAuditEvent te{};
+        CHECK(trail_find_by_mutation_id(9000, te), "3280 AC1: typed trail has same mid");
+        CHECK(te.outcome == AuditOutcome::Error, "3280 AC1: trail outcome Error (not Success)");
+    }
+    {
+        std::println("\n--- #3280 AC2: boundary deny dual-write + one-SE-per-deny ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(
+            9001, "linear-synth-hard-fail", /*before=*/1, /*after=*/2, /*node=*/0,
+            /*nodes_changed=*/0, /*fiber=*/5);
+        const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq1 > seq0, "3280 AC2: boundary deny advanced SE ring");
+        const auto& e = g_security_event_ring().ring[(seq1 - 1) % kSecurityEventRingSize];
+        CHECK(e.kind == SecurityEventKind::InvariantFail, "3280 AC2: kind InvariantFail");
+        CHECK(e.denied == true, "3280 AC2: denied=true");
+        CHECK(e.mutation_id == 9001, "3280 AC2: SE mid == trail mid");
+        // One SE per deny: second boundary deny for the same mid → no double emit.
+        const auto seq1b = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(9001,
+                                                                        "invariant-force-rollback",
+                                                                        /*before=*/1, /*after=*/2);
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq1b,
+              "3280 AC2: TLS one-per-deny suppresses second emit");
+        TypedMutationAuditEvent te{};
+        CHECK(trail_find_by_mutation_id(9001, te), "3280 AC2: trail has deny mid");
+        CHECK(te.outcome == AuditOutcome::Rollback,
+              "3280 AC2: trail outcome Rollback (not Success)");
+    }
+    {
+        std::println("\n--- #3280 AC3: Soft/Sampled zero-cost (no extra SE) ---");
+        reset_process();
+        aura::compiler::typed_audit::apply_dev_audit_defaults(); // Sampled, production off
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::InvariantAuditResult r;
+        r.linear_ok = false;
+        aura::compiler::typed_audit::record_invariant_audit_result(9002, "structural", r,
+                                                                   /*before=*/1, /*after=*/2, 0, 5,
+                                                                   7);
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq0,
+              "3280 AC3: Soft adds no extra SE (zero-cost)");
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(9003, "rollback", 1, 2);
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq0,
+              "3280 AC3: Soft boundary deny adds no extra SE");
+    }
+    {
+        std::println("\n--- #3280 AC4: mid=0 production refuse → no invented InvariantFail ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(0, "rollback",
+                                                                        /*before=*/1, /*after=*/2,
+                                                                        0, 0, 5);
+        const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        bool invented_mid0 = false;
+        for (auto s = seq1; s > seq0 && s > 0; --s) {
+            const auto& ee = g_security_event_ring().ring[(s - 1) % kSecurityEventRingSize];
+            if (ee.kind == SecurityEventKind::InvariantFail && ee.mutation_id == 0 &&
+                std::string_view(ee.reason).find("mid-fallback-refused") ==
+                    std::string_view::npos) {
+                invented_mid0 = true;
+            }
+        }
+        CHECK(!invented_mid0, "3280 AC4: no invented InvariantFail with mid=0 from boundary");
+    }
+    {
+        std::println("\n--- #3280 AC5: source-cite + linter + no invent ---");
+        const auto typed = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(typed.find("Issue #3280") != std::string::npos, "3280 AC5: typed audit cites #3280");
+        CHECK(typed.find("emit_invariant_deny_se") != std::string::npos,
+              "3280 AC5: shared helper present");
+        CHECK(typed.find("SecurityEventKind::InvariantFail") != std::string::npos,
+              "3280 AC5: InvariantFail SE emit");
+        CHECK(typed.find("format_invariant_deny_reason") != std::string::npos,
+              "3280 AC5: reuses deny-reason shape");
+        const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(boundary.find("record_boundary_deny_after_restore") != std::string::npos,
+              "3280 AC5: boundary deny sites present");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_invariant_deny_se_dual_write_3280.py");
+        CHECK(!lint.empty() && lint.find("Issue #3280") != std::string::npos,
+              "3280 AC5: linter present");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_invariant_deny_se_dual_write_3280.py") != std::string::npos,
+              "3280 AC5: build.py wires linter");
+        CHECK(!std::filesystem::exists("docs/design/3280-"), "3280 AC5: no docs/design per #1655");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_3280.cpp"),
+              "3280 AC5: no invent test per #81967");
+        CHECK(!std::filesystem::exists("tests/compiler/test_issue_3280.cpp"),
+              "3280 AC5: no invent test per #81967");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

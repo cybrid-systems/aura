@@ -3094,6 +3094,42 @@ inline void clear_boundary_audit_mid() noexcept {
     return resolve_audit_mutation_id(0);
 }
 
+// Issue #3280: dual-write SecurityEvent(InvariantFail) for invariant /
+// boundary denies that today only stamp the Typed trail. Production / Full
+// only (Soft/Off/Sampled zero-cost — no extra SE when strategy would skip
+// audit). Reuses format_invariant_deny_reason shape
+// ("invariant-denied: <kind> tenant=<id> op=<op>") + join_audit_and_se_mid
+// (#3066 composite/batch pin). One SE per deny: TLS mid-keyed guard so
+// record_invariant_audit_result + record_boundary_deny_after_restore never
+// double-emit for the same deny. #3217 order: call AFTER structural
+// restore + coercion/occurrence/proof clear (boundary deny sites already
+// satisfy this). mid=0 under production refuse → no invented SE (the
+// mid-fallback-refused SE from resolve_audit_mutation_id is the joinable
+// evidence, AC4).
+inline thread_local std::uint64_t g_tls_invariant_deny_se_mid = 0;
+
+inline void clear_invariant_deny_se_tls() noexcept {
+    g_tls_invariant_deny_se_mid = 0;
+}
+
+inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
+                                   std::int64_t fiber_id, std::uint64_t epoch, std::string_view op,
+                                   std::string_view deny_kind) noexcept {
+    if (mid == 0)
+        return; // production refuse path already emitted mid-fallback-refused (#3054)
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return; // Soft/Sampled zero-cost
+    if (g_tls_invariant_deny_se_mid == mid)
+        return; // one SE per deny (both helpers may run for the same deny)
+    g_tls_invariant_deny_se_mid = mid;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    emit_security_event_durable(SecurityEventKind::InvariantFail, tenant_id, mid, epoch,
+                                /*effect_bits=*/0, op,
+                                format_invariant_deny_reason(deny_kind, tenant_id, op),
+                                /*denied=*/true, fiber_id);
+}
+
 // Issue #3066: pin one join mid for the composite / lockless batch and
 // publish to TLS + last_stamped (queryable) before sub-mutates. Soft /
 // quiet (no caller, no epoch, not production/Full) → 0 extra, no alloc.
@@ -3430,6 +3466,10 @@ inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view 
 // structural restore and coercion/occurrence/proof clear first.
 // Soft: same trail write as record_boundary_outcome(success=false);
 // no extra I/O. Production mid=0 drops (SE mid-fallback-refused).
+// Issue #3280: dual-write SecurityEvent(InvariantFail) after the trail
+// stamp (restore-before-stamp order preserved) so SE-primary surfaces
+// (query:security-audit / query:evolution-audit-decision) see boundary
+// force-rollbacks. One SE per deny (TLS mid-keyed guard).
 inline void record_boundary_deny_after_restore(std::uint64_t mutation_id, std::string_view op,
                                                std::uint64_t before_epoch,
                                                std::uint64_t after_epoch,
@@ -3438,6 +3478,14 @@ inline void record_boundary_deny_after_restore(std::uint64_t mutation_id, std::s
                                                std::int64_t fiber_id = 0) noexcept {
     record_boundary_outcome(mutation_id, op, before_epoch, after_epoch, /*success=*/false,
                             target_node, nodes_changed, fiber_id);
+    // Issue #3280: SE dual-write for the boundary deny. mid resolved via
+    // join_audit_and_se_mid (composite/batch pin #3066); production/Full
+    // only; one SE per deny (TLS guard suppresses the second helper run).
+    const auto join_mid = join_audit_and_se_mid(mutation_id);
+    if (join_mid != 0) {
+        emit_invariant_deny_se(join_mid, /*tenant_id=*/0, fiber_id, after_epoch, op,
+                               /*deny_kind=*/"boundary");
+    }
 }
 
 // Issue #1614: record result of type + linear + provenance invariant suite.
@@ -3680,6 +3728,31 @@ inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string
         capture_audit_event(mutation_id, "invariant-fail", MutationKind::Other, before_epoch,
                             after_epoch, AuditOutcome::Error, target_node, r.notes_count, fiber_id,
                             r.notes_count);
+        // Issue #3280: dual-write SecurityEvent(InvariantFail) after the
+        // trail Error stamp so SE-primary surfaces (query:security-audit /
+        // query:evolution-audit-decision) see type/linear/ADT
+        // force-rollbacks — the most common self-evo reject class. mid
+        // resolved via join_audit_and_se_mid (#3066 composite/batch pin);
+        // production/Full only; one SE per deny (TLS mid-keyed guard
+        // suppresses the boundary-deny second emit). #3217 order: callers
+        // restore + clear before this function runs (SE after restore).
+        const auto join_mid = join_audit_and_se_mid(mutation_id);
+        if (join_mid != 0) {
+            std::string_view deny_kind = "invariant";
+            if (!r.type_ok)
+                deny_kind = "type";
+            else if (!r.linear_ok)
+                deny_kind = "linear";
+            else if (!r.provenance_ok)
+                deny_kind = "provenance";
+            else if (!r.adt_ok)
+                deny_kind = "adt";
+            else if (r.cross_batch_linear_escape)
+                deny_kind = "linear-cross-batch";
+            else if (r.cross_closure_linear_escape)
+                deny_kind = "linear-cross-closure";
+            emit_invariant_deny_se(join_mid, tenant_id, fiber_id, after_epoch, op, deny_kind);
+        }
     }
 }
 
