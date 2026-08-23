@@ -20,6 +20,8 @@
 #   - (2026-08) gate ‖ build-test (build-test no longer waits on gate)
 #   - (2026-08) PR bench --strict → main-only
 #   - (2026-08) PR AURA_ISSUE_BUILD=none when issue_matrix paths untouched
+#   - (2026-08) aura then test_ir+test_concurrent ninja; -g1 on build-test
+#   - (2026-08) shallow checkout on main push (full history only on PR)
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #
@@ -218,7 +220,9 @@ jobs:
     steps:
     - uses: actions/checkout@v7
       with:
-        fetch-depth: 0
+        # PR issue-fast needs AURA_GIT_BASE in history. Number-as-string:
+        # `&& 0 || 1` would coerce 0 to the fallback 1.
+        fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
 
     - uses: actions/cache@v6
       with:
@@ -260,6 +264,8 @@ jobs:
         # PR: link issue/domain-batch binaries only when src/tests/cmake/… changed;
         # pure scripts/lib/docs tooling PRs still build aura + core suites.
         AURA_ISSUE_BUILD: ${{ github.event_name == 'push' && 'all' || (needs.changes.outputs.issue_matrix == 'true' && 'all' || 'none') }}
+        # RelWithDebInfo -g → -g1: smaller .o / mold RSS. asan/ubsan keep full -g.
+        AURA_DEBUG_LEVEL: "1"
       run: python3 build.py ci
 
     # Issue #2554: PR chaos hard-fail runtime (steal Δ==0, residual==0).
@@ -340,12 +346,14 @@ jobs:
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
 
-    # Slim matrix: aura + test_ir only (no all_test_issue_targets).
+    # Slim matrix: aura + test_ir only (no all_test_issue_targets,
+    # no test_concurrent — asan-verify does not run that binary).
     # Full ASAN of 500+ issue binaries filled the runner disk
     # ("No space left on device") around link step ~1173/1196.
     - name: Build with ASAN
       env:
         AURA_ISSUE_BUILD: none
+        AURA_BUILD_TARGETS: aura,test_ir
         AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
                                # rebuild deadlock (ninja -j2 has been
                                # observed to hang on this stage).
@@ -470,10 +478,11 @@ jobs:
       run: pip install --break-system-packages -r requirements-dev.txt
 
     # Slim matrix (same rationale as asan-build): unit smoke only needs
-    # aura + test_ir; skip the full issue-test link farm.
+    # aura + test_ir; skip test_concurrent and the issue-test link farm.
     - name: Build with UBSAN
       env:
         AURA_ISSUE_BUILD: none
+        AURA_BUILD_TARGETS: aura,test_ir
         AURA_LINK_JOBS: "1"  # #2636: serialize link to avoid arena.ixx.o
                                # rebuild deadlock (mirrors asan-build fix).
       run: python3 build.py --sanitizer=ubsan build

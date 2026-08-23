@@ -6522,7 +6522,38 @@ def _cmake_configure_args() -> list[str]:
         joined = " ".join(ldflags_extra)
         args.append(f"-DCMAKE_EXE_LINKER_FLAGS={joined}")
         args.append(f"-DCMAKE_SHARED_LINKER_FLAGS={joined}")
+
+    # RelWithDebInfo default is -O2 -g, which bloats .o / mold RSS on the
+    # issue-link farm. AURA_DEBUG_LEVEL=0..3 replaces -g with -gN. Skip
+    # sanitizer trees — they need fuller frames for asan/ubsan traces.
+    dbg = os.environ.get("AURA_DEBUG_LEVEL", "").strip()
+    if dbg in {"0", "1", "2", "3"} and san_name not in SANITIZER_FLAGS:
+        rel = f"-O2 -g{dbg} -DNDEBUG"
+        args.append(f"-DCMAKE_CXX_FLAGS_RELWITHDEBINFO={rel}")
+        args.append(f"-DCMAKE_C_FLAGS_RELWITHDEBINFO={rel}")
+        info(f"debug level: -g{dbg} (AURA_DEBUG_LEVEL)")
     return args
+
+
+def _cmake_build_cmd(targets: list[str], nproc: int) -> list[str]:
+    cmd = ["cmake", "--build", str(BUILD), "-j", str(nproc)]
+    for target in targets:
+        cmd.extend(["--target", target])
+    return cmd
+
+
+def _build_named_targets(targets: list[str], nproc: int, *, fatal: bool) -> int:
+    """Ninja one or more cmake targets; retry once on GCC 16 module ICE."""
+    label = "+".join(targets)
+    t0 = time.time()
+    r = run(_cmake_build_cmd(targets, nproc), cwd=ROOT)
+    if r != 0:
+        warn(f"{label} build failed — retrying once (GCC ICE workaround)")
+        r = run(_cmake_build_cmd(targets, nproc), cwd=ROOT)
+    _phase(f"build {label}", t0)
+    if r != 0 and fatal:
+        fail(f"build {label} failed")
+    return r
 
 
 def cmd_build():
@@ -6538,9 +6569,10 @@ def cmd_build():
     if r != 0:
         return r
 
-    # Build main binaries one target at a time. A single multi-target
-    # ninja -jN invocation races ast.ixx across aura/test_ir and can
-    # trigger a flaky GCC 16 ICE in the ealias pass under -O2.
+    # aura first: a single ninja of aura+test_ir races ast.ixx and can ICE
+    # GCC 16 ealias under -O2. After aura, remaining test bins share BMIs
+    # and can be one ninja (overlap unique TUs + two links). Combined
+    # failure falls back to one-target-at-a-time.
     #
     # AURA_BUILD_TARGETS=aura[,test_ir,...] — restrict the main matrix
     # (deployment-health only needs the aura binary for --health-server).
@@ -6550,38 +6582,24 @@ def cmd_build():
         info(f"build targets (AURA_BUILD_TARGETS): {', '.join(main_targets)}")
     else:
         main_targets = ("aura", "test_ir", "test_concurrent")
-    for target in main_targets:
-        t0 = time.time()
-        r = run(
-            [
-                "cmake",
-                "--build",
-                str(BUILD),
-                "--target",
-                target,
-                "-j",
-                str(nproc),
-            ],
-            cwd=ROOT,
-        )
+
+    remaining = list(main_targets)
+    if "aura" in remaining:
+        remaining = [t for t in remaining if t != "aura"]
+        r = _build_named_targets(["aura"], nproc, fatal=True)
         if r != 0:
-            warn(f"{target} build failed — retrying once (GCC ICE workaround)")
-            r = run(
-                [
-                    "cmake",
-                    "--build",
-                    str(BUILD),
-                    "--target",
-                    target,
-                    "-j",
-                    str(nproc),
-                ],
-                cwd=ROOT,
-            )
-        _phase(f"build {target}", t0)
-        if r != 0:
-            fail(f"build {target} failed")
             return r
+
+    if remaining:
+        r = _build_named_targets(remaining, nproc, fatal=len(remaining) == 1)
+        if r != 0:
+            if len(remaining) == 1:
+                return r
+            warn(f"combined {'+'.join(remaining)} failed — falling back to one target at a time")
+            for target in remaining:
+                r = _build_named_targets([target], nproc, fatal=True)
+                if r != 0:
+                    return r
 
     # Aura-only builds (deployment-health) skip the issue matrix unless
     # AURA_ISSUE_BUILD=all is forced.
@@ -6605,7 +6623,7 @@ def cmd_build():
     # skipping the issue matrix: linking 500+ ASAN-instrumented test
     # binaries fills the GitHub Actions runner disk ("No space left on
     # device") and blows the wall clock. asan-verify / ubsan-smoke only
-    # need aura + test_ir (+ concurrent). Force full matrix with
+    # need aura + test_ir. Force full matrix with
     # AURA_ISSUE_BUILD=all under --sanitizer=.
     tier = issues_tier()
     issue_mode = os.environ.get("AURA_ISSUE_BUILD", "all").strip().lower()
