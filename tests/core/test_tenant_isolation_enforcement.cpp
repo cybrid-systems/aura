@@ -2796,6 +2796,78 @@ int main() {
               "3204 AC5: no docs/design");
     }
 
+    // ── #3276: freeze the privileged-write call-site allowlist. Runtime
+    // fences (#2968/#3086/#3145/#3029/#2969/#3141) are solid; residual is
+    // static surface area — any NEW TU can call g_capability_registry().grant
+    // / grant_locked / grant_session / grant_once / grant_macro_self_evo /
+    // g_workspace_isolation().grant_cross_tenant and bypass Evaluator
+    // principal / audit / TenantAdmin wrappers. The allowlist + coverage
+    // linter freeze the sole permitted inventory; the linter fails the gate
+    // on any src/ hit outside it. Read-only getters (grant_epoch_retain_window
+    // / grant_min_valid_epoch) are not grant writes and stay out of scope.
+    {
+        const auto al = read_file("scripts/coverage/allowlists/privileged_grant_calls.json");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_privileged_grant_callsite_allowlist_3276.py");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto sdef = read_file("src/compiler/security_defaults.hh");
+        const auto prim = read_file("src/compiler/evaluator_primitives_security.cpp");
+        const auto obs = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+        const auto build = read_file("build.py");
+
+        std::println("\n--- #3276 AC1: allowlist freezes the sole permitted inventory ---");
+        CHECK(al.find("src/compiler/evaluator_security.cpp") != std::string::npos,
+              "3276 AC1: evaluator_security.cpp allowlisted");
+        CHECK(al.find("src/compiler/security_defaults.hh") != std::string::npos,
+              "3276 AC1: security_defaults.hh allowlisted");
+        CHECK(al.find("src/compiler/evaluator_primitives_security.cpp") != std::string::npos,
+              "3276 AC1: evaluator_primitives_security.cpp allowlisted");
+        CHECK(al.find(".grant_locked(") != std::string::npos,
+              "3276 AC1: grant_locked pattern in allowlist");
+        CHECK(al.find(".grant_session(") != std::string::npos,
+              "3276 AC1: grant_session pattern in allowlist");
+        CHECK(al.find(".grant_macro_self_evo(") != std::string::npos,
+              "3276 AC1: grant_macro_self_evo pattern in allowlist");
+        CHECK(al.find(".grant_cross_tenant(") != std::string::npos,
+              "3276 AC1: grant_cross_tenant pattern in allowlist");
+        CHECK(al.find(".grant_epoch_retain_window(") == std::string::npos &&
+                  al.find(".grant_min_valid_epoch(") == std::string::npos,
+              "3276 AC1: read-only getters NOT in allowlist (out of scope)");
+
+        std::println("\n--- #3276 AC2: current call sites sit inside the allowlist ---");
+        CHECK(sec.find("g_capability_registry().grant(") != std::string::npos,
+              "3276 AC2: evaluator_security.cpp direct grant (authority)");
+        CHECK(sec.find(".grant_locked(") != std::string::npos,
+              "3276 AC2: evaluator_security.cpp grant_locked (authority)");
+        CHECK(sec.find("g_workspace_isolation().grant_cross_tenant(") != std::string::npos,
+              "3276 AC2: evaluator_security.cpp cross-tenant grant (authority)");
+        CHECK(sdef.find("g_capability_registry().grant(") != std::string::npos,
+              "3276 AC2: security_defaults.hh bootstrap grant");
+        CHECK(sdef.find("/*tenant=*/0") != std::string::npos,
+              "3276 AC2: bootstrap render grants stay tenant=0");
+        CHECK(prim.find("g_capability_registry().grant_macro_self_evo(") != std::string::npos,
+              "3276 AC2: prim macro-self-evo grant (behind #3029 fence)");
+        CHECK(obs.find(".grant_epoch_retain_window(") != std::string::npos &&
+                  obs.find(".grant_min_valid_epoch(") != std::string::npos,
+              "3276 AC2: obs_jit read-only getters remain (not grant writes)");
+
+        std::println("\n--- #3276 AC3/AC4: linter scans + no new TU / no invent ---");
+        CHECK(lint.find("Issue #3276") != std::string::npos, "3276 AC3: linter cites #3276");
+        CHECK(lint.find("SCANNED_PATTERNS") != std::string::npos,
+              "3276 AC3: linter scans grant-family patterns");
+        CHECK(lint.find("hits_outside") != std::string::npos,
+              "3276 AC3: linter fails on hits outside allowlist");
+        CHECK(lint.find("_strip_comments") != std::string::npos,
+              "3276 AC3: comments stripped (doc mentions not false hits)");
+        CHECK(build.find("check_privileged_grant_callsite_allowlist_3276") != std::string::npos,
+              "3276 AC4: build.py wires linter");
+        CHECK(read_file("tests/core/test_issue_3276.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3276.cpp").empty(),
+              "3276 AC4: no test_issue_3276.cpp per #81967");
+        CHECK(read_file("docs/design/3276-privileged-grant-allowlist.md").empty(),
+              "3276 AC4: no docs/design/3276-* per #1655");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

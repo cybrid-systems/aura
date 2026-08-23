@@ -1,0 +1,38 @@
+{
+  "issue": 3276,
+  "title": "Privileged grant call-site allowlist (frozen)",
+  "description": "Static-surface freeze: any NEW translation unit calling the process-global capability registry / workspace-isolation grant family would bypass Evaluator principal / audit / TenantAdmin wrappers. This allowlist is the ONLY permitted inventory of direct privileged-write call sites in src/. Tests (tests/) are exempt (Soft / explicit test helpers). Read-only getters (grant_epoch_retain_window / grant_min_valid_epoch) are NOT grant writes and are out of scope.",
+  "files": {
+    "src/compiler/evaluator_security.cpp": {
+      "allowed": [
+        ".grant(",
+        ".grant_locked(",
+        ".grant_session(",
+        ".grant_cross_tenant("
+      ],
+      "note": "Sole production Evaluator authority (#2968/#3086/#3145 fences live here)."
+    },
+    "src/compiler/security_defaults.hh": {
+      "allowed": [
+        ".grant("
+      ],
+      "note": "Bootstrap render grants only (tenant=0, Effect::Render) — grant_render_kernel_principal."
+    },
+    "src/compiler/evaluator_primitives_security.cpp": {
+      "allowed": [
+        ".grant_macro_self_evo(",
+        ".revoke_macro_self_evo("
+      ],
+      "note": "Prim path behind TenantAdmin fence (#3029)."
+    }
+  },
+  "scanned_patterns": [
+    ".grant(",
+    ".grant_locked(",
+    ".grant_session(",
+    ".grant_once(",
+    ".grant_macro_self_evo(",
+    ".revoke_macro_self_evo(",
+    ".grant_cross_tenant("
+  ]
+}
