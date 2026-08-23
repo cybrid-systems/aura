@@ -5419,6 +5419,25 @@ def cmd_lint():
             "Issue #2955 production ABI self-check linter failed — run python3 scripts/coverage/checks/check_production_abi_selfcheck_2955.py"
         )
         return r
+    # Issue #3275: production link gate for the tenant-scope resume ABI.
+    # Weak no-op (fiber_bridge.cpp) must never silently resolve under
+    # production multi-tenant (fiber resumes would run under the worker's
+    # ambient principal, skipping assigned_tenant rebind). Gate: weak
+    # bodies abort under the production lock (#2377 pattern) + additive
+    # tenant_scope_resume_missing_total on the Soft path + strong marker
+    # aura_abi_strong_tenant_scope_resume_v required by the #2955 startup
+    # self-check (new fail bit 6). Soft / sandbox=off unchanged. Extends
+    # test_tenant_scope_fiber_mandate (#81967); no docs/design/ (#1655).
+    tsg3275_script = COVERAGE_CHECKS / "check_tenant_scope_link_gate_3275.py"
+    if not tsg3275_script.exists():
+        fail(f"missing {tsg3275_script}")
+        return 1
+    r = run([sys.executable, str(tsg3275_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3275 tenant-scope link gate linter failed — run python3 scripts/coverage/checks/check_tenant_scope_link_gate_3275.py"
+        )
+        return r
     # Issue #2956: outermost Guard/soft post-publish mirror canary
     # (held/depth/process-held). Extends test_mutation_safety_snapshot_steal
     # (#81967); no docs/design (#1655).

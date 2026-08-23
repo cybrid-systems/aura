@@ -3320,6 +3320,14 @@ extern "C" int aura_abi_strong_steal_complete_v(void) noexcept {
 extern "C" int aura_abi_strong_mutation_held_v(void) noexcept {
     return 1;
 }
+// Issue #3275: tenant-scope resume ABI is defined strong in this TU
+// (aura_fiber_install_tenant_scope_for_resume / release above). Weak stub
+// in fiber_bridge returns 0; production self-check requires this marker
+// == 1 so a link set that resolves the weak no-op fails at startup
+// instead of silently bypassing fiber-resume principal rebind.
+extern "C" int aura_abi_strong_tenant_scope_resume_v(void) noexcept {
+    return 1;
+}
 
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Always count the steal-complete entry (even with null fiber).

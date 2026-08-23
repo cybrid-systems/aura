@@ -258,12 +258,48 @@ __attribute__((weak, used)) void aura_orch_note_join_drain_reclaim_still_running
 // and bumps tenant_scope_mismatch_total when current capability_tenant_id_
 // != assigned_tenant_id_. Weak no-op keeps non-evaluator link units
 // (test_concurrent / test_issue_*) resolving without dragging the full
-// module into their link unit — production defaults stay bypassable
-// only when the production lock is not engaged (Soft test path).
-__attribute__((weak, used)) void aura_fiber_install_tenant_scope_for_resume(void* /*fiber_ptr*/) {}
-// Issue #2491: release TenantScope after fiber yields back to worker
-// (scope dtor restores previous principal). Weak no-op keeps test
-// binaries linking without Evaluator module.
-__attribute__((weak, used)) void aura_fiber_release_tenant_scope_after_yield() {}
+// module into their link unit.
+//
+// Issue #3275: under the production lock the weak no-op MUST NOT silently
+// return — a production multi-tenant binary that links serve / orch without
+// the Evaluator strong symbols would run fiber resumes under the worker's
+// ambient capability_tenant_id_ (assigned_tenant never rebound), silently
+// skipping principal isolation. Abort so mis-linked production builds fail
+// closed. Soft / AURA_SANDBOX=off / light-link binaries bump
+// tenant_scope_resume_missing_total and no-op (contract preserved).
+__attribute__((weak, used)) void aura_fiber_install_tenant_scope_for_resume(void* /*fiber_ptr*/) {
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr,
+                     "FATAL: weak aura_fiber_install_tenant_scope_for_resume resolved under "
+                     "production (#3275); multi-tenant builds must link the strong TenantScope "
+                     "ABI (evaluator_fiber_mutation.cpp)\n");
+        std::abort();
+    }
+    aura::gc_hooks::bump_tenant_scope_resume_missing_total();
+}
+// Issue #2491 / #3275: release TenantScope after fiber yields back to worker
+// (scope dtor restores previous principal). Weak no-op keeps test binaries
+// linking without Evaluator module; under the production lock it aborts
+// (same fail-closed shape as install — a production binary resolving this
+// weak body would leave the worker principal un-restored after resume).
+__attribute__((weak, used)) void aura_fiber_release_tenant_scope_after_yield() {
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr,
+                     "FATAL: weak aura_fiber_release_tenant_scope_after_yield resolved under "
+                     "production (#3275)\n");
+        std::abort();
+    }
+    aura::gc_hooks::bump_tenant_scope_resume_missing_total();
+}
+
+// Issue #3275: strong-identity marker for the tenant-scope resume ABI.
+// Weak stub returns 0 (not production-strong); the strong def in
+// evaluator_fiber_mutation.cpp returns 1. Production self-check
+// (runtime_production_abi.cpp) requires this marker == 1 before
+// multi-worker / production Ready, so a link set that resolves the weak
+// no-op fails at startup instead of silently bypassing principal rebind.
+extern "C" __attribute__((weak, used)) int aura_abi_strong_tenant_scope_resume_v(void) noexcept {
+    return 0;
+}
 
 } // extern "C"

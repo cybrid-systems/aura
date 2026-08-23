@@ -35,6 +35,13 @@ inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitDefaults = 1ull << 
 // sticky wiring, or residual_zero SSOT is already 0 at Ready. Reuses the
 // existing last_fail_bits mask (no new metric counter).
 inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitResidualSticky = 1ull << 5;
+// Issue #3275: bit 6 set when the tenant-scope resume ABI is missing
+// (weak aura_fiber_install_tenant_scope_for_resume / release resolved).
+// Production multi-tenant must link the strong TenantScope symbols in
+// evaluator_fiber_mutation.cpp — otherwise fiber resumes run under the
+// worker's ambient capability_tenant_id_ (principal bypass). Soft /
+// sandbox=off / light-link never reaches this check (selfcheck not required).
+inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitTenantScope = 1ull << 6;
 // Issue #3195: set when aura_runtime_require_production_multi_worker
 // succeeds. residual_zero / sticky-fail consult this so a later Soft
 // flip cannot wipe readiness (I3/I6). Not a metric — process latch.
@@ -101,6 +108,9 @@ extern "C" int aura_abi_strong_steal_complete_v(void) noexcept;
 extern "C" int aura_abi_strong_fiber_eval_id_v(void) noexcept;
 extern "C" int aura_abi_strong_mutation_held_v(void) noexcept;
 extern "C" int aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept;
+// Issue #3275: tenant-scope resume ABI strong marker (1 = strong
+// aura_fiber_install_tenant_scope_for_resume / release linked).
+extern "C" int aura_abi_strong_tenant_scope_resume_v(void) noexcept;
 
 // C ABI entry for hosts that cannot attach aura::serve.
 extern "C" int aura_runtime_require_production_abi_c(void) noexcept;

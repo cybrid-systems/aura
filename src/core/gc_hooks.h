@@ -532,6 +532,21 @@ inline void bump_steal_complete_entry_missing_total() noexcept {
     g_steal_complete_entry_missing_total.fetch_add(1, std::memory_order_relaxed);
 }
 
+// Issue #3275: tenant-scope resume weak no-op resolved (install/release
+// weak stubs under non-production). Bumped when the light-link weak body
+// runs (Soft / AURA_SANDBOX=off / test binaries without Evaluator).
+// Production multi-tenant must never bump this — the weak body aborts
+// under the production lock instead (fiber resume would otherwise run
+// under the worker's ambient capability_tenant_id_, silently skipping
+// principal rebind). Mirrors g_steal_complete_entry_missing_total (#2377).
+inline std::atomic<std::uint64_t> g_tenant_scope_resume_missing_total{0}; // #3275
+[[nodiscard]] inline std::uint64_t tenant_scope_resume_missing_total() noexcept {
+    return g_tenant_scope_resume_missing_total.load(std::memory_order_relaxed);
+}
+inline void bump_tenant_scope_resume_missing_total() noexcept {
+    g_tenant_scope_resume_missing_total.fetch_add(1, std::memory_order_relaxed);
+}
+
 // Issue #2314: force_clear_residual_defer_for_evaluator is defined below
 // force_clear_all_gc_defer_for_evaluator / mutation_hold helpers (order
 // matters — header-only free functions must not call undeclared siblings).
