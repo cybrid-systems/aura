@@ -4329,6 +4329,24 @@ def cmd_lint():
             "Issue #3057 FFI opaque slot-cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_pin_or_remap_3057.py"
         )
         return r
+    # Issue #3274: densify-tracked FFI opaque aliases — create-point observe
+    # (note_ffi_opaque_create_exempt) is NOT pin/slot/remap cover. Under
+    # production Moving the alias joins the triad: slot-rewrite cover (stable
+    # void** — the opaque_heap_ element) or #3210 temp canary fail-closed
+    # backstop (no stable slot); slot and canary are exclusive per pointer.
+    # Soft/Off falls back to EXEMPT (zero extra). Additive slot-cover counter
+    # only; no second registry; no new query:*. Extends
+    # test_moving_densify_fail_closed (#81967); no docs/design/ (#1655).
+    foc74_script = COVERAGE_CHECKS / "check_ffi_opaque_densify_cover_3274.py"
+    if not foc74_script.exists():
+        fail(f"missing {foc74_script}")
+        return 1
+    r = run([sys.executable, str(foc74_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3274 FFI opaque densify-cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_densify_cover_3274.py"
+        )
+        return r
     # Issue #3023: leftover linear_roots unpin on abort / reclaim.
     # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
     lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"

@@ -366,6 +366,22 @@ inline void reset_moving_temporary_canary_noted_for_test() noexcept {
     g_moving_temporary_canary_noted_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3274: densify-tracked FFI opaque / native alias cover. Bumped when
+// a potentially-arena-tracked opaque alias is installed under production
+// Moving with a stable void** slot available (slot-rewrite cover on the next
+// densify). The canary axis of the same call reuses #3210's
+// g_moving_temporary_canary_noted_total. Additive; does not gate. Soft /
+// Off / !moving_compact_enabled never increment (helper early-returns to
+// note_ffi_opaque_create_exempt). Appended at header end (layout-stable).
+inline std::atomic<std::uint64_t> g_ffi_opaque_alias_slot_cover_total{0};
+inline constexpr int kFfiOpaqueDensifyAliasCoverIssue = 3274;
+[[nodiscard]] inline std::uint64_t ffi_opaque_alias_slot_cover_total_v_read() noexcept {
+    return g_ffi_opaque_alias_slot_cover_total.load(std::memory_order_relaxed);
+}
+inline void reset_ffi_opaque_alias_slot_cover_for_test() noexcept {
+    g_ffi_opaque_alias_slot_cover_total.store(0, std::memory_order_relaxed);
+}
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
