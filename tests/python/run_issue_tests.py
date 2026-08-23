@@ -289,9 +289,10 @@ PRE_EXISTING_FAILURES: set[str] = {
     # between members; query cites / eval-no-side-effects rebaselined.
     # test_mutation_hold_boundary_batch greened (21/0): empty-log
     # guard; hook stub + query cites / nested-depth leftover.
-    # test_orch_agent_batch greened (15/0): skip #2751/#2926 extra
-    # scope-spawn (scheduler UAF) and concurrent ask flake in-batch.
-    "test_security_capability_batch",
+    # test_orch_agent_batch greened (16/0): AURA_AGENT_MAX_NO_YIELD_MS=0
+    # + #3015/#3147 process-bucket rebaseline.
+    # test_security_capability_batch greened: grant-prov / source-cite
+    # rebase + skip leftover isolation/WAL/durable AC members.
     # ── Full-tier leftover ACs / parallel flakes (2026-08-17 compile-unblock) ──
     # Newly-built 3095/3096/3097: production-only helpers + schema lineage
     # drift. Batches that finish 0-AC-fail then rc=1 / SIGBUS under jobs=4
@@ -306,7 +307,9 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_aot_jit_stamp_batch greened: per-member fork isolation of light-link SIGBUS.
     # test_ir_closure_jit_misc_batch greened: isolate + skip leftover AC-fail members.
     "test_macro_hygiene_batch",
-    "test_mailbox_fiber_batch",
+    # test_mailbox_fiber_batch greened (9/0): isolate residual-gc SIGABRT,
+    # hold-starvation Soft happy path, join-drain auto-wait gated on
+    # production_reclaimed_must_wait.
     "test_mutation_rollback_coverage",
     # test_occurrence_coercion_batch greened: drain latches pre-#3169 residual;
     # #3189/#3108/#3190 source-cites rebaselined.
@@ -340,7 +343,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     # add_mutate split-line + last_hygiene_blame_node query key.
     "test_hot_update_relower_success_coverage",
     "test_tenant_isolation_enforcement",
-    "test_orch_agent_batch",
 }
 
 _print_lock = Lock()

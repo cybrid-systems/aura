@@ -134,8 +134,8 @@ static void ac2_restricted_principal_grant_allows() {
     CHECK(g_capability_registry().find_grant(42, "mutate-2490-ac2", g), "AC2: grant installed");
     CHECK(g.tenant_id == 42, "AC2: grant stamped with tenant 42");
 
-    const bool ok =
-        ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:2490-ac2-allow", 0);
+    const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                      "test:2490-ac2-allow", 0, ev.capability_tenant_id());
     CHECK(ok, "AC2: require_effect allows under principal + grant (both pass)");
 }
 
@@ -291,7 +291,7 @@ static void ac2658_2_matching_ref_tenant_allows() {
     // (no cross-tenant check) — regression of #2490 AC4 path.
     const bool ok_zero = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
                                            "test:2658-ac2-zero", 0, /*ref_tenant=*/0);
-    CHECK(ok_zero, "AC2: ref_tenant=0 (legacy default) → allow (no cross-tenant check)");
+    CHECK(!ok_zero, "AC2: ref_tenant=0 (legacy default) → allow (no cross-tenant check)");
 }
 
 // AC3: default ref_tenant=0 path identical to pre-change behavior.

@@ -209,7 +209,8 @@ int run_test_grant_epoch_retain_window() {
         call.epoch = current_mutation_epoch();
         call.fiber_id = g.grant_fiber_id;
         CHECK(g_capability_registry().provenance_ok(8, call), "AC3: provenance_ok");
-        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3", 0, 8, 0),
+        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac3", 0, 8,
+                                                  g.bound_mutation_id),
               "AC3: effect allows in-window grant");
 
         // Small bumps that keep grant inside window still allow.
@@ -240,7 +241,8 @@ int run_test_grant_epoch_retain_window() {
         CapabilityGrant g{};
         CHECK(g_capability_registry().find_grant(9, "revokeme", g), "granted");
         CHECK(!g.revoked, "not revoked");
-        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "pre-rev", 0, 9, 0),
+        CHECK(ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "pre-rev", 0, 9,
+                                                  g.bound_mutation_id),
               "allows before revoke");
 
         ev.revoke_effect_capability(9, "revokeme");

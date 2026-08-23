@@ -33,14 +33,14 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 252 | 252 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 253 | 253 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 104 | 104 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 58 | 58 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 84 | 84 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 56 | 56 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 55 | 55 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -168,7 +168,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/reflect/test_reflect_macro_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/reflect/test_reflect_pattern_hygiene_batch.cpp` → theme `edsl_hygiene`
 - `tests/core/test_resource_quota_batch.cpp` → theme `arena_compaction`
-- `tests/compiler/test_security_capability_batch.cpp` → theme `uncategorized`
+- `tests/compiler/test_security_capability_batch.cpp` → theme `mutation_dirty`
 - `tests/serve/test_serve_legacy_issue_batch.cpp` → theme `uncategorized`
 - `tests/compiler/test_shape_soa_storm_batch.cpp` → theme `shape_soa`
 - `tests/compiler/test_shape_soa_unit_batch.cpp` → theme `shape_soa`
@@ -1170,13 +1170,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (252)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (253)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (252)
+#### domain/ (253)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1386,6 +1386,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_security_audit_trail.cpp` (—) [domain_suite, theme_compiler] — Issue #2075 — unified SecurityEvent schema + default-on mutation/effect audit WAL.
 - `tests/compiler/test_security_audit_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: check_and_record_effect allow + deny both append SecurityEvent
 - `tests/compiler/test_security_audit_wal_force_restricted.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh process, default Restricted, no multi-tenant env → Security
+- `tests/compiler/test_security_capability_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_security_capability_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_security_schedule_mutate_admit.cpp` (—) [domain_suite, theme_compiler] — Refines #2590 (gate contract) + #2587 (mailbox-starvation sibling
 - `tests/compiler/test_setcode_rebind_survive.cpp` (—) [domain_suite, theme_compiler] — closures or hash telemetry (Aether closed-loop agent state).
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp — Issue #744:
@@ -1943,13 +1944,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (56)
+### `uncategorized` — Uncategorized / mixed (55)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (56)
+#### domain/ (55)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -1990,7 +1991,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_namespace_audit.cpp` (—) [domain_suite, theme_compiler] — test_query_namespace_audit.cpp — Issue #562:
 - `tests/compiler/test_reemit_defer_batch.cpp` (—) [small, batch_driver, domain_suite, theme_compiler] — test_reemit_defer_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_sandbox_mode_authority.cpp` (—) [domain_suite, theme_compiler] — triple-state drift). Tests verify that the SOLE writer
-- `tests/compiler/test_security_capability_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_security_capability_batch.cpp — thematic multi-TU batch
 - `tests/serve/test_serve_legacy_issue_batch.cpp` (—) [small, batch_driver, domain_suite, theme_serve] — test_serve_legacy_issue_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_side_effect_security_gate_hardfail.cpp` (—) [domain_suite, theme_compiler] — AC1: Intentionally broken fixture prim (side-effect name, no
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:

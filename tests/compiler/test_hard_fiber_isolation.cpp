@@ -149,7 +149,7 @@ int run_test_hard_fiber_isolation() {
         const auto hard0 = g_capability_effect_metrics().capability_fiber_hard_deny_total.load();
         const bool ok =
             ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac1-soft",
-                                                /*target=*/0, /*tenant=*/42, /*mid=*/0);
+                                                /*target=*/0, /*tenant=*/42, g.bound_mutation_id);
         CHECK(ok, "AC1: soft mismatch allows");
         CHECK(g_capability_effect_metrics().capability_fiber_mismatch_total.load() > mismatch0,
               "AC1: fiber-mismatch metric advanced");
@@ -182,8 +182,8 @@ int run_test_hard_fiber_isolation() {
         const auto denied0 = g_capability_effect_metrics().capability_effect_denied_total.load();
         reset_security_event_ring_for_test();
 
-        const bool ok =
-            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac2-hard", 0, 77, 0);
+        const bool ok = ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate,
+                                                            "ac2-hard", 0, 77, g.bound_mutation_id);
         CHECK(!ok, "AC2: hard mismatch denies");
         CHECK(g_capability_effect_metrics().capability_fiber_hard_deny_total.load() > hard0,
               "AC2: fiber-hard-deny metric advanced");
@@ -194,8 +194,8 @@ int run_test_hard_fiber_isolation() {
 
         // Same fiber still allowed.
         set_effect_fiber_id_override(11);
-        const bool ok_same =
-            ev.check_and_record_effect_for_test(kEffectMutate, kEffectMutate, "ac2-same", 0, 77, 0);
+        const bool ok_same = ev.check_and_record_effect_for_test(
+            kEffectMutate, kEffectMutate, "ac2-same", 0, 77, g.bound_mutation_id);
         CHECK(ok_same, "AC2: same-fiber grant still allows");
         set_effect_fiber_id_override(0);
     }

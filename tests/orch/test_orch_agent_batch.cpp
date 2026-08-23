@@ -7,7 +7,9 @@
 #include "compiler/coercion_provenance_policy.hh"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
+#include "core/sandbox.hh"
 
+#include <cstdlib>
 #include <print>
 
 import std;
@@ -15,6 +17,10 @@ import std;
 static void reset_member_face() {
     // Do not reset_all_agent_scopes_for_test() here: that map-clear
     // without join UAF leftover scheduler fibers (flaky SIGSEGV).
+    // Do not force AURA_SANDBOX=off here: #3179/#3147 production
+    // auto-fill of bp_scope_id keys off AURA_SANDBOX != off.
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
     aura::compiler::reset_tree_walker_fallback_policy_for_test();
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
