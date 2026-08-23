@@ -346,6 +346,22 @@ StealSafetyDecision steal_safety_transaction(Fiber* stolen) noexcept {
             return StealSafetyDecision::RejectHard;
         }
 
+        // Issue #3288: continuous fail-closed — under latched multi-worker,
+        // sticky-fail (set when any named residual is non-zero under the
+        // latch, #3162/#3195) must refuse the Ok path until residual returns
+        // to 0. This closes the observe-until-query gap: the schema-3073
+        // readiness poll is no longer the only enforcement point. Quiet Ok
+        // path when residual is already 0: sticky is 0 → one relaxed load,
+        // no RMW / no counter bump (AC2 zero extra atomics). Soft /
+        // single-worker / unlatched: weak latch probe returns 0 →
+        // short-circuit before the sticky load (AC3 zero behavioural
+        // change). Reuses the existing sticky bit — no second residual bus.
+        if (aura_runtime_multi_worker_production_latched() != 0 &&
+            g_steal_safety_production_residual_sticky_fail.load(std::memory_order_relaxed) != 0) {
+            g_steal_safety_transaction_reject_hard_total.fetch_add(1, std::memory_order_relaxed);
+            return StealSafetyDecision::RejectHard;
+        }
+
         // AC1 step 7 — stamp resume_safety_ticket only on Ok path
         // (after hard-AND + quiet re-sample passed under the same window).
         // Issue #2844 sole-enqueue: ticket stamp ONLY here (all invariants Ok).
