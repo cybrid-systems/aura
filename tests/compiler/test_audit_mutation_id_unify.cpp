@@ -381,8 +381,9 @@ static void ac3066_3_soft_zero_extra() {
           "3066 AC3: Soft no pin-total bump");
     CHECK(aura::compiler::typed_audit::g_composite_batch_se_join_total.load() == se0,
           "3066 AC3: Soft no SE join emit");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
     const auto sec = read_file("src/compiler/evaluator_security.cpp");
-    CHECK(sec.find("join_audit_and_se_mid") != std::string::npos,
+    CHECK(tma.find("join_audit_and_se_mid") != std::string::npos,
           "3066 AC3: require_effect uses join");
     CHECK(sec.find("mid = 1") != std::string::npos || sec.find("mid = 1;") != std::string::npos ||
               sec.find("non-zero join stamp") != std::string::npos,

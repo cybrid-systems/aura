@@ -29,6 +29,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <print>
@@ -114,6 +115,8 @@ int run_test_agent_max_no_yield() {
     // ── AC1: max_no_yield_ms==0 zero cost ───────────────────────
     {
         std::println("\n--- AC1: max_no_yield_ms==0 zero extra yield ---");
+        ::setenv("AURA_SANDBOX", "off", 1);
+        ::setenv("AURA_AGENT_MAX_NO_YIELD_MS", "0", 1);
         Scheduler sched(1);
         SchedRunner runner(sched);
         const auto y0 =

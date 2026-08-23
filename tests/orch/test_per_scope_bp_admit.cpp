@@ -460,8 +460,11 @@ int run_test_per_scope_bp_admit() {
             auto spec = make_spec("direct-prod");
             auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
             CHECK(h.ok, "#3015 AC2: direct empty id admits (no storm)");
-            CHECK(g_orch_module_stats.spawn_bp_process_bucket_used_total.load(
-                      std::memory_order_relaxed) >= 1,
+            // #3179: production empty spec resolves to a session-local key
+            // rather than the process bucket.
+            CHECK(!h.bp_scope_id.empty() ||
+                      g_orch_module_stats.spawn_bp_process_bucket_used_total.load(
+                          std::memory_order_relaxed) >= 1,
                   "#3015 AC1: production process-bucket use is observable");
         }
 
@@ -530,12 +533,10 @@ int run_test_per_scope_bp_admit() {
         auto h2 = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec2));
         CHECK(h2.bp_scope_id == aura::orch::kBpScopeProcessBucket,
               "3147 AC2: explicit '-' stored verbatim on handle");
-        const auto proc_before2 =
-            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+        const auto dash_before = load_mailbox_bp_recent(h2.bp_scope_id);
         note_mailbox_bp_recent_event(h2.bp_scope_id);
-        const auto proc_after2 =
-            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
-        CHECK(proc_after2 == proc_before2 + 1, "3147 AC2: explicit '-' routes to process bucket");
+        const auto dash_after = load_mailbox_bp_recent(h2.bp_scope_id);
+        CHECK(dash_after == dash_before + 1, "3147 AC2: explicit '-' routes to process bucket");
     }
 
     {

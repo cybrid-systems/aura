@@ -35,9 +35,11 @@
 #include <string>
 #include <string_view>
 
+#include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
+#include "core/workspace_epoch.hh"
 
 import std;
 import aura.compiler.service;
@@ -86,6 +88,8 @@ static void reset_all() {
     // the authority already updates the registry when sandbox::set_mode
     // is invoked.
     set_mode(SandboxMode::Off);
+    if (aura::core::current_mutation_epoch() == 0)
+        aura::core::bump_mutation_epoch(1);
 }
 
 // ── AC1: source cites #2077 + delegate to effect matrix under Strict ──────
@@ -107,7 +111,8 @@ static void ac1_source_and_strict_delegates() {
     // No grants yet → has_capability("mutate") must consult effect matrix and deny.
     CHECK(!ev.has_capability(kCapMutate), "Strict + no grants → has_capability(mutate) deny");
     // Now grant the effect directly via the registry (no string list push).
-    g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate, {});
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate,
+                                  aura_test_grant_prov());
     CHECK(ev.has_capability(kCapMutate),
           "Strict + registry-only effect grant → has_capability(mutate) true");
 }
@@ -120,11 +125,13 @@ static void ac2_effect_only_grant_satisfies() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
     // Grant kEffectMutate directly via the effect matrix only (no string push).
-    g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate, {});
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate,
+                                  aura_test_grant_prov());
     // has_capability must now consult the matrix and return true.
     CHECK(ev.has_capability(kCapMutate), "registry-only Mutate bit → has_capability(mutate) true");
     // And the effect gate agrees (require_effect also reads the matrix).
-    CHECK(ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:ac2-effect-only", 0),
+    CHECK(ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:ac2-effect-only", 0,
+                            ev.capability_tenant_id()),
           "require_effect(Mutate) also true");
 }
 
@@ -164,15 +171,18 @@ static void ac4_string_only_caps_still_work() {
     ev.grant_capability(std::string(kCapCompileStats));
     CHECK(ev.has_capability(kCapCompileStats),
           "compile-stats (no effect map) → string list path works");
-    ev.grant_capability(std::string(kCapFiber));
+    // Issue #2532: fiber maps to TenantAdmin (control plane), not string-only.
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapFiber, Effect::TenantAdmin,
+                                  aura_test_grant_prov());
     CHECK(ev.has_capability(kCapFiber),
-          "fiber (no effect map) → has_capability(fiber) true after grant");
+          "fiber (TenantAdmin map) → has_capability(fiber) true after grant");
     // Negative: "compile-stats" must NOT accidentally satisfy mutate.
     CHECK(!ev.has_capability(kCapMutate), "compile-stats grant must not satisfy mutate");
     // Sanity-check effect_for_cap_name classification.
     CHECK(effect_for_cap_name(kCapCompileStats) == Effect::None,
           "effect_for_cap_name(compile-stats) == None");
-    CHECK(effect_for_cap_name(kCapFiber) == Effect::None, "effect_for_cap_name(fiber) == None");
+    CHECK(effect_for_cap_name(kCapFiber) == Effect::TenantAdmin,
+          "effect_for_cap_name(fiber) == TenantAdmin");
 }
 
 // ── AC5: wildcard "*" grants the full effect mask
@@ -183,13 +193,19 @@ static void ac5_wildcard_full_mask() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
     // Explicit "*" string grant → wildcard holds → all caps true.
+    // #3141: privilege-bearing wildcard needs a non-zero mid (#3090) and
+    // is granted via the registry so the matrix is the source of truth.
+    g_capability_registry().grant(ev.capability_tenant_id(), "tenant-admin", Effect::TenantAdmin,
+                                  aura_test_grant_prov());
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapWildcard,
+                                  effect_for_cap_name(kCapWildcard), aura_test_grant_prov());
     ev.grant_capability(std::string(kCapWildcard));
     CHECK(ev.has_capability(kCapWildcard), "wildcard string → has_capability(*) true");
     CHECK(ev.has_capability(kCapMutate), "wildcard string → has_capability(mutate) true");
     CHECK(ev.has_capability(kCapFiber), "wildcard string → has_capability(fiber) true (legacy)");
     // Effect-only full mask (no "*" string) → effect-mapped caps true,
-    // non-effect caps (compile-stats, fiber) still false because they
-    // have no effect bit to delegate to.
+    // non-effect caps (compile-stats) still false because they have no
+    // effect bit to delegate to. fiber is TenantAdmin-mapped (#2532).
     reset_all();
     CompilerService cs2;
     auto& ev2 = cs2.evaluator();
@@ -197,8 +213,8 @@ static void ac5_wildcard_full_mask() {
     g_capability_registry().grant(ev2.capability_tenant_id(), "*",
                                   Effect::Read | Effect::Write | Effect::Exec | Effect::Mutate |
                                       Effect::Network | Effect::Ffi | Effect::Render |
-                                      Effect::MacroSelfEvo,
-                                  {});
+                                      Effect::MacroSelfEvo | Effect::TenantAdmin | Effect::Syscall,
+                                  aura_test_grant_prov());
     CHECK(ev2.has_capability(kCapMutate), "effect-only full mask → has_capability(mutate) true");
     CHECK(ev2.has_capability(kCapNetwork), "effect-only full mask → has_capability(network) true");
     CHECK(!ev2.has_capability(kCapCompileStats),
@@ -277,11 +293,11 @@ static void ac7_matrix() {
             ev.grant_capability(std::string(kCapMutate));
         if (c.grant_effect_only)
             g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate,
-                                          {});
+                                          aura_test_grant_prov());
 
         const bool has = ev.has_capability(kCapMutate);
-        const bool req =
-            ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:ac7", 0);
+        const bool req = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "test:ac7", 0,
+                                           ev.capability_tenant_id());
         CHECK(has == c.expect_has_capability,
               std::format("{}: has_capability expected={}", c.name, c.expect_has_capability));
         CHECK(req == c.expect_require_effect,
@@ -293,6 +309,10 @@ static void ac7_matrix() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
+    g_capability_registry().grant(ev.capability_tenant_id(), "tenant-admin", Effect::TenantAdmin,
+                                  aura_test_grant_prov());
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapWildcard,
+                                  effect_for_cap_name(kCapWildcard), aura_test_grant_prov());
     ev.grant_capability(std::string(kCapWildcard));
     CHECK(ev.has_capability(kCapMutate), "wildcard satisfies mutate");
     CHECK(ev.has_capability(kCapCompileStats), "wildcard satisfies compile-stats");

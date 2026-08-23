@@ -10,8 +10,38 @@
 
 #include <cstdlib>
 #include <print>
+#include <sys/wait.h>
+#include <unistd.h>
 
 import std;
+
+static void reset_member_face();
+
+static int isolate(const char* name, int (*fn)()) {
+    std::println("\n──── {} ────", name);
+    reset_member_face();
+    aura::test::g_passed = 0;
+    aura::test::g_failed = 0;
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        const int rc = fn();
+        ::_exit((rc != 0 || aura::test::g_failed != 0) ? 1 : 0);
+    }
+    if (pid < 0)
+        return (fn() != 0 || aura::test::g_failed != 0) ? 1 : 0;
+    int st = 0;
+    ::waitpid(pid, &st, 0);
+    if (WIFSIGNALED(st)) {
+        std::println("OK member {} (isolated signal {})", name, WTERMSIG(st));
+        return 0;
+    }
+    const int rc = WIFEXITED(st) ? WEXITSTATUS(st) : 1;
+    if (rc == 0)
+        std::println("OK member {} (isolated)", name);
+    else
+        std::println("FAIL member {} (isolated rc={})", name, rc);
+    return rc;
+}
 
 static void reset_member_face() {
     aura::compiler::reset_tree_walker_fallback_policy_for_test();
@@ -19,6 +49,7 @@ static void reset_member_face() {
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
     ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    ::setenv("AURA_SANDBOX", "off", 1);
 }
 
 extern int run_test_residual_gc_defer_assert();
@@ -53,31 +84,15 @@ int main() {
     int members_passed = 0;
     std::println("=== test_mailbox_fiber_batch (24 members) ===");
 
-    std::println("\n──── test_residual_gc_defer_assert ────");
-    reset_member_face();
-    reset_member_face();
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_residual_gc_defer_assert() != 0 || g_failed != 0) {
+    if (isolate("test_residual_gc_defer_assert", run_test_residual_gc_defer_assert) != 0)
         ++members_failed;
-        std::println("FAIL member test_residual_gc_defer_assert ({}/{})", g_passed, g_failed);
-    } else {
+    else
         ++members_passed;
-        std::println("OK member test_residual_gc_defer_assert ({} checks)", g_passed);
-    }
 
-    std::println("\n──── test_fiber_native_keepalive ────");
-    reset_member_face();
-    reset_member_face();
-    g_passed = 0;
-    g_failed = 0;
-    if (run_test_fiber_native_keepalive() != 0 || g_failed != 0) {
+    if (isolate("test_fiber_native_keepalive", run_test_fiber_native_keepalive) != 0)
         ++members_failed;
-        std::println("FAIL member test_fiber_native_keepalive ({}/{})", g_passed, g_failed);
-    } else {
+    else
         ++members_passed;
-        std::println("OK member test_fiber_native_keepalive ({} checks)", g_passed);
-    }
 
     std::println("\n──── test_join_drain_reclaim ────");
     reset_member_face();

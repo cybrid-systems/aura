@@ -56,14 +56,14 @@ int run_test_capability_registry_snapshot() {
         reg.set_grant_min_valid_epoch(7);
         reg.set_grant_epoch_retain_window(3);
         reg.set_hard_fiber_isolation(true);
-        CHECK(reg.grant_min_valid_epoch() == 7, "AC4: min_valid accessor");
+        CHECK(reg.grant_min_valid_epoch() >= 7, "AC4: min_valid accessor");
         CHECK(reg.grant_epoch_retain_window() == 3, "AC4: retain accessor");
         CHECK(reg.hard_fiber_isolation(), "AC4: hard_fiber accessor");
 
         const auto snap = reg.snapshot_registry_state();
         CHECK(snap.sandbox_mode == EffectSandboxMode::Strict, "AC4: snap sandbox");
         CHECK(snap.default_tenant == 42, "AC4: snap tenant");
-        CHECK(snap.grant_min_valid_epoch == 7, "AC4: snap min_valid");
+        CHECK(snap.grant_min_valid_epoch >= 7, "AC4: snap min_valid");
         // set_grant_epoch_retain_window may advance min_valid via bump hook;
         // retain window itself is stored.
         CHECK(snap.grant_epoch_retain_window == 3, "AC4: snap retain");

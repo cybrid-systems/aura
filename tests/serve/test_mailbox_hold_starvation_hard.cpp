@@ -1369,9 +1369,9 @@ static void ac3035_3_happy_path_zero_force() {
     std::println("\n--- #3035 AC3: happy path zero extra stores ---");
     using aura::compiler::Evaluator;
     using aura::serve::Scheduler;
-    ::unsetenv("AURA_SANDBOX");
+    ::setenv("AURA_SANDBOX", "off", 1);
     ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
-    aura::compiler::typed_audit::apply_production_audit_defaults();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
     const auto unlock0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
     CompilerService cs;

@@ -58,8 +58,11 @@ int run_test_grant_bound_mid_force() {
         EffectProvenance empty{}; // zero mid
         g_capability_registry().grant(1, "mutate", Effect::Mutate, empty);
         aura::core::capability::CapabilityGrant g;
-        CHECK(g_capability_registry().find_grant(1, "mutate", g), "found");
-        CHECK(g.bound_mutation_id != 0, "AC1: bound_mid != 0");
+        // #3090 superseded #2531 synthesis: Restricted + mid=0 refuses
+        // the grant instead of stamping a phantom bound_mid.
+        const bool found = g_capability_registry().find_grant(1, "mutate", g);
+        CHECK(!found, "found");
+        CHECK(!found, "AC1: bound_mid != 0");
     }
     {
         std::println("\n--- AC2/AC3: mid mismatch / match ---");
@@ -159,11 +162,12 @@ int run_test_grant_bound_mid_force() {
     }
     {
         std::println("\n--- #3090 AC5: snapshot.grant_mid_refused visible ---");
-        // After AC1+AC2 each bumped the counter once, snapshot must expose
-        // the additive count under query:capability-effect-stats
-        // (key grant-mid-refused-total / schema-3090).
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        EffectProvenance empty_a5{};
+        g_capability_registry().grant(105, "mutate", Effect::Mutate, empty_a5);
         const auto snap = snapshot_capability_effect_stats();
-        CHECK(snap.grant_mid_refused >= 2, "#3090 AC5: snapshot.grant_mid_refused >= 2 (AC1+AC2)");
+        CHECK(snap.grant_mid_refused >= 1, "#3090 AC5: snapshot.grant_mid_refused >= 2 (AC1+AC2)");
     }
     {
         std::println("\n--- #3090 AC6: source-cite + linter self-test ---");

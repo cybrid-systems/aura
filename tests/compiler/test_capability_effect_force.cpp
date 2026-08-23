@@ -23,7 +23,10 @@
 #include <print>
 #include <string>
 
+#include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
+#include "core/capability_model.hh"
+#include "core/sandbox.hh"
 
 import std;
 import aura.compiler.evaluator;
@@ -77,12 +80,14 @@ int run_test_capability_effect_force() {
         CompilerService cs;
         auto& ev = cs.evaluator();
         ev.set_effect_sandbox_mode(2);
-        // Grant kCapWildcard — the global capability bypass that lets
-        // the dispatch-site gate pass for any effect (per #1416 +
-        // test_capability_gating.cpp pattern).
-        ev.grant_capability(aura::compiler::security::kCapWildcard);
-        const bool ok =
-            ev.require_effect(static_cast<std::uint16_t>(kEffectFfi), "test:ac3-ffi-allow", 0);
+        // Grant FFI via the registry with a non-zero mid (#3090). Wildcard
+        // string grant is privilege-bearing under Strict (#3141) and is not
+        // required for this AC — the matrix is the source of truth.
+        aura::core::capability::g_capability_registry().grant(ev.capability_tenant_id(), "ffi",
+                                                              aura::core::capability::Effect::Ffi,
+                                                              aura_test_grant_prov());
+        const bool ok = ev.require_effect(static_cast<std::uint16_t>(kEffectFfi),
+                                          "test:ac3-ffi-allow", 0, ev.capability_tenant_id());
         std::println("  require_effect(strict, with-grant) = {}", ok);
         CHECK(ok, "require_effect allows FFI under Strict with kCapWildcard grant");
     }
@@ -106,24 +111,27 @@ int run_test_capability_effect_force() {
     // ── AC5: Mutate path still uses effect check (no regression) ─────
     {
         std::println("\n--- AC5: Mutate path not regressed ---");
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
         CompilerService cs;
         auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(0);
         // require_effect(kEffectMutate, ...) is the same path the
         // mutate primitive uses internally (per evaluator_primitives_mutate.cpp
         // line 350 pattern: check_and_record_effect(kEffectMutate, ...)).
-        const bool ok_mutate =
-            ev.require_effect(static_cast<std::uint16_t>(kEffectMutate), "mutate", 0);
+        const bool ok_mutate = ev.require_effect(static_cast<std::uint16_t>(kEffectMutate),
+                                                 "mutate", 0, ev.capability_tenant_id());
         std::println("  require_effect(kEffectMutate) = {}", ok_mutate);
         CHECK(ok_mutate, "require_effect(kEffectMutate) returns true (mutate path preserved)");
 
         // Also verify Network/Exec/Render helpers work (prove the pattern
         // is generic across effect types).
+        const auto tid = ev.capability_tenant_id();
         const bool ok_net =
-            ev.require_effect(static_cast<std::uint16_t>(kEffectNetwork), "test:ac5-net", 0);
+            ev.require_effect(static_cast<std::uint16_t>(kEffectNetwork), "test:ac5-net", 0, tid);
         const bool ok_exec =
-            ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "test:ac5-exec", 0);
+            ev.require_effect(static_cast<std::uint16_t>(kEffectExec), "test:ac5-exec", 0, tid);
         const bool ok_render =
-            ev.require_effect(static_cast<std::uint16_t>(kEffectRender), "test:ac5-render", 0);
+            ev.require_effect(static_cast<std::uint16_t>(kEffectRender), "test:ac5-render", 0, tid);
         CHECK(ok_net && ok_exec && ok_render,
               "require_effect works for kEffectNetwork/kEffectExec/kEffectRender");
     }

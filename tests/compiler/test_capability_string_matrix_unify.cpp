@@ -10,6 +10,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/workspace_epoch.hh"
@@ -68,7 +69,8 @@ static void ac1_registry_only_mutate() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2); // Strict
     CHECK(!ev.has_capability(kCapMutate), "no grant → deny");
-    g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate, {});
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapMutate, Effect::Mutate,
+                                  aura_test_grant_prov());
     CHECK(ev.has_capability(kCapMutate),
           "AC1: registry-only Mutate satisfies has_capability without string vector");
 }

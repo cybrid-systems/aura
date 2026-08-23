@@ -20,6 +20,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/grant_test_support.hh"
 #include "compiler/security_capabilities.h"
 #include "core/capability_model.hh"
 #include "core/security_event.hh"
@@ -83,6 +84,8 @@ static std::string read_file(const char* path) {
 
 static void reset_all() {
     reset_capability_effects_for_test();
+    if (current_mutation_epoch() == 0)
+        bump_mutation_epoch(1);
 }
 
 // AC1: registry-only grant for each of the 8 newly-promoted cap names
@@ -115,7 +118,7 @@ static void ac1_registry_only_promoted_caps() {
               std::string("AC1: effect_for_cap_name(") + c.name + ") maps to expected bits");
         CHECK(!ev.has_capability(c.name),
               std::string("AC1: no grant → has_capability(") + c.name + ") deny");
-        g_capability_registry().grant(tenant, c.name, c.expected, {});
+        g_capability_registry().grant(tenant, c.name, c.expected, aura_test_grant_prov());
         CHECK(ev.has_capability(c.name),
               std::string("AC1: registry-only grant → has_capability(") + c.name + ") true");
         CapabilityGrant g{};
@@ -136,6 +139,8 @@ static void ac2_revoke_clears_both() {
     CompilerService cs;
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(2);
+    g_capability_registry().grant(ev.capability_tenant_id(), kCapTenantAdmin, Effect::TenantAdmin,
+                                  aura_test_grant_prov());
     ev.grant_capability(std::string(kCapSelfEvo));
     CHECK(ev.has_capability(kCapSelfEvo), "AC2: granted self-evo");
     ev.grant_capability(std::string(kCapSysOpen));
@@ -249,7 +254,7 @@ static void ac5_hard_fiber_deny() {
     const auto tenant = ev.capability_tenant_id();
     // Grant agent at fiber 1.
     set_effect_fiber_id_override(1);
-    auto prov = make_grant_provenance(0, true, 0, 0); // fiber_id = override (1)
+    auto prov = aura_test_grant_prov(0, /*fiber_id=*/1);
     g_capability_registry().grant(tenant, kCapAgent, Effect::TenantAdmin, prov);
     CHECK(ev.has_capability(kCapAgent), "AC5: agent granted at fiber 1");
 
@@ -269,7 +274,7 @@ static void ac5_hard_fiber_deny() {
 
     // Same path for self-evo (mirrors MacroSelfEvo → kEffectMacroSelfEvo).
     set_effect_fiber_id_override(3);
-    auto prov2 = make_grant_provenance(0, true, 0, 0); // fiber_id = override (3)
+    auto prov2 = aura_test_grant_prov(0, /*fiber_id=*/3);
     g_capability_registry().grant(tenant, kCapSelfEvo, Effect::MacroSelfEvo, prov2);
     set_effect_fiber_id_override(4);
     EffectProvenance call_prov2{};
