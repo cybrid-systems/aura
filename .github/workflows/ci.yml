@@ -20,8 +20,9 @@
 #   - (2026-08) gate ‖ build-test (build-test no longer waits on gate)
 #   - (2026-08) PR bench --strict → main-only
 #   - (2026-08) PR AURA_ISSUE_BUILD=none when issue_matrix paths untouched
-#   - (2026-08) aura then test_ir+test_concurrent ninja; -g1 on build-test
+#   - (2026-08) aura then test_ir, then test_concurrent+issue ninja; -g1
 #   - (2026-08) shallow checkout on main push (full history only on PR)
+#   - (2026-08) BMI symlink fan-out only to this-run consumer dirs
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #

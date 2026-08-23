@@ -6556,6 +6556,120 @@ def _build_named_targets(targets: list[str], nproc: int, *, fatal: bool) -> int:
     return r
 
 
+# Own FILE_SET .ixx producers. Must not share a ninja with aura /
+# aura_test_objects — GCC 16 ealias ICE on ast.ixx under -O2.
+_MODULE_ICE_ISOLATE = frozenset({"test_ir", "test_gc_evaluator_integration"})
+_MODULE_PRODUCER_DIRS = frozenset(f"{t}.dir" for t in _MODULE_ICE_ISOLATE)
+
+
+def _target_bin_ok(name: str) -> bool:
+    p = BUILD / name
+    try:
+        return p.is_file() and os.access(p, os.X_OK) and p.stat().st_size >= 1024
+    except OSError:
+        return False
+
+
+def _ninja_build(targets: list[str], *, jobs: int, keep_going: bool = False) -> int:
+    cmd = ["ninja", "-C", str(BUILD), f"-j{jobs}"]
+    if keep_going:
+        cmd.append("-k0")
+    cmd.extend(targets)
+    return run(cmd, cwd=ROOT)
+
+
+def _ninja_phony_inputs(target: str) -> list[str]:
+    """Members of a phony aggregate (e.g. all_test_issue_targets)."""
+    try:
+        proc = subprocess.run(
+            ["ninja", "-C", str(BUILD), "-t", "query", target],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if proc.returncode != 0:
+        return []
+    names: list[str] = []
+    in_inputs = False
+    for ln in (proc.stdout or "").splitlines():
+        if ln.strip().startswith("input:"):
+            in_inputs = True
+            continue
+        if in_inputs:
+            if ln.startswith("  ") and not ln.startswith("    ") and ln.strip().endswith(":"):
+                break
+            s = ln.strip()
+            if s and s != "phony":
+                names.append(s)
+    return names
+
+
+def _launcher_consumer_dirs(main_bins: list[str], issue_targets: list[str]) -> list[str]:
+    names: list[str] = []
+    seen: set[str] = set()
+    for t in [*main_bins, *issue_targets]:
+        d = f"{t}.dir"
+        if d in _MODULE_PRODUCER_DIRS or d in seen:
+            continue
+        seen.add(d)
+        names.append(d)
+    return names
+
+
+def _apply_launcher_limit(dirs: list[str]) -> None:
+    os.environ["AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS"] = ",".join(dirs)
+    info(f"module launcher BMI fan-out: {len(dirs)} consumer dirs")
+
+
+def _drop_truncated_test_bins() -> None:
+    for p in BUILD.glob("test_*"):
+        try:
+            if p.is_file() and p.stat().st_size < 1024:
+                p.unlink(missing_ok=True)
+                warn(f"removed truncated link output {p.name}")
+        except OSError:
+            pass
+
+
+def _issue_ninja(targets: list[str] | None, *, jobs: int, label: str) -> int:
+    """Build issue targets; return ninja rc. Caps peak link thrash."""
+    cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{jobs}"]
+    if targets:
+        cmd.extend(targets)
+    else:
+        cmd.append("all_test_issue_targets")
+    info(label)
+    return run(cmd, cwd=ROOT)
+
+
+def _retry_issue_colder(targets: list[str] | None, first_jobs: int, r: int) -> int:
+    """Re-link issue bins at -j2 then -j1 after mold/disk SIGBUS."""
+    _drop_truncated_test_bins()
+    try:
+        usage = shutil.disk_usage(BUILD)
+        warn(
+            f"issue-test build failed (rc={r}); free disk "
+            f"{usage.free // (1024**3)} GiB of {usage.total // (1024**3)} GiB — retrying colder"
+        )
+    except OSError:
+        warn(f"issue-test build failed (rc={r}) — retrying colder")
+    r = _issue_ninja(
+        targets,
+        jobs=min(2, first_jobs),
+        label="issue tests: retry -j2 (mold/disk flake)",
+    )
+    if r == 0:
+        return 0
+    return _issue_ninja(
+        targets,
+        jobs=1,
+        label="issue tests: retry -j1 (serial link)",
+    )
+
+
 def cmd_build():
     """CMake 构建 (Ninja)"""
     print(f"{B}═══ Build ═══{N}")
@@ -6569,10 +6683,10 @@ def cmd_build():
     if r != 0:
         return r
 
-    # aura first: a single ninja of aura+test_ir races ast.ixx and can ICE
-    # GCC 16 ealias under -O2. After aura, remaining test bins share BMIs
-    # and can be one ninja (overlap unique TUs + two links). Combined
-    # failure falls back to one-target-at-a-time.
+    # aura, then test_ir (own FILE_SET .ixx): a single ninja of
+    # aura+test_ir races ast.ixx and can ICE GCC 16 ealias under -O2.
+    # After that, test_concurrent + issue binaries share aura_test_objects
+    # BMIs and can be one ninja (overlap unique TUs with the issue farm).
     #
     # AURA_BUILD_TARGETS=aura[,test_ir,...] — restrict the main matrix
     # (deployment-health only needs the aura binary for --health-server).
@@ -6590,17 +6704,6 @@ def cmd_build():
         if r != 0:
             return r
 
-    if remaining:
-        r = _build_named_targets(remaining, nproc, fatal=len(remaining) == 1)
-        if r != 0:
-            if len(remaining) == 1:
-                return r
-            warn(f"combined {'+'.join(remaining)} failed — falling back to one target at a time")
-            for target in remaining:
-                r = _build_named_targets([target], nproc, fatal=True)
-                if r != 0:
-                    return r
-
     # Aura-only builds (deployment-health) skip the issue matrix unless
     # AURA_ISSUE_BUILD=all is forced.
     if (
@@ -6611,6 +6714,13 @@ def cmd_build():
         ok("build OK (aura-only; issue matrix skipped)")
         _phase("total build", t_all)
         return 0
+
+    ice_targets = [t for t in remaining if t in _MODULE_ICE_ISOLATE]
+    overlap_main = [t for t in remaining if t not in _MODULE_ICE_ISOLATE]
+    for target in ice_targets:
+        r = _build_named_targets([target], nproc, fatal=True)
+        if r != 0:
+            return r
 
     # Build test_issue_* targets. Full tier uses the aggregate
     # (profile bundles + true standalones; dual standalones that
@@ -6631,96 +6741,82 @@ def cmd_build():
     if san_name in SANITIZER_FLAGS and issue_mode in ("all", ""):
         issue_mode = "none"
         info(f"issue tests: skipped under --sanitizer={san_name} (set AURA_ISSUE_BUILD=all to force full matrix)")
-    t0 = time.time()
 
-    def _issue_ninja(targets: list[str] | None, *, jobs: int, label: str) -> int:
-        """Build issue targets; return ninja rc. Caps peak link thrash."""
-        cmd = ["ninja", "-C", str(BUILD), "-k", "0", f"-j{jobs}"]
-        if targets:
-            cmd.extend(targets)
-        else:
-            cmd.append("all_test_issue_targets")
-        info(label)
-        return run(cmd, cwd=ROOT)
-
-    def _retry_issue_build(first_cmd_jobs: int, targets: list[str] | None, label: str) -> int:
-        """Retry failed issue links at lower -j after mold/disk SIGBUS flakes.
-
-        mold can exit with SIGBUS / 'Disk full?' when several ~70MB LLVM
-        test binaries link concurrently even with free disk (mmap pressure).
-        Drop incomplete outputs and re-link with -j2 then -j1.
-        """
-        r = _issue_ninja(targets, jobs=first_cmd_jobs, label=label)
-        if r == 0:
-            return 0
-        # Drop zero-length / truncated binaries so ninja re-links cleanly.
-        for p in BUILD.glob("test_*"):
-            try:
-                if p.is_file() and p.stat().st_size < 1024:
-                    p.unlink(missing_ok=True)
-                    warn(f"removed truncated link output {p.name}")
-            except OSError:
-                pass
-        try:
-            import shutil as _shutil
-
-            usage = _shutil.disk_usage(BUILD)
-            warn(
-                f"issue-test build failed (rc={r}); free disk "
-                f"{usage.free // (1024**3)} GiB of {usage.total // (1024**3)} GiB — retrying colder"
-            )
-        except OSError:
-            warn(f"issue-test build failed (rc={r}) — retrying colder")
-        r = _issue_ninja(
-            targets,
-            jobs=min(2, first_cmd_jobs),
-            label="issue tests: retry -j2 (mold/disk flake)",
-        )
-        if r == 0:
-            return 0
-        return _issue_ninja(
-            targets,
-            jobs=1,
-            label="issue tests: retry -j1 (serial link)",
-        )
-
-    # Cap ninja graph width for full issue matrix: link_pool already
-    # limits concurrent ld, but huge -j still schedules hundreds of
-    # ready links and spikes mold RSS → SIGBUS on 7–14 GiB runners.
-    issue_jobs = max(1, min(nproc, 4))
-
+    issue_ninja: list[str] | None
+    issue_label = ""
     if issue_mode in ("none", "skip", "off", "0"):
+        issue_ninja = []
         info("issue tests: skipped (AURA_ISSUE_BUILD=none)")
-        r = 0
     elif tier == "full" and issue_mode == "bundles":
         from issue_tier import BUNDLE_PROFILES
 
-        targets = [f"test_issues_{p}" for p in BUNDLE_PROFILES]
-        r = _retry_issue_build(
-            issue_jobs,
-            targets,
-            f"issue tests: tier=full mode=bundles ({len(targets)} bundle targets, -j{issue_jobs})",
-        )
+        issue_ninja = [f"test_issues_{p}" for p in BUNDLE_PROFILES]
+        issue_label = f"bundles ({len(issue_ninja)})"
     elif tier == "full":
-        r = _retry_issue_build(
-            issue_jobs,
-            None,
-            f"issue tests: tier=full (bundles + standalones; duals excluded, -j{issue_jobs})",
-        )
+        issue_ninja = None
+        issue_label = "full (bundles + standalones; duals excluded)"
     else:
-        targets = resolve_issue_targets("fast")
-        changed = [t for t in targets if t not in set(load_fast_targets())]
+        issue_ninja = resolve_issue_targets("fast")
+        changed = [t for t in issue_ninja if t not in set(load_fast_targets())]
         extra = f", +{len(changed)} git-changed" if changed else ""
-        r = _retry_issue_build(
-            issue_jobs,
-            targets,
-            f"issue tests: tier=fast ({len(targets)} targets{extra}, -j{issue_jobs})",
-        )
-    _phase("build issue tests", t0)
-    if r != 0:
-        # Don't fail cmd_build on partial-build errors —
-        # the runner will skip the unbuilt binaries.
-        print(f"{Y}  some test_issue_* targets failed to build (pre-existing); runner will skip them{N}")
+        issue_label = f"fast ({len(issue_ninja)} targets{extra})"
+
+    building_issues = issue_ninja is None or bool(issue_ninja)
+    issue_jobs = max(1, min(nproc, 4))
+
+    saved_limit = os.environ.get("AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS")
+    try:
+        limit_issue: list[str] = []
+        if issue_ninja is None:
+            limit_issue = _ninja_phony_inputs("all_test_issue_targets")
+        elif issue_ninja:
+            limit_issue = list(issue_ninja)
+        # Only pin fan-out when we know every consumer; an empty query
+        # on the full aggregate would omit issue dirs and break imports.
+        if limit_issue or not building_issues:
+            limit_dirs = _launcher_consumer_dirs(overlap_main, limit_issue)
+            if limit_dirs:
+                _apply_launcher_limit(limit_dirs)
+
+        if not building_issues:
+            if overlap_main:
+                r = _build_named_targets(overlap_main, nproc, fatal=len(overlap_main) == 1)
+                if r != 0:
+                    if len(overlap_main) == 1:
+                        return r
+                    warn(f"combined {'+'.join(overlap_main)} failed — falling back to one target at a time")
+                    for target in overlap_main:
+                        r = _build_named_targets([target], nproc, fatal=True)
+                        if r != 0:
+                            return r
+        else:
+            t0 = time.time()
+            ninja_targets = list(overlap_main)
+            if issue_ninja is None:
+                ninja_targets.append("all_test_issue_targets")
+            else:
+                ninja_targets.extend(issue_ninja)
+            extra = f"+{','.join(overlap_main)}" if overlap_main else ""
+            info(f"issue tests: tier={tier} mode={issue_label}{extra}, -j{issue_jobs}")
+            r = _ninja_build(ninja_targets, jobs=issue_jobs, keep_going=True)
+            for target in overlap_main:
+                if not _target_bin_ok(target):
+                    warn(f"{target} missing after combined ninja — retrying")
+                    rr = _build_named_targets([target], nproc, fatal=True)
+                    if rr != 0:
+                        return rr
+            if r != 0:
+                r = _retry_issue_colder(issue_ninja, issue_jobs, r)
+            _phase("build test bins + issue tests", t0)
+            if r != 0:
+                # Don't fail cmd_build on partial-build errors —
+                # the runner will skip the unbuilt binaries.
+                print(f"{Y}  some test_issue_* targets failed to build (pre-existing); runner will skip them{N}")
+    finally:
+        if saved_limit is None:
+            os.environ.pop("AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS", None)
+        else:
+            os.environ["AURA_MODULE_LAUNCHER_LIMIT_CONSUMERS"] = saved_limit
 
     _phase("build total", t_all)
     ok("build OK")

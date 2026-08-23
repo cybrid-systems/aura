@@ -129,6 +129,9 @@ if [ "$producer_key" = "aura_test_objects.dir" ]; then
             name="${name// /}"
             [ -n "$name" ] || continue
             d="$BUILD_DIR/CMakeFiles/$name"
+            # Cold CI: CMakeFiles/<tgt>.dir may not exist until that
+            # target compiles. mkdir so BMI symlinks land before then.
+            mkdir -p "$d" 2>/dev/null || true
             [ -d "$d" ] && consumers+=("$d")
         done
     else
