@@ -5439,8 +5439,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             //   schema-3242 + issue-3242)
             // + 4 additive keys (suggested-next + suggested-next-code +
             //   schema-3246 + issue-3246)
-            // = 46 minimum; planned 48 → query_hash_capacity_for 128.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 48;
+            // + 3 additive keys (se-mid-miss + schema-3284 + issue-3284)
+            // = 49 minimum; planned 56 → query_hash_capacity_for 128.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 56;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)
@@ -5496,15 +5497,28 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             std::int64_t last_se_denied = 0;
             std::int64_t last_se_reason_code = 0; // 0=none; else SecurityEventKind+1
             std::string last_se_reason_str;       // Issue #3149: SE reason[64] string snapshot
+            // Issue #3284: SE match discipline — when a join mid is in
+            // scope (explicit arg or default last-stamped path), ONLY
+            // accept SE rows with e.mutation_id == join_mid; never publish
+            // SE fields from a different mid beside a typed hit for mid M
+            // (residual of #3114/#3280 — previously the filter was gated
+            // on filt_mid, so the default path bound the latest SE row of
+            // ANY mid). If no same-mid SE row exists → additive
+            // se-mid-miss=1 (mirror typed-trail-miss), SE fields stay
+            // 0/"" (AC1). Pure load — no should_audit, no WAL I/O, no
+            // mutate. Soft/Off zero-cost preserved.
+            int se_mid_miss = 0;
             {
                 const auto& ring = g_security_event_ring();
                 const auto head = ring.seq.load(std::memory_order_relaxed);
+                bool se_mid_hit = false;
                 for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
                     if (head <= i)
                         break;
                     const auto& e = ring.ring[(head - 1 - i) % kSecurityEventRingSize];
-                    if (filt_mid && e.mutation_id != join_mid)
+                    if (join_mid != 0 && e.mutation_id != join_mid)
                         continue;
+                    se_mid_hit = true;
                     last_se_denied = e.denied ? 1 : 0;
                     last_se_reason_code = static_cast<std::int64_t>(e.kind) + 1;
                     // Issue #3149: NUL-safe truncation from e.reason[64].
@@ -5517,6 +5531,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     }
                     break;
                 }
+                se_mid_miss = (join_mid != 0 && !se_mid_hit) ? 1 : 0;
             }
 
             TypedMutationAuditEvent te{};
@@ -5696,6 +5711,13 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("last-se-reason-code", last_se_reason_code);
             insert_kv_str("last-se-reason", last_se_reason_str);
             insert_kv("last-se-denied", last_se_denied);
+            // Issue #3284: additive se-mid-miss — 1 when a join mid is in
+            // scope but no SE row shares e.mutation_id == join_mid (typed
+            // Error/Rollback with no same-mid SE). Mirrors typed-trail-miss
+            // (both are 0 on the clean join). Never publish SE fields from
+            // a different mid beside a typed hit for mid M. Schema additive
+            // only — existing schema/issue sentinels unchanged (AC4).
+            insert_kv("se-mid-miss", se_mid_miss);
             insert_kv("typed-outcome", typed_outcome);
             insert_kv("typed-trail-miss", typed_miss);
             insert_kv("commit-would-allow", cr.would_allow_commit ? 1 : 0);
@@ -5740,6 +5762,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // same evolution-audit-decision handler, single PR).
             insert_kv("schema-3152", 3152);
             insert_kv("issue-3152", 3152);
+            // Issue #3284: additive schema/issue sentinels for the
+            // se-mid-miss discipline flag (typed Error with no same-mid
+            // SE row → explicit miss, never cross-mid SE bleed).
+            insert_kv("schema-3284", 3284);
+            insert_kv("issue-3284", 3284);
             // Issue #3205: additive durable-hit + schema/issue sentinels.
             // Default path durable-hit=0 (no scan). overflow still 0.
             insert_kv("durable-hit", durable_hit);

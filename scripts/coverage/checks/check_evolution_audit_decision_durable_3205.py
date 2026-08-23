@@ -65,7 +65,7 @@ def main() -> int:
     if "fopen" in block:
         fails.append("AC2: fopen in evolution-audit-decision handler (I/O belongs in WAL helper)")
 
-    must("kEvolutionAuditDecisionPlannedKeys = 48", "AC3 planned 48 (covers #3242+#3246 additive)", sec)
+    must("kEvolutionAuditDecisionPlannedKeys = 56", "AC3 planned 48 (covers #3242+#3246 additive)", sec)
     must('insert_kv("durable-hit", durable_hit)', "AC3 durable-hit", sec)
     must("schema-3205", "AC3 schema-3205", sec)
     must("issue-3205", "AC3 issue-3205", sec)

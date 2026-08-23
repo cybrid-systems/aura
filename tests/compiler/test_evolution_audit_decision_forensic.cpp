@@ -109,12 +109,16 @@ static void ac3_soft_zero_cost() {
 static void ac4_capacity_schema() {
     std::println("\n--- AC4: capacity / schema ---");
     auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 48") != std::string::npos,
-          "planned_keys bumped 40 -> 44 (#3242)");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 56") != std::string::npos,
+          "planned_keys bumped 48 -> 56 (#3284)");
     CHECK(src.find("insert_kv(\"schema-3152\", 3152)") != std::string::npos,
           "schema-3152 sentinel present");
     CHECK(src.find("insert_kv(\"issue-3152\", 3152)") != std::string::npos,
           "issue-3152 sentinel present");
+    CHECK(src.find("insert_kv(\"schema-3284\", 3284)") != std::string::npos,
+          "schema-3284 sentinel present");
+    CHECK(src.find("insert_kv(\"issue-3284\", 3284)") != std::string::npos,
+          "issue-3284 sentinel present");
     CHECK(src.find("overflowed = false") != std::string::npos, "overflow tracking preserved");
     CHECK(src.find("query_hash_finish(ht, ev.string_heap_, overflowed)") != std::string::npos,
           "query_hash_finish still called with overflow flag");
@@ -165,8 +169,32 @@ static void ac7_typed_summary_3242() {
               std::string::npos,
           "typed-summary-from-wal key");
     CHECK(src.find("insert_kv(\"schema-3242\",") != std::string::npos, "schema-3242");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 48") != std::string::npos,
-          "planned keys 44");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 56") != std::string::npos,
+          "planned keys 56");
+}
+
+// AC8: Issue #3284 — SE match discipline. When a join mid is in scope
+// (explicit arg or default last-stamped path), only SE rows with
+// e.mutation_id == join_mid are accepted; if none, se-mid-miss=1 and the
+// SE fields stay 0/"" (never publish a different mid's SE beside a typed
+// hit for mid M). Soft / no :durable stays zero disk I/O.
+static void ac8_3284_se_mid_miss() {
+    std::println("\n--- AC8: #3284 SE match discipline + se-mid-miss ---");
+    auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
+    CHECK(src.find("Issue #3284") != std::string::npos, "cites #3284");
+    // Filter is join_mid-scoped (not filt_mid-scoped): default last-stamped
+    // path must also refuse a different mid's SE beside a typed hit.
+    CHECK(src.find("join_mid != 0 && e.mutation_id != join_mid") != std::string::npos,
+          "SE walk filters by join_mid (not filt_mid)");
+    CHECK(src.find("se_mid_miss = (join_mid != 0 && !se_mid_hit) ? 1 : 0") != std::string::npos,
+          "se_mid_miss set when no same-mid SE row");
+    CHECK(src.find("insert_kv(\"se-mid-miss\", se_mid_miss)") != std::string::npos,
+          "se-mid-miss key inserted");
+    // Soft / no :durable still zero disk I/O: the WAL path remains gated on
+    // want_durable + production_defaults_active().
+    CHECK(src.find("if (want_durable && join_mid != 0 && production_defaults_active())") !=
+              std::string::npos,
+          "durable WAL path still gated (AC3 zero disk I/O)");
 }
 
 } // namespace
@@ -179,6 +207,7 @@ int main() {
     ac5_parallel_with_3149();
     ac6_durable_3205();
     ac7_typed_summary_3242();
+    ac8_3284_se_mid_miss();
     if (g_failed)
         return 1;
     std::println("evolution-audit-decision forensic-source (#3152): OK ({} passed)", g_passed);
