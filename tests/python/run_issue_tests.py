@@ -807,9 +807,24 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
     # Phase 0: bulk refresh when a modest number of bins are SO-stale.
     # Large skew (local half-rebuilt trees) rebuilds on-demand in run_one
     # to avoid a multi-hour ninja front-load.
+    # CI: cmd_build already linked all_test_issue_targets — skip the happy-path
+    # ninja insert (serial recovery still rebuilds on rc=127 / crash / undef).
     present = [b for b in runnable if (BUILD / b).is_file()]
     stale_n = sum(1 for b in present if _binary_stale_vs_shared_sos(BUILD / b))
-    if 0 < stale_n <= 40:
+    ci_skip_refresh = str(os.environ.get("AURA_CI", "")).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    force_refresh = os.environ.get("AURA_ISSUES_REFRESH_STALE", "").strip() in {"1", "true", "yes"}
+    if ci_skip_refresh and stale_n > 0 and not force_refresh:
+        print(
+            f"{Y}Note: {stale_n} issue binaries look older than shared SOs; "
+            f"CI skips bulk refresh (rebuild on rc=127/crash only; "
+            f"AURA_ISSUES_REFRESH_STALE=1 to force).{N}"
+        )
+    elif 0 < stale_n <= 40:
         refresh_stale_issue_binaries(present)
     elif stale_n > 40:
         print(
@@ -817,7 +832,7 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
             f"will rebuild on-demand after rc=127/crash (set "
             f"AURA_ISSUES_REFRESH_STALE=1 to bulk-relink first).{N}"
         )
-        if os.environ.get("AURA_ISSUES_REFRESH_STALE", "").strip() in {"1", "true", "yes"}:
+        if force_refresh:
             refresh_stale_issue_binaries(present)
 
     workers = max(1, min(jobs, len(runnable)))

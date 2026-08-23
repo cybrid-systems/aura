@@ -7377,44 +7377,72 @@ class SuiteSpec:
     kind: str  # cpp | aura | extra
     doc: str
     parallel: bool = True
+    # cmd_test wave: cheap (fan-out) → medium (2-wide) → heavy/stress (exclusive).
+    # Caps inner AURA_*_JOBS so suite-level × inner-level never exceeds nproc.
+    wave: str = "cheap"
 
 
 SUITE_SPECS: tuple[SuiteSpec, ...] = (
-    SuiteSpec("unit", test_unit, "cpp", "C++ test_ir only"),
-    SuiteSpec("concurrent", test_concurrent, "cpp", "C++ test_concurrent stress"),
+    SuiteSpec("unit", test_unit, "cpp", "C++ test_ir only", wave="cheap"),
+    SuiteSpec(
+        "concurrent",
+        test_concurrent,
+        "cpp",
+        "C++ test_concurrent stress",
+        parallel=False,
+        wave="stress",
+    ),
     SuiteSpec(
         "issues",
         test_issues,
         "cpp",
         "C++ domain / issue binaries (AURA_ISSUES_TIER=full)",
+        parallel=False,
+        wave="heavy",
     ),
     SuiteSpec(
         "issues-fast",
         test_issues,
         "cpp",
         "same runner as issues, AURA_ISSUES_TIER=fast",
+        parallel=False,
+        wave="heavy",
     ),
-    SuiteSpec("runtime-c", test_runtime_unit, "cpp", "lib/runtime.c harness"),
-    SuiteSpec("integ", test_integ, "aura", "fixture integ via aura_file_runner snippets"),
-    SuiteSpec("typecheck", test_typecheck, "aura", "fixture typecheck via aura_file_runner"),
-    SuiteSpec("smoke", test_smoke, "aura", "fixture smoke via command runner"),
-    SuiteSpec("bash", test_bash, "aura", "tests/run-tests.sh via tests/python/run.py"),
-    SuiteSpec("suite", test_suite_runner, "aura", "tests/suite/*.aura (--load via aura_file_runner)"),
+    SuiteSpec("runtime-c", test_runtime_unit, "cpp", "lib/runtime.c harness", wave="cheap"),
+    SuiteSpec("integ", test_integ, "aura", "fixture integ via aura_file_runner snippets", wave="cheap"),
+    SuiteSpec("typecheck", test_typecheck, "aura", "fixture typecheck via aura_file_runner", wave="cheap"),
+    SuiteSpec("smoke", test_smoke, "aura", "fixture smoke via command runner", wave="cheap"),
+    SuiteSpec("bash", test_bash, "aura", "tests/run-tests.sh via tests/python/run.py", wave="medium"),
+    SuiteSpec(
+        "suite",
+        test_suite_runner,
+        "aura",
+        "tests/suite/*.aura (--load via aura_file_runner)",
+        wave="medium",
+    ),
     SuiteSpec(
         "regression",
         test_regression,
         "aura",
         "tests/regression/*.aura (stdin + ;; expect: via aura_file_runner)",
+        wave="medium",
     ),
-    SuiteSpec("gradual", test_gradual, "aura", "gradual guarantee"),
-    SuiteSpec("p0", test_p0_regression, "aura", "P0 snippets + freeze/AOT extras"),
-    SuiteSpec("e2e", test_e2e, "aura", "commercial_readiness golden E2E", parallel=False),
-    SuiteSpec("suite-s0", test_suite_s0, "aura", "suite subset under AURA_PRIMITIVES=s0", parallel=False),
-    SuiteSpec("repl", test_repl, "extra", "REPL pexpect"),
-    SuiteSpec("bench", test_bench, "extra", "benchmark SLO", parallel=False),
-    SuiteSpec("mutation", test_mutation, "extra", "mutation_loop smoke", parallel=False),
-    SuiteSpec("demo", test_demo, "extra", "agent demo pipeline", parallel=False),
-    SuiteSpec("ai", test_ai_agent_demo, "extra", "AI agent demo", parallel=False),
+    SuiteSpec("gradual", test_gradual, "aura", "gradual guarantee", wave="cheap"),
+    SuiteSpec("p0", test_p0_regression, "aura", "P0 snippets + freeze/AOT extras", wave="medium"),
+    SuiteSpec("e2e", test_e2e, "aura", "commercial_readiness golden E2E", parallel=False, wave="stress"),
+    SuiteSpec(
+        "suite-s0",
+        test_suite_s0,
+        "aura",
+        "suite subset under AURA_PRIMITIVES=s0",
+        parallel=False,
+        wave="stress",
+    ),
+    SuiteSpec("repl", test_repl, "extra", "REPL pexpect", wave="cheap"),
+    SuiteSpec("bench", test_bench, "extra", "benchmark SLO", parallel=False, wave="stress"),
+    SuiteSpec("mutation", test_mutation, "extra", "mutation_loop smoke", parallel=False, wave="stress"),
+    SuiteSpec("demo", test_demo, "extra", "agent demo pipeline", parallel=False, wave="stress"),
+    SuiteSpec("ai", test_ai_agent_demo, "extra", "AI agent demo", parallel=False, wave="stress"),
 )
 
 SUITE_BY_NAME: dict[str, SuiteSpec] = {s.name: s for s in SUITE_SPECS}
@@ -7465,6 +7493,16 @@ CI_ISSUES_FAST = ["issues-fast"]
 CI_PARALLEL_SAFE = frozenset(s.name for s in SUITE_SPECS if s.parallel)
 
 
+_SUITE_WAVES: tuple[str, ...] = ("cheap", "medium", "heavy", "stress")
+# Max suite-level workers per wave (None = min(AURA_TEST_JOBS, batch size)).
+_WAVE_SUITE_WORKERS: dict[str, int | None] = {
+    "cheap": None,
+    "medium": 2,
+    "heavy": 1,
+    "stress": 1,
+}
+
+
 def _validate_suite_registry() -> None:
     """Fail loud if tiers drift from leaves."""
     unknown = [n for leaves in TIER_LEAVES.values() for n in leaves if n not in SUITE_BY_NAME]
@@ -7478,6 +7516,9 @@ def _validate_suite_registry() -> None:
     unit_src = test_unit.__code__.co_names
     if "test_concurrent" in unit_src or "concurrent_bin" in unit_src:
         raise RuntimeError("unit must not embed the concurrent binary")
+    bad_wave = [s.name for s in SUITE_SPECS if s.wave not in _SUITE_WAVES]
+    if bad_wave:
+        raise RuntimeError(f"SuiteSpec.wave must be one of {_SUITE_WAVES}: {bad_wave}")
 
 
 _validate_suite_registry()
@@ -7571,8 +7612,34 @@ def _suite_base_name(label: str) -> str:
     return label.split("/")[-1]
 
 
+def _suite_wave(label: str) -> str:
+    spec = SUITE_BY_NAME.get(_suite_base_name(label))
+    return spec.wave if spec else "cheap"
+
+
+def _cap_inner_jobs(live_suites: int) -> dict[str, str]:
+    """Pin inner fan-out so suite-level × inner ≤ nproc.
+
+    Explicit AURA_*_JOBS in the environment are caps, not floors.
+    """
+    cores = os.cpu_count() or 4
+    inner = max(1, cores // max(1, live_suites))
+    applied: dict[str, str] = {}
+    for key in ("AURA_SUITE_JOBS", "AURA_ISSUES_JOBS", "AURA_CASE_JOBS"):
+        raw = os.environ.get(key, "").strip()
+        if raw.isdigit() and int(raw) > 0:
+            applied[key] = str(max(1, min(int(raw), inner)))
+        else:
+            applied[key] = str(inner)
+    return applied
+
+
 def cmd_test(suite_names: list[str]):
-    """Run test suites."""
+    """Run test suites in cheap → medium → heavy → stress waves.
+
+    Inner AURA_SUITE_JOBS / AURA_ISSUES_JOBS / AURA_CASE_JOBS are capped to
+    nproc // live_suites so overlapping heavies cannot oversubscribe the host.
+    """
     items = _expand_suite_names(suite_names)
     if not items:
         warn("no test suites to run")
@@ -7587,21 +7654,41 @@ def cmd_test(suite_names: list[str]):
             results[name] = rc
         return _summarize_test_results(results)
 
-    parallel = [(lbl, fn) for lbl, fn in items if _suite_base_name(lbl) in CI_PARALLEL_SAFE]
-    serial = [(lbl, fn) for lbl, fn in items if _suite_base_name(lbl) not in CI_PARALLEL_SAFE]
+    by_wave: dict[str, list[tuple[str, object]]] = {w: [] for w in _SUITE_WAVES}
+    for label, fn in items:
+        by_wave[_suite_wave(label)].append((label, fn))
 
-    if parallel:
-        workers = min(jobs, len(parallel))
-        print(f"{B}Running {len(parallel)} parallel-safe suites (jobs={workers}); {len(serial)} suite(s) serial{N}")
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(_run_suite, label, fn): label for label, fn in parallel}
-            for fut in as_completed(futures):
-                label, rc, _elapsed = fut.result()
-                results[label] = rc
-
-    for label, fn in serial:
-        name, rc, _elapsed = _run_suite(label, fn)
-        results[name] = rc
+    saved_inner = {k: os.environ.get(k) for k in ("AURA_SUITE_JOBS", "AURA_ISSUES_JOBS", "AURA_CASE_JOBS")}
+    try:
+        for wave in _SUITE_WAVES:
+            batch = by_wave[wave]
+            if not batch:
+                continue
+            cap = _WAVE_SUITE_WORKERS[wave]
+            workers = 1 if cap == 1 else min(jobs if cap is None else cap, len(batch), jobs)
+            inner = _cap_inner_jobs(workers)
+            os.environ.update(inner)
+            print(
+                f"{B}Wave {wave}: {len(batch)} suite(s), workers={workers}, "
+                f"inner_jobs={inner['AURA_SUITE_JOBS']} "
+                f"(suite/issues/case){N}"
+            )
+            if workers <= 1:
+                for label, fn in batch:
+                    name, rc, _elapsed = _run_suite(label, fn)
+                    results[name] = rc
+            else:
+                with ThreadPoolExecutor(max_workers=workers) as pool:
+                    futures = {pool.submit(_run_suite, label, fn): label for label, fn in batch}
+                    for fut in as_completed(futures):
+                        label, rc, _elapsed = fut.result()
+                        results[label] = rc
+    finally:
+        for k, v in saved_inner.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
 
     return _summarize_test_results(results)
 
