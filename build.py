@@ -4300,6 +4300,26 @@ def cmd_lint():
             "Issue #3060 pure-anon pressure force-leave linter failed — run python3 scripts/coverage/checks/check_pure_anon_pressure_force_leave_3060.py"
         )
         return r
+    # Issue #3277: pure-anon no-boundary first-call force-leave. Under
+    # production high-frequency self-mod WITHOUT an outermost MutationBoundary
+    # success-exit, budget-skipped pure-anon would stay on touch-time MustDeopt
+    # until BoundaryExit / residual tick heals — first post-reemit native call
+    # can still pay jitter. The reemit-success walk now force-leaves the oldest
+    # pending/skipped slots under production (reuse #3060 pressure helper +
+    # #3024 overflow semantics; helper clamps to batch). Soft / budget=0:
+    # zero extra (walk gated before). Extends
+    # test_anonymous_residual_stable_id_policy (#81967); no docs/design/
+    # (#1655); no new counters/query keys.
+    pnb3277_script = COVERAGE_CHECKS / "check_pure_anon_no_boundary_force_leave_3277.py"
+    if not pnb3277_script.exists():
+        fail(f"missing {pnb3277_script}")
+        return 1
+    r = run([sys.executable, str(pnb3277_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3277 pure-anon no-boundary force-leave linter failed — run python3 scripts/coverage/checks/check_pure_anon_no_boundary_force_leave_3277.py"
+        )
+        return r
     # Issue #3020: domain query:* hash builders fail-soft on insert miss.
     # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
     # no docs/design/ (#1655).

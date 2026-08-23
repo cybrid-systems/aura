@@ -2321,6 +2321,13 @@ extern "C" std::uint64_t aura_pure_anon_pressure_bp() noexcept {
 // Issue #2950: budget-exhausted pure-anon slots are enqueued for a
 // bounded background remount drained on BoundaryExit / pipeline
 // amortized path (never steal-complete #2715). Cap = budget ceiling.
+//
+// Issue #3277: forward decl — production pressure force-leave for
+// skipped pure-anon (defined below in the #2950 bg queue section).
+// Called from this walk when skip > 0 under production to close the
+// no-boundary first-call window (heal without awaiting BoundaryExit).
+static void pure_anon_pressure_force_leave_oldest(std::size_t max_n) noexcept;
+
 extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
                                                           std::uint64_t* ok_count,
                                                           std::uint64_t* skip_budget_count) {
@@ -2396,6 +2403,21 @@ extern "C" void aura_sync_remount_pure_anon_live_closures(std::uint64_t budget,
     // Issue #2950: enqueue budget-exhausted pure-anon after table unlock.
     for (std::size_t i = 0; i < pending_n; ++i)
         aura_pure_anon_bg_enqueue(pending_bg[i]);
+
+    // Issue #3277: close the no-boundary first-call hole. Under production
+    // high-frequency self-mod WITHOUT an outermost MutationBoundary
+    // success-exit, skipped pure-anon (past budget) would otherwise stay on
+    // touch-time MustDeopt only until BoundaryExit / residual tick heals —
+    // the first post-reemit native call can still pay MustDeopt jitter.
+    // Force leave-native on the oldest pending/skipped slots now (bounded
+    // batch — the helper clamps to kPureAnonPressureForceBatch internally,
+    // reuse #3060 pressure helper + #3024 overflow semantics) so the next
+    // native call cannot execute stale code without MustDeopt / dual-fresh
+    // miss. Queue stays so a later quiet drain can remount-heal.
+    // Soft / Off / budget=0: never reaches here (walk gated on budget>0 and
+    // production defaults only) — zero extra work (AC3).
+    if (skip > 0 && aura::compiler::typed_audit::production_defaults_active())
+        pure_anon_pressure_force_leave_oldest(skip);
 
     aura_bump_live_closure_sync_remount_pure_anon_totals(ok, skip);
 

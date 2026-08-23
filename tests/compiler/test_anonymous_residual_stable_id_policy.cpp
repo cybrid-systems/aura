@@ -1155,6 +1155,132 @@ static void ac3060_5_source_and_linter() {
           "3060 AC5: no invent test per #81967");
 }
 
+// ── Issue #3277: pure-anon no-boundary first-call closure. ──
+// Under production high-frequency self-mod WITHOUT an outermost
+// MutationBoundary success-exit, budget-skipped pure-anon would otherwise
+// stay on touch-time MustDeopt only until BoundaryExit / residual tick
+// heals — first post-reemit native call can still pay MustDeopt jitter.
+// The reemit-success walk now force-leaves the oldest pending/skipped
+// slots under production (reuse #3060 pressure helper + #3024 overflow
+// semantics), closing the window without awaiting BoundaryExit.
+// AC1: production walk skip → force leave-native (must_deopt + epoch poison)
+// AC2: Soft / !production → skip counter only, no force
+// AC3: budget=0 → zero walk / no force
+// AC4: storm throttle → budget shrink still closes the hole (no permanent
+//      native window); no steal-complete drain
+// AC5: source-cite + linter + no invent
+static void ac3277_1_prod_walk_skip_force_leave() {
+    std::println("\n--- #3277 AC1: production walk skip → force leave-native ---");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_test_reset_residual_remount_state();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3277 AC1: alloc pure-anon");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_pure_anon_bg_enqueue(cid);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() > md0,
+          "3277 AC1: force-leave counter advanced on walk skip");
+    CHECK(aura_closure_get_must_deopt(cid) != 0, "3277 AC1: MustDeopt set (leave native)");
+    CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3277 AC1: bridge_epoch poisoned");
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3277 AC1: call leaves native");
+    CHECK(aura_pure_anon_bg_pending() >= 1, "3277 AC1: queue not popped (heal later)");
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3277_2_soft_skip_counter_only() {
+    std::println("\n--- #3277 AC2: Soft / !production walk skip → counter only ---");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_test_reset_residual_remount_state();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3277 AC2: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_pure_anon_bg_enqueue(cid);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/1, &ok, &skip);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() == md0,
+          "3277 AC2: no force-leave under !production");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3277 AC2: MustDeopt not forced (Soft)");
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3277_3_budget_zero_no_force() {
+    std::println("\n--- #3277 AC3: budget=0 → zero walk / no force ---");
+    aura_test_reset_pure_anon_bg_queue();
+    aura_test_reset_residual_remount_state();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3277 AC3: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    aura_pure_anon_bg_enqueue(cid);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    std::uint64_t ok = 0, skip = 0;
+    aura_sync_remount_pure_anon_live_closures(/*budget=*/0, &ok, &skip);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(ok == 0 && skip == 0, "3277 AC3: budget=0 zero walk");
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() == md0,
+          "3277 AC3: no force on budget=0");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3277 AC3: MustDeopt not forced");
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3277_4_storm_shrink_and_no_steal_drain() {
+    std::println("\n--- #3277 AC4: storm throttle shrink + no steal drain ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    // Storm shrink lowers the budget (more skip pressure) but the walk
+    // still force-leaves skipped pure-anon under production — no permanent
+    // native hole from a smaller budget.
+    CHECK(br.find("should_throttle_reemit()") != std::string::npos,
+          "3277 AC4: storm throttle gate in bridge");
+    CHECK(br.find("pure_budget = aura_sync_remount_pure_anon_budget_base()") != std::string::npos,
+          "3277 AC4: storm shrinks to base budget");
+    CHECK(rt.find("pure_anon_pressure_force_leave_oldest(skip)") != std::string::npos,
+          "3277 AC4: walk force-leave on skip (independent of budget size)");
+    const auto pos = steal.find("aura_evaluator_on_steal_complete");
+    CHECK(pos != std::string::npos, "3277 AC4: steal-complete site");
+    const auto win = steal.substr(pos, 8000);
+    CHECK(win.find("aura_pure_anon_bg_remount_drain") == std::string::npos &&
+              win.find("pure_anon_pressure_force_leave_oldest") == std::string::npos,
+          "3277 AC4: steal does not drain / force pure-anon (#2715 preserved)");
+}
+
+static void ac3277_5_source_and_linter() {
+    std::println("\n--- #3277 AC5: source-cite + linter + no invent ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pure_anon_no_boundary_force_leave_3277.py");
+    CHECK(rt.find("Issue #3277") != std::string::npos, "3277 AC5: runtime cites #3277");
+    CHECK(rt.find("close the no-boundary first-call hole") != std::string::npos,
+          "3277 AC5: walk force-leave documented");
+    CHECK(rt.find("pure_anon_pressure_force_leave_oldest(skip)") != std::string::npos,
+          "3277 AC5: reuses #3060 pressure helper");
+    CHECK(!lint.empty() && lint.find("Issue #3277") != std::string::npos, "3277 AC5: linter");
+    CHECK(build.find("check_pure_anon_no_boundary_force_leave_3277") != std::string::npos,
+          "3277 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3277-pure-anon-no-boundary-force.md").empty(),
+          "3277 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3277.cpp").empty(),
+          "3277 AC5: no invent test per #81967");
+}
+
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
 // Outside reemit-success; clears residual MustDeopt under bounded budget.
 
@@ -2143,6 +2269,12 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3060_3_named_and_steal_unchanged();
     ac3060_4_soak_bounded_leave();
     ac3060_5_source_and_linter();
+    std::println("\n=== Issue #3277: pure-anon no-boundary first-call force-leave ===");
+    ac3277_1_prod_walk_skip_force_leave();
+    ac3277_2_soft_skip_counter_only();
+    ac3277_3_budget_zero_no_force();
+    ac3277_4_storm_shrink_and_no_steal_drain();
+    ac3277_5_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
     ac2928_2_storm_skip();
