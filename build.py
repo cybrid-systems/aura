@@ -7300,7 +7300,7 @@ def test_regression():
         env=_aura_test_env(),
         mode="stdin",
         timeout_s=10,
-        jobs=1,
+        jobs=_case_jobs(),
     )
 
 
