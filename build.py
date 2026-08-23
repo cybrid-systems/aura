@@ -3669,6 +3669,29 @@ def cmd_lint():
             "Issue #2969 registry write-fence linter failed — run python3 scripts/coverage/checks/check_capability_write_fence_2969.py"
         )
         return r
+    # Issue #3276: freeze the privileged-write call-site allowlist. Runtime
+    # fences (#2968/#3086/#3145/#3029/#2969/#3141) are solid, but any NEW
+    # translation unit can still call g_capability_registry().grant /
+    # grant_locked / grant_session / grant_once / grant_macro_self_evo /
+    # g_workspace_isolation().grant_cross_tenant and bypass Evaluator
+    # principal / audit / TenantAdmin wrappers — bypass by addition. The
+    # allowlist (scripts/coverage/allowlists/privileged_grant_calls.json)
+    # freezes the sole permitted inventory (evaluator_security.cpp /
+    # security_defaults.hh bootstrap render / evaluator_primitives_security.cpp
+    # macro-self-evo); the linter scans src/ and fails on any hit outside.
+    # Read-only getters (grant_epoch_retain_window / grant_min_valid_epoch)
+    # are not grant writes. Extends test_tenant_isolation_enforcement
+    # (#81967); no docs/design/ (#1655).
+    pg3276_script = COVERAGE_CHECKS / "check_privileged_grant_callsite_allowlist_3276.py"
+    if not pg3276_script.exists():
+        fail(f"missing {pg3276_script}")
+        return 1
+    r = run([sys.executable, str(pg3276_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3276 privileged-grant call-site allowlist linter failed — run python3 scripts/coverage/checks/check_privileged_grant_callsite_allowlist_3276.py"
+        )
+        return r
     # Issue #3010: allow_cross_tenant_ write gate — under production,
     # security:set-tenant-principal! / set_tenant_principal with
     # allow_cross=true requires TenantAdmin or wildcard. Deny → SE
