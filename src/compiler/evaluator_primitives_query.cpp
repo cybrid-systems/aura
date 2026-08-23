@@ -539,9 +539,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 std::lock_guard<std::mutex> lock(module_export_cache::g_mtx);
                 size = module_export_cache::g_by_path.size();
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -565,6 +566,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema", 1680);
             insert_kv("issue", 1680);
@@ -577,9 +580,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             const auto m = load(module_export_cache::g_miss);
             const auto denom = h + m;
             insert_kv("hit-rate-bp", denom > 0 ? (h * 10000) / denom : 0);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     ObservabilityPrims::register_stats_impl(
@@ -627,10 +628,6 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 hygiene_violation =
                     static_cast<std::int64_t>(ev->mutation_boundary_hygiene_violation_total());
             }
-            auto* ht = FlatHashTable::create(8);
-            if (!ht)
-                return make_int(success + macro_dirty + epoch_bump + hygiene_violation);
-            (void)ht; // FlatHashTable fill follows the same pattern as query:ir-marker-stats.
             return make_int(success + macro_dirty + epoch_bump + hygiene_violation);
         });
 
@@ -707,32 +704,17 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 ir_macro_introduced_inlined_skipped = hook_skipped;
             // Compat scalar: sum of IR marker buckets for pre-#1644 callers.
             const std::int64_t marker_total = ir_user + ir_macro_intro + ir_bool_lit;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_int(marker_total);
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
             auto hcap = ht->capacity;
-            auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                auto kidx = ev ? ev->push_string_heap(k_str) : 0;
-                EvalValue key_ev = make_string(static_cast<std::uint64_t>(kidx));
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        keys[idx] = key_ev.val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+            auto insert_kv = [&](const std::string& k_str, std::int64_t v) {
+                if (!insert_kv_checked(ht, ev->string_heap_mut(), k_str, v))
+                    overflowed = true;
             };
             if (!ev) {
                 FlatHashTable::destroy(ht);
@@ -747,9 +729,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("ir-module-walked", ir_walked);
             insert_kv("schema", 1891);
             insert_kv("issue", 1891);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev->string_heap_mut(), overflowed);
         });
 
     // Issue #2096: query:macro-mutate-restamp-stats. Surfaces the
@@ -851,9 +831,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
         "query:macro-schema-cache-dirty-stamp-stats",
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -877,6 +858,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             // #2098: existing clone_macro_body per-node stamp counter.
             // Aliases (schema-cache-dirty-stamped / total) preserved so
@@ -904,9 +887,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("active", 1);
             insert_kv("rest-param-qq-wired", 1);
             insert_kv("schema-cache-rest-stamp-wired", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #458: query:hygiene-stats. Returns an integer
@@ -941,9 +922,11 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
 
-            auto* ht = FlatHashTable::create(64); // #2099 + #3095 + #3252 (~25 keys)
+            auto* ht = FlatHashTable::create(
+                query_hash_capacity_for(30)); // #2099 + #3095 + #3252 (~25 keys)
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -967,6 +950,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
 
             insert_kv("save_total",
@@ -1031,9 +1016,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("active", 1);
             insert_kv("lineage-1893", 1893);
             insert_kv("nested-under-mutation-boundary", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #456 / #1036: query:dirty-subtree root-node-id
@@ -1101,9 +1084,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1127,6 +1111,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("epoch-after", static_cast<std::int64_t>(entry.epoch_after));
             insert_kv("epoch-delta", static_cast<std::int64_t>(entry.epoch_delta));
@@ -1140,9 +1126,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-fail",
                       static_cast<std::int64_t>(ev->get_schema_validation_fail_count()));
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #504: query:mutation-boundary-log. Consolidated Guard impact
@@ -1159,9 +1143,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             const auto entry = ev->get_latest_mutation_impact_entry();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1185,6 +1170,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             const std::uint64_t snapshots = ev->get_impact_snapshot_count();
             const std::uint64_t impacts = ev->get_mutation_impact_count();
@@ -1216,9 +1203,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-valid", ev->get_last_schema_validation_ok() ? 1 : 0);
             insert_kv("boundary-log-total", static_cast<std::int64_t>(total));
             insert_kv("boundary-log-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #489: query:stability-stats. Hash view of StableNodeRef
@@ -1232,9 +1217,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             std::uint64_t invalidations = 0;
             if (auto* ws = ev->workspace_flat())
                 invalidations = ws->stable_ref_invalidations();
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1258,6 +1244,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("raw-nodeid-usage",
                       static_cast<std::int64_t>(ev->get_raw_nodeid_usage_in_primitives_count()));
@@ -1269,9 +1257,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("stale-ref-warned",
                       static_cast<std::int64_t>(ev->get_stale_ref_warned_count()));
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #456: query:epoch-stats. Returns the current
@@ -1375,9 +1361,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // capacity and were silently dropped by insert_kv's full-scan
             // return-without-insert). Bump to 128 so the full LayoutStamp +
             // stable-ref surface stays visible to hash-ref queries.
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(75));
             if (!ht)
                 return make_int(rec_int);
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1401,6 +1388,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("generation-wrap-count", static_cast<std::int64_t>(wraps));
             insert_kv("stable-ref-invalidations", static_cast<std::int64_t>(invalidations));
@@ -1560,9 +1549,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                           static_cast<std::int64_t>(wflat->pinned_across_boundaries()));
             else
                 insert_kv("pinned-across-boundaries", 0);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #1470 / #1499 / #1593 / #1597 / #1599 / #1613:
@@ -1886,9 +1873,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 ev.bump_safepoint_adaptive_threshold();
             }
 
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(88));
             if (!ht)
                 return make_int(rec_int);
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1912,6 +1900,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             // #1470 fields (stable contract)
             insert_kv("wraps", static_cast<std::int64_t>(wraps));
@@ -2014,9 +2004,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("macro-hygiene-submodule-wired", 1);
             insert_kv("issue", 1613);
             insert_kv("schema", 1613); // lineage 1599|1597|1593|1499
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #738: query:stable-ref-boundary-stats-hash — cross-COW /
@@ -2027,9 +2015,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
     ObservabilityPrims::register_stats_impl(
         "query:stable-ref-boundary-stats-hash", [&ev, &string_heap](const auto&) -> EvalValue {
             // Capacity 32: #738 keys + #2189 pin-lifecycle fields.
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2053,6 +2042,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             const std::uint64_t cross_cow = ev.get_cross_cow_invalidations();
             const std::uint64_t pins_total = ev.cow_boundary_pins_total();
@@ -2084,9 +2075,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("schema-2189", 2189);
             insert_kv("issue-2189", 2189);
             insert_kv("agent-pin-lifecycle-wired", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #620: query:stable-ref-provenance — Agent-discoverable
@@ -2137,9 +2126,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             // Issue #2056: mandate tenant + fiber stamp on provenance query capture.
             auto ref = ev.make_stamped_safe_ref(nid, /*workspace_id=*/0, cur_fiber);
             const bool is_live = ref.is_valid_in(*ws);
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
             if (!ht)
                 return make_bool(false);
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2163,6 +2153,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("id", static_cast<std::int64_t>(ref.id));
             insert_kv("gen", static_cast<std::int64_t>(ref.gen));
@@ -2181,9 +2173,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("tenant-id", static_cast<std::int64_t>(ref.tenant_id));
             insert_kv("schema", 620);
             insert_kv("schema-2056", 2056);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #497: query:stable-ref-lifecycle-stats — long-session
@@ -2221,9 +2211,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 recommendation = 3;
             const std::uint64_t lifecycle_total =
                 wraps + invalidations + stale + soft_compact + auto_refresh + bump_gen;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(19));
             if (!ht)
                 return make_int(recommendation);
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2247,6 +2238,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("generation-wrap-count", static_cast<std::int64_t>(wraps));
             insert_kv("wrap-epoch", static_cast<std::int64_t>(wrap_epoch));
@@ -2259,9 +2252,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("node-compact-total", static_cast<std::int64_t>(compact_total));
             insert_kv("lifecycle-recommendation", recommendation);
             insert_kv("lifecycle-total", static_cast<std::int64_t>(lifecycle_total));
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #631: query:stable-ref-provenance-sv-stats-hash —
@@ -2341,9 +2332,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->stable_ref_invalidations.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2367,15 +2359,15 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("cross-fiber-violations", static_cast<std::int64_t>(cross_fiber));
             insert_kv("provenance-mismatches-on-sv", static_cast<std::int64_t>(mismatches));
             insert_kv("safe-resolves", static_cast<std::int64_t>(safe_resolves));
             insert_kv("total-stable-ref-invalidations", static_cast<std::int64_t>(mismatches));
             insert_kv("schema", 631);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #438: query:fiber-migration-stats. Returns
@@ -2538,9 +2530,10 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             if (!ev)
                 return make_void();
             auto& string_heap = ev->string_heap_mut();
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2564,6 +2557,8 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             const std::uint64_t gc_pauses = aura_fiber_static_gc_pause_attributed_to_mutation();
             const std::uint64_t depth = aura_evaluator_mutation_boundary_depth();
@@ -2603,9 +2598,7 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
             insert_kv("mutation-coord-schema", 591);
             insert_kv("scheduler-mutation-coord-total", static_cast<std::int64_t>(total));
             insert_kv("scheduler-mutation-coord-recommendation", recommendation);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #618: (orchestration:tune-gc-frequency ratio) —
