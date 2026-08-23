@@ -95,6 +95,17 @@ inline constexpr int kAgentApplyPerEvalMutexIssue = 2158;
 // ownership. Production hashes expose identity-plane +
 // handoff-token-present; Soft skips intern (zero extra).
 inline constexpr int kIdentityPlaneHandoffBoundaryIssue = 3216;
+// Issue #3273: make the cross-Evaluator handoff observation-only contract
+// explicit in types + Aura hashes. join_via_handoff / orch:join-via-token
+// never take ownership, never release the source reservation, never detach
+// the source mailbox, and never move the name into the importer table —
+// there is no path that releases source-side state from the importer. The
+// typed result carries observation_only / reservation_held_by_source and
+// the Aura hash exposes observation-only / ownership=source /
+// reservation-held-by-source under production. No process-global registry
+// (Session-local Scope + per-Evaluator name table remain SSOT); cross-Eval
+// stays an explicit token pass.
+inline constexpr int kHandoffObservationOnlyIssue = 3273;
 // Issue #3220: production auto-wait Timeout still holds reservation /
 // name-table until ~AgentHandle. directory / scope-resolve mark
 // lifecycle=reclaimed-pending so Agents do not reuse the name.
@@ -2504,6 +2515,18 @@ wait_reclaimed_body(AgentHandle& h, std::optional<std::uint64_t> timeout_ms = {}
 // (counters unchanged). Source remains sole reservation owner; proxy
 // dtor continues to be a no-op on reservation (#2009 preserved).
 //
+// Issue #3273: observation-only contract is explicit in the typed
+// result — JoinViaTokenResult carries observation_only=true and
+// reservation_held_by_source=true on every path (including Invalid),
+// and there is no importer-side release/detach surface on the type.
+// Callers cannot confuse this with join_agent ownership; the
+// importer never becomes the owner and never frees source state. The
+// Aura wrapper (orch:join-via-token) mirrors this with observation-only
+// / ownership=source / reservation-held-by-source keys under production.
+// Cross-Eval coordination stays an explicit token pass — no plane merge
+// (handoff is not a fourth identity plane, #3216) and no process-global
+// registry.
+//
 // Counter reuse: bumps handoff_join_via_token_total on every call and
 // handoff_join_via_token_timeout_total on the Timeout subset. Does
 // NOT bump wait_reclaimed_total (different call site — C++ importer
@@ -2531,6 +2554,16 @@ struct JoinViaTokenResult {
     // (mirrored at export per #3148).
     bool source_reclaimed_deferred = false;
     bool source_must_wait_reclaimed = false;
+    // Issue #3273: observation-only contract made explicit in the typed
+    // result — this result can NEVER be confused with join_agent
+    // ownership. observation_only is always true for this API (there is
+    // no ownership-transfer mode); reservation_held_by_source is always
+    // true (the importer never releases the source reservation, never
+    // detaches the source mailbox, and never takes body ownership —
+    // #2009 / #2661 preserved). There is deliberately no importer-side
+    // release/detach surface on this type.
+    bool observation_only = true;           // always true for join_via_handoff
+    bool reservation_held_by_source = true; // source is sole reservation owner
 };
 
 [[nodiscard]] inline JoinViaTokenResult join_via_handoff(const HandoffToken& tok,

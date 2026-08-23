@@ -876,8 +876,12 @@ int run_test_join_drain_reclaim() {
         const auto agent = read_file("src/compiler/evaluator_primitives_agent.cpp");
         const auto reclaimed_if =
             agent.find("if (jr.status == aura::serve::JoinStatus::Reclaimed)");
-        const auto res_key = agent.find("reservation-held");
-        const auto mb_key = agent.find("mailbox-held");
+        // Exact-key match (quoted) so #3273's reservation-held-by-source on
+        // the handoff prim (different surface, defined earlier in the file)
+        // does not satisfy this check — only the agent-join reservation-held
+        // key must appear after the Reclaimed guard.
+        const auto res_key = agent.find("\"reservation-held\"");
+        const auto mb_key = agent.find("\"mailbox-held\"");
         CHECK(reclaimed_if != std::string::npos && res_key != std::string::npos &&
                   reclaimed_if < res_key,
               "2945 AC2: reservation-held only after Reclaimed guard");
@@ -3458,6 +3462,206 @@ int run_test_join_drain_reclaim() {
                   "3272 AC5: no test_issue_3272.cpp per #81967");
             CHECK(read_file("docs/design/3272-host-forget-window.md").empty(),
                   "3272 AC5: no docs/design/3272-* per #1655");
+        }
+
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+    }
+
+    // ── Issue #3273: make the cross-Evaluator handoff observation-only
+    // contract explicit in types + Aura hashes. join_via_handoff /
+    // orch:join-via-token never take ownership, never release the source
+    // reservation, never detach the source mailbox, never move the name
+    // into the importer table — the typed result carries
+    // observation_only=true / reservation_held_by_source=true and the
+    // Aura hash exposes observation-only / ownership=source /
+    // reservation-held-by-source under production. No process-global
+    // registry; cross-Eval stays an explicit token pass (#3216 planes).
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::agent_export_handoff;
+        using aura::orch::agent_import_handoff;
+        using aura::orch::AgentScope;
+        using aura::orch::AgentSpec;
+        using aura::orch::HandoffToken;
+        using aura::orch::join_via_handoff;
+        using aura::orch::JoinViaTokenPolicy;
+        using aura::orch::kHandoffObservationOnlyIssue;
+
+        std::println("\n--- #3273 AC1: typed result observation-only (no ownership) ---");
+        {
+            // Soft / Off path: empty token → Invalid, but the contract
+            // fields are still present (observation_only / source-owner).
+            apply_dev_audit_defaults();
+            HandoffToken empty_tok;
+            JoinViaTokenPolicy jp;
+            jp.timeout_ms = 10;
+            auto res = join_via_handoff(empty_tok, jp);
+            CHECK(res.status == JoinStatus::Invalid,
+                  "3273 AC1: empty token → Invalid (zero-cost gate)");
+            CHECK(res.observation_only, "3273 AC1: observation_only=true on Invalid");
+            CHECK(res.reservation_held_by_source,
+                  "3273 AC1: reservation_held_by_source=true on Invalid");
+        }
+        {
+            // Valid path: source-owned live body → Timeout, still
+            // observation-only, source still owns reservation.
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "src-3273-ac1";
+            std::atomic<bool> stop_3273{false};
+            spec.body = [&] {
+                while (!stop_3273.load(std::memory_order_acquire))
+                    ; // non-yielding live body (mirrors #3148 AC2)
+            };
+            auto& src = scope.spawn(spec);
+            CHECK(src.ok && src.fiber != nullptr, "3273 AC1: source spawn ok");
+            src.reserved_memory_bytes = 4096;
+            const auto src_fiber_id = src.fiber->id();
+            auto tok = agent_export_handoff(src);
+            JoinViaTokenPolicy jp;
+            jp.timeout_ms = 20;
+            auto res = join_via_handoff(tok, jp);
+            CHECK(res.status == JoinStatus::Timeout || res.status == JoinStatus::Ok,
+                  "3273 AC1: live body → Timeout or Ok (observe only)");
+            CHECK(res.observation_only, "3273 AC1: observation_only=true on valid result");
+            CHECK(res.reservation_held_by_source,
+                  "3273 AC1: reservation_held_by_source=true on valid result");
+            CHECK(src.reserved_memory_bytes == 4096,
+                  "3273 AC1: source reservation untouched by observer");
+            CHECK(src.fiber && src.fiber->id() == src_fiber_id,
+                  "3273 AC1: source fiber identity preserved (no ownership move)");
+            CHECK(src.mailbox != nullptr, "3273 AC1: source mailbox still attached");
+            stop_3273.store(true, std::memory_order_release);
+            if (src.fiber)
+                src.fiber->request_cancel();
+            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+        }
+
+        std::println("\n--- #3273 AC2: dual-Evaluator — importer observe, source owns ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            Scheduler sched(1);
+            AgentScope scope(sched);
+            AgentSpec spec;
+            spec.name = "src-3273-ac2";
+            std::atomic<bool> stop_3273b{false};
+            spec.body = [&] {
+                while (!stop_3273b.load(std::memory_order_acquire))
+                    ;
+            };
+            auto& src = scope.spawn(spec);
+            CHECK(src.ok && src.fiber != nullptr, "3273 AC2: source spawn ok");
+            src.reserved_memory_bytes = 2048;
+            auto tok = agent_export_handoff(src);
+            // Importer on a second Evaluator (dual name-table).
+            CompilerService cs2;
+            auto proxy = agent_import_handoff(std::move(tok), static_cast<void*>(&cs2), sched);
+            CHECK(proxy.reserved_memory_bytes == 0,
+                  "3273 AC2: proxy has zero reservation (no double-count)");
+            auto tok_obs = agent_export_handoff(proxy);
+            JoinViaTokenPolicy jp;
+            jp.timeout_ms = 20;
+            auto res = join_via_handoff(tok_obs, jp);
+            CHECK(res.observation_only, "3273 AC2: importer result observation-only");
+            CHECK(res.reservation_held_by_source,
+                  "3273 AC2: reservation-held-by-source on importer result");
+            CHECK(src.reserved_memory_bytes == 2048,
+                  "3273 AC2: source reservation unchanged after importer observe");
+            // Importer drop must NOT detach source mailbox / release source
+            // reservation (proxy dtor is a no-op on reservation, #2009).
+            proxy = AgentHandle{};
+            CHECK(src.mailbox != nullptr, "3273 AC2: importer drop keeps source mailbox");
+            CHECK(src.reserved_memory_bytes == 2048,
+                  "3273 AC2: importer drop keeps source reservation");
+            stop_3273b.store(true, std::memory_order_release);
+            if (src.fiber)
+                src.fiber->request_cancel();
+            (void)join_agent(src, JoinPolicy{.primary_ms = 500, .drain_ms = 200});
+            CHECK(src.reserved_memory_bytes == 0,
+                  "3273 AC2: source join_agent reclaims reservation (source-owned)");
+        }
+
+        std::println("\n--- #3273 AC3/AC4: Aura hash surface + identity-plane stays ---");
+        {
+            const char* prev_sb = std::getenv("AURA_SANDBOX");
+            std::string prev_sb_s = prev_sb ? prev_sb : "";
+            ::setenv("AURA_SANDBOX", "restricted", 1);
+            apply_production_audit_defaults();
+            CompilerService cs;
+            auto obsv = cs.eval(
+                R"((let ((r (orch:join-via-token "no-such-token-3273")))
+                     (list (if (hash-has-key? r "observation-only") 1 0)
+                           (if (hash-ref r "observation-only") 1 0)
+                           (if (string=? (hash-ref r "ownership") "source") 1 0)
+                           (if (hash-ref r "reservation-held-by-source") 1 0)
+                           (if (hash-has-key? r "identity-plane") 1 0)
+                           (hash-ref r "schema-3273"))))");
+            CHECK(obsv.has_value(), "3273 AC3: join-via-token invalid hash returns");
+            auto spawn_ok = cs.eval(R"((let ((r (orch:spawn-agent "ac3273-src")))
+                                         (if (hash-ref r "ok") 1 0)))");
+            CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1,
+                  "3273 AC3: spawn-agent ac3273-src ok");
+            auto tok_hash = cs.eval(R"((orch:agent-export-via-token "ac3273-src"))");
+            CHECK(tok_hash && is_string(*tok_hash), "3273 AC3: export-via-token returns hash");
+            auto obsv2 = cs.eval(R"(
+              (let* ((tok (orch:agent-export-via-token "ac3273-src"))
+                     (r (orch:join-via-token tok :timeout-ms 20)))
+                (list (if (hash-ref r "observation-only") 1 0)
+                      (if (string=? (hash-ref r "ownership") "source") 1 0)
+                      (if (hash-ref r "reservation-held-by-source") 1 0)
+                      (if (hash-has-key? r "identity-plane") 1 0)
+                      (hash-ref r "schema-3273"))))");
+            CHECK(obsv2.has_value(), "3273 AC3: valid join-via-token hash returns");
+            apply_dev_audit_defaults();
+            if (!prev_sb_s.empty())
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            else
+                ::unsetenv("AURA_SANDBOX");
+        }
+
+        std::println("\n--- #3273 AC5: source-cite + no invent + no registry ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto build = read_file("build.py");
+            const auto scopeh = read_file("src/orch/agent_scope.h");
+            CHECK(spawn.find("kHandoffObservationOnlyIssue = 3273") != std::string::npos,
+                  "3273 AC5: issue constant");
+            CHECK(spawn.find("observation_only = true") != std::string::npos,
+                  "3273 AC5: typed observation_only field");
+            CHECK(spawn.find("reservation_held_by_source = true") != std::string::npos,
+                  "3273 AC5: typed reservation_held_by_source field");
+            CHECK(spawn.find("release_source_reservation") == std::string::npos &&
+                      spawn.find("detach_source_mailbox") == std::string::npos,
+                  "3273 AC5: no release/detach surface on the typed result");
+            CHECK(prim.find("add_handoff_observation_only") != std::string::npos,
+                  "3273 AC5: Aura helper");
+            CHECK(prim.find("observation-only") != std::string::npos,
+                  "3273 AC5: Aura observation-only key");
+            CHECK(prim.find("reservation-held-by-source") != std::string::npos,
+                  "3273 AC5: Aura reservation-held-by-source key");
+            CHECK(prim.find("ownership") != std::string::npos, "3273 AC5: Aura ownership key");
+            CHECK(prim.find("schema-3273") != std::string::npos, "3273 AC5: schema-3273");
+            CHECK(prim.find("query:handoff-observation") == std::string::npos &&
+                      prim.find("query:ownership") == std::string::npos,
+                  "3273 AC5: no new query:* (reuse orch-module-stats)");
+            CHECK(spawn.find("class AgentRegistry") == std::string::npos &&
+                      scopeh.find("class AgentRegistry") == std::string::npos &&
+                      prim.find("g_handoff_token_stash") != std::string::npos,
+                  "3273 AC5: no registry; token stash is transient stage");
+            CHECK(build.find("check_handoff_observation_only_3273") != std::string::npos,
+                  "3273 AC5: build.py wires linter");
+            CHECK(read_file("tests/orch/test_issue_3273.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3273.cpp").empty(),
+                  "3273 AC5: no test_issue_3273.cpp per #81967");
+            CHECK(read_file("docs/design/3273-handoff-observation-only.md").empty(),
+                  "3273 AC5: no docs/design/3273-* per #1655");
         }
 
         set_mode(SandboxMode::Off);
