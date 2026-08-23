@@ -855,6 +855,25 @@ def cmd_lint():
             "Issue #3142 SessionBound revoke cascade linter failed — run python3 scripts/coverage/checks/check_session_bound_dtor_cascade.py"
         )
         return r
+    # Issue #3279: session_bound orphan fail-closed sweep. The orphan
+    # counter was metric-only (declared, never bumped); under production
+    # long-run a lost Guard / abort-without-mid-clear / dual-Evaluator race
+    # can leave a live session_bound grant whose mid is no longer live →
+    # privilege sticky. SSOT sweep walks by_tenant under mtx, bumps the
+    # existing session_bound_orphan_detected_total, and under
+    # Restricted/Strict revokes orphans with reason "session-orphan-sweep"
+    # (SE + audit joinable by mid). Extends test_capability_single_use_consume.cpp
+    # (#3142 suite home, #81967); no docs/design.
+    sbo3279_script = COVERAGE_CHECKS / "check_session_bound_orphan_sweep_3279.py"
+    if not sbo3279_script.exists():
+        fail(f"missing {sbo3279_script}")
+        return 1
+    r = run([sys.executable, str(sbo3279_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3279 session_bound orphan sweep linter failed — run python3 scripts/coverage/checks/check_session_bound_orphan_sweep_3279.py"
+        )
+        return r
     # Issue #3143: typed_mid SSOT for require_effect mid stamp chain — closes
     # 5-source mid drift between SE.mid / AuditWalRecord.provenance_mutation_id
     # / TypedMutationAudit.last_mid / CapabilityGrant.bound_mutation_id.

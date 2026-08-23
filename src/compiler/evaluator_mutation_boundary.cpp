@@ -2335,6 +2335,34 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         aura::serve::set_current_fiber_session_mid(session_mid_at_enter_);
         aura::compiler::g_mutation_hold_live_session_mid.store(session_mid_at_enter_,
                                                                std::memory_order_release);
+        // Issue #3279: production fail-closed orphan sweep at outermost
+        // enter (AC3 trigger 2). When live_session_grants > 0 (a residual
+        // session-bound grant exists) but the resolved session mid is 0 /
+        // mismatched, the grant table has diverged from the tracked live
+        // mids — a lost Guard / abort-without-mid-clear / dual-Evaluator
+        // race edge left a consumable row. Restricted/Strict revokes
+        // orphans (reason "session-orphan-sweep", SE + audit joinable by
+        // mid); Soft/Off observe-only (counter, never revoke). Zero extra
+        // work when no live session grants.
+        {
+            using ::aura::core::capability::g_capability_effect_metrics;
+            using ::aura::core::capability::g_capability_registry;
+            auto& met = g_capability_effect_metrics();
+            if (met.capability_live_session_grants.load(std::memory_order_relaxed) > 0) {
+                std::vector<std::uint64_t> live_mids;
+                if (session_mid_at_enter_ != 0)
+                    live_mids.push_back(session_mid_at_enter_);
+                const auto hold_mid = aura::compiler::g_mutation_hold_live_session_mid.load(
+                    std::memory_order_acquire);
+                if (hold_mid != 0)
+                    live_mids.push_back(hold_mid);
+                const auto fiber_mid = aura::serve::current_fiber_session_mid();
+                if (fiber_mid != 0)
+                    live_mids.push_back(fiber_mid);
+                (void)g_capability_registry().sweep_session_bound_orphans(
+                    live_mids, static_cast<std::uint32_t>(aura_fiber_current_id()));
+            }
+        }
     }
     // Issue #2215: RenderFastExit eligible when outermost Guard is entered
     // under render hotpath (RenderHotEntryGuard / enter_render_hotpath).
