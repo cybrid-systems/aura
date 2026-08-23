@@ -329,6 +329,113 @@ void test_ac3116_dual_clear_tls_and_counter() {
     set_strategy(AuditStrategy::Full);
 }
 
+// ── Issue #3281 — mid-bound abort authority version ────────────────
+// The #3193/#3232 abort-authority face is process-wide (in_flight count);
+// this adds the MID key so a densify/steal rehydrate for the SAME mid
+// refuses to freeze a green proof / leave residual CoercionMap / Occurrence
+// / proof entries while an abort-restore for that mid is outstanding, and
+// the outermost-success persist refuses to stamp green on a mid with an
+// outstanding abort-restore. Production/Full only; Soft zero-cost.
+void test_ac3281_mid_bound_abort_authority() {
+    std::print("3281 — mid-bound abort authority version\n");
+    using aura::compiler::typed_audit::begin_mid_abort_authority;
+    using aura::compiler::typed_audit::end_mid_abort_authority;
+    using aura::compiler::typed_audit::g_mid_abort_authority_mismatch_total;
+    using aura::compiler::typed_audit::mid_abort_authority_outstanding;
+    using aura::compiler::typed_audit::mid_abort_authority_version;
+    using aura::compiler::typed_audit::reset_mid_abort_authority_for_test;
+
+    // AC1: production/Full capture — begin returns non-zero version,
+    // outstanding is true, version matches the returned value.
+    reset_for_test();
+    reset_mid_abort_authority_for_test();
+    set_strategy(AuditStrategy::Full);
+    constexpr std::uint64_t mid = 328101;
+    const auto v1 = begin_mid_abort_authority(mid);
+    expect_true("3281 AC1: begin returns non-zero version under Full", v1 != 0);
+    expect_true("3281 AC1: outstanding true while slot held", mid_abort_authority_outstanding(mid));
+    expect_eq_i64("3281 AC1: version matches begin return", static_cast<std::int64_t>(v1),
+                  static_cast<std::int64_t>(mid_abort_authority_version(mid)));
+    // AC4: end releases the slot.
+    end_mid_abort_authority(mid);
+    expect_eq_i64("3281 AC4: outstanding false after end", 0,
+                  static_cast<std::int64_t>(mid_abort_authority_outstanding(mid)));
+
+    // AC2: nested same-mid abort bumps the version; last end clears.
+    const auto n1 = begin_mid_abort_authority(mid);
+    const auto n2 = begin_mid_abort_authority(mid);
+    expect_true("3281 AC2: nested begin bumps version", n2 > n1);
+    end_mid_abort_authority(mid);
+    expect_true("3281 AC2: still outstanding after one end (nested)",
+                mid_abort_authority_outstanding(mid));
+    end_mid_abort_authority(mid);
+    expect_eq_i64("3281 AC2: cleared after last end", 0,
+                  static_cast<std::int64_t>(mid_abort_authority_outstanding(mid)));
+
+    // AC3: Soft/Sampled zero-cost — begin no-ops, outstanding false.
+    apply_dev_audit_defaults();
+    set_strategy(AuditStrategy::Sampled);
+    reset_mid_abort_authority_for_test();
+    expect_eq_i64("3281 AC3: Soft begin returns 0 (zero-cost)", 0,
+                  static_cast<std::int64_t>(begin_mid_abort_authority(mid)));
+    expect_eq_i64("3281 AC3: Soft outstanding false", 0,
+                  static_cast<std::int64_t>(mid_abort_authority_outstanding(mid)));
+    reset_mid_abort_authority_for_test();
+    set_strategy(AuditStrategy::Full);
+
+    // AC5: source-cite — abort sites + rehydrate chokepoint wired.
+    {
+        std::ifstream boundary("src/compiler/evaluator_mutation_boundary.cpp");
+        std::stringstream ss;
+        ss << boundary.rdbuf();
+        const auto src = ss.str();
+        expect_true("3281 AC5: boundary cites Issue #3281",
+                    src.find("Issue #3281") != std::string::npos);
+        expect_true("3281 AC5: begin_mid_abort_authority at abort sites",
+                    src.find("begin_mid_abort_authority") != std::string::npos);
+        expect_true("3281 AC5: end_mid_abort_authority at abort sites",
+                    src.find("end_mid_abort_authority") != std::string::npos);
+        expect_true("3281 AC5: persist refuses on outstanding mid",
+                    src.find("mid_abort_authority_outstanding") != std::string::npos);
+    }
+    {
+        std::ifstream tc("src/compiler/type_checker_impl.cpp");
+        std::stringstream ss;
+        ss << tc.rdbuf();
+        expect_true("3281 AC5: rehydrate chokepoint refuses on outstanding mid",
+                    ss.str().find("mid_abort_authority_outstanding") != std::string::npos);
+    }
+    {
+        std::ifstream h("src/compiler/typed_mutation_audit.h");
+        std::stringstream ss;
+        ss << h.rdbuf();
+        const auto src = ss.str();
+        expect_true("3281 AC5: header cites Issue #3281",
+                    src.find("Issue #3281") != std::string::npos);
+        expect_true("3281 AC5: 8-slot mid authority table",
+                    src.find("kMidAbortAuthoritySlots") != std::string::npos);
+        expect_true("3281 AC5: mismatch counter (observable)",
+                    src.find("g_mid_abort_authority_mismatch_total") != std::string::npos);
+    }
+    {
+        std::ifstream lint("scripts/coverage/checks/check_mid_bound_abort_authority_3281.py");
+        expect_true("3281 AC5: linter present", lint.good());
+    }
+    {
+        std::ifstream bp("build.py");
+        std::stringstream ss;
+        ss << bp.rdbuf();
+        expect_true("3281 AC5: build.py wires linter",
+                    ss.str().find("check_mid_bound_abort_authority_3281.py") != std::string::npos);
+    }
+    expect_eq_i64("3281 AC5: no invented docs/design", 0,
+                  static_cast<std::int64_t>(std::filesystem::exists("docs/design/3281-")));
+    expect_eq_i64(
+        "3281 AC5: no invent test per #81967", 0,
+        static_cast<std::int64_t>(std::filesystem::exists("tests/issues/test_issue_3281.cpp")));
+    (void)g_mid_abort_authority_mismatch_total;
+}
+
 } // namespace
 
 int main() {
@@ -341,6 +448,7 @@ int main() {
     test_ac5_soft_quiet_zero_cost();
     test_regression_wired();
     test_ac3116_dual_clear_tls_and_counter();
+    test_ac3281_mid_bound_abort_authority();
     std::print("All #3102 AC tests PASSED\n");
     return 0;
 }

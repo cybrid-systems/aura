@@ -5147,6 +5147,25 @@ def cmd_lint():
             "Issue #3116 coercion abort dual-clear linter failed — run python3 scripts/coverage/checks/check_coercion_abort_dual_clear_3116.py"
         )
         return r
+    # Issue #3281: mid-bound abort authority snapshot. The #3193/#3232
+    # abort-authority face is process-wide (in_flight count); this adds the
+    # MID key so a densify/steal rehydrate for the SAME mid refuses to
+    # freeze a green TypeLinearCommitProof / leave residual CoercionMap /
+    # Occurrence entries while an abort-restore for that mid is outstanding,
+    # and outermost-success persist refuses green on a mid with an
+    # outstanding abort-restore. Production/Full only; Soft zero-cost.
+    # Extends test_coercion_map_abort_rewind (#3102 suite home, #81967);
+    # no docs/design/ (#1655).
+    mba3281_script = COVERAGE_CHECKS / "check_mid_bound_abort_authority_3281.py"
+    if not mba3281_script.exists():
+        fail(f"missing {mba3281_script}")
+        return 1
+    r = run([sys.executable, str(mba3281_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
+        )
+        return r
     # Issue #3117: dual-topology abort restore IR cache + source_to_ir_map fence.
     # Extends test_mutation_rollback_coverage; no test_issue_3117.cpp.
     arif3117_script = COVERAGE_CHECKS / "check_abort_restore_ir_map_fence_3117.py"
