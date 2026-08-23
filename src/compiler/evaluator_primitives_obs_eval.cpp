@@ -7410,9 +7410,10 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
         "query:incremental-relower-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                // #1601 / #1623 / #1915 / #2032 / #2190: ~160+ keys — create(512)
-                // headroom so open-addressing never fails insert under load.
-                auto* ht = FlatHashTable::create(query_hash_capacity_for(102));
+                // Planned-key arg must track kv.size() (currently ~280).
+                // 102 → cap 256 overflowed; `schema` is last and dropped,
+                // so lineage CHECKs saw -1 (test_dep_graph_partial_relower_threshold).
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(kv.size()));
                 if (!ht)
                     return make_void();
                 bool overflowed = false;
