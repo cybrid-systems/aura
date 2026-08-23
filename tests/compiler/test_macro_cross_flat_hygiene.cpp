@@ -26,6 +26,7 @@
 #include <cstdint>
 #include <fstream>
 #include <print>
+#include <sstream>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -74,6 +75,24 @@ aura_test_cross_flat_expand_consistency(void* target_flat, void* target_pool, vo
 extern "C" std::uint64_t aura_test_bump_hygiene_violation_in_macro_expand(std::uint64_t n) noexcept;
 extern "C" void aura_test_set_macro_expand_sandbox_strict(int v) noexcept;
 extern "C" std::uint64_t aura_test_macro_expand_sandbox_strict_v_read() noexcept;
+
+// Local file-read helper (test_2098 pattern): resolves against the repo
+// root from either the repo root or build/ cwd.
+static std::string read_file(const char* path) {
+    std::ifstream f(path);
+    if (f) {
+        std::stringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
+    }
+    std::ifstream f2((std::string("../") + path).c_str());
+    if (f2) {
+        std::stringstream ss;
+        ss << f2.rdbuf();
+        return ss.str();
+    }
+    return {};
+}
 
 // Helper: ensure sandbox_strict is reset to 0 (relaxed) before AND
 // after each test, so test order doesn't affect subsequent tests.
@@ -287,6 +306,157 @@ static void ac_source_cite() {
     CHECK(true, "AC7: source-cite (8 gate / wire-up sites)");
 }
 
+// ─── Issue #3278: cross-FlatAST schema_cache / StringPool homology ───
+// clone_macro_body_at_depth copies the source node's schema_cache (a
+// type-id index into the SOURCE registry) into the target by raw
+// integer. Under concurrent steal mid-clone + densify/compact of either
+// side, that integer can become non-homologous with the target type
+// environment — a stale id can short-circuit the type checker's
+// schema_cache hit path (cached_schema == tid.index) into a wrong-type
+// cache hit. ensure_cross_flat_expand_consistency now re-stamps the
+// cloned subtree against the target under production / force-hygienic:
+// cross-pool clones clear copied schema ids (0 = re-infer in target
+// env); OOB ids (≥ kSchemaIdMax, #2859 bound) bump the existing
+// g_hygiene_violation_in_macro_expand_total (fail-closed). Same-pool
+// clones keep the #390 copy (homologous — shared registry). Soft/Off
+// never walks (zero-cost contract preserved).
+
+// AC8: cross-pool clone under force-hygienic re-stamps schema_cache
+// against the target env (cleared to 0) while the source keeps its own.
+static void ac3278_cross_pool_schema_restamp() {
+    std::println("\n--- AC8: #3278 cross-pool schema_cache re-stamp (force-hygienic) ---");
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(1); // force-hygienic gate
+
+    FlatAST target;
+    StringPool target_pool;
+    FlatAST src;
+    StringPool src_pool;
+    auto x = src_pool.intern("x");
+    auto body = src.add_variable(x);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+    src.set_schema_cache(lam, /*tid=*/42); // #390 pre-cached schema
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        nm;
+    auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
+                                   SyntaxMarker::MacroIntroduced);
+    CHECK(cloned != NULL_NODE, "AC8: cross-flat clone ok");
+    // Cross-pool + force-hygienic → the copied schema id is re-stamped
+    // to 0 (target type checker re-infers in the target env). Source
+    // keeps its own schema_cache (never mutated).
+    CHECK(target.schema_cache(cloned) == 0u,
+          "AC8: cross-pool cloned node schema_cache re-stamped to 0");
+    CHECK(src.schema_cache(lam) == 42u, "AC8: source schema_cache preserved");
+    const auto post = aura_test_cross_flat_expand_consistency(
+        static_cast<void*>(&target), static_cast<void*>(&target_pool), static_cast<void*>(&src),
+        static_cast<void*>(&src_pool), static_cast<std::uint32_t>(cloned));
+    CHECK(post == 0, "AC8: post-call validate == 0 (restamp auto-cleaned)");
+}
+
+// AC9: same-pool cross-flat clone keeps the #390 schema_cache copy
+// (homologous — shared registry, no re-stamp). Also Soft (!production,
+// strict=0) keeps the copy: zero-cost contract unchanged.
+static void ac3278_same_pool_and_soft_keep_copy() {
+    std::println("\n--- AC9: #3278 same-pool + Soft keep schema_cache copy ---");
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(1); // force-hygienic ON
+    {
+        // Same-pool cross-flat: two flats sharing one pool → homologous.
+        FlatAST target;
+        FlatAST src;
+        StringPool shared;
+        auto x = shared.intern("x");
+        auto body = src.add_variable(x);
+        auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+        src.set_schema_cache(lam, /*tid=*/77);
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            nm;
+        auto cloned = clone_macro_body(target, shared, src, shared, lam, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "AC9: same-pool clone ok");
+        CHECK(target.schema_cache(cloned) == 77u,
+              "AC9: same-pool keeps #390 schema_cache copy (homologous, no re-stamp)");
+    }
+    aura_test_set_macro_expand_sandbox_strict(0); // Soft / relaxed
+    {
+        // Cross-pool + Soft → zero-cost contract: copy preserved.
+        FlatAST target;
+        StringPool target_pool;
+        FlatAST src;
+        StringPool src_pool;
+        auto x = src_pool.intern("x");
+        auto body = src.add_variable(x);
+        auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+        src.set_schema_cache(lam, /*tid=*/55);
+        std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
+                           std::equal_to<>>
+            nm;
+        auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
+                                       SyntaxMarker::MacroIntroduced);
+        CHECK(cloned != NULL_NODE, "AC9: Soft cross-flat clone ok");
+        CHECK(target.schema_cache(cloned) == 55u,
+              "AC9: Soft keeps copy (zero-cost contract unchanged)");
+    }
+}
+
+// AC10: drift fail-closed — a stale / OOB schema id planted on the
+// cloned subtree (simulating a concurrent densify/steal race after the
+// re-stamp) is detected by the homology check: bump the existing
+// violation counter + clear it (0 = re-infer in target env).
+static void ac3278_drift_fail_closed() {
+    std::println("\n--- AC10: #3278 drift fail-closed (OOB schema id cleared + counted) ---");
+    SandboxStrictGuard guard;
+    aura_test_set_macro_expand_sandbox_strict(1);
+
+    FlatAST target;
+    StringPool target_pool;
+    FlatAST src;
+    StringPool src_pool;
+    auto x = src_pool.intern("x");
+    auto body = src.add_variable(x);
+    auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
+    std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
+        nm;
+    auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
+                                   SyntaxMarker::MacroIntroduced);
+    CHECK(cloned != NULL_NODE, "AC10: cross-flat clone ok");
+    CHECK(target.schema_cache(cloned) == 0u, "AC10: re-stamped to 0 post-clone");
+
+    // Simulate a concurrent densify/steal interleave: a non-homologous
+    // OOB schema id lands on the cloned node after the re-stamp.
+    constexpr std::uint32_t kSchemaIdMax3278 = 1u << 24; // #2859 bound
+    target.set_schema_cache(cloned, kSchemaIdMax3278 + 7u);
+    const auto v0 = g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
+    const auto post = aura_test_cross_flat_expand_consistency(
+        static_cast<void*>(&target), static_cast<void*>(&target_pool), static_cast<void*>(&src),
+        static_cast<void*>(&src_pool), static_cast<std::uint32_t>(cloned));
+    const auto v1 = g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
+    CHECK(v1 > v0, "AC10: OOB schema id drift bumps violation counter (fail-closed)");
+    CHECK(target.schema_cache(cloned) == 0u, "AC10: drift id cleared (0 = re-infer in target env)");
+    CHECK(post == 0, "AC10: post-call validate == 0");
+}
+
+// AC11: source-cite + linter + no invent.
+static void ac3278_source_cite() {
+    std::println("\n--- AC11: #3278 source-cite + linter ---");
+    auto src = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(src.find("Issue #3278") != std::string::npos, "AC11: runtime cites #3278");
+    CHECK(src.find("schema_homology_prod") != std::string::npos,
+          "AC11: production / force-hygienic gate present");
+    CHECK(src.find("kSchemaIdMax") != std::string::npos, "AC11: OOB bound (#2859) present");
+    CHECK(src.find("g_hygiene_violation_in_macro_expand_total") != std::string::npos,
+          "AC11: reuses existing violation counter (no new metric)");
+    auto lint = read_file("scripts/coverage/checks/check_cross_flat_schema_homology_3278.py");
+    CHECK(!lint.empty(), "AC11: linter present");
+    CHECK(lint.find("3278") != std::string::npos, "AC11: linter cites #3278");
+    auto bp = read_file("build.py");
+    CHECK(bp.find("check_cross_flat_schema_homology_3278.py") != std::string::npos,
+          "AC11: build.py wires linter");
+    CHECK(read_file("docs/design/3278-").empty(), "AC11: no docs/design per #1655");
+    CHECK(read_file("tests/issues/test_issue_3278.cpp").empty(), "AC11: no invent test per #81967");
+}
+
 } // namespace
 
 int run_test_macro_cross_flat_hygiene() {
@@ -298,6 +468,11 @@ int run_test_macro_cross_flat_hygiene() {
     ac_sandbox_strict_toggle();
     ac_query();
     ac_source_cite();
+    // Issue #3278: cross-FlatAST schema_cache / StringPool homology.
+    ac3278_cross_pool_schema_restamp();
+    ac3278_same_pool_and_soft_keep_copy();
+    ac3278_drift_fail_closed();
+    ac3278_source_cite();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
