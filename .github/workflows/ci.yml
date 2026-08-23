@@ -42,8 +42,11 @@ concurrency:
 env:
   AURA_BUILD_TYPE: RelWithDebInfo
   AURA_BUILD_JOBS: "0"  # 0 → use all host CPUs in build.py
+  AURA_CI: "1"  # skip issues happy-path ninja refresh; recovery still rebuilds crashes
+  # Suite-level cap. cmd_test waves (cheap→medium→heavy→stress) derive inner
+  # AURA_SUITE_JOBS / AURA_ISSUES_JOBS / AURA_CASE_JOBS as nproc // live_suites
+  # so 4 overlapping heavies cannot multiply into 4×3×4 processes on 4 vCPU.
   AURA_TEST_JOBS: "4"
-  # Suite-internal + multi-case fan-out (suites also run in parallel).
   AURA_SUITE_JOBS: "3"
   AURA_CASE_JOBS: "2"
   AURA_ISSUES_JOBS: "4"
