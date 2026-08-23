@@ -24,6 +24,7 @@
 #   - (2026-08) shallow checkout on main push (full history only on PR)
 #   - (2026-08) BMI symlink fan-out only to this-run consumer dirs
 #   - (2026-08) cheap/medium tests overlap remaining ninja after aura+test_ir
+#   - (2026-08) bash harness fans out on AURA_CASE_JOBS (process-isolated)
 #
 # Branch protection: require both `gate` and `build-test` (not only one).
 #

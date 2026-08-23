@@ -25,42 +25,130 @@ fi
 green() { printf "  \033[32m✓\033[0m %s\n" "$1"; }
 red()   { printf "  \033[31m✗\033[0m %s\n" "$1"; }
 
+# Parallel case fan-out (AURA_CASE_JOBS). Default 1 keeps local logs serial.
+JOBS="${AURA_CASE_JOBS:-1}"
+case "$JOBS" in ''|*[!0-9]*) JOBS=1 ;; esac
+[ "$JOBS" -lt 1 ] && JOBS=1
+_RESULT_DIR=""
+_LOCKDIR=""
+_PIDS=()
+if [ "$JOBS" -gt 1 ]; then
+    _RESULT_DIR=$(mktemp -d /tmp/aura-bash-tests.XXXXXX)
+    _LOCKDIR="$_RESULT_DIR/lock.d"
+    : >"$_RESULT_DIR/log"
+    trap 'wait 2>/dev/null || true; rm -rf "${_RESULT_DIR:-}"' EXIT
+    echo "  bash parallel jobs=$JOBS"
+fi
+
+_lock() {
+    while ! mkdir "$_LOCKDIR" 2>/dev/null; do
+        sleep 0.01
+    done
+}
+_unlock() { rmdir "$_LOCKDIR" 2>/dev/null || true; }
+
+_record_pass() {
+    local name="$1"
+    if [ "$JOBS" -le 1 ]; then
+        green "$name"
+        PASS=$((PASS + 1))
+        return
+    fi
+    _lock
+    green "$name"
+    echo PASS >>"$_RESULT_DIR/log"
+    _unlock
+}
+
+_record_fail() {
+    local name="$1"
+    if [ "$JOBS" -le 1 ]; then
+        red "$name"
+        [ "$#" -gt 1 ] && printf '%s\n' "${@:2}"
+        FAIL=$((FAIL + 1))
+        return
+    fi
+    _lock
+    red "$name"
+    [ "$#" -gt 1 ] && printf '%s\n' "${@:2}"
+    echo FAIL >>"$_RESULT_DIR/log"
+    _unlock
+}
+
+_throttle() {
+    [ "$JOBS" -gt 1 ] || return 0
+    local pid new=()
+    for pid in "${_PIDS[@]}"; do
+        if kill -0 "$pid" 2>/dev/null; then
+            new+=("$pid")
+        fi
+    done
+    _PIDS=("${new[@]}")
+    while [ "${#_PIDS[@]}" -ge "$JOBS" ]; do
+        wait -n 2>/dev/null || wait "${_PIDS[0]}" 2>/dev/null || true
+        new=()
+        for pid in "${_PIDS[@]}"; do
+            if kill -0 "$pid" 2>/dev/null; then
+                new+=("$pid")
+            fi
+        done
+        _PIDS=("${new[@]}")
+    done
+}
+
+_dispatch() {
+    if [ "$JOBS" -le 1 ]; then
+        "$@"
+        return
+    fi
+    _throttle
+    "$@" &
+    _PIDS+=("$!")
+}
+
+_finish_parallel() {
+    [ "$JOBS" -gt 1 ] || return 0
+    wait || true
+    PASS=$(grep -c '^PASS$' "$_RESULT_DIR/log" 2>/dev/null || true)
+    FAIL=$(grep -c '^FAIL$' "$_RESULT_DIR/log" 2>/dev/null || true)
+    PASS=${PASS:-0}
+    FAIL=${FAIL:-0}
+}
+
+_eval_case() {
+    local name="$1" input="$2" expected="$3" to="$4"
+    local result
+    result=$(printf '%s' "$input" | timeout "$to" "$AURA" 2>&1 | tr -d '\n')
+    if [ "$result" = "$expected" ]; then
+        _record_pass "$name"
+    else
+        _record_fail "$name" "       expected: $expected" "       got:      $result"
+    fi
+}
+
+_typecheck_case() {
+    local name="$1" input="$2" expected="$3"
+    local result
+    result=$(timeout 5 "$AURA" --typecheck "$input" 2>&1 | tr -d '\n')
+    if [ "$result" = "$expected" ]; then
+        _record_pass "$name"
+    else
+        _record_fail "$name" "       expected: $expected" "       got:      $result"
+    fi
+}
+
 run_test() {
     local name="$1"
     local input="$2"
     local expected="$3"
     # Optional 4th arg: timeout seconds (default 5). Heavy ASAN paths need more.
     local to="${4:-5}"
-    local result
-
-    result=$(printf '%s' "$input" | timeout "$to" "$AURA" 2>&1 | tr -d '\n')
-    if [ "$result" = "$expected" ]; then
-        green "$name"
-        PASS=$((PASS + 1))
-    else
-        red "$name"
-        echo "       expected: $expected"
-        echo "       got:      $result"
-        FAIL=$((FAIL + 1))
-    fi
+    _dispatch _eval_case "$name" "$input" "$expected" "$to"
 }
 
 # Run a typecheck test (passes expression as --typecheck argument)
 run_typecheck_test() {
-    local name="$1"
-    local input="$2"
-    local expected="$3"
-    local result
-    result=$(timeout 5 "$AURA" --typecheck "$input" 2>&1 | tr -d '\n')
-    if [ "$result" = "$expected" ]; then
-        green "$name"
-        PASS=$((PASS + 1))
-    else
-        red "$name"
-        echo "       expected: $expected"
-        echo "       got:      $result"
-        FAIL=$((FAIL + 1))
-    fi
+    _dispatch _typecheck_case "$1" "$2" "$3"
 }
 
 echo "=== Aura Core Tests ==="
@@ -261,21 +349,18 @@ run_test "ea:hash-store" "$(printf '(let ((h (hash)) (k "x")) (hash-set! h k (co
 run_test "ea:chain" "$(printf '(begin (define (make-pair x) (cons x x)) (define (f n) (if (< n 0) 0 (car (make-pair n)))) (f 42))')" "42"
 
 # --no-arena still produces correct results
-run_with_flag() {
-    local name="$1"
-    local input="$2"
-    local expected="$3"
+_flag_case() {
+    local name="$1" input="$2" expected="$3"
     local result
     result=$(printf '%s' "$input" | timeout 5 "$AURA" --no-arena 2>&1 | tr -d '\n')
     if [ "$result" = "$expected" ]; then
-        green "$name"
-        PASS=$((PASS + 1))
+        _record_pass "$name"
     else
-        red "$name"
-        echo "       expected: $expected"
-        echo "       got:      $result"
-        FAIL=$((FAIL + 1))
+        _record_fail "$name" "       expected: $expected" "       got:      $result"
     fi
+}
+run_with_flag() {
+    _dispatch _flag_case "$1" "$2" "$3"
 }
 run_with_flag "ea:no-arena-car" "(car (cons 1 2))" "1"
 run_with_flag "ea:no-arena-list" "(map (lambda (x) (* x 2)) (list 1 2 3))" "(2 4 6)"
@@ -480,39 +565,41 @@ run_test "ffi:alloc-free" "$(printf '(begin (require "std/ffi" all:) (define p (
 
 
 # --emit-binary: standalone native binary
-run_emit_test() {
-    local name="$1"
-    local input="$2"
-    local expected="$3"
-    local bin_path="/tmp/aura_emit_${name}"
-    local err_path="/tmp/aura_emit_${name}.err"
-    local result
+_emit_case() {
+    local name="$1" input="$2" expected="$3"
+    local safe="${name//\//_}"
+    local bin_path err_path result
+    if [ -n "${_RESULT_DIR:-}" ]; then
+        bin_path="$_RESULT_DIR/emit_$safe"
+    else
+        bin_path="/tmp/aura_emit_${safe}"
+    fi
+    err_path="${bin_path}.err"
     # Capture stderr to a file so we can show it on failure (don't pollute test output).
     printf '%s' "$input" | timeout 10 "$AURA" --emit-binary "$bin_path" 2>"$err_path" >/dev/null
     if [ -x "$bin_path" ]; then
         result=$("$bin_path" 2>&1 | tr -d '\n')
         if [ "$result" = "$expected" ]; then
-            green "$name"
-            PASS=$((PASS + 1))
+            _record_pass "$name"
         else
-            red "$name"
-            echo "       expected: $expected"
-            echo "       got:      $result"
+            local extra="       expected: $expected"$'\n'"       got:      $result"
             if [ -s "$err_path" ]; then
-                echo "       stderr:   $(head -1 "$err_path")"
+                extra+=$'\n'"       stderr:   $(head -1 "$err_path")"
             fi
-            FAIL=$((FAIL + 1))
+            _record_fail "$name" "$extra"
         fi
-        rm -f "$bin_path" "${bin_path}.o" "${bin_path}.tmp.aura" "${bin_path}.runtime.o" "${bin_path}.ir" 2>/dev/null
+        rm -f "$bin_path" "${bin_path}.o" "${bin_path}.tmp.aura" "${bin_path}.runtime.o" "${bin_path}.ir" "$err_path" 2>/dev/null
     else
-        red "$name (no binary)"
-        # Surface AOT error for debugging in CI.
+        local extra=""
         if [ -s "$err_path" ]; then
-            echo "       aot_err:  $(head -3 "$err_path" | tr '\n' ' ')"
+            extra="       aot_err:  $(head -3 "$err_path" | tr '\n' ' ')"
         fi
         rm -f "$err_path"
-        FAIL=$((FAIL + 1))
+        _record_fail "$name (no binary)" "$extra"
     fi
+}
+run_emit_test() {
+    _dispatch _emit_case "$1" "$2" "$3"
 }
 
 
@@ -739,19 +826,18 @@ run_test "edsl-ir-cache:cascade-not-on-strangers" \
 # Phase 4: (eval-current :jit) re-evaluates via the IR pipeline.
 # The pipeline prints "PM: running ..." to stderr, which the test
 # script merges into stdout. Filter those out before comparing.
-run_test_jit() {
-    local name="$1"; local input="$2"; local expected="$3"
+_jit_case() {
+    local name="$1" input="$2" expected="$3"
     local actual
-    actual=$(printf '%s' "$input" | timeout 10 "$AURA" 2>&1 | grep -vE '^PM:' | tr -d '
-')
+    actual=$(printf '%s' "$input" | timeout 10 "$AURA" 2>&1 | grep -vE '^PM:' | tr -d '\n')
     if [ "$actual" = "$expected" ]; then
-        green "$name"; PASS=$((PASS + 1))
+        _record_pass "$name"
     else
-        red "$name"
-        echo "       expected: $expected"
-        echo "       got:      $actual"
-        FAIL=$((FAIL + 1))
+        _record_fail "$name" "       expected: $expected" "       got:      $actual"
     fi
+}
+run_test_jit() {
+    _dispatch _jit_case "$1" "$2" "$3"
 }
 run_test_jit "edsl-ir-cache:jit-value-producing" \
     "$(printf '(set-code \"(+ 1 2)\") (eval-current :jit)')" \
@@ -781,5 +867,6 @@ echo "  ↷  edsl-ir-cache:incremental-mutation-stress: SKIPPED — hangs after 
 # expression value of the re-eval, not the workspace's bound env.)
 
 # Print final test count
-printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL" 
+_finish_parallel
+printf "Tests: %d passed, %d failed\n" "$PASS" "$FAIL"
 [ "$FAIL" -eq 0 ] || exit 1

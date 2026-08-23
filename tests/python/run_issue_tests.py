@@ -383,6 +383,19 @@ def _test_binary_has_source(name: str) -> bool:
     return bool((tests / "bundles" / f"{name}.cpp").is_file())
 
 
+# Unit / sanitizer / ICE-isolated bins that live in build/ as test_* but
+# are not issue-suite members. Glob discovery used to pick these up
+# (test_concurrent then sat in PRE_EXISTING as a 60s timeout).
+_ISSUE_DISCOVERY_SKIP = frozenset(
+    {
+        "test_ir",
+        "test_concurrent",
+        "test_gc_evaluator_integration",
+        "test_contracts",
+    }
+)
+
+
 def discover_test_issue_binaries() -> list[str]:
     """Find issue bundle + standalone test binaries in build/."""
     bundled = _bundled_standalone_members()
@@ -393,6 +406,8 @@ def discover_test_issue_binaries() -> list[str]:
         if not entry.is_file():
             continue
         name = entry.name
+        if name in _ISSUE_DISCOVERY_SKIP:
+            continue
         if (
             name.startswith("test_issues_")
             or name.startswith("test_obs_")
@@ -435,6 +450,8 @@ def discover_test_issue_targets() -> list[str]:
         if ":" not in line:
             continue
         name = line.split(":", 1)[0].strip()
+        if name in _ISSUE_DISCOVERY_SKIP:
+            continue
         if (
             (
                 name.startswith("test_issues_")
