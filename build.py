@@ -4888,6 +4888,26 @@ def cmd_lint():
             "Issue #3216 identity-plane handoff-boundary linter failed — run python3 scripts/coverage/checks/check_identity_plane_handoff_boundary_3216.py"
         )
         return r
+    # Issue #3273: make the cross-Evaluator handoff observation-only
+    # contract explicit in types + Aura hashes. join_via_handoff /
+    # orch:join-via-token never take ownership, never release the source
+    # reservation, never detach the source mailbox, never move the name
+    # into the importer table — the typed result carries observation_only /
+    # reservation_held_by_source and the Aura hash exposes observation-only
+    # / ownership=source / reservation-held-by-source under production.
+    # No process-global registry; cross-Eval stays an explicit token pass
+    # (#3216 planes). Tests extend test_join_drain_reclaim (#81967); no
+    # docs/design/ (#1655); no new query:* (reuse query:orch-module-stats).
+    hoo3273_script = COVERAGE_CHECKS / "check_handoff_observation_only_3273.py"
+    if not hoo3273_script.exists():
+        fail(f"missing {hoo3273_script}")
+        return 1
+    r = run([sys.executable, str(hoo3273_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3273 handoff observation-only linter failed — run python3 scripts/coverage/checks/check_handoff_observation_only_3273.py"
+        )
+        return r
     # Issue #3217: deny path restores before trail/SE stamp. Unified
     # order across composite / nested / lockless-child / linear-synth /
     # densify force / AOT fail. Production mid=0 never invents Success.

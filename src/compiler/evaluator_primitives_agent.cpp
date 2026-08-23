@@ -3119,6 +3119,26 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         kv.emplace_back("schema-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
         kv.emplace_back("issue-3216", make_int(aura::orch::kIdentityPlaneHandoffBoundaryIssue));
     };
+    // Issue #3273: observation-only contract on the Aura hash. Stamped on
+    // every orch:join-via-token result (valid + invalid paths) so Agents
+    // can distinguish "I joined my handle" (join_agent ownership) from
+    // "I observed a remote body" (token observation). ownership=source is
+    // always true — the importer never releases the source reservation /
+    // detaches the source mailbox; there is no ownership-transfer mode.
+    // Production-only intern (Soft / Off: one production_defaults load,
+    // no string).
+    auto add_handoff_observation_only = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv) {
+        if (!aura::compiler::typed_audit::production_defaults_active())
+            return;
+        auto oidx = ev.string_heap_.size();
+        ev.string_heap_.push_back("source");
+        kv.emplace_back("observation-only", make_bool(true));
+        kv.emplace_back("ownership", make_string(oidx));
+        kv.emplace_back("reservation-held-by-source", make_bool(true));
+        kv.emplace_back("schema-3273", make_int(aura::orch::kHandoffObservationOnlyIssue));
+        kv.emplace_back("issue-3273", make_int(aura::orch::kHandoffObservationOnlyIssue));
+        kv.emplace_back("handoff-observation-only-wired", make_int(1));
+    };
     // Issue #3220: additive lifecycle=reclaimed-pending. Production-only
     // intern (Soft: one production_defaults load, no string).
     auto add_reclaimed_pending_lifecycle = [&ev](std::vector<std::pair<std::string, EvalValue>>& kv,
@@ -6149,9 +6169,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // AgentRegistry (#3089 / #1966 lineage preserved). Reuses the
     // handoff_join_via_token_total counter pair bumped by the C++
     // helper (no new query key, no metrics middle insertion per AC6).
+    // Issue #3273: every result (valid + invalid) carries
+    // observation-only=#t / ownership="source" /
+    // reservation-held-by-source=#t under production so Agents cannot
+    // confuse this with join_agent ownership. Cross-Eval stays an
+    // explicit token pass; no plane merge (#3216), no registry.
     add("orch:join-via-token",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_handoff_token_present](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_handoff_token_present,
+         add_handoff_observation_only](std::span<const EvalValue> a) -> EvalValue {
             auto make_invalid_hash = [&]() {
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
@@ -6170,6 +6195,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 };
                 // Issue #3216: token not staged (production-only intern).
                 add_handoff_token_present(kv, false);
+                // Issue #3273: observation-only contract on every result.
+                add_handoff_observation_only(kv);
                 return build_orch_hash(kv);
             };
             if (a.empty() || !types::is_string(a[0]))
@@ -6233,6 +6260,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             };
             // Issue #3216: token was staged (not a fourth identity plane).
             add_handoff_token_present(kv, true);
+            // Issue #3273: observation-only contract on the valid result —
+            // ownership=source / observation-only=#t /
+            // reservation-held-by-source=#t (production intern).
+            add_handoff_observation_only(kv);
             return build_orch_hash(kv);
         });
 }
