@@ -5205,6 +5205,27 @@ def cmd_lint():
             "Issue #3287 restamp residual-lag deny linter failed — run python3 scripts/coverage/checks/check_restamp_residual_lag_deny_3287.py"
         )
         return r
+    # Issue #3288: production multi-worker Ready residual-zero sticky must
+    # be a continuous fail-closed gate, not query-only (I3/I6).
+    # steal_safety_transaction Ok path consults the sticky-fail bit under
+    # the latch BEFORE the ticket stamp (sticky → RejectHard, no enqueue)
+    # and MutationBoundaryGuard::try_acquire / try_acquire_for_region refuse
+    # a new outermost Guard admit with structured
+    # AdmissionRejected: production-residual-sticky until residual returns
+    # to 0. Reuses the existing sticky bit + residual counters — no second
+    # residual bus, no new metric key (schema-3288 / issue-3288 additive
+    # stamps only). Extends test_steal_safety_production_residual_zero +
+    # test_steal_complete_restamp_txn (#81967); no docs/design/ (#1655).
+    prs3288_script = COVERAGE_CHECKS / "check_production_residual_sticky_continuous_3288.py"
+    if not prs3288_script.exists():
+        fail(f"missing {prs3288_script}")
+        return 1
+    r = run([sys.executable, str(prs3288_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3288 production residual-sticky continuous gate linter failed — run python3 scripts/coverage/checks/check_production_residual_sticky_continuous_3288.py"
+        )
+        return r
     # Issue #3286: production QueryResult must force schema-2 full
     # provenance (layout-only matches rejected / auto-upgraded, I6). The
     # shared end_query_epoch_maybe_result finish auto-upgrades a bare match

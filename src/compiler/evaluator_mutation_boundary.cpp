@@ -80,9 +80,10 @@ module;
 #include "compiler/frame_budget.hh"          // Issue #2137 frame-budget cascade isolation
 #include "compiler/mutation_hold_budget.h"   // Issue #2313: mutation_hold_budget_us()
 #include "serve/fiber.h"                     // Issue #2184: publish MutationSafetySnapshot
-#include "serve/multi_fiber_mailbox.h"       // Issue #2347: clear recv boundary reject window
-#include "compiler/shape_profiler.h"         // Issue #2255: current_global_shape_version
-#include "orch/security_schedule_gate.h"     // Issue #2630: evaluate_security_schedule admit
+#include "serve/steal_safety.h" // Issue #3288: production residual sticky-fail continuous gate
+#include "serve/multi_fiber_mailbox.h"             // Issue #2347: clear recv boundary reject window
+#include "compiler/shape_profiler.h"               // Issue #2255: current_global_shape_version
+#include "orch/security_schedule_gate.h"           // Issue #2630: evaluate_security_schedule admit
 #include "compiler/mutation_concurrency_health.hh" // Issue #2985: health admit gate
 
 // Issue #3102: import aura.compiler.dirty_propagation. The 3 abort sites plus
@@ -2065,6 +2066,20 @@ Evaluator::MutationBoundaryGuard::try_acquire(Evaluator& ev, std::uint64_t pendi
         }
         // Soft path: fall through (metric-only — counters always bump).
     }
+    // Issue #3288: production multi-worker continuous fail-closed —
+    // sticky residual-fail (set when any named residual is non-zero under
+    // the latch, #3162/#3195) refuses a new outermost Guard admit until
+    // residual returns to 0. Soft / single-worker / unlatched: weak latch
+    // probe returns 0 → zero behavioural change. Reuses the existing
+    // sticky bit — no second residual bus (AC4).
+    if (aura::serve::aura_runtime_multi_worker_production_latched() != 0 &&
+        aura::serve::steal_safety_production_residual_sticky_fail_v_read() != 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: production-residual-sticky")));
+    }
     // Issue #2985: mutation-concurrency-health auto-reject (after
     // hold-budget / security-schedule). GlobalExclusive: hard reason
     // or health_bp < budget. Soft: observe only.
@@ -2194,6 +2209,18 @@ Evaluator::MutationBoundaryGuard::try_acquire_for_region(Evaluator& ev, std::uin
             return std::unexpected(
                 aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded, *reason));
         }
+    }
+    // Issue #3288: production multi-worker continuous fail-closed —
+    // sticky residual-fail refuses region-scoped outermost Guard admit
+    // under the latch until residual returns to 0 (same gate as
+    // try_acquire). Soft / single-worker / unlatched: no change.
+    if (aura::serve::aura_runtime_multi_worker_production_latched() != 0 &&
+        aura::serve::steal_safety_production_residual_sticky_fail_v_read() != 0) {
+        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics_))
+            m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return std::unexpected(
+            aura::core::AuraError(aura::core::AuraErrorKind::ResourceQuotaExceeded,
+                                  std::string("AdmissionRejected: production-residual-sticky")));
     }
     // Issue #2985: region-concurrent — hard force_reason only
     // (budget-only still admits cone-disjoint mutates).

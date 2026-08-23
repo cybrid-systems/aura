@@ -45,6 +45,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "serve/fiber.h" // Issue #3288: live Fiber for Ok-path sticky gate
 #include "serve/runtime_production_abi.h"
 #include "serve/steal_safety.h"
 
@@ -410,6 +411,134 @@ int run_test_steal_safety_production_residual_zero() {
               "AC13: residuals clear → SSOT recovers");
 
         set_production_multi_worker_latched_for_test(false);
+        clear_steal_safety_transaction_for_test();
+        clear_production_abi_selfcheck_for_test();
+    }
+
+    // ── AC14 (Issue #3288): Ok path consults sticky under latch (not
+    //    query-only) + try_acquire refusal ──
+    {
+        std::println("\n--- AC14: continuous Ok-path sticky gate (#3288) ---");
+        auto cpp = read_file("src/serve/steal_safety.cpp");
+        auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        auto qts = read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        auto fn_pos = cpp.find("StealSafetyDecision steal_safety_transaction(");
+        CHECK(fn_pos != std::string::npos, "AC14: transaction function present");
+        auto fn_end = cpp.find("\n}\n", fn_pos);
+        if (fn_end == std::string::npos)
+            fn_end = fn_pos + 8000;
+        auto fn_win = cpp.substr(fn_pos, fn_end - fn_pos);
+        must_inline(fn_win, "Issue #3288");
+        auto ok_pos = fn_win.find("set_resume_safety_ticket(snap.ticket)");
+        auto sticky_load = fn_win.find("g_steal_safety_production_residual_sticky_fail.load");
+        CHECK(ok_pos != std::string::npos, "AC14: Ok ticket stamp present");
+        CHECK(sticky_load != std::string::npos && sticky_load < ok_pos,
+              "AC14: sticky consult on Ok path before ticket stamp");
+        // Latch-gated: Soft / single-worker / unlatched zero behavioural
+        // change (weak latch probe returns 0 → short-circuit).
+        auto latch_win = sticky_load != std::string::npos
+                             ? fn_win.substr(sticky_load > 300 ? sticky_load - 300 : 0, 600)
+                             : std::string{};
+        must_inline(latch_win, "aura_runtime_multi_worker_production_latched() != 0");
+        // try_acquire + try_acquire_for_region structured refusal.
+        CHECK(mb.find("AdmissionRejected: production-residual-sticky") != std::string::npos,
+              "AC14: try_acquire sticky refusal present");
+        CHECK(mb.find("Issue #3288") != std::string::npos, "AC14: try_acquire cites #3288");
+        // No new counters / no second residual bus.
+        CHECK(cpp.find("g_3288_") == std::string::npos &&
+                  read_file("src/serve/steal_safety.h").find("g_3288_") == std::string::npos,
+              "AC14: no new g_3288_* counter");
+        // Additive schema stamps.
+        must_inline(qts, "schema-3288");
+        must_inline(qts, "issue-3288");
+        // No new test file / no docs (per #81967 / #1655).
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "issues" /
+                                       "test_issue_3288.cpp"),
+              "AC14: tests/issues/test_issue_3288.cpp absent (#81967)");
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "serve" /
+                                       "test_issue_3288.cpp"),
+              "AC14: tests/serve/test_issue_3288.cpp absent (#81967)");
+        auto docs = std::filesystem::current_path() / "docs" / "design";
+        if (std::filesystem::exists(docs)) {
+            for (const auto& f : std::filesystem::directory_iterator(docs)) {
+                auto name = f.path().filename().string();
+                CHECK(name.find("3288-") == std::string::npos,
+                      "AC14: no docs/design/3288-* plan doc (#1655)");
+                (void)name;
+                break;
+            }
+        }
+    }
+
+    // ── AC15 (Issue #3288): live — Ok path refuses under sticky until
+    //    residual returns to 0 (continuous fail-closed, not query-only) ──
+    {
+        std::println("\n--- AC15: live Ok-path sticky gate (#3288) ---");
+        using aura::serve::clear_production_abi_selfcheck_for_test;
+        using aura::serve::clear_steal_safety_transaction_for_test;
+        using aura::serve::Fiber;
+        using aura::serve::g_steal_safety_production_residual_sticky_fail;
+        using aura::serve::g_steal_safety_residual_boundary_unsafe_total;
+        using aura::serve::g_steal_safety_transaction_ok_total;
+        using aura::serve::g_steal_safety_transaction_reject_hard_total;
+        using aura::serve::set_production_multi_worker_latched_for_test;
+        using aura::serve::steal_safety_production_residual_sticky_fail_v_read;
+        using aura::serve::steal_safety_production_residual_zero_v_read;
+        using aura::serve::steal_safety_transaction;
+        using aura::serve::StealSafetyDecision;
+
+        clear_steal_safety_transaction_for_test();
+        clear_production_abi_selfcheck_for_test();
+        Fiber f([] {});
+
+        // Unlatched baseline: residual non-zero is observe-only (Soft
+        // pass-through) — no sticky, Ok path unaffected.
+        g_steal_safety_residual_boundary_unsafe_total.store(1, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 1,
+              "AC15: unlatched Soft pass-through");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 0,
+              "AC15: unlatched sticky stays 0");
+
+        // Latch multi-worker: residual non-zero → SSOT fail-closes + sticky.
+        set_production_multi_worker_latched_for_test(true);
+        CHECK(steal_safety_production_residual_zero_v_read() == 0,
+              "AC15: latched SSOT fail-closes");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 1,
+              "AC15: latched residual sets sticky");
+
+        // Ok path must refuse (continuous fail-closed, not query-only): even
+        // a clean fiber (per-fiber hard-AND passing) gets RejectHard from the
+        // sticky consult before the ticket stamp.
+        const auto ok0 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+        const auto rej0 =
+            g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed);
+        const auto d = steal_safety_transaction(&f);
+        CHECK(d == StealSafetyDecision::RejectHard,
+              "AC15: transaction Ok path refuses under sticky");
+        CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) == ok0,
+              "AC15: ok_total unchanged (no enqueue)");
+        CHECK(g_steal_safety_transaction_reject_hard_total.load(std::memory_order_relaxed) > rej0,
+              "AC15: reject_hard_total bumps");
+        CHECK(!f.has_resume_safety_ticket(), "AC15: no ticket stamp on sticky RejectHard");
+
+        // Residual returns to 0 → sticky cleared (poll) → Ok resumes.
+        g_steal_safety_residual_boundary_unsafe_total.store(0, std::memory_order_relaxed);
+        CHECK(steal_safety_production_residual_zero_v_read() == 1,
+              "AC15: SSOT recovers when residual clears");
+        CHECK(steal_safety_production_residual_sticky_fail_v_read() == 0,
+              "AC15: sticky cleared after recovery");
+        const auto ok1 = g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed);
+        const auto d2 = steal_safety_transaction(&f);
+        // Ambient residual (densify lag etc.) may still RejectHard; on Ok the
+        // ticket must be stamped (recovery path works end-to-end).
+        if (d2 == StealSafetyDecision::Ok) {
+            CHECK(g_steal_safety_transaction_ok_total.load(std::memory_order_relaxed) > ok1,
+                  "AC15: ok_total bumps after recovery");
+            CHECK(f.has_resume_safety_ticket(), "AC15: ticket stamped after recovery");
+        }
+
+        set_production_multi_worker_latched_for_test(false);
+        g_steal_safety_production_residual_sticky_fail.store(0, std::memory_order_relaxed);
         clear_steal_safety_transaction_for_test();
         clear_production_abi_selfcheck_for_test();
     }

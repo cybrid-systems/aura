@@ -1531,7 +1531,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_steal_complete_strong_entry.cpp` (—) [domain_suite, theme_serve] — legacy residual-less path under production).
 - `tests/serve/test_steal_densify_linear_type_hard_and.cpp` (—) [large, domain_suite, theme_serve] — AC1: Inject residual OR linear force under Hard → Cancel+Done; fail +1
 - `tests/serve/test_steal_layout_stamp.cpp` (—) [domain_suite, theme_serve] — AC1: Steal with matching stamp → no mismatch bump
-- `tests/serve/test_steal_safety_production_residual_zero.cpp` (—) [domain_suite, theme_serve] — AC1: source cites #3131 in steal_safety.h + evaluator_primitives_query
+- `tests/serve/test_steal_safety_production_residual_zero.cpp` (—) [large, domain_suite, theme_serve] — AC1: source cites #3131 in steal_safety.h + evaluator_primitives_query
 - `tests/serve/test_steal_safety_ticket.cpp` (—) [domain_suite, theme_serve] — AC1: snapshot carries ticket; resume mismatch → hard-fail
 - `tests/serve/test_steal_snapshot_hard_invariant.cpp` (—) [domain_suite, theme_serve] — (fail-closed canary). Soft: mismatch metric only. Hard: mark-failed.
 - `tests/serve/test_steal_snapshot_soft_production_lock.cpp` (—) [domain_suite, theme_serve] — + require force-deopt ABI under production Soft lock.

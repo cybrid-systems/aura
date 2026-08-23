@@ -1661,6 +1661,16 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                             // SSOT + sticky counters reused (no new metric).
                             insert_kv("schema-3195", 3195);
                             insert_kv("issue-3195", 3195);
+                            // Issue #3288: production multi-worker Ready
+                            // residual-zero sticky is a continuous fail-closed
+                            // gate, not query-only — steal_safety_transaction
+                            // Ok path + outermost Guard try_acquire consult
+                            // sticky under latch (RejectHard / AdmissionRejected
+                            // until residual returns to 0). Additive issue
+                            // stamps only — sticky + residual counters reused
+                            // (no new metric key, no second residual bus).
+                            insert_kv("schema-3288", 3288);
+                            insert_kv("issue-3288", 3288);
                             // Issue #2702:
                             // query:resume-hard-fail —
                             // Agent-visible resume hard-fail
