@@ -70,7 +70,7 @@ static void ac3257_1_last_look_source() {
     const auto ixx = read_file("src/compiler/service.ixx");
     auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
     CHECK(pos != std::string::npos, "3257 AC1: relower present");
-    auto block = ixx.substr(pos, 14000);
+    auto block = ixx.substr(pos, 26000);
     CHECK(block.find("Issue #3257") != std::string::npos, "3257 AC1: relower cites #3257");
     CHECK(block.find("post_attr_armed") != std::string::npos ||
               block.find("attr_seen_size") != std::string::npos,
@@ -173,6 +173,12 @@ static void ac3168_2_soft_zero_extra();
 static void ac3168_3_partial_peel_preserved();
 static void ac3168_4_existing_3067_3097_3135_preserved();
 static void ac3168_5_source_and_linter();
+
+// Issue #3283: deferred-hybrid re-arm lag close before partial peel.
+static void ac3283_1_source_shape();
+static void ac3283_2_gen_recheck_fail_closed();
+static void ac3283_3_concurrent_rearm_soak();
+static void ac3283_4_linter_wiring();
 
 int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
@@ -336,6 +342,12 @@ int run_test_cascade_decision_residual_atomic_3135() {
     ac3257_4_concurrent_rearm_soak();
     ac3257_5_source_and_linter();
 
+    std::println("\n=== Issue #3283: deferred-hybrid re-arm lag before partial peel ===");
+    ac3283_1_source_shape();
+    ac3283_2_gen_recheck_fail_closed();
+    ac3283_3_concurrent_rearm_soak();
+    ac3283_4_linter_wiring();
+
     std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
@@ -484,5 +496,100 @@ static void ac3168_5_source_and_linter() {
           "3168 AC8: linter cites #3168");
     CHECK(build.find("check_cascade_rearm_new_edge_only_3168") != std::string::npos,
           "3168 AC8: build.py wires linter");
+}
+
+// ── Issue #3283 ACs ──
+// Deferred-hybrid re-arm lag close before partial peel. A concurrent
+// record_dependency / record_block_dependency stale-reject can append a
+// deferred edge AFTER the size/snapshot used for impact consult but
+// BEFORE (or during) the partial peel — those late edges are not in the
+// dirty mask / impact_ub consulted by should_partial_relower_impact_checked
+// → partial under-marks callers. Fix: deferred_hybrid_gen_ generation
+// counter bumped under cascade_decision_mtx_ at BOTH emplace sites
+// (record_block_dependency now takes the lock too — #3135 parity) +
+// gen0 snapshot + pre-peel fail-closed re-check (gen move + cone hit →
+// force full, distinguisher partial_forced_full_by_impact_total).
+static void ac3283_1_source_shape() {
+    std::println("\n--- #3283 AC1: generation counter + both emplace sites lock-parity ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    CHECK(ixx.find("Issue #3283") != std::string::npos, "3283 AC1: service.ixx cites #3283");
+    CHECK(ixx.find("deferred_hybrid_gen_") != std::string::npos,
+          "3283 AC1: deferred_hybrid_gen_ member");
+    auto rd_pos = ixx.find("void record_dependency(");
+    CHECK(rd_pos != std::string::npos, "3283 AC1: record_dependency def");
+    auto rd_block = ixx.substr(rd_pos, 9000);
+    must_inline(rd_block, "deferred_hybrid_gen_.fetch_add", "3283 AC1: record_dependency gen bump");
+    auto rbd_pos = ixx.find("void record_block_dependency(");
+    CHECK(rbd_pos != std::string::npos, "3283 AC1: record_block_dependency def");
+    auto rbd_block = ixx.substr(rbd_pos, 9000);
+    must_inline(rbd_block, "cascade_guard(cascade_decision_mtx_)",
+                "3283 AC1: record_block_dependency lock parity (#3135)");
+    must_inline(rbd_block, "deferred_hybrid_gen_.fetch_add",
+                "3283 AC1: record_block_dependency gen bump");
+}
+
+static void ac3283_2_gen_recheck_fail_closed() {
+    std::println("\n--- #3283 AC2: gen0 snapshot + pre-peel fail-closed re-check ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+    CHECK(pos != std::string::npos, "3283 AC2: relower def");
+    auto rel = ixx.substr(pos, 26000);
+    must_inline(rel, "gen0 = deferred_hybrid_gen_.load", "3283 AC2: gen0 snapshot under lock");
+    must_inline(rel, "deferred_hybrid_gen_.load(std::memory_order_acquire) != gen0",
+                "3283 AC2: pre-peel gen re-check");
+    must_inline(rel, "cone_hit", "3283 AC2: cone hit detection");
+    must_inline(rel, "partial_forced_full_by_impact_total",
+                "3283 AC2: force-full distinguisher (AC1(b) take-full)");
+}
+
+static void ac3283_3_concurrent_rearm_soak() {
+    std::println("\n--- #3283 AC3: concurrent re-arm during relower → no silent stale ---");
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda () (B)))
+")
+)")
+              .has_value(),
+          "3283 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3283 AC3: eval");
+    cs.public_record_dependency("A", "B");
+    auto& m = cs.metrics();
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    std::atomic<int> stop{0};
+    std::thread bumper([&] {
+        for (int i = 0; i < 80 && !stop.load(std::memory_order_relaxed); ++i) {
+            cs.public_note_stale_dep_reject("A", "B");
+            cs.public_record_dependency("A", "B");
+            cs.public_record_block_dependency("A", "B", 0, 0);
+        }
+    });
+    for (int i = 0; i < 16; ++i) {
+        cs.public_mark_define_dirty("A");
+        cs.public_mark_define_dirty("B");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+    }
+    stop.store(1, std::memory_order_relaxed);
+    bumper.join();
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3283 AC3: graphs consistent after soak");
+    auto ra = cs.eval("(A)");
+    CHECK(ra.has_value(), "3283 AC3: (A) evals after soak (never silent stale peel)");
+    CHECK(m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >= forced0,
+          "3283 AC3: forced-full distinguisher non-decreasing (fail-closed)");
+}
+
+static void ac3283_4_linter_wiring() {
+    std::println("\n--- #3283 AC4: linter + no invent ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_deferred_rearm_lag_3283.py");
+    CHECK(!lint.empty() && lint.find("Issue #3283") != std::string::npos, "3283 AC4: linter");
+    CHECK(build.find("check_deferred_rearm_lag_3283") != std::string::npos,
+          "3283 AC4: build.py wiring");
+    CHECK(read_file("tests/compiler/test_issue_3283.cpp").empty(),
+          "3283 AC4: no test_issue_3283.cpp");
+    CHECK(read_file("tests/issues/test_issue_3283.cpp").empty(),
+          "3283 AC4: no tests/issues/test_issue_3283.cpp");
 }
 #endif

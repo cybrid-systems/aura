@@ -7022,6 +7022,15 @@ public:
                                                                   lock_order::Level::DepGraph);
             initial_deferred_edges_size = deferred_hybrid_edges_.size();
         }
+        // Issue #3283: snapshot the deferred-hybrid queue generation under
+        // the cascade_decision_mtx_ critical section. Both emplace sites
+        // (record_dependency + record_block_dependency stale-reject paths)
+        // now serialize under this lock (#3135 parity) and bump
+        // deferred_hybrid_gen_; any bump after gen0 during the decision
+        // window = a concurrent stale-reject re-armed edges the entry
+        // drain / size snapshot never saw → fail-closed before partial
+        // (pre-peel re-check below, AC1(b) take-full).
+        const std::uint64_t gen0 = deferred_hybrid_gen_.load(std::memory_order_acquire);
         std::size_t ok = 0;
         // Snapshot names first — relower may erase/replace entries.
         std::vector<std::string> dirty_names;
@@ -7225,6 +7234,47 @@ public:
                         metrics_.partial_forced_full_by_impact_total.fetch_add(
                             1, std::memory_order_relaxed);
                     }
+                }
+            }
+            // Issue #3283: fail-closed re-arm lag close before partial
+            // peel. A concurrent record_dependency / record_block_dependency
+            // stale-reject can re-arm the deferred queue AFTER the
+            // impact_ub consult for this define (both emplace sites now
+            // serialize under cascade_decision_mtx_ and bump
+            // deferred_hybrid_gen_ — #3135 parity), so the late edges are
+            // NOT in the dirty mask / impact_ub consulted by
+            // should_partial_relower_impact_checked → a partial peel would
+            // under-mark the lagging caller cone. Any generation bump since
+            // the batch snapshot (gen0) means the queue grew: if this
+            // define's cone intersects a newly deferred (caller, callee)
+            // pair, force full (AC1(b) take-full; distinguisher
+            // partial_forced_full_by_impact_total). Prefer the #3168
+            // target-only mark when the new edges are attributable; this is
+            // the fail-closed fallback for edges that arrived after that
+            // attribution snapshot. Soft/Off + armed==0: gen never moves
+            // (one acquire, no extra lock — AC2 zero-cost).
+            if (want_partial && deferred_hybrid_gen_.load(std::memory_order_acquire) != gen0) {
+                bool cone_hit = false;
+                {
+                    lock_order::OrderedSharedLock<std::shared_mutex> read(
+                        dep_graph_mtx_, lock_order::Level::DepGraph);
+                    const auto cur = deferred_hybrid_edges_.size();
+                    if (cur > initial_deferred_edges_size) {
+                        for (std::size_t idx = initial_deferred_edges_size; idx < cur; ++idx) {
+                            const auto& [c, k] = deferred_hybrid_edges_[idx];
+                            if (c == name || k == name) {
+                                cone_hit = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                if (cone_hit) {
+                    want_partial = false;
+                    it->second.mark_all_blocks_dirty();
+                    it->second.dirty = true;
+                    metrics_.partial_forced_full_by_impact_total.fetch_add(
+                        1, std::memory_order_relaxed);
                 }
             }
             if (want_partial)
@@ -11201,6 +11251,16 @@ private:
     // reject actually happened (clean path: zero extra).
     std::vector<std::pair<std::string, std::string>> deferred_hybrid_edges_{};
     std::atomic<std::uint32_t> deferred_hybrid_armed_{0};
+    // Issue #3283: generation counter on the deferred-hybrid queue. Bumped
+    // on every emplace_back (both record_dependency and
+    // record_block_dependency stale-reject paths) under
+    // cascade_decision_mtx_ (#3135 parity). relower_dirty_defines_from_
+    // workspace snapshots it after the entry drain + lock and re-checks it
+    // before committing to partial: any bump during the decision window =
+    // a concurrent stale-reject re-armed edges the drain/snapshot never
+    // saw → fail-closed force full (or late-edge attribution) instead of a
+    // partial peel with a stale impact bound.
+    std::atomic<std::uint64_t> deferred_hybrid_gen_{0};
     // Issue #3135: cascade-decision lock (ordered AFTER mutate_mtx_).
     // Serializes record_dependency reject/re-arm against the drain →
     // impact_ub consult → partial/full decision window in
@@ -11270,6 +11330,10 @@ private:
             std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
             deferred_hybrid_armed_.store(1, std::memory_order_release);
+            // Issue #3283: bump the queue generation so a concurrent
+            // relower decision window can detect the re-arm after its
+            // entry drain / size snapshot (fail-closed before partial).
+            deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         auto& caller_entry = dep_graph_[caller];
@@ -11367,8 +11431,16 @@ private:
         const auto gen_after = dep_graph_generation_.load(std::memory_order_acquire);
         if (epoch_before != epoch_after || gen_before != gen_after) {
             metrics_.dep_graph_edge_reject_stale_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3283: record_block_dependency's stale-reject must
+            // serialize under cascade_decision_mtx_ like record_dependency
+            // (#3135 parity) — otherwise it can append a deferred edge
+            // DURING a concurrent relower decision window (which holds the
+            // lock) and the re-arm escapes the #3257 last-look / #3168
+            // attribution, under-marking the caller cone on a partial peel.
+            std::lock_guard<std::mutex> cascade_guard(cascade_decision_mtx_);
             deferred_hybrid_edges_.emplace_back(caller, callee);
             deferred_hybrid_armed_.store(1, std::memory_order_release);
+            deferred_hybrid_gen_.fetch_add(1, std::memory_order_relaxed);
             return;
         }
         const auto caller_slot = ensure_dep_fn_slot_(caller);

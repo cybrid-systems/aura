@@ -3452,6 +3452,28 @@ def cmd_lint():
             "Issue #3257 deferred-hybrid re-arm last-look linter failed — run python3 scripts/coverage/checks/check_deferred_hybrid_rearm_last_look_3257.py"
         )
         return r
+    # Issue #3283: close deferred-hybrid re-arm lag before partial peel. A
+    # concurrent record_dependency / record_block_dependency stale-reject
+    # can re-arm deferred edges AFTER the size/snapshot used for impact
+    # consult but BEFORE (or during) the partial peel — those late edges
+    # are not in the dirty mask / impact_ub consulted by
+    # should_partial_relower_impact_checked → partial under-marks callers.
+    # Fix: deferred_hybrid_gen_ generation counter bumped under
+    # cascade_decision_mtx_ at BOTH emplace sites (record_block_dependency
+    # now takes the lock too — #3135 parity) + gen0 snapshot + pre-peel
+    # fail-closed re-check (gen move + cone hit → force full). Extends
+    # test_cascade_decision_residual_atomic (#3135/#3257 home, #81967);
+    # no docs/design/ (#1655).
+    drl3283_script = COVERAGE_CHECKS / "check_deferred_rearm_lag_3283.py"
+    if not drl3283_script.exists():
+        fail(f"missing {drl3283_script}")
+        return 1
+    r = run([sys.executable, str(drl3283_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3283 deferred-hybrid re-arm lag linter failed — run python3 scripts/coverage/checks/check_deferred_rearm_lag_3283.py"
+        )
+        return r
     # Issue #3258: abort fence rejects concurrent lookup until force-dirty
     # walk completes. Extends test_abort_ir_cache_fence_first.cpp (#81967);
     # no docs/design/ (#1655).
