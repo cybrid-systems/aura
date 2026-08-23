@@ -63,7 +63,7 @@ def main() -> int:
     else:
         # Full-triad path starts after the Soft skip return.
         start = fm.find("if (ws) {", uni)
-        body = fm[start : start + 1600] if start > 0 else ""
+        body = fm[start : start + 2800] if start > 0 else ""
         n = body.find("restamp_all_node_generations")
         s = body.find("auto_restamp_pinned_stable_refs_at")
         p = body.find("restamp_all_pins_for_arena")

@@ -5188,6 +5188,23 @@ def cmd_lint():
             "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
         )
         return r
+    # Issue #3287: outermost restamp over-budget residual tear must not
+    # leave a clean StableNodeRef / query:*-stable export face on lagging
+    # nodes (I6). query:stable-ref-provenance now consults the torn gate
+    # under production; unified_restamp_after_boundary adds a residual-lag
+    # assertion after the hot cone (bumps the existing torn-visible bus,
+    # no new key). Extends test_stable_ref_tenant_capture (#3259 home,
+    # #81967); no docs/design/ (#1655).
+    rrl3287_script = COVERAGE_CHECKS / "check_restamp_residual_lag_deny_3287.py"
+    if not rrl3287_script.exists():
+        fail(f"missing {rrl3287_script}")
+        return 1
+    r = run([sys.executable, str(rrl3287_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3287 restamp residual-lag deny linter failed — run python3 scripts/coverage/checks/check_restamp_residual_lag_deny_3287.py"
+        )
+        return r
     # Issue #3286: production QueryResult must force schema-2 full
     # provenance (layout-only matches rejected / auto-upgraded, I6). The
     # shared end_query_epoch_maybe_result finish auto-upgrades a bare match

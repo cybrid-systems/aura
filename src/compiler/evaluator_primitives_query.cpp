@@ -2118,6 +2118,16 @@ void register_query_primitives(PrimRegistrar add, std::pmr::vector<Pair>& pairs,
                 return make_bool(false);
             if (nid >= ws->size())
                 return make_bool(false);
+            // Issue #3287: production + residual restamp-lag → deny clean
+            // hit. The hot-cone eager restamp (#3259) may leave the non-hot
+            // remainder lagging the authority generation; this surface must
+            // not export a pre-mutate gen (looks green). allow_query_stable_
+            // ref_export is the shared torn gate (production + torn + node
+            // not eagerly restamped → reject). Soft observe stays metric-only.
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                !ev.allow_query_stable_ref_export(nid)) {
+                return make_bool(false);
+            }
             // Issue #303 / Issue #392: capture full provenance.
             // fiber_id = 0 when no fiber is active on this thread;
             // the Agent can compare two captures and detect a

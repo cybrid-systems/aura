@@ -310,6 +310,80 @@ void ac3259_5_source_and_linter() {
 
 } // namespace
 
+void ac3287_1_residual_lag_deny_surface() {
+    std::println(
+        "\n--- #3287 AC1: residual-lag deny on query:stable-ref-provenance + boundary ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::kRestampHotConeBudgetIssue;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kRestampHotConeBudgetIssue == 3259, "3287 AC1: #3259 lineage constant");
+    // Source: query:stable-ref-provenance consults the torn gate under
+    // production (no clean export on a lagging node — issue required
+    // close #1 deny-clean-hit branch).
+    const auto q = read_src("src/compiler/evaluator_primitives_query.cpp");
+    auto qpos = q.find("query:stable-ref-provenance");
+    // Anchor on the surface body: skip the leading comment occurrence and
+    // land on the add(...) registration (the gate lives just inside).
+    auto qpos2 = q.find("add(\"query:stable-ref-provenance\"", qpos);
+    if (qpos2 == std::string::npos)
+        qpos2 = q.find("query:stable-ref-provenance", qpos + 1);
+    CHECK(qpos2 != std::string::npos, "3287 AC1: stable-ref-provenance surface");
+    auto qwin = q.substr(qpos2, 3000);
+    CHECK(qwin.find("Issue #3287") != std::string::npos, "3287 AC1: surface cites #3287");
+    CHECK(qwin.find("allow_query_stable_ref_export") != std::string::npos,
+          "3287 AC1: surface consults torn gate");
+    // Source: boundary residual-lag assertion after the hot cone — if
+    // still over-budget torn under production, bump the torn-visible bus
+    // so residual faces are never left clean-exportable.
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    auto fpos = fiber.find("Issue #3287: residual-lag assertion");
+    CHECK(fpos != std::string::npos, "3287 AC1: boundary cites #3287 residual-lag");
+    auto fwin = fiber.substr(fpos, 1400);
+    CHECK(fwin.find("restamp_over_budget_torn()") != std::string::npos,
+          "3287 AC1: residual tear check after hot cone");
+    CHECK(fwin.find("g_unified_restamp_torn_visible_total") != std::string::npos,
+          "3287 AC1: reuses existing torn-visible bus (no new key)");
+    // Behavioral: production + over-budget + node outside hot cone → the
+    // provenance surface must deny (gate), while a hot-cone node stays
+    // exportable (regression guard on #3259 AC1).
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (r3287a x) x) (define (r3287b y) y) "
+                  "(define (r3287c z) z) (define (r3287d w) w)\")")
+              .has_value(),
+          "3287 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3287 AC1: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3287 AC1: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(*ws);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    CHECK(ws->restamp_over_budget_torn(), "3287 AC1: remainder still torn");
+    const auto lag = first_non_eager(*ws);
+    if (lag != NULL_NODE) {
+        CHECK(!ev.allow_query_stable_ref_export(lag),
+              "3287 AC1: production rejects lag on provenance surface gate");
+        auto prov = cs.eval("(query:stable-ref-provenance " +
+                            std::to_string(static_cast<std::int64_t>(lag)) + ")");
+        // Deny-clean-hit: either false or a hash whose is-live is not a
+        // green pre-mutate gen — never a clean success on the lag node.
+        CHECK(prov.has_value(), "3287 AC1: provenance query returns");
+        CHECK(!ev.allow_query_stable_ref_export(lag),
+              "3287 AC1: gate still closed after surface call");
+    }
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
 int run_test_stable_ref_tenant_capture() {
     std::println("=== Issue #2125: stamp_ref_tenant on all StableNodeRef capture paths ===");
     CHECK(kStableRefTenantCaptureIssue == 2125, "AC1: issue stamp constant");
@@ -591,6 +665,7 @@ int run_test_stable_ref_tenant_capture() {
     ac3259_3_soft_gen0_zero_extra();
     ac3259_4_torn_counters_accurate();
     ac3259_5_source_and_linter();
+    ac3287_1_residual_lag_deny_surface();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
