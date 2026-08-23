@@ -864,6 +864,21 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
                 if (r.nodes == 0)
                     r.nodes = ws->restamp_hot_cone_after_budget();
                 aura::core::force_query_epoch_stale_from_restamp_budget();
+                // Issue #3287: residual-lag assertion — after the hot-cone
+                // eager restamp, if any remaining nodes are still lagging the
+                // authority generation, production must NOT leave a clean
+                // query:*-stable / StableNodeRef export face on them. The
+                // deny side is allow_query_stable_ref_export (torn + node not
+                // eagerly restamped → reject); this counter records that a
+                // residual tear remained visible after the cone so Agents /
+                // CI can assert fail-closed (acceptance: no clean export on a
+                // node whose generation lags the outermost authority). Soft /
+                // budget==0: zero extra (only reached when production &&
+                // budget_exceeded). Reuses the existing torn-visible bus — no
+                // new metric key.
+                if (ws->restamp_over_budget_torn())
+                    aura::ast::g_unified_restamp_torn_visible_total.fetch_add(
+                        1, std::memory_order_relaxed);
             }
         }
     }
