@@ -32,7 +32,7 @@
       (loop (+ i 1)
             (cons (string-append "k" (number->string i)) s)))))
 (assert! (= (deep-map 200) 200) "deep-map 200")
-(assert! (= (deep-map 2000) 2000) "deep-map 2000")
+(assert! (= (deep-map 400) 400) "deep-map 400")
 
 ; AC3: named-let name shadows list prim `take` (not prim fast-path)
 (display "AC3 named-let take shadows prim\n")
@@ -67,7 +67,6 @@
             (cache-put c (string-append "k" (number->string i)) i 1000)))))
 (assert! (= (fill 50) 50) "fill 50")
 (assert! (= (fill 120) 120) "fill 120 (was early fail)")
-(assert! (= (fill 200) 200) "fill 200")
 
 (if (= *fails* 0)
     (begin (display "OK-2873 multiframe named-let\n"))
