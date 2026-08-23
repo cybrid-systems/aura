@@ -5091,6 +5091,24 @@ def cmd_lint():
             "Issue #3246 evolution-audit suggested-next linter failed — run python3 scripts/coverage/checks/check_evolution_audit_suggested_next_3246.py"
         )
         return r
+    # Issue #3280: invariant / boundary deny dual-writes
+    # SecurityEvent(InvariantFail). record_invariant_audit_result (!all_ok)
+    # + record_boundary_deny_after_restore only stamped the Typed trail —
+    # SE-primary surfaces (query:security-audit / query:evolution-audit-
+    # decision) never saw type/linear/ADT force-rollbacks. Shared
+    # emit_invariant_deny_se helper (production/Full only, one SE per deny,
+    # #3217 restore-before-stamp). Extends test_security_audit_unify
+    # (#81967); no docs/design/ (#1655).
+    ids3280_script = COVERAGE_CHECKS / "check_invariant_deny_se_dual_write_3280.py"
+    if not ids3280_script.exists():
+        fail(f"missing {ids3280_script}")
+        return 1
+    r = run([sys.executable, str(ids3280_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3280 invariant/boundary deny SE dual-write linter failed — run python3 scripts/coverage/checks/check_invariant_deny_se_dual_write_3280.py"
+        )
+        return r
     # Issue #3242: durable typed summary sidecar after typed-trail wrap.
     # Additive kind/sidecar (AURATYS1); old mutation WAL replay ignores it.
     # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).
