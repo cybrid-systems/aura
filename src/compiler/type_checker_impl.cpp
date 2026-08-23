@@ -699,6 +699,19 @@ ConstraintSystem::rehydrate_occurrence_from_persist(std::uint64_t preferred_mid)
     // the hold (in_flight==0 → one acquire load, no skip).
     if (aura::compiler::typed_audit::abort_authority_blocks_rehydrate())
         return 0;
+    // Issue #3281: mid-bound abort authority — a densify/steal rehydrate
+    // for the SAME mid that has an outstanding abort-restore must refuse to
+    // freeze a green proof / leave residual map entries (AC1). The
+    // #3193/#3232 face above is process-wide (blocks ANY mid during ANY
+    // abort); this adds the mid key so a rehydrate that starts after the
+    // process face dropped but while the mid-bound slot is still held
+    // (abort restore completing / interleave) refuses. Soft: slot never
+    // armed → outstanding returns 0 → one extra relaxed load only.
+    {
+        const auto join_mid = aura::compiler::typed_audit::join_audit_and_se_mid(preferred_mid);
+        if (aura::compiler::typed_audit::mid_abort_authority_outstanding(join_mid))
+            return 0;
+    }
     if (!occurrence_goals_.empty())
         return 0; // live table still authoritative
     if (occurrence_persist_log_.empty())

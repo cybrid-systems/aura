@@ -237,6 +237,30 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         ev->bump_occurrence_persist_fingerprint_mismatch();
         return; // skip persist + proof + health + grant
     }
+    // Issue #3281 AC2: no green stamp on torn state — outermost-success
+    // persist + TypeLinearCommitProof stamp only after fingerprint match
+    // AND no outstanding abort-restore for that mid. If an abort restore
+    // for the current join mid is still mid-flight (mid-bound authority
+    // slot held), refuse to freeze green: clear buffer + stamp REJECT
+    // (existing force_reason family) + bump the mismatch total. Soft:
+    // slot never armed → outstanding returns 0 → zero extra.
+    {
+        const auto join_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+        if (aura::compiler::typed_audit::mid_abort_authority_outstanding(join_mid)) {
+            (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+            ev->bump_occurrence_persist_fingerprint_mismatch();
+            (void)
+                aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    join_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
+            aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            aura::compiler::typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
+                1, std::memory_order_relaxed);
+            return;
+        }
+    }
     // (1) Persist live goals into the long-lived side buffer when enabled.
     // Issue #3225: append seqlocks the persist log (production) so a
     // concurrent densify/steal rehydrate cannot freeze a torn fingerprint.
@@ -694,6 +718,14 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // + persist clear + proof invalidate (one face). Nested hold is a
         // count — inner end does not drop the outer face. Soft: observe-only.
         typed_audit::AbortAuthorityHold abort_authority;
+        // Issue #3281: mid-bound abort authority version. Capture the
+        // mid-local version at abort enter (production/Full only) so ALL
+        // ordered clears below complete under it; a concurrent
+        // densify/steal rehydrate for the SAME mid refuses to freeze a
+        // green proof while the slot is outstanding (AC1), and the
+        // post-clear check below detects version drift (interleave) and
+        // forces full clear + reject proof.
+        const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
         BoundaryRollbackStats stats;
         stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
             cp.mutation_log_size, std::move(cp.children_snapshot));
@@ -806,6 +838,28 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // Invalidate the def-use index — the workspace state
         // is now different from what the index reflects.
         defuse_index_ = nullptr;
+        // Issue #3281: mid-bound authority post-clear check. All ordered
+        // clears (IR force-dirty → proof clear → coercion rewind →
+        // occurrence restore → dual-clear → persist clear) completed under
+        // the version captured at abort enter. If a concurrent densify/steal
+        // rehydrate bumped the mid authority version mid-abort, the clears
+        // may be torn → force full clear + stamp REJECT proof (no green
+        // stamp on torn state, AC2) + bump the existing mismatch family.
+        if (mid_abort_ver != 0 &&
+            typed_audit::mid_abort_authority_version(cp.audit_mid) != mid_abort_ver) {
+            typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::clear_coercion_commit_readiness_on_abort();
+            aura_clear_occurrence_persist_buffer(this);
+            (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                cp.audit_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                typed_audit::kProofLiveGoalCountHintAuto, /*goal_fingerprint=*/0,
+                /*from_cs=*/false, /*force_reason=*/16);
+            typed_audit::publish_type_linear_proof_outcome(
+                typed_audit::kTypeLinearProofOutcomeReject);
+        }
+        typed_audit::end_mid_abort_authority(cp.audit_mid);
     }
     // Issue #273: structural mutates bump generation_; refresh all
     // live node_gen_ entries so subsequent eval_flat paths see
@@ -1470,6 +1524,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                 abort_ir_cache_begin_force_fn_();
                             // Issue #3193 / Issue #3232: abort authority hold (one face).
                             typed_audit::AbortAuthorityHold abort_authority;
+                            // Issue #3281: mid-bound abort authority for this
+                            // abort-restore (production/Full). Released after
+                            // the clears below (see end_mid_abort_authority).
+                            const auto mid_abort_ver =
+                                typed_audit::begin_mid_abort_authority(cp.audit_mid);
                             BoundaryRollbackStats stats;
                             stats.field_records_rolled =
                                 workspace_flat_->abort_restore_dual_topology(
@@ -1566,6 +1625,29 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                                     typed_audit::MutationKind::Structural, cp.version, epoch_after,
                                     typed_audit::AuditOutcome::Error,
                                     static_cast<std::uint32_t>(audit_target), 0, fid, 0);
+                            // Issue #3281: mid-bound authority post-clear check —
+                            // same shape as the main abort site. If a concurrent
+                            // densify/steal bumped the mid authority version during
+                            // this abort-restore's clears, force reject (no green
+                            // stamp on torn state).
+                            if (mid_abort_ver != 0 && typed_audit::mid_abort_authority_version(
+                                                          cp.audit_mid) != mid_abort_ver) {
+                                typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
+                                    1, std::memory_order_relaxed);
+                                typed_audit::clear_type_linear_commit_proof_on_abort();
+                                typed_audit::clear_coercion_commit_readiness_on_abort();
+                                aura_clear_occurrence_persist_buffer(this);
+                                (void)typed_audit::
+                                    build_type_linear_commit_proof_from_live_with_outcome(
+                                        cp.audit_mid, /*would_allow_commit=*/false,
+                                        /*linear_ok=*/false,
+                                        typed_audit::kProofLiveGoalCountHintAuto,
+                                        /*goal_fingerprint=*/0, /*from_cs=*/false,
+                                        /*force_reason=*/16);
+                                typed_audit::publish_type_linear_proof_outcome(
+                                    typed_audit::kTypeLinearProofOutcomeReject);
+                            }
+                            typed_audit::end_mid_abort_authority(cp.audit_mid);
                             return cp;
                         }
                     }
@@ -1616,6 +1698,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         abort_ir_cache_begin_force_fn_();
                     // Issue #3193 / Issue #3232: abort authority hold (one face).
                     typed_audit::AbortAuthorityHold abort_authority;
+                    // Issue #3281: mid-bound abort authority for this
+                    // abort-restore (production/Full). Released after the
+                    // clears below (see end_mid_abort_authority).
+                    const auto mid_abort_ver = typed_audit::begin_mid_abort_authority(cp.audit_mid);
                     BoundaryRollbackStats stats;
                     stats.field_records_rolled = workspace_flat_->abort_restore_dual_topology(
                         cp.mutation_log_size, std::move(cp.children_snapshot));
@@ -1689,6 +1775,26 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     typed_audit::record_boundary_deny_after_restore(
                         mid, "guard-reflect-validate-force-rollback", cp.version,
                         defuse_version_.load(std::memory_order_acquire), 0, 0, fid);
+                    // Issue #3281: mid-bound authority post-clear check —
+                    // same shape as the main abort site. If a concurrent
+                    // densify/steal bumped the mid authority version during
+                    // this abort-restore's clears, force reject (no green
+                    // stamp on torn state).
+                    if (mid_abort_ver != 0 &&
+                        typed_audit::mid_abort_authority_version(cp.audit_mid) != mid_abort_ver) {
+                        typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        typed_audit::clear_type_linear_commit_proof_on_abort();
+                        typed_audit::clear_coercion_commit_readiness_on_abort();
+                        aura_clear_occurrence_persist_buffer(this);
+                        (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                            cp.audit_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                            typed_audit::kProofLiveGoalCountHintAuto, /*goal_fingerprint=*/0,
+                            /*from_cs=*/false, /*force_reason=*/16);
+                        typed_audit::publish_type_linear_proof_outcome(
+                            typed_audit::kTypeLinearProofOutcomeReject);
+                    }
+                    typed_audit::end_mid_abort_authority(cp.audit_mid);
                     return cp;
                 }
                 // Soft / non-Strict: metric-only; mutation stays committed.

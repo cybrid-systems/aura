@@ -25,6 +25,7 @@ namespace aura::compiler {
 }
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -2138,6 +2139,101 @@ inline void reset_abort_authority_hold_for_test() noexcept {
     g_abort_authority_in_flight.store(0, std::memory_order_relaxed);
     g_abort_authority_hold_total.store(0, std::memory_order_relaxed);
     g_abort_authority_hold_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3281: mid-bound abort authority version. The #3193/#3232 face is
+// process-wide (g_abort_authority_in_flight count) — it blocks rehydrate
+// for ANY mid during ANY abort. This adds the MID key so a densify/steal
+// rehydrate for the SAME mid that had an abort-restore refuses to freeze
+// a green proof / leave residual CoercionMap / Occurrence / proof entries
+// when the abort restore completed (process face dropped) but the interleave
+// with densify/steal rehydrate is still mid-flight (AC1). Bounded 8-slot
+// table keyed by mid; version bumps per begin (nested same-mid abort →
+// outer detects interleave → force full clear + reject proof). Soft/Off:
+// begin no-ops (zero extra), version/outstanding return 0 (AC4).
+inline constexpr int kMidBoundAbortAuthorityIssue = 3281;
+inline constexpr std::size_t kMidAbortAuthoritySlots = 8;
+struct MidAbortAuthoritySlot {
+    std::atomic<std::uint64_t> mid{0};
+    std::atomic<std::uint64_t> ver{0};
+};
+inline std::array<MidAbortAuthoritySlot, kMidAbortAuthoritySlots> g_mid_abort_authority{};
+inline std::atomic<std::uint64_t> g_mid_abort_authority_mismatch_total{0};
+inline std::atomic<std::uint32_t> g_mid_abort_authority_wired{1};
+
+[[nodiscard]] inline bool mid_abort_authority_hard() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
+[[nodiscard]] inline std::uint64_t mid_abort_authority_version(std::uint64_t mid) noexcept {
+    if (mid == 0 || !mid_abort_authority_hard())
+        return 0;
+    for (const auto& s : g_mid_abort_authority) {
+        if (s.mid.load(std::memory_order_acquire) == mid)
+            return s.ver.load(std::memory_order_acquire);
+    }
+    return 0;
+}
+
+// True when an abort-restore for THIS mid is outstanding. Densify/steal
+// rehydrate + outermost-success persist consult this to refuse freezing a
+// green proof on a mid whose abort clears are still in flight (AC1/AC2).
+[[nodiscard]] inline bool mid_abort_authority_outstanding(std::uint64_t mid) noexcept {
+    return mid_abort_authority_version(mid) != 0;
+}
+
+// Capture the mid-bound authority version at abort enter (production/Full
+// only). Returns 0 when not armed (Soft/Off or table full → process-wide
+// face still guards). Nested same-mid abort bumps the version so the outer
+// abort detects the interleave after its clears.
+[[nodiscard]] inline std::uint64_t begin_mid_abort_authority(std::uint64_t mid) noexcept {
+    if (mid == 0 || !mid_abort_authority_hard())
+        return 0;
+    for (auto& s : g_mid_abort_authority) {
+        std::uint64_t expected = 0;
+        if (s.mid.compare_exchange_strong(expected, mid, std::memory_order_acq_rel,
+                                          std::memory_order_relaxed)) {
+            s.ver.store(1, std::memory_order_release);
+            return 1;
+        }
+        if (s.mid.load(std::memory_order_acquire) == mid) {
+            const auto v = s.ver.load(std::memory_order_relaxed);
+            s.ver.store(v + 1, std::memory_order_release);
+            return v + 1;
+        }
+    }
+    return 0; // table full → process-wide in_flight face still blocks rehydrate
+}
+
+// Release the mid-bound authority slot at abort end. Nested same-mid
+// aborts decrement (matching the process-wide nested count semantics:
+// last end publishes 0 / clears the slot). A concurrent densify/steal
+// rehydrate that observes an outstanding mid version for THIS mid must
+// refuse to freeze a green proof (AC1).
+inline void end_mid_abort_authority(std::uint64_t mid) noexcept {
+    if (mid == 0)
+        return;
+    for (auto& s : g_mid_abort_authority) {
+        if (s.mid.load(std::memory_order_acquire) != mid)
+            continue;
+        auto v = s.ver.load(std::memory_order_relaxed);
+        while (v > 1 && !s.ver.compare_exchange_weak(v, v - 1, std::memory_order_release,
+                                                     std::memory_order_relaxed)) {
+        }
+        if (v <= 1) {
+            s.mid.store(0, std::memory_order_release);
+            s.ver.store(0, std::memory_order_release);
+        }
+        return;
+    }
+}
+
+inline void reset_mid_abort_authority_for_test() noexcept {
+    for (auto& s : g_mid_abort_authority) {
+        s.mid.store(0, std::memory_order_relaxed);
+        s.ver.store(0, std::memory_order_relaxed);
+    }
+    g_mid_abort_authority_mismatch_total.store(0, std::memory_order_relaxed);
 }
 
 // Returns true when production/Full actually armed the hold.
