@@ -11,7 +11,7 @@
 #     same as PR, plus ubsan-smoke / asan / repro / deploy-health / bench
 #
 # PR optimisations:
-#   - concurrency cancel-in-progress (superseded PR pushes)
+#   - keep last 3 in-flight CI runs (current + previous 2); prune older
 #   - drop PR-side full rebuild jobs (s0-smoke + ubsan-smoke)
 #   - security-scan no longer needs: [gate]
 #   - gate: remove non-blocking clang-tidy
@@ -34,10 +34,10 @@ on:
   pull_request:
     branches: [ main ]
 
-# Cancel superseded runs on the same PR / branch (big win on rapid pushes).
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+# GitHub native concurrency is cancel-all or serialize — it cannot keep-N.
+# prune-stale-ci cancels in-progress/queued runs on the same PR / branch
+# beyond the newest 3 (this run + previous 2). Other jobs do not wait on
+# it, so a new push starts immediately.
 
 env:
   AURA_BUILD_TYPE: RelWithDebInfo
@@ -65,6 +65,81 @@ env:
   AURA_CI_STRICT_BENCH: "0"
 
 jobs:
+  # Keep current + previous 2 live runs on this PR / branch; cancel older.
+  # ubuntu-latest (not the dev container) so gh is on PATH. Not a required
+  # check — failure here must not block gate / build-test.
+  prune-stale-ci:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+    - name: Cancel CI older than the newest 3
+      env:
+        GH_TOKEN: ${{ github.token }}
+        KEEP: "3"
+        PR_NUMBER: ${{ github.event.pull_request.number || 0 }}
+        BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+        EVENT_NAME: ${{ github.event_name }}
+      run: |
+        set -euo pipefail
+        echo "prune: keep=${KEEP} current=${GITHUB_RUN_ID} event=${EVENT_NAME} pr=${PR_NUMBER} branch=${BRANCH_NAME}"
+        gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?event=${EVENT_NAME}&per_page=50" > /tmp/ci-runs.json
+        python3 - <<'PY'
+        import json, os, subprocess, sys
+
+        keep_n = int(os.environ["KEEP"])
+        current = int(os.environ["GITHUB_RUN_ID"])
+        event = os.environ["EVENT_NAME"]
+        pr = int(os.environ["PR_NUMBER"] or "0")
+        branch = os.environ["BRANCH_NAME"]
+        repo = os.environ["GITHUB_REPOSITORY"]
+
+        with open("/tmp/ci-runs.json") as f:
+            data = json.load(f)
+
+        live = {"in_progress", "queued", "waiting", "pending", "requested"}
+        runs = []
+        for r in data.get("workflow_runs") or []:
+            if r.get("status") not in live:
+                continue
+            if event == "pull_request":
+                prs = r.get("pull_requests") or []
+                num = prs[0].get("number", 0) if prs else 0
+                if num:
+                    if num != pr:
+                        continue
+                elif r.get("head_branch") != branch:
+                    continue
+            elif r.get("event") != "push" or r.get("head_branch") != branch:
+                continue
+            runs.append(r)
+
+        runs.sort(key=lambda r: r.get("created_at") or "", reverse=True)
+        ids = [int(r["id"]) for r in runs]
+        if current not in ids:
+            ids.insert(0, current)
+
+        keep_ids = set(ids[:keep_n])
+        keep_ids.add(current)
+        cancel = [i for i in ids if i not in keep_ids]
+
+        print("live:", ids)
+        print("keep:", sorted(keep_ids, reverse=True))
+        print("cancel:", cancel)
+        failed = 0
+        for run_id in cancel:
+            print(f"cancelling {run_id}")
+            rc = subprocess.call(
+                ["gh", "run", "cancel", str(run_id), "--repo", repo],
+            )
+            if rc != 0:
+                print(f"warn: could not cancel {run_id} (rc={rc})", file=sys.stderr)
+                failed += 1
+        if failed:
+            print(f"warn: {failed} cancel(s) failed; new run still proceeds", file=sys.stderr)
+        PY
+
   # Cheap filter: docs/chore-only PRs skip the full C++ matrix.
   # issue_matrix: whether to link/run the test_issue_* / domain-batch matrix
   # (skip when only scripts/lib/docs tooling changed — still builds aura).
