@@ -5188,6 +5188,27 @@ def cmd_lint():
             "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
         )
         return r
+    # Issue #3285: 1×SLO synthetic-edge inject tier for non-cooperative
+    # outermost MutationBoundary holders (I1 residual of #3254/#3222). The
+    # inbody watchdog now injects the synthetic MutationBoundary edge as
+    # soon as cancel-arm has elapsed ≥1×SLO (production) — same-fiber
+    # inject or cross-fiber urgent inbody poll (#3223 helper) — so a body
+    # whose next cooperative edge lands inside [1×SLO, 2×SLO) force-releases
+    # (dual-restore + unlock + depth 0) within the 2×SLO window; the 2×SLO
+    # hard bound stays. Cross-fiber never unlocks the foreign unique_lock
+    # (AC2). Soft observe-only; counters reused (no new keys). Extends
+    # test_hold_budget_synthetic_yield_injection (#3133/#3254 home,
+    # #81967); no docs/design/ (#1655).
+    nfr3285_script = COVERAGE_CHECKS / "check_noncoop_force_release_1slo_3285.py"
+    if not nfr3285_script.exists():
+        fail(f"missing {nfr3285_script}")
+        return 1
+    r = run([sys.executable, str(nfr3285_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3285 1×SLO inject tier linter failed — run python3 scripts/coverage/checks/check_noncoop_force_release_1slo_3285.py"
+        )
+        return r
     # Issue #3284: evolution-audit-decision SE match discipline. The SE
     # walk previously only filtered by mid when the explicit-mid arg was
     # present — the default last-stamped path bound the LATEST SE row of

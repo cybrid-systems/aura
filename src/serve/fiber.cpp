@@ -343,6 +343,37 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     if (now <= armed_ns)
         return 0;
     const auto elapsed_us = (now - armed_ns) / 1000ULL;
+    // Issue #3285: 1×SLO inject tier (I1 residual of #3254/#3222) —
+    // inject the synthetic MutationBoundary edge as soon as the cancel
+    // has been armed for ≥1×SLO, so a body that DOES hit a cooperative
+    // edge (check_gc_safepoint / yield / Phase-5) consumes the pending
+    // cancel early and runs the same-fiber dual-restore + drop-hold
+    // force-release within the 2×SLO inbody window — not only at the
+    // 2×SLO hard bound. Cross-fiber never drops the foreign holder lock
+    // (AC2); it only sets pending-cancel + urgent inbody poll (via the
+    // #3223 helper) so the victim's next edge matches same-fiber. Soft /
+    // sandbox=off: observe only (reject_enabled gate, zero behavioural
+    // change). Counters: reuse the existing forced-release pair + the
+    // inbody-window-exceeded counter — no new keys.
+    const auto slo_us = aura::compiler::mutation_hold_slo_us();
+    if (slo_us != 0 && elapsed_us > slo_us &&
+        aura::compiler::mutation_hold_budget_reject_enabled()) {
+        const auto snap_early = aura::compiler::mutation_hold_live_snapshot();
+        const auto fid_early =
+            snap_early.fiber_id != 0
+                ? snap_early.fiber_id
+                : aura::compiler::g_hold_budget_cancel_armed_fiber.load(std::memory_order_acquire);
+        if (fid_early != 0) {
+            if (auto* cur = g_current_fiber; cur && cur->id() == fid_early) {
+                cur->inject_synthetic_mutation_boundary_yield();
+            } else {
+                // Cross-fiber: urgent inbody poll nudge (sets pending-
+                // cancel + synthetic yield on the victim; the foreign
+                // thread never drops the holder's lock — AC2).
+                (void)aura_fiber_request_urgent_inbody_poll(fid_early);
+            }
+        }
+    }
     if (elapsed_us <= bound_us)
         return 0;
     const auto snap = mutation_hold_live_snapshot();
