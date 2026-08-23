@@ -5188,6 +5188,26 @@ def cmd_lint():
             "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
         )
         return r
+    # Issue #3284: evolution-audit-decision SE match discipline. The SE
+    # walk previously only filtered by mid when the explicit-mid arg was
+    # present — the default last-stamped path bound the LATEST SE row of
+    # ANY mid beside a typed hit for mid M (cross-mid SE bleed, residual
+    # of #3114/#3280). Now: when join_mid != 0 only accept SE rows with
+    # e.mutation_id == join_mid; if none, additive se-mid-miss=1 (mirror
+    # typed-trail-miss) and SE fields stay 0/"". Schema additive only;
+    # Soft / no :durable stays zero disk I/O. Extends
+    # test_evolution_audit_decision_forensic (#3152 suite home, #81967);
+    # no docs/design/ (#1655).
+    sem3284_script = COVERAGE_CHECKS / "check_evolution_audit_se_mid_miss_3284.py"
+    if not sem3284_script.exists():
+        fail(f"missing {sem3284_script}")
+        return 1
+    r = run([sys.executable, str(sem3284_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3284 evolution-audit-decision SE match discipline linter failed — run python3 scripts/coverage/checks/check_evolution_audit_se_mid_miss_3284.py"
+        )
+        return r
     # Issue #3282: residual fixed FlatHashTable::create(N) after #3020 — the
     # security/mutate/obs_*/query_* domain builders now use
     # query_hash_capacity_for + insert_kv_checked/overflowed +
