@@ -5188,6 +5188,24 @@ def cmd_lint():
             "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
         )
         return r
+    # Issue #3286: production QueryResult must force schema-2 full
+    # provenance (layout-only matches rejected / auto-upgraded, I6). The
+    # shared end_query_epoch_maybe_result finish auto-upgrades a bare match
+    # list to the schema-2 stamped hash under production defaults
+    # (stamp_query_result_full_provenance; fail-closed restamp-lag /
+    # query-epoch-stale on stamp failure). Soft/Off keeps the layout-only
+    # bare path (zero-cost). Extends test_query_result_full_provenance
+    # (#3103/#3137/#3231 home, #81967); no docs/design/ (#1655).
+    pqr3286_script = COVERAGE_CHECKS / "check_production_query_result_schema2_3286.py"
+    if not pqr3286_script.exists():
+        fail(f"missing {pqr3286_script}")
+        return 1
+    r = run([sys.executable, str(pqr3286_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3286 production QueryResult schema-2 linter failed — run python3 scripts/coverage/checks/check_production_query_result_schema2_3286.py"
+        )
+        return r
     # Issue #3285: 1×SLO synthetic-edge inject tier for non-cooperative
     # outermost MutationBoundary holders (I1 residual of #3254/#3222). The
     # inbody watchdog now injects the synthetic MutationBoundary edge as
