@@ -5166,6 +5166,23 @@ def cmd_lint():
             "Issue #3281 mid-bound abort authority linter failed — run python3 scripts/coverage/checks/check_mid_bound_abort_authority_3281.py"
         )
         return r
+    # Issue #3282: residual fixed FlatHashTable::create(N) after #3020 — the
+    # security/mutate/obs_*/query_* domain builders now use
+    # query_hash_capacity_for + insert_kv_checked/overflowed +
+    # query_hash_finish(..., overflowed) so additive keys never silently drop
+    # and capacity misses never return void. Grep-gate blocks new bare
+    # create(literal) in these TUs. Extends test_engine_metrics_facade
+    # (#81967); no docs/design/ (#1655).
+    qho3282_script = COVERAGE_CHECKS / "check_query_hash_overflow_3282.py"
+    if not qho3282_script.exists():
+        fail(f"missing {qho3282_script}")
+        return 1
+    r = run([sys.executable, str(qho3282_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3282 residual create(N) linter failed — run python3 scripts/coverage/checks/check_query_hash_overflow_3282.py"
+        )
+        return r
     # Issue #3117: dual-topology abort restore IR cache + source_to_ir_map fence.
     # Extends test_mutation_rollback_coverage; no test_issue_3117.cpp.
     arif3117_script = COVERAGE_CHECKS / "check_abort_restore_ir_map_fence_3117.py"

@@ -361,6 +361,38 @@ int main() {
         }
     }
 
+    // ── Issue #3282: residual fixed FlatHashTable::create(N) after #3020 ──
+    // security/mutate/obs_*/query_* domain builders migrated to
+    // query_hash_capacity_for + insert_kv_checked/overflowed +
+    // query_hash_finish(..., overflowed). Forced overflow must yield a
+    // non-void hash with hash-overflow=1 (AC2); happy path unchanged (AC3);
+    // no key renames / same query resolution (AC4).
+    {
+        aura_query_hash_reset_overflow_for_test();
+        aura_query_hash_set_force_cap(0);
+        // AC3/AC4: migrated handler resolves as a hash with its real keys.
+        auto h = cs.eval("(engine:metrics \"query:security-posture\")");
+        if (h && !is_void(*h)) {
+            CHECK(is_hash(*h), "3282 AC3: security-posture still a hash after migration");
+            CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-3244") ==
+                      3244,
+                  "3282 AC4: existing key unchanged after migration");
+        } else {
+            CHECK(true, "3282 AC3: security-posture absent (s0) — skip");
+        }
+        // AC2: force a tiny cap → overflow path → hash-overflow=1, non-void.
+        aura_query_hash_set_force_cap(2);
+        CHECK(is_hash_expr(cs, "(engine:metrics \"query:security-posture\")"),
+              "3282 AC2: forced overflow still returns a hash (non-void)");
+        const auto ho3282 =
+            hash_int(cs, "(engine:metrics \"query:security-posture\")", "hash-overflow");
+        CHECK(ho3282 == 1 ||
+                  hash_int(cs, "(engine:metrics \"query:security-posture\")", "overflow") == 1,
+              "3282 AC2: hash-overflow sentinel set on forced overflow");
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+    }
+
     if (::aura::test::g_failed) {
         std::println(std::cerr, "engine metrics facade #1433: FAIL ({} failed, {} passed)",
                      ::aura::test::g_failed, ::aura::test::g_passed);

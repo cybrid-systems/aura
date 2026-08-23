@@ -668,9 +668,10 @@ void ObservabilityPrims::register_eval_p4(PrimRegistrar add, Evaluator& ev) {
                 m->primitives_meta_catalog_query_total.fetch_add(1, std::memory_order_relaxed);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -698,13 +699,11 @@ void ObservabilityPrims::register_eval_p4(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::size_t schema_doc = 0;
             std::size_t doc_only = 0;
@@ -764,9 +763,10 @@ void ObservabilityPrims::register_eval_p5(PrimRegistrar add, Evaluator& ev) {
                 m->primitive_skeleton_generations_total.fetch_add(1, std::memory_order_relaxed);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(8));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -794,13 +794,11 @@ void ObservabilityPrims::register_eval_p5(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             auto push_str = [&](const std::string& s) -> EvalValue {
                 auto sidx = ev.string_heap_.size();
@@ -938,9 +936,10 @@ void ObservabilityPrims::register_eval_p6(PrimRegistrar add, Evaluator& ev) {
                     : 0;
             // soa-jit-win: existing primitive_fastpath_hits_total proxy.
             const std::uint64_t soa_jit_win = fastpath_hits;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -964,6 +963,8 @@ void ObservabilityPrims::register_eval_p6(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("hotpath-calls", static_cast<std::int64_t>(hotpath_calls));
             insert_kv("error-consistency", static_cast<std::int64_t>(error_consistency));
@@ -971,9 +972,7 @@ void ObservabilityPrims::register_eval_p6(PrimRegistrar add, Evaluator& ev) {
             insert_kv("ai-native-hits", static_cast<std::int64_t>(ai_native_hits));
             insert_kv("soa-jit-win", static_cast<std::int64_t>(soa_jit_win));
             insert_kv("schema", 633);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -1066,9 +1065,10 @@ void ObservabilityPrims::register_eval_p7(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->closure_safe_rebuild_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1092,6 +1092,8 @@ void ObservabilityPrims::register_eval_p7(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("invalidations-post-mutate",
                       static_cast<std::int64_t>(invalidations_post_mutate));
@@ -1099,9 +1101,7 @@ void ObservabilityPrims::register_eval_p7(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(version_mismatches_caught));
             insert_kv("safe-rebuilds", static_cast<std::int64_t>(safe_rebuilds));
             insert_kv("schema", 637);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -1248,9 +1248,10 @@ void ObservabilityPrims::register_eval_p8(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->sv_stable_ref_provenance_strict_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1274,14 +1275,14 @@ void ObservabilityPrims::register_eval_p8(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("feedback-apply", static_cast<std::int64_t>(feedback_apply));
             insert_kv("guard-reemit", static_cast<std::int64_t>(guard_reemit));
             insert_kv("stable-ref-strict", static_cast<std::int64_t>(stable_ref_strict));
             insert_kv("schema", 640);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -1324,9 +1325,10 @@ void ObservabilityPrims::register_eval_p9(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t direction_changes =
                 static_cast<std::int64_t>(ev.get_sv_interface_direction_changes_total());
             const std::int64_t events_total = ports_count + modport_views + direction_changes;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1350,15 +1352,15 @@ void ObservabilityPrims::register_eval_p9(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("ports-count", ports_count);
             insert_kv("modport-views", modport_views);
             insert_kv("direction-changes", direction_changes);
             insert_kv("interface-events-total", events_total);
             insert_kv("schema", 661);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -1455,9 +1457,10 @@ void ObservabilityPrims::register_eval_p10(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->stable_ref_sv_feedback_wired_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1481,14 +1484,14 @@ void ObservabilityPrims::register_eval_p10(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("fiber-check", static_cast<std::int64_t>(fiber_check));
             insert_kv("auto-refresh", static_cast<std::int64_t>(auto_refresh));
             insert_kv("sv-feedback-wired", static_cast<std::int64_t>(sv_feedback_wired));
             insert_kv("schema", 641);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -1587,9 +1590,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->arena_guard_request_defrag_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1613,14 +1617,14 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("auto-trigger", static_cast<std::int64_t>(auto_trigger));
             insert_kv("live-move-yield", static_cast<std::int64_t>(live_move_yield));
             insert_kv("guard-defrag", static_cast<std::int64_t>(guard_defrag));
             insert_kv("schema", 642);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2004: explicit live_compact primitive — invokes Evaluator::live_compact
@@ -1646,9 +1650,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             }
             const aura::ast::LiveCompactResult lc = ev.live_compact(mode);
             // Capacity 32: Soft/Force/Moving result fields + schema-2166 keys.
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(27));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1672,6 +1677,8 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("bytes-reclaimed", static_cast<std::int64_t>(lc.bytes_reclaimed));
             insert_kv("slots-recycled", static_cast<std::int64_t>(lc.slots_recycled));
@@ -1715,9 +1722,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             // Issue #2856: moving-unified hard-fail counters (moving_unified_fail)
             // are exposed via the obs_jit engine:metrics surface — see
             // evaluator_primitives_obs_jit.cpp g_moving_unified_fail_total.
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2004: live_compact observability primitive — surfaces the 6 new
@@ -1757,9 +1762,10 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             // Capacity 128: schema-2004 + #2157 Force + #2166 Moving densify
             // + #2298/#2337/#2363 general-object pin adopt keys (was 64;
             // load approached capacity and dropped tail inserts).
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(93));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -1783,6 +1789,8 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("soft-count", static_cast<std::int64_t>(soft_count));
             insert_kv("force-count", static_cast<std::int64_t>(force_count));
@@ -2021,9 +2029,7 @@ void ObservabilityPrims::register_eval_p11(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2267", 2267);
             insert_kv("issue-2267", 2267);
             insert_kv("root-remap-pass-wired", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2142,9 +2148,10 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
             //   - schema            669 (drift sentinel — changed
             //                       from 643 to signal the
             //                       enriched field set)
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2168,6 +2175,8 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             auto name_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(name);
@@ -2191,9 +2200,7 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
             ev.string_heap_.push_back(pm.category);
             insert_kv("category", make_string(static_cast<std::uint64_t>(cat_idx)));
             insert_kv("schema", make_int(669));
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         // Dispatch: optional [name] argument.
         if (!a.empty() && aura::compiler::types::is_string(a[0])) {
@@ -2216,9 +2223,10 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
         // form is provided by #617 query:primitives-meta-
         // catalog — the new primitive specializes on
         // per-name lookup.)
-        auto* ht = FlatHashTable::create(8);
+        auto* ht = FlatHashTable::create(query_hash_capacity_for(11));
         if (!ht)
             return make_void();
+        bool overflowed = false;
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -2242,13 +2250,13 @@ void ObservabilityPrims::register_eval_p12(PrimRegistrar add, Evaluator& ev) {
                     return;
                 }
             }
+
+            overflowed = true;
         };
         insert_kv("define-macro-used", static_cast<std::int64_t>(define_macro_used));
         insert_kv("prim-error-unified", static_cast<std::int64_t>(prim_error_unified));
         insert_kv("schema", 643);
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
+        return query_hash_finish(ht, ev.string_heap_, overflowed);
     });
 }
 
@@ -2291,9 +2299,10 @@ void ObservabilityPrims::register_eval_p13(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t schema_documented =
                 static_cast<std::int64_t>(ev.primitives_.schema_documented_meta_count());
             const std::int64_t total = static_cast<std::int64_t>(ev.primitives_.slot_count());
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2317,15 +2326,15 @@ void ObservabilityPrims::register_eval_p13(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("meta-hits", meta_hits);
             insert_kv("documented-count", documented);
             insert_kv("schema-documented", schema_documented);
             insert_kv("total-registered", total);
             insert_kv("schema", 669);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2382,9 +2391,10 @@ void ObservabilityPrims::register_eval_p14(PrimRegistrar add, Evaluator& ev) {
                 recommended_action = 2; // audit capture contract
             else if (documented < slots)
                 recommended_action = 1; // backfill missing meta
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(15));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2408,6 +2418,8 @@ void ObservabilityPrims::register_eval_p14(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("capture-violations-detected", static_cast<std::int64_t>(capture_viol));
             insert_kv("style-compliance-pct", style_compliance_pct);
@@ -2417,9 +2429,7 @@ void ObservabilityPrims::register_eval_p14(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(kPrimCaptureContractVersion));
             insert_kv("recommended-action", recommended_action);
             insert_kv("schema", 671);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2450,9 +2460,10 @@ void ObservabilityPrims::register_eval_p15(PrimRegistrar add, Evaluator& ev) {
                 slots > 0 ? static_cast<std::int64_t>(
                                 ((slots > capture_viol ? slots - capture_viol : 0) * 100) / slots)
                           : 100;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2476,6 +2487,8 @@ void ObservabilityPrims::register_eval_p15(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("capture-violations", static_cast<std::int64_t>(capture_viol));
             insert_kv("prim-error-hits", static_cast<std::int64_t>(prim_errors));
@@ -2483,9 +2496,7 @@ void ObservabilityPrims::register_eval_p15(PrimRegistrar add, Evaluator& ev) {
             insert_kv("capture-contract-version",
                       static_cast<std::int64_t>(kPrimCaptureContractVersion));
             insert_kv("schema", 751);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2556,9 +2567,10 @@ void ObservabilityPrims::register_eval_p16(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.get_list_estimated_cache_misses());
             const std::int64_t events_total =
                 chain_traversals + soa_hits + intrinsic_dispatches + estimated_cache_misses;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2582,6 +2594,8 @@ void ObservabilityPrims::register_eval_p16(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("chain-traversals", chain_traversals);
             insert_kv("soa-hits", soa_hits);
@@ -2589,9 +2603,7 @@ void ObservabilityPrims::register_eval_p16(PrimRegistrar add, Evaluator& ev) {
             insert_kv("estimated-cache-misses", estimated_cache_misses);
             insert_kv("hotpath-events-total", events_total);
             insert_kv("schema", 752);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2625,9 +2637,10 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.get_longrunning_deployment_slo_hits());
             const std::int64_t events_total = quota_violations + checkpoint_success +
                                               heal_triggers + resource_trend + deployment_slo_hits;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(15));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2651,6 +2664,8 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("quota-violations", quota_violations);
             insert_kv("checkpoint-success", checkpoint_success);
@@ -2659,9 +2674,7 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
             insert_kv("deployment-slo-hits", deployment_slo_hits);
             insert_kv("infra-events-total", events_total);
             insert_kv("schema", 753);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #1583 / #1207: query:longrunning-recovery-stats — recovery
@@ -2682,9 +2695,10 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
             const auto total_us =
                 m ? m->longrunning_recovery_latency_us_total.load(std::memory_order_relaxed) : 0;
             const auto avg = samples > 0 ? total_us / samples : 0;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2708,6 +2722,8 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("stall-budget-us", static_cast<std::int64_t>(ev.recovery_stall_budget_us()));
             insert_kv("samples", static_cast<std::int64_t>(samples));
@@ -2730,9 +2746,7 @@ void ObservabilityPrims::register_eval_p17(PrimRegistrar add, Evaluator& ev) {
             insert_kv("stall-violations",
                       static_cast<std::int64_t>(ev.get_recovery_stall_violations()));
             insert_kv("schema", 1583);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2764,9 +2778,10 @@ void ObservabilityPrims::register_eval_p18(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.get_orchestration_llm_gc_safepoint_adapted());
             const std::int64_t events_total =
                 outermost_preferred + backoff_triggers + llm_tail_reduction + gc_safepoint_adapted;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2790,6 +2805,8 @@ void ObservabilityPrims::register_eval_p18(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("outermost-preferred", outermost_preferred);
             insert_kv("backoff-triggers", backoff_triggers);
@@ -2797,9 +2814,7 @@ void ObservabilityPrims::register_eval_p18(PrimRegistrar add, Evaluator& ev) {
             insert_kv("gc-safepoint-adapted", gc_safepoint_adapted);
             insert_kv("orchestration-events-total", events_total);
             insert_kv("schema", 754);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2830,9 +2845,10 @@ void ObservabilityPrims::register_eval_p19(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(ev.get_concurrent_safety_recovery_success());
             const std::int64_t events_total = steal_boundary_success + aot_reload_at_guard +
                                               gc_safepoint_during_steal + recovery_success;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2856,6 +2872,8 @@ void ObservabilityPrims::register_eval_p19(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("steal-boundary-success", steal_boundary_success);
             insert_kv("aot-reload-at-guard", aot_reload_at_guard);
@@ -2863,9 +2881,7 @@ void ObservabilityPrims::register_eval_p19(PrimRegistrar add, Evaluator& ev) {
             insert_kv("recovery-success", recovery_success);
             insert_kv("safety-events-total", events_total);
             insert_kv("schema", 755);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -2964,9 +2980,10 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->aot_region_filter_reapply_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -2990,14 +3007,14 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("ref-bump", static_cast<std::int64_t>(ref_bump));
             insert_kv("ref-decrement", static_cast<std::int64_t>(ref_decrement));
             insert_kv("region-reapply", static_cast<std::int64_t>(region_reapply));
             insert_kv("schema", 644);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2306: (query:aot-version-triple) — Agent-facing read-only
@@ -3034,9 +3051,10 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
             // Capacity must be a power of 2 — the insert_kv probe
             // uses `(hcap - 1) & idx` masking which requires it.
             // 8 entries (5 stamps + 3 sentinels) at 50% load → 16.
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3060,6 +3078,8 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("defuse", static_cast<std::int64_t>(defuse));
             insert_kv("env", static_cast<std::int64_t>(env_gen));
@@ -3073,9 +3093,7 @@ void ObservabilityPrims::register_eval_p20(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema", 2306);
             insert_kv("issue", 2306);
             insert_kv("aot-version-triple-wired", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -3173,9 +3191,10 @@ void ObservabilityPrims::register_eval_p21(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->scheduler_mutation_deferred_bias_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3199,14 +3218,14 @@ void ObservabilityPrims::register_eval_p21(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("lifo-hits", static_cast<std::int64_t>(lifo_hits));
             insert_kv("fifo-steals", static_cast<std::int64_t>(fifo_steals));
             insert_kv("mutation-deferred", static_cast<std::int64_t>(mutation_deferred));
             insert_kv("schema", 645);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -3299,9 +3318,10 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->gc_backoff_trigger_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3325,14 +3345,14 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("outermost-deferral", static_cast<std::int64_t>(outermost_deferral));
             insert_kv("inner-proceeded", static_cast<std::int64_t>(inner_proceeded));
             insert_kv("backoff-trigger", static_cast<std::int64_t>(backoff_trigger));
             insert_kv("schema", 646);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2001: query:gc-compact-stats — pointer remapping
@@ -3351,9 +3371,10 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             const std::uint64_t pairs_remapped =
                 m ? m->gc_pairs_remapped_total.load(std::memory_order_relaxed) : 0;
             // #2001 + #2087 + #2084: ~12 keys — create(16) headroom.
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3377,6 +3398,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema", 2001);
             insert_kv("strings-compacted", static_cast<std::int64_t>(strings_compacted));
@@ -3403,9 +3426,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mark-size-provider-wired",
                       static_cast<std::int64_t>(
                           aura::serve::g_mark_size_provider_wired.load(std::memory_order_relaxed)));
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2084: query:gc-mark-size-stats — whether mark_from_roots received
@@ -3415,9 +3436,10 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
         "query:gc-mark-size-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
             // Capacity power-of-two; #2117 adds atomic MarkBitVector keys.
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3441,6 +3463,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema", 2084);
             insert_kv("schema-2084", 2084);
@@ -3473,9 +3497,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
             insert_kv("mark-bitvector-relaxed-order", 1); // STW fence is external
             insert_kv("schema-2117", 2117);
             insert_kv("issue-2117", 2117);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2003: query:envframe-lifetime-stats — EnvFrame explicit
@@ -3495,9 +3517,10 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                 m ? m->envframe_lifetime_guard_invalidations_total.load(std::memory_order_relaxed)
                   : 0;
             // Capacity 32: schema-2003/2087 keys + #2164 hold-pin counters.
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3521,6 +3544,8 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema", 2003);
             insert_kv("guards-constructed",
@@ -3581,9 +3606,7 @@ void ObservabilityPrims::register_eval_p22(PrimRegistrar add, Evaluator& ev) {
                               Site::CompactSweep)));
             insert_kv("schema-2164", 2164);
             insert_kv("hold-pin-wired", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -3697,9 +3720,10 @@ void ObservabilityPrims::register_eval_p23(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->envframe_dualpath_repair_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3723,14 +3747,14 @@ void ObservabilityPrims::register_eval_p23(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("cross-fiber-stale", static_cast<std::int64_t>(cross_fiber_stale));
             insert_kv("version-mismatch", static_cast<std::int64_t>(version_mismatch));
             insert_kv("dualpath-repair", static_cast<std::int64_t>(dualpath_repair));
             insert_kv("schema", 647);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -3875,9 +3899,10 @@ void ObservabilityPrims::register_eval_p24(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->panic_concurrent_gc_conflict_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -3901,14 +3926,14 @@ void ObservabilityPrims::register_eval_p24(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("transfer-on-resume", static_cast<std::int64_t>(transfer_on_resume));
             insert_kv("invalid-frames-skipped", static_cast<std::int64_t>(invalid_frames_skipped));
             insert_kv("concurrent-gc-conflict", static_cast<std::int64_t>(concurrent_gc_conflict));
             insert_kv("schema", 648);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4027,9 +4052,10 @@ void ObservabilityPrims::register_eval_p25(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->yield_cross_steal_invalidation_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4053,15 +4079,15 @@ void ObservabilityPrims::register_eval_p25(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("transfer-with-restamp", static_cast<std::int64_t>(transfer_with_restamp));
             insert_kv("size-mismatch-caught", static_cast<std::int64_t>(size_mismatch_caught));
             insert_kv("cross-steal-invalidation",
                       static_cast<std::int64_t>(cross_steal_invalidation));
             insert_kv("schema", 649);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4169,9 +4195,10 @@ void ObservabilityPrims::register_eval_p26(PrimRegistrar add, Evaluator& ev) {
                           ->stealbudget_max_before_sleep_raised_total.load(
                               std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4195,14 +4222,14 @@ void ObservabilityPrims::register_eval_p26(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("outermost-bias", static_cast<std::int64_t>(outermost_bias));
             insert_kv("explicit-bias", static_cast<std::int64_t>(explicit_bias));
             insert_kv("max-sleep-raised", static_cast<std::int64_t>(max_sleep_raised));
             insert_kv("schema", 650);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4321,9 +4348,10 @@ void ObservabilityPrims::register_eval_p27(PrimRegistrar add, Evaluator& ev) {
                     ? static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics())
                           ->gc_panic_conflict_resolved_total.load(std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4347,14 +4375,14 @@ void ObservabilityPrims::register_eval_p27(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("pending-panic-deferral", static_cast<std::int64_t>(pending_panic_deferral));
             insert_kv("gc-blocked-by-panic", static_cast<std::int64_t>(gc_blocked_by_panic));
             insert_kv("conflicts-resolved", static_cast<std::int64_t>(conflicts_resolved));
             insert_kv("schema", 651);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4477,9 +4505,10 @@ void ObservabilityPrims::register_eval_p28(PrimRegistrar add, Evaluator& ev) {
                           ->envframe_dualpath_consistency_violations_total.load(
                               std::memory_order_relaxed)
                     : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4503,14 +4532,14 @@ void ObservabilityPrims::register_eval_p28(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("mirror-write", static_cast<std::int64_t>(mirror_write));
             insert_kv("dualpath-refresh", static_cast<std::int64_t>(dualpath_refresh));
             insert_kv("consistency-violations", static_cast<std::int64_t>(consistency_violations));
             insert_kv("schema", 589);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4639,9 +4668,10 @@ void ObservabilityPrims::register_eval_p29(PrimRegistrar add, Evaluator& ev) {
                 ac.aot_hotupdate_invariant_fail_total.load(std::memory_order_relaxed));
             const std::int64_t hu_aud =
                 static_cast<std::int64_t>(ac.aot_hotupdate_audits.load(std::memory_order_relaxed));
-            auto* ht = FlatHashTable::create(24);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4665,6 +4695,8 @@ void ObservabilityPrims::register_eval_p29(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("region-isolation", region_isolation);
             insert_kv("dispatch-stale", dispatch_stale);
@@ -4676,9 +4708,7 @@ void ObservabilityPrims::register_eval_p29(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hotupdate-audits", hu_aud);
             insert_kv("schema", 590); // keep #590 schema; #1883 extends fields
             insert_kv("issue-1883-extended", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4712,9 +4742,10 @@ void ObservabilityPrims::register_eval_p30(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->tag_arity_hygiene_query_delta_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4738,14 +4769,14 @@ void ObservabilityPrims::register_eval_p30(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("capture-prevented", capture_prevented);
             insert_kv("ir-post-mutate-violation", ir_violation);
             insert_kv("tag-arity-delta", tag_delta);
             insert_kv("schema", 593);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4804,9 +4835,10 @@ void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->guard_reflect_validate_skipped_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4830,6 +4862,8 @@ void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("checkpoints-committed", commits);
             insert_kv("restores-on-resume", restores_on_resume);
@@ -4848,9 +4882,7 @@ void ObservabilityPrims::register_eval_p31(PrimRegistrar add, Evaluator& ev) {
             insert_kv("guard-reflect-validate-wired", 1);
             insert_kv("schema-2765", 2765);
             insert_kv("issue-2765", 2765);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -4930,9 +4962,10 @@ void ObservabilityPrims::register_eval_p32(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->compiler_root_dangling_prevented_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -4956,15 +4989,15 @@ void ObservabilityPrims::register_eval_p32(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("stale-closure-detected", stale_closure);
             insert_kv("env-version-mismatch", env_mismatch);
             insert_kv("root-refresh-count", root_refresh);
             insert_kv("dangling-prevented", dangling_prevented);
             insert_kv("schema", 599);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -5003,9 +5036,10 @@ void ObservabilityPrims::register_eval_p33(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->incremental_closure_jit_sync_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -5029,15 +5063,15 @@ void ObservabilityPrims::register_eval_p33(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("blocks-relowered", blocks_relowered);
             insert_kv("closure-bridge-hits", bridge_hits);
             insert_kv("min-scope-win", min_scope_win);
             insert_kv("jit-sync-count", jit_sync);
             insert_kv("schema", 600);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -5074,9 +5108,10 @@ void ObservabilityPrims::register_eval_p34(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(m->incremental_closure_env_version_resync_total.load(
                         std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -5100,14 +5135,14 @@ void ObservabilityPrims::register_eval_p34(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("impact-blocks-on-bridge", impact_on_bridge);
             insert_kv("quote-lambda-stale-prevented", quote_lambda_prevented);
             insert_kv("env-version-resync", env_resync);
             insert_kv("schema", 741);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -5151,9 +5186,10 @@ void ObservabilityPrims::register_eval_p35(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->macro_hygiene_dirty_impact_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -5177,6 +5213,8 @@ void ObservabilityPrims::register_eval_p35(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("hygiene-panic-restamp", panic_restamp);
             insert_kv("provenance-violations", provenance_violations);
@@ -5184,9 +5222,7 @@ void ObservabilityPrims::register_eval_p35(PrimRegistrar add, Evaluator& ev) {
             insert_kv("reflect-hygiene-validation", reflect_validation);
             insert_kv("hygiene-dirty-impact", dirty_impact);
             insert_kv("schema", 654);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -5232,9 +5268,10 @@ void ObservabilityPrims::register_eval_p36(PrimRegistrar add, Evaluator& ev) {
         "query:macro-reflect-validation-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -5262,13 +5299,11 @@ void ObservabilityPrims::register_eval_p36(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -5336,9 +5371,10 @@ void ObservabilityPrims::register_eval_p37(PrimRegistrar add, Evaluator& ev) {
         "query:macro-jit-hygiene-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -5366,13 +5402,11 @@ void ObservabilityPrims::register_eval_p37(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -5464,9 +5498,10 @@ void ObservabilityPrims::register_eval_p38(PrimRegistrar add, Evaluator& ev) {
         "query:self-evolution-closedloop-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -5494,13 +5529,11 @@ void ObservabilityPrims::register_eval_p38(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -5613,9 +5646,10 @@ void ObservabilityPrims::register_eval_p39(PrimRegistrar add, Evaluator& ev) {
         "query:stable-ref-layer-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -5643,13 +5677,11 @@ void ObservabilityPrims::register_eval_p39(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -5755,9 +5787,10 @@ void ObservabilityPrims::register_eval_p40(PrimRegistrar add, Evaluator& ev) {
     // arity=0 + pure=true (same pattern as #712/#713/#714/#715).
     ObservabilityPrims::register_stats_impl("query:pattern-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -5785,13 +5818,11 @@ void ObservabilityPrims::register_eval_p40(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         CompilerMetrics* m =
             ev.compiler_metrics() ? static_cast<CompilerMetrics*>(ev.compiler_metrics()) : nullptr;
@@ -5860,9 +5891,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         "query:fiber-boundary-violation-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -5890,13 +5922,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -5935,9 +5965,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // ~50 fields (#2040 + #2120 + #2121) + 9 histogram buckets
                 // + #2211/#2269/#2296/#2314/#2364 residual/panic densify keys.
-                auto* ht = FlatHashTable::create(256);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(121));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -5965,13 +5996,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6555,9 +6584,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         "query:workspace-mtx-contention-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(64);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(34));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -6585,13 +6615,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6688,9 +6716,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         "query:workspace-concurrency-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(31));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -6716,9 +6745,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6778,9 +6805,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         "query:mutation-hold-estimate", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -6808,13 +6836,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -6908,9 +6934,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         "query:mutation-hold-live", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(24);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -6938,13 +6965,11 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             const auto snap = aura::compiler::mutation_hold_live_snapshot();
             const auto budget =
@@ -7002,9 +7027,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                 return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
             };
             // #2521: more keys (schema-2521 + default-on sentinel).
-            auto* ht = FlatHashTable::create(48);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(37));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -7028,6 +7054,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("unique-inplace-total", load(m.unique_inplace_total));
             insert_kv("cow-alloc-total", load(m.cow_alloc_total));
@@ -7075,17 +7103,16 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2140", aura::ast::kPcvExclusiveSetIssue);
             insert_kv("schema", aura::ast::kPcvTlsDefaultOnIssue);
             insert_kv("active", 1);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Shared builder for safe-yield action surfaces (#1504 / #1591 / #1635).
     // Capacity must be power-of-two (open-address mask hcap-1).
     auto build_safe_yield_hash = [&ev](int rc) -> EvalValue {
-        auto* ht = FlatHashTable::create(64);
+        auto* ht = FlatHashTable::create(query_hash_capacity_for(53));
         if (!ht)
             return make_void();
+        bool overflowed = false;
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -7109,6 +7136,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                     return;
                 }
             }
+
+            overflowed = true;
         };
         const bool yielded = (rc == 0);
         const bool skipped = (rc == 1);
@@ -7152,9 +7181,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
         insert_kv("safe-yield-mandate-active", 1);
         insert_kv("issue", 1635);
         insert_kv("schema", 1635); // lineage 1591 / 1504
-        auto hidx = g_hash_tables.size();
-        g_hash_tables.push_back(ht);
-        return make_hash(hidx);
+        return query_hash_finish(ht, ev.string_heap_, overflowed);
     };
 
     // Issue #1504: (query:mutation-boundary-safe-yield) — attempt cooperative
@@ -7183,9 +7210,10 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
     // Issue #1504 / #1635: lifetime counters + depth instrumentation (read-only).
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-safe-yield-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -7209,6 +7237,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("boundary-depth", static_cast<std::int64_t>(ev.mutation_boundary_depth()));
             insert_kv("depth-slot",
@@ -7243,18 +7273,17 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #1591 / #1635: unified fairness dashboard (safe-yield + per-fiber
     // depth + steal starvation + safepoint wait). One hash for multi-Agent.
     ObservabilityPrims::register_stats_impl(
         "query:mutation-boundary-fairness-stats", [&ev](const auto&) -> EvalValue {
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -7278,6 +7307,8 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
             auto& s = ::aura::serve::metrics::adaptive_steal_stats();
@@ -7330,9 +7361,7 @@ void ObservabilityPrims::register_eval_p41(PrimRegistrar add, Evaluator& ev) {
             insert_kv("safe-yield-mandate-active", 1);
             insert_kv("issue", 1635);
             insert_kv("schema", 1635); // lineage 1591 / 1504
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -7383,9 +7412,10 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #1601 / #1623 / #1915 / #2032 / #2190: ~160+ keys — create(512)
                 // headroom so open-addressing never fails insert under load.
-                auto* ht = FlatHashTable::create(512);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(102));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -7413,13 +7443,11 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -8074,9 +8102,10 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:incremental-relower-policy-stats", [&ev](const auto&) -> EvalValue {
             (void)ev;
-            auto* ht = FlatHashTable::create(128); // #2190 headroom
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(51)); // #2190 headroom
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -8196,13 +8225,11 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2113: (query:incremental-soundness-stats) — debug oracle
@@ -8215,9 +8242,10 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
                                      : nullptr;
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -8281,13 +8309,11 @@ void ObservabilityPrims::register_eval_p42(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -8349,9 +8375,10 @@ void ObservabilityPrims::register_eval_p43(PrimRegistrar add, Evaluator& ev) {
         "query:closure-env-epoch-safety-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -8379,13 +8406,11 @@ void ObservabilityPrims::register_eval_p43(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -8468,9 +8493,10 @@ void ObservabilityPrims::register_eval_p44(PrimRegistrar add, Evaluator& ev) {
         "query:jit-interpreter-parity-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -8498,13 +8524,11 @@ void ObservabilityPrims::register_eval_p44(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -8579,9 +8603,10 @@ void ObservabilityPrims::register_eval_p45(PrimRegistrar add, Evaluator& ev) {
         "query:ir-soa-completeness-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -8609,13 +8634,11 @@ void ObservabilityPrims::register_eval_p45(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -8688,9 +8711,10 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
         "query:arena-integration-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -8718,13 +8742,11 @@ void ObservabilityPrims::register_eval_p46(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -8774,9 +8796,10 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #1622: ~14 keys — create(32) headroom.
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(37));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -8804,13 +8827,11 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -8915,9 +8936,10 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
         "query:mutation-boundary-coverage-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(128);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(35));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -8945,13 +8967,11 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -9043,9 +9063,10 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // Capacity must be power-of-two (open-address mask hcap-1).
                 // #2115 adds depth-safe steal keys → room above 1633 lineage.
-                auto* ht = FlatHashTable::create(128);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(52));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -9073,13 +9094,11 @@ void ObservabilityPrims::register_eval_p47(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             auto& s = ::aura::serve::metrics::adaptive_steal_stats();
             auto load = [&](std::atomic<std::uint64_t>& a) -> std::int64_t {
@@ -9259,9 +9278,10 @@ void ObservabilityPrims::register_eval_p48(PrimRegistrar add, Evaluator& ev) {
         "query:closed-loop-reliability-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -9289,13 +9309,11 @@ void ObservabilityPrims::register_eval_p48(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             CompilerMetrics* m = ev.compiler_metrics()
                                      ? static_cast<CompilerMetrics*>(ev.compiler_metrics())
@@ -9362,9 +9380,10 @@ void ObservabilityPrims::register_eval_p49(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->edsl_mutate_invalidate_precision_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -9388,6 +9407,8 @@ void ObservabilityPrims::register_eval_p49(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("cow-stable-ref-remaps", cow_remap);
             insert_kv("tag-arity-delta-patches", delta_patch);
@@ -9395,9 +9416,7 @@ void ObservabilityPrims::register_eval_p49(PrimRegistrar add, Evaluator& ev) {
             insert_kv("children-safe-views", children_safe);
             insert_kv("mutate-invalidate-precision", invalidate_precision);
             insert_kv("schema", 655);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -9448,9 +9467,10 @@ void ObservabilityPrims::register_eval_p50(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(m->compiler_core_quote_fallback_refresh_total.load(
                         std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -9474,6 +9494,8 @@ void ObservabilityPrims::register_eval_p50(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("bridge-epoch-cache-syncs", bridge_sync);
             insert_kv("impact-blocks", impact_blocks);
@@ -9483,9 +9505,7 @@ void ObservabilityPrims::register_eval_p50(PrimRegistrar add, Evaluator& ev) {
             insert_kv("linear-metadata-flows", linear_flow);
             insert_kv("quote-fallback-refreshes", quote_refresh);
             insert_kv("schema", 657);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -9522,9 +9542,10 @@ void ObservabilityPrims::register_eval_p51(PrimRegistrar add, Evaluator& ev) {
                 shape::history_jitter_reduction_count.load(std::memory_order_relaxed));
             const std::int64_t dirty_skips = static_cast<std::int64_t>(
                 passes_skipped_dirty_pipeline.load(std::memory_order_relaxed));
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -9548,6 +9569,8 @@ void ObservabilityPrims::register_eval_p51(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("arena-tier-fallbacks", arena_fallback);
             insert_kv("soa-dirty-cascades", soa_cascade);
@@ -9555,9 +9578,7 @@ void ObservabilityPrims::register_eval_p51(PrimRegistrar add, Evaluator& ev) {
             insert_kv("shape-history-jitter-wins", jitter_wins);
             insert_kv("pass-dirty-skips", dirty_skips);
             insert_kv("schema", 658);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -9586,9 +9607,10 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t hotpath_hits = static_cast<std::int64_t>(
                 aura::core::cpp26::hotpath_invariant_hits_total.load(std::memory_order_relaxed));
             // #1620 / #2435: more keys — create(64) headroom.
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(34));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -9612,6 +9634,8 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("contract-violations-caught", violations);
             insert_kv("consteval-checks", consteval_checks);
@@ -9725,9 +9749,7 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hotpath-invariant-hits", hotpath_hits);
             insert_kv("issue", 1620);
             insert_kv("schema", 1620); // lineage 742|1519|1321
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -9816,9 +9838,10 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
             const auto fp_bp = static_cast<std::int64_t>(
                 aura::core::arena_policy::auto_compact_false_positive_bp());
             // #1621 + #1919 + #2059: ~50 keys — create(128) headroom.
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(54));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -9842,6 +9865,8 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("auto-compact-triggers", static_cast<std::int64_t>(auto_triggers));
             insert_kv("defrag-fiber-safe-hits", static_cast<std::int64_t>(defrag_fiber_safe));
@@ -9922,9 +9947,7 @@ void ObservabilityPrims::register_eval_p53(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-2059", 2059);
             insert_kv("issue", 1621);
             insert_kv("schema", 1621); // lineage 743 → 1621 + #1919 + #2059
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -9955,9 +9978,10 @@ void ObservabilityPrims::register_eval_p54(PrimRegistrar add, Evaluator& ev) {
                 shape_jit_pass::speculative_win_lost_total.load(std::memory_order_relaxed));
             const std::int64_t stable_skips = static_cast<std::int64_t>(
                 passes_skipped_shape_stable_blocks.load(std::memory_order_relaxed));
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -9981,6 +10005,8 @@ void ObservabilityPrims::register_eval_p54(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("stability-churn-deopts", churn);
             insert_kv("dirty-from-shape", dirty_shape);
@@ -9988,9 +10014,7 @@ void ObservabilityPrims::register_eval_p54(PrimRegistrar add, Evaluator& ev) {
             insert_kv("speculative-win-lost", win_lost);
             insert_kv("shape-stable-block-skips", stable_skips);
             insert_kv("schema", 744);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10029,9 +10053,10 @@ void ObservabilityPrims::register_eval_p55(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(m->constraint_stale_blame_invalidation_total.load(
                         std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10055,15 +10080,15 @@ void ObservabilityPrims::register_eval_p55(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("reverify-hits-on-narrow", narrow_hits);
             insert_kv("cross-delta-blame-complete", blame_complete);
             insert_kv("timeout-prevented", timeout_prevented);
             insert_kv("stale-blame-invalidation", stale_blame);
             insert_kv("schema", 745);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10149,9 +10174,10 @@ void ObservabilityPrims::register_eval_p56(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->narrow_evidence_propagated_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(24);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(23));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10175,6 +10201,8 @@ void ObservabilityPrims::register_eval_p56(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             // #746 lineage
             insert_kv("narrow-evidence-hits", narrow_hits);
@@ -10193,9 +10221,7 @@ void ObservabilityPrims::register_eval_p56(PrimRegistrar add, Evaluator& ev) {
             insert_kv("guardshape-narrow-wired", 1);
             insert_kv("issue", 1615);
             insert_kv("schema", 1615); // lineage 746
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10227,9 +10253,10 @@ void ObservabilityPrims::register_eval_p57(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->linear_occurrence_predicate_safe_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10253,14 +10280,14 @@ void ObservabilityPrims::register_eval_p57(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("revalidate-hits", revalidates);
             insert_kv("escape-violations-prevented", escape_prev);
             insert_kv("predicate-branch-linear-safe", branch_safe);
             insert_kv("schema", 747);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10297,9 +10324,10 @@ void ObservabilityPrims::register_eval_p58(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->sv_emit_parse_fail_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10323,15 +10351,15 @@ void ObservabilityPrims::register_eval_p58(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("structure-mutate-hits", structure_mutate);
             insert_kv("dirty-reemit-triggers", dirty_reemit);
             insert_kv("emit-fidelity-pass", emit_pass);
             insert_kv("emit-fidelity-fail", emit_fail);
             insert_kv("schema", 748);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10368,9 +10396,10 @@ void ObservabilityPrims::register_eval_p59(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->sv_commercial_emit_tool_compatible_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10394,15 +10423,15 @@ void ObservabilityPrims::register_eval_p59(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("emit-parse-success-hits", parse_success);
             insert_kv("roundtrip-mismatch-prevented", mismatch_prevented);
             insert_kv("dirty-reemit-hits", dirty_reemit);
             insert_kv("commercial-tool-compatible-hits", tool_compatible);
             insert_kv("schema", 801);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10438,9 +10467,10 @@ void ObservabilityPrims::register_eval_p60(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->sv_self_evo_convergence_hits_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10464,15 +10494,15 @@ void ObservabilityPrims::register_eval_p60(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("feedback-parse-hits", feedback_parse);
             insert_kv("structured-mutate-hits", structured_mutate);
             insert_kv("closed-loop-rounds", closed_loop_rounds);
             insert_kv("convergence-hits", convergence);
             insert_kv("schema", 802);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10646,9 +10676,10 @@ void ObservabilityPrims::register_eval_p61(PrimRegistrar add, Evaluator& ev) {
                     recommendation = 2;
                 }
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10672,6 +10703,8 @@ void ObservabilityPrims::register_eval_p61(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("convergence-rate", convergence_rate);
             insert_kv("ref-drift-prevented", ref_drift_prevented);
@@ -10682,9 +10715,7 @@ void ObservabilityPrims::register_eval_p61(PrimRegistrar add, Evaluator& ev) {
             insert_kv("longrunning-harness-active", longrunning_harness_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 803);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10731,9 +10762,10 @@ void ObservabilityPrims::register_eval_p62(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->ir_soa_jit_codegen_time_ns_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10757,6 +10789,8 @@ void ObservabilityPrims::register_eval_p62(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("soa-instructions-emitted", soa_instructions_emitted);
             insert_kv("dirty-block-skips", dirty_block_skips);
@@ -10764,9 +10798,7 @@ void ObservabilityPrims::register_eval_p62(PrimRegistrar add, Evaluator& ev) {
             insert_kv("pmr-column-utilization", pmr_column_utilization);
             insert_kv("jit-soa-codegen-time-ns", jit_soa_codegen_time_ns);
             insert_kv("schema", 766);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10874,9 +10906,10 @@ void ObservabilityPrims::register_eval_p63(PrimRegistrar add, Evaluator& ev) {
                 production_readiness =
                     (fiber_yield_during_compact > 0 || defrag_blocked_fibers > 0) ? 0 : 1;
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -10900,6 +10933,8 @@ void ObservabilityPrims::register_eval_p63(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("auto-compact-triggers", static_cast<std::int64_t>(auto_triggers));
             insert_kv("frag-reduced-bp", static_cast<std::int64_t>(frag_reduced_bp));
@@ -10909,9 +10944,7 @@ void ObservabilityPrims::register_eval_p63(PrimRegistrar add, Evaluator& ev) {
             insert_kv("defrag-blocked-fibers", defrag_blocked_fibers);
             insert_kv("production-readiness", production_readiness);
             insert_kv("schema", 767);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -10999,9 +11032,10 @@ void ObservabilityPrims::register_eval_p64(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->concept_violations_caught_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11025,6 +11059,8 @@ void ObservabilityPrims::register_eval_p64(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("contract-checks-hotpath", contract_checks_hotpath);
             insert_kv("shape-stability-transitions", shape_stability_transitions);
@@ -11032,9 +11068,7 @@ void ObservabilityPrims::register_eval_p64(PrimRegistrar add, Evaluator& ev) {
             insert_kv("deopt-targeted-skips", deopt_targeted_skips);
             insert_kv("concept-violations-caught", concept_violations_caught);
             insert_kv("schema", 768);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -11074,9 +11108,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->stable_ref_steal_auto_refresh_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11100,15 +11135,15 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("provenance-enforced-hits", provenance_enforced);
             insert_kv("cross-cow-refresh-hits", cross_cow_refresh);
             insert_kv("fiber-workspace-mismatch-prevented", fiber_ws_mismatch);
             insert_kv("steal-auto-refresh-hits", steal_auto_refresh);
             insert_kv("schema", 818);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #1592 / #1608 / #1612 / #1631: unified post-steal / resume
@@ -11121,9 +11156,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
         "query:post-steal-closed-loop-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             // #1660 lineage + #1916 + #2026 linear-provenance keys → 256 slots.
-            auto* ht = FlatHashTable::create(256);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(105));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11147,6 +11183,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             const std::int64_t refresh_count =
                 static_cast<std::int64_t>(ev.get_post_steal_refresh_count());
@@ -11417,9 +11455,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             }
             insert_kv("issue", 1631);
             insert_kv("schema", 1631); // lineage 1612 / 1608 / 1592 / 1490 (+ #2026 / #2103)
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #1598 / #1604 / #1626 / #1632 / #1660: apply_closure / JIT /
@@ -11433,9 +11469,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             // Capacity must be power-of-two (open-address mask hcap-1).
             // #1660 AC aliases + #2371 soft-migrate keys.
-            auto* ht = FlatHashTable::create(256);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(106));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11459,6 +11496,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             const auto L = [&](const std::atomic<std::uint64_t>* f) -> std::int64_t {
                 return f ? static_cast<std::int64_t>(f->load(std::memory_order_relaxed)) : 0;
@@ -11625,9 +11664,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("issue-1916", 1916);
             insert_kv("issue", 1660);
             insert_kv("schema", 1660); // lineage 1632 / 1627 / 1626 / 1607 / 1604 / 1598 → 1916
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #1595: Fiber::join / MultiFiberMailbox / parallel_intend linear
@@ -11635,9 +11672,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:join-linear-enforcement-stats", [&ev](const auto&) -> EvalValue {
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(24);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11661,6 +11699,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("linear_join_enforcement_total",
                       m ? static_cast<std::int64_t>(
@@ -11682,9 +11722,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("parallel-intend-path-wired", 1);
             insert_kv("issue", 1595);
             insert_kv("schema", 1595);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #1564 / #1630: unified StableNodeRef full-provenance enforcement.
@@ -11730,9 +11768,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                   : static_cast<std::int64_t>(snap.cross_cow_provenance_enforced);
             // Capacity 128: #1630/#2056/#2125/#2186/#2404 keys (was 64;
             // #2404 export keys need headroom under open addressing).
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(50));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11756,6 +11795,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema", 1630);
             insert_kv("active", 1);
@@ -11822,9 +11863,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             insert_kv("stable-ref-export-wired", 1);
             insert_kv("stable-ref-export-hard-reject",
                       aura::core::provenance::stable_ref_export_hard_reject() ? 1 : 0);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2224: query:tenant-isolation-stats — Agent-discoverable
@@ -11871,9 +11910,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             using ::aura::core::workspace_isolation::snapshot_tenant_isolation_stats;
             const auto snap = snapshot_tenant_isolation_stats();
             auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(30));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -11897,6 +11937,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema-2224", 2224);
             insert_kv("issue-2224", 2224);
@@ -11935,9 +11977,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                       static_cast<std::int64_t>(snap.nodeid_only_entry_prevented));
             insert_kv("nodeid-only-entry-prevented-wired", 1);
             insert_kv("schema-3040", 3040);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // Issue #2225: query:security-posture — Agent-discoverable
@@ -11980,9 +12020,10 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
             const auto wal_snap = snapshot_security_event_wal_stats();
             const auto& ring = g_security_event_ring();
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(30));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12006,6 +12047,8 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("schema-2225", 2225);
             insert_kv("issue-2225", 2225);
@@ -12059,9 +12102,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12154,9 +12195,10 @@ void ObservabilityPrims::register_eval_p66(PrimRegistrar add, Evaluator& ev) {
             if (slo_breach > 0) {
                 slo_status = 2; // explicit breach bump wins over derived
             }
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(15));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12180,6 +12222,8 @@ void ObservabilityPrims::register_eval_p66(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("slo-status", slo_status);
             insert_kv("emit-parse-success", emit_success);
@@ -12188,9 +12232,7 @@ void ObservabilityPrims::register_eval_p66(PrimRegistrar add, Evaluator& ev) {
             insert_kv("reemit-hits", reemit_hits);
             insert_kv("slo-breach-total", slo_breach);
             insert_kv("schema", 772);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12299,9 +12341,10 @@ void ObservabilityPrims::register_eval_p67(PrimRegistrar add, Evaluator& ev) {
                         m->workspace_closedloop_stale_ref_prevented_eda_loops_total.load(
                             std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(15));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12325,6 +12368,8 @@ void ObservabilityPrims::register_eval_p67(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("concurrent-query-mutate-success-pct", cq_success_pct);
             insert_kv("cross-cow-ref-validity-pct", cross_cow_ref_validity_pct);
@@ -12333,9 +12378,7 @@ void ObservabilityPrims::register_eval_p67(PrimRegistrar add, Evaluator& ev) {
             insert_kv("multi-agent-edit-fidelity", multi_agent_edit_fidelity);
             insert_kv("stale-ref-prevented-eda-loops", stale_ref_prevented);
             insert_kv("schema", 773);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12415,9 +12458,10 @@ void ObservabilityPrims::register_eval_p68(PrimRegistrar add, Evaluator& ev) {
                 convergence_rate_pct =
                     (convergence_hits * ::aura::compiler::kBasisPointScale) / closed_loop_rounds;
             }
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12441,15 +12485,15 @@ void ObservabilityPrims::register_eval_p68(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("convergence-rate", convergence_rate_pct);
             insert_kv("closed-loop-rounds", closed_loop_rounds);
             insert_kv("convergence-hits", convergence_hits);
             insert_kv("feedback-mutate-rounds", feedback_mutate_rounds);
             insert_kv("schema", 774);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12544,9 +12588,10 @@ void ObservabilityPrims::register_eval_p69(PrimRegistrar add, Evaluator& ev) {
                 meta_completeness_pct = static_cast<std::int64_t>(
                     (schema_documented * ::aura::compiler::kBasisPointScale) / total);
             }
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12570,15 +12615,15 @@ void ObservabilityPrims::register_eval_p69(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("extensions_registered", extensions_registered);
             insert_kv("contract_violations_caught", contract_violations_caught);
             insert_kv("meta_completeness_pct", meta_completeness_pct);
             insert_kv("test_skeletons_generated", test_skeletons_generated);
             insert_kv("schema", 775);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12714,9 +12759,10 @@ void ObservabilityPrims::register_eval_p70(PrimRegistrar add, Evaluator& ev) {
                     recommendation = 2;
                 }
             }
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(16));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta_hash = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12740,6 +12786,8 @@ void ObservabilityPrims::register_eval_p70(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("extensions", extensions);
             insert_kv("validation-pass", validation_pass);
@@ -12749,9 +12797,7 @@ void ObservabilityPrims::register_eval_p70(PrimRegistrar add, Evaluator& ev) {
             insert_kv("extend-registry-safe-active", extend_active);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 806);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12860,9 +12906,10 @@ void ObservabilityPrims::register_eval_p71(PrimRegistrar add, Evaluator& ev) {
             }
             const std::int64_t ns_per_apply =
                 samples == 0 ? 0 : static_cast<std::int64_t>(ns_accum / samples);
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -12886,6 +12933,8 @@ void ObservabilityPrims::register_eval_p71(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("fastpath-hit-rate-pct", fastpath_pct);
             insert_kv("ns-per-apply", ns_per_apply);
@@ -12893,9 +12942,7 @@ void ObservabilityPrims::register_eval_p71(PrimRegistrar add, Evaluator& ev) {
             insert_kv("extension-reg-ns", static_cast<std::int64_t>(ext_ns));
             insert_kv("bench-runs", static_cast<std::int64_t>(bench_runs));
             insert_kv("schema", 805);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -12989,9 +13036,10 @@ void ObservabilityPrims::register_eval_p72(PrimRegistrar add, Evaluator& ev) {
             // (= stability_score < 50, the #614 "regression" threshold
             // that recommends action 3). Otherwise 0.
             const std::int64_t regression_flag = current_vs_baseline_pct < 5000 ? 1 : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13019,15 +13067,15 @@ void ObservabilityPrims::register_eval_p72(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("current-vs-baseline-pct", current_vs_baseline_pct);
             insert_kv("contract-violations", static_cast<std::int64_t>(contract_viol));
             insert_kv("fastpath-hit-rate-pct", fastpath_hit_rate_pct);
             insert_kv("regression-flag", regression_flag);
             insert_kv("schema", 776);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13105,9 +13153,10 @@ void ObservabilityPrims::register_eval_p74(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // missing-primitive (Agent is using FFI)
             else
                 recommendation = 3; // early-stage (no FFI usage yet)
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13135,15 +13184,15 @@ void ObservabilityPrims::register_eval_p74(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("ffi-call-count", ffi_call_count);
             insert_kv("batch-ffi-supported", batch_ffi_supported);
             insert_kv("terminal-batch-write-supported", terminal_batch_write_supported);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 778);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13215,9 +13264,10 @@ void ObservabilityPrims::register_eval_p75(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // missing-primitive (rendering active)
             else
                 recommendation = 3; // early-stage (no rendering yet)
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13245,15 +13295,15 @@ void ObservabilityPrims::register_eval_p75(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("dirty-region-count", dirty_region_count);
             insert_kv("present-delta-supported", present_delta_supported);
             insert_kv("terminal-dirty-region-supported", terminal_dirty_region_supported);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 779);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13345,9 +13395,10 @@ void ObservabilityPrims::register_eval_p76(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // missing-optimization (JIT active)
             else
                 recommendation = 3; // early-stage (no JIT activity)
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13375,6 +13426,8 @@ void ObservabilityPrims::register_eval_p76(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("hotpath-eval-flat-calls", hotpath_eval_flat_calls);
             insert_kv("hotpath-lowering-calls", hotpath_lowering_calls);
@@ -13382,9 +13435,7 @@ void ObservabilityPrims::register_eval_p76(PrimRegistrar add, Evaluator& ev) {
             insert_kv("hot-update-rendering-optimized", hot_update_rendering_optimized);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 780);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13492,9 +13543,10 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2;
             else
                 recommendation = 3;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13519,6 +13571,8 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("pair-alloc-total", pair_alloc_total);
             insert_kv("zero-copy-supported", zero_copy_supported);
@@ -13537,9 +13591,7 @@ void ObservabilityPrims::register_eval_p77(PrimRegistrar add, Evaluator& ev) {
             // schema stays 781 (#781 contract); arena extension via phase + fields (#1561).
             insert_kv("schema", 781);
             insert_kv("arena-schema", 1561);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13660,9 +13712,10 @@ void ObservabilityPrims::register_eval_p78(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 2; // missing-module (core primitives exist without module wrapper)
             else
                 recommendation = 3; // early-stage (no core primitives, no module)
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13690,6 +13743,8 @@ void ObservabilityPrims::register_eval_p78(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("core-primitive-count", core_primitive_count);
             insert_kv("terminal-module-available", terminal_module_available);
@@ -13697,9 +13752,7 @@ void ObservabilityPrims::register_eval_p78(PrimRegistrar add, Evaluator& ev) {
             insert_kv("example-renderer-available", example_renderer_available);
             insert_kv("recommendation", recommendation);
             insert_kv("schema", 782);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13791,10 +13844,12 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             else if (outermost_total > 0 || inner_deferred_total > 0 || cross_fiber_total > 0)
                 recommendation = 2; // Phase 1 only (steal split shipped)
             else
-                recommendation = 3;               // early-stage (no steal activity yet)
-            auto* ht = FlatHashTable::create(64); // #2184/#2310/#2346/#2372 schema keys
+                recommendation = 3; // early-stage (no steal activity yet)
+            auto* ht = FlatHashTable::create(
+                query_hash_capacity_for(46)); // #2184/#2310/#2346/#2372 schema keys
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -13822,6 +13877,8 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("outermost-steal-total", static_cast<std::int64_t>(outermost_total));
             insert_kv("inner-deferred-total", static_cast<std::int64_t>(inner_deferred_total));
@@ -13909,9 +13966,7 @@ void ObservabilityPrims::register_eval_p79(PrimRegistrar add, Evaluator& ev) {
             insert_kv("schema-2372", 2372);
             insert_kv("issue-2372", 2372);
             insert_kv("schema", 783);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -13989,9 +14044,10 @@ void ObservabilityPrims::register_eval_p80(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(m->reflection_stale_validation_prevented_total.load(
                         std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -14015,15 +14071,15 @@ void ObservabilityPrims::register_eval_p80(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("validated", validated);
             insert_kv("hygiene-invariants-held", hygiene_held);
             insert_kv("schema-violations", violations);
             insert_kv("stale-validation-prevented", stale_prev);
             insert_kv("schema", 750);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -14068,9 +14124,10 @@ void ObservabilityPrims::register_eval_p81(PrimRegistrar add, Evaluator& ev) {
                 m ? static_cast<std::int64_t>(
                         m->coercion_zerooverhead_win_total.load(std::memory_order_relaxed))
                   : 0;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -14094,6 +14151,8 @@ void ObservabilityPrims::register_eval_p81(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("delta-reverify-scans", reverify);
             insert_kv("dead-coercion-eliminated", dce);
@@ -14101,9 +14160,7 @@ void ObservabilityPrims::register_eval_p81(PrimRegistrar add, Evaluator& ev) {
             insert_kv("narrowing-provenance-refresh", provenance);
             insert_kv("coercion-incremental-wins", coercion);
             insert_kv("schema", 659);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -14154,9 +14211,10 @@ void ObservabilityPrims::register_eval_p82(PrimRegistrar add, Evaluator& ev) {
                 ev.get_runtime_observability_steal_ownership_violation_correlated());
             const std::int64_t correlated_total =
                 steal_attempts + steal_deferred + ownership_violation;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -14180,15 +14238,15 @@ void ObservabilityPrims::register_eval_p82(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("steal-attempts-correlated", steal_attempts);
             insert_kv("steal-deferred-correlated", steal_deferred);
             insert_kv("steal-ownership-violation-correlated", ownership_violation);
             insert_kv("correlated-events-total", correlated_total);
             insert_kv("schema", 673);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -14238,9 +14296,10 @@ void ObservabilityPrims::register_eval_p83(PrimRegistrar add, Evaluator& ev) {
             const std::int64_t corruptions =
                 static_cast<std::int64_t>(ev.get_self_evolution_chaos_corruptions());
             const std::int64_t events_total = cycles + failures + corruptions;
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -14264,15 +14323,15 @@ void ObservabilityPrims::register_eval_p83(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("chaos-cycles", cycles);
             insert_kv("chaos-failures", failures);
             insert_kv("chaos-corruptions", corruptions);
             insert_kv("chaos-events-total", events_total);
             insert_kv("schema", 674);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -14285,9 +14344,10 @@ void ObservabilityPrims::register_eval_p84(PrimRegistrar add, Evaluator& ev) {
         "query:primitive-metadata", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(20));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -14315,13 +14375,11 @@ void ObservabilityPrims::register_eval_p84(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
             const std::uint64_t slots = ev.primitives_.slot_count();
@@ -14395,9 +14453,10 @@ void ObservabilityPrims::register_eval_p86(PrimRegistrar add, Evaluator& ev) {
     // moving-window rate.
     ObservabilityPrims::register_stats_impl("query:eda-hw-stats", [&ev](const auto&) -> EvalValue {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(14));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -14425,13 +14484,11 @@ void ObservabilityPrims::register_eval_p86(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         const auto* m = static_cast<const CompilerMetrics*>(ev.compiler_metrics());
         const std::uint64_t load_sv_ok = 0;
@@ -14653,9 +14710,10 @@ void ObservabilityPrims::register_eval_p88(PrimRegistrar add, Evaluator& ev) {
                     recommendation = 2;
                 }
             }
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -14679,6 +14737,8 @@ void ObservabilityPrims::register_eval_p88(PrimRegistrar add, Evaluator& ev) {
                         return;
                     }
                 }
+
+                overflowed = true;
             };
             insert_kv("error-count-total", error_count_total);
             insert_kv("with-provenance", with_provenance);
@@ -14689,9 +14749,7 @@ void ObservabilityPrims::register_eval_p88(PrimRegistrar add, Evaluator& ev) {
             insert_kv("recovery-hook-invocations", recovery_hook_invocations);
             insert_kv("unified-error-path-active", unified_error_path_active);
             insert_kv("schema", 804);
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 
@@ -14764,9 +14822,10 @@ void ObservabilityPrims::register_eval_p89(PrimRegistrar add, Evaluator& ev) {
             // pattern used by query:primitive-perf-stats below).
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(11));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -14794,13 +14853,11 @@ void ObservabilityPrims::register_eval_p89(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"total", make_int(static_cast<std::int64_t>(total))},
@@ -14844,9 +14901,10 @@ void ObservabilityPrims::register_eval_p90(PrimRegistrar add, Evaluator& ev) {
                 prim_count > 0 ? static_cast<std::int64_t>(call_total / prim_count) : 0;
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(11));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -14874,13 +14932,11 @@ void ObservabilityPrims::register_eval_p90(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"primitive-call-total", make_int(static_cast<std::int64_t>(call_total))},
@@ -15027,9 +15083,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             // Capacity 256: #2046/#2093/#2095/#2165/#2271/#2299/#2366 keys
             // (power-of-2 probe; 64 was >80% load after #2299).
-            auto* ht = FlatHashTable::create(256);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(131));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -15057,13 +15114,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         std::uint64_t joint_bump = 0;
         std::uint64_t region_ver_bump = 0;
@@ -15395,9 +15450,10 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #2369/#2605/#2606/#2850/#2893/#2950 expand this surface.
-                auto* ht = FlatHashTable::create(256);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(98));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -15425,13 +15481,11 @@ void ObservabilityPrims::register_eval_p91(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::uint64_t name_fb = 0;
             // Issue #2602: synchronous remount walk counters (distinct
@@ -15900,9 +15954,10 @@ void ObservabilityPrims::register_eval_p92(PrimRegistrar add, Evaluator& ev) {
             const auto ccache_off = aura::ci::ccache_disabled();
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -15930,13 +15985,11 @@ void ObservabilityPrims::register_eval_p92(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             auto bt_idx = ev.string_heap_.size();
             ev.string_heap_.push_back(aura::ci::build_type_from_env());
@@ -15986,9 +16039,10 @@ void ObservabilityPrims::register_eval_p93(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // Capacity power-of-two; #1661 adds AC aliases + wire flags.
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(25));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16016,13 +16070,11 @@ void ObservabilityPrims::register_eval_p93(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"shape-fold-count", make_int(static_cast<std::int64_t>(fold))},
@@ -16289,9 +16341,10 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
                 // #1619/#1918: ~25 keys — need headroom (create(32) can drop).
-                auto* ht = FlatHashTable::create(64);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(56));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16319,13 +16372,11 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             // Refresh from live atomics.
             const auto enforce =
@@ -16498,9 +16549,10 @@ void ObservabilityPrims::register_eval_p95(PrimRegistrar add, Evaluator& ev) {
             skip_count = ev.arena_group().auto_compact_skip_count();
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16528,13 +16580,11 @@ void ObservabilityPrims::register_eval_p95(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"auto-compact-guard-call-count", make_int(static_cast<std::int64_t>(guard_calls))},
@@ -16617,9 +16667,10 @@ void ObservabilityPrims::register_eval_p96(PrimRegistrar add, Evaluator& ev) {
             }
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16647,13 +16698,11 @@ void ObservabilityPrims::register_eval_p96(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"auto-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
@@ -16675,9 +16724,10 @@ void ObservabilityPrims::register_eval_p97(PrimRegistrar add, Evaluator& ev) {
         "query:arena-auto-compact-defrag-stats", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(24));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16705,13 +16755,11 @@ void ObservabilityPrims::register_eval_p97(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             const auto& group = ev.arena_group();
             const auto stats = group.total_stats();
@@ -16821,9 +16869,10 @@ void ObservabilityPrims::register_eval_p98(PrimRegistrar add, Evaluator& ev) {
                                                      static_cast<double>(total_cap);
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16851,13 +16900,11 @@ void ObservabilityPrims::register_eval_p98(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"auto-compact-triggers", make_int(static_cast<std::int64_t>(auto_triggers))},
@@ -16923,9 +16970,10 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
             lim_v = std::max(lim_v, ev.prim_heap_quota(PrimHeapDim::Vectors));
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(32);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(25));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -16953,13 +17001,11 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::int64_t recommend = kPrimHeapRecommendOk;
             if (lock_samples > 0 && (lock_hold_ns / lock_samples) > kPrimHeapLockHoldWarnNs)
@@ -17017,9 +17063,10 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                     : static_cast<std::int64_t>((success * 10000) / attempts); // basis points
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(17));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -17047,13 +17094,11 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"attempts-total", make_int(static_cast<std::int64_t>(attempts))},
@@ -17108,9 +17153,10 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                 recommendation = 1;
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(16);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(19));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -17138,13 +17184,11 @@ void ObservabilityPrims::register_eval_p99(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"primitive-call-total", make_int(static_cast<std::int64_t>(call_total))},
@@ -17190,9 +17234,10 @@ void ObservabilityPrims::register_eval_p100(PrimRegistrar add, Evaluator& ev) {
         "query:cxx26-hotpath-invariants", [&ev](const auto&) -> EvalValue {
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(8);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -17220,13 +17265,11 @@ void ObservabilityPrims::register_eval_p100(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             // These values are the ones static_assert'd in
             // value_tags.h. The build will fail if they drift.
@@ -17257,9 +17300,10 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             // Issue #394 / #258 / #1878: capacity 64 (was 32). #1502 +
             // #1900 + #1878 multi-tenant atomicity keys need headroom.
-            auto* ht = FlatHashTable::create(64);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(32));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -17287,13 +17331,11 @@ void ObservabilityPrims::register_eval_p101(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         std::size_t avg = ev.atomic_batch_domain_.count > 0
                               ? ev.atomic_batch_domain_.ops_total / ev.atomic_batch_domain_.count
@@ -17387,9 +17429,10 @@ void ObservabilityPrims::register_eval_p102(PrimRegistrar add, Evaluator& ev) {
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
             // Issue #394 / #258: capacity 32 (was 8). closure:stats
             // returns 7 keys; cap-8 insertion failures broke hash-ref.
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(15));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -17417,13 +17460,11 @@ void ObservabilityPrims::register_eval_p102(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         // Issue #252: closure stats. Read from ev.compiler_metrics_
         // (shared with the IR's IROpcode::Call/Apply). If metrics
@@ -17498,9 +17539,10 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
         // a helper) so the new primitive stays self-contained
         // and easy to evolve independently.
         auto build_hash = [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-            auto* ht = FlatHashTable::create(32);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(22));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -17528,13 +17570,11 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         };
         std::uint64_t calls = 0, ffi_c = 0, tw_c = 0, ir_c = 0;
         std::uint64_t bridge_c = 0, stale_c = 0;
@@ -17641,9 +17681,10 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
             // above the ~50% open-addressing load factor sweet spot.
             auto build_hash =
                 [&](std::span<const std::pair<std::string, EvalValue>> kv) -> EvalValue {
-                auto* ht = FlatHashTable::create(64);
+                auto* ht = FlatHashTable::create(query_hash_capacity_for(42));
                 if (!ht)
                     return make_void();
+                bool overflowed = false;
                 auto meta = ht->metadata();
                 auto keys = ht->keys();
                 auto vals = ht->values();
@@ -17671,13 +17712,11 @@ void ObservabilityPrims::register_eval_p103(PrimRegistrar add, Evaluator& ev) {
                         }
                     }
                     if (!inserted) {
-                        FlatHashTable::destroy(ht);
-                        return make_void();
+                        overflowed = true;
+                        break;
                     }
                 }
-                auto hidx = g_hash_tables.size();
-                g_hash_tables.push_back(ht);
-                return make_hash(hidx);
+                return query_hash_finish(ht, ev.string_heap_, overflowed);
             };
             using namespace aura::compiler::macro_exp;
             // All values are atomic loads — zero allocation in the hot
@@ -17830,9 +17869,10 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
         "query:pass-concepts-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::pass_concepts;
             note_concept_constraints_import();
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(13));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -17871,22 +17911,21 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // (engine:metrics "query:render-pass-incremental-stats") — Issue #1578.
     ObservabilityPrims::register_stats_impl(
         "query:render-pass-incremental-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
-            auto* ht = FlatHashTable::create(16);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(18));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -17929,13 +17968,11 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // (engine:metrics "query:optimization-passes-stats") — Issue #1576:
@@ -17946,9 +17983,10 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
         "query:optimization-passes-stats", [&ev](const auto&) -> EvalValue {
             using namespace aura::compiler::opt_registry;
             // #1576 + #2025 + #2106 + #2130 keys → 128 slots.
-            auto* ht = FlatHashTable::create(128);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(75));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -18110,13 +18148,11 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // (engine:metrics "query:dirty-cascade-stats") — Issue #2063 / #2106 / #2191:
@@ -18125,9 +18161,10 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:dirty-cascade-stats", [&ev](const auto&) -> EvalValue {
             (void)aura::compiler::dirty::flush_dirty_skip_subtree_to_metrics();
-            auto* ht = FlatHashTable::create(64); // #2191 / #3264 headroom
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(36)); // #2191 / #3264 headroom
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -18230,13 +18267,11 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 
     // (query:closure-epoch-concurrency-stats) — Issue #739:
@@ -18259,9 +18294,10 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                 linear_prevented =
                     m->linear_violation_prevented_epoch_total.load(std::memory_order_relaxed);
             }
-            auto* ht = FlatHashTable::create(8);
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(12));
             if (!ht)
                 return make_void();
+            bool overflowed = false;
             auto meta = ht->metadata();
             auto keys = ht->keys();
             auto vals = ht->values();
@@ -18296,13 +18332,11 @@ void ObservabilityPrims::register_eval_p104(PrimRegistrar add, Evaluator& ev) {
                     }
                 }
                 if (!inserted) {
-                    FlatHashTable::destroy(ht);
-                    return make_void();
+                    overflowed = true;
+                    break;
                 }
             }
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
 }
 } // namespace aura::compiler::primitives_detail
