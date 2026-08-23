@@ -3541,6 +3541,20 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 // name; additive lifecycle so Agents do not reuse it.
                 add_reclaimed_pending_lifecycle(kv, hp->must_wait_reclaimed ||
                                                         hp->reclaimed_deferred_cleanup);
+                // Issue #3272: single documented fail-closed flag — after
+                // production auto-wait Timeout, cleanup is still owed on
+                // this handle (must_wait_reclaimed true / deferred cleanup
+                // pending). Hosts that keep the handle long-lived branch on
+                // cleanup-pending and call ensure_reclaimed_cleanup (SSOT
+                // second-wait, #3087/#3245) once the body exits; dtor is
+                // the last resort (#3012). Soft / explicit wait / Ok
+                // auto-wait: key stays #f (zero extra on Ok/Timeout/Cancelled
+                // non-Reclaimed keys per #2885).
+                kv.emplace_back("cleanup-pending", make_bool(hp->must_wait_reclaimed ||
+                                                             hp->reclaimed_deferred_cleanup));
+                kv.emplace_back("schema-3272", make_int(aura::orch::kHostForgetWindowCloseIssue));
+                kv.emplace_back("issue-3272", make_int(aura::orch::kHostForgetWindowCloseIssue));
+                kv.emplace_back("cleanup-pending-wired", make_int(1));
             }
             // Issue #3014: body try_acquire reject — keys only on reject
             // (zero extra hash keys on success / Soft ok path).
@@ -4042,6 +4056,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             std::int64_t reclaimed_n = 0;
             std::int64_t must_wait_n = 0;
             std::int64_t reservation_held_n = 0;
+            std::int64_t cleanup_pending_n = 0; // Issue #3272: SSOT second-wait owed
             for (auto& hp : scope->handles_mut()) {
                 auto_wait_us +=
                     aura::orch::maybe_auto_wait_reclaimed_production(hp, caller_passed_wait);
@@ -4056,6 +4071,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ++must_wait_n;
                 if (hp.reserved_memory_bytes != 0)
                     ++reservation_held_n;
+                if (hp.must_wait_reclaimed || hp.reclaimed_deferred_cleanup)
+                    ++cleanup_pending_n;
             }
             // Issue #3208: capture before drop (empty join drops the slot).
             const auto join_fail_effective = scope->last_on_join_fail_effective();
@@ -4105,6 +4122,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 {"reclaimed-count", make_int(reclaimed_n)},
                 {"must-wait-count", make_int(must_wait_n)},
                 {"reservation-held-count", make_int(reservation_held_n)},
+                // Issue #3272: cleanup-pending-count = handles that still
+                // owe the SSOT second-wait (ensure_reclaimed_cleanup /
+                // wait_reclaimed_body) after auto-wait Timeout. Additive
+                // next to must-wait-count; Soft / explicit wait stay 0.
+                {"cleanup-pending-count", make_int(cleanup_pending_n)},
+                {"schema-3272", make_int(aura::orch::kHostForgetWindowCloseIssue)},
+                {"issue-3272", make_int(aura::orch::kHostForgetWindowCloseIssue)},
+                {"cleanup-pending-count-wired", make_int(1)},
                 {"schema-3050", make_int(3050)},
                 {"issue-3050", make_int(3050)},
                 {"scope-join-per-handle-wired", make_int(1)},
