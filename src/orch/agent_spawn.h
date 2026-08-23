@@ -902,6 +902,15 @@ inline OrchModuleStats g_orch_module_stats{};
 // the join-time bump still get a hold-path signal. Soft: must_wait
 // is false → one bool check, no extra atomic.
 inline constexpr int kEnsureReclaimedCleanupAdoptionIssue = 3245;
+// Issue #3272: close the production host-forget residual after the 50ms
+// auto-wait Timeout. ensure_reclaimed_cleanup stays the SSOT second-wait
+// (no second cleanup path); hosts that keep AgentHandle in long-lived
+// vectors / hand it across components MUST call it (or wait_reclaimed_body)
+// once the body exits so reservation + mailbox reclaim — dtor is the last
+// resort, never a process-global registry. Aura join / scope-join-all hashes
+// surface cleanup-pending / cleanup-pending-count on the risk path only
+// (additive; Soft / explicit wait stay zero-cost).
+inline constexpr int kHostForgetWindowCloseIssue = 3272;
 inline void note_reclaimed_pending_hold(bool pending) noexcept {
     if (!pending)
         return;

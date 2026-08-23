@@ -3299,6 +3299,171 @@ int run_test_join_drain_reclaim() {
         apply_dev_audit_defaults();
     }
 
+    // ── Issue #3272: close production host-forget residual after the
+    // auto-wait Timeout. On Timeout: must_wait_reclaimed stays true,
+    // reservation + mailbox remain held (#2661), cleanup is deferred to
+    // a later ensure_reclaimed_cleanup / wait_reclaimed_body / dtor.
+    // SSOT second-wait stays ensure_reclaimed_cleanup (#3087/#3245);
+    // no second cleanup path; no process-global registry. Soft/Off and
+    // explicit wait stay zero-cost (#3012). AC4: cleanup-pending /
+    // cleanup-pending-count hash keys on the risk path only.
+    {
+        using aura::core::sandbox::SandboxMode;
+        using aura::core::sandbox::set_mode;
+        using aura::orch::ensure_reclaimed_cleanup;
+        using aura::orch::kHostForgetWindowCloseIssue;
+        using aura::orch::note_reclaimed_pending_hold;
+
+        std::println("\n--- #3272 AC1: auto-wait Timeout → must_wait + reservation held ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 4096;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            const auto risk0 = g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                std::memory_order_relaxed);
+            (void)join_agent(h, policy);
+            if (aura::orch::production_reclaimed_must_wait()) {
+                CHECK(h.must_wait_reclaimed, "3272 AC1: must_wait retained on Timeout");
+                CHECK(h.wait_reclaimed_timeout, "3272 AC1: auto-wait Timeout flag");
+                CHECK(h.reserved_memory_bytes == 4096,
+                      "3272 AC1: #2661 no-early-free (reservation held)");
+                CHECK(h.reclaimed_deferred_cleanup, "3272 AC1: deferred cleanup pending");
+                CHECK(g_orch_module_stats.host_forget_reclaimed_risk_total.load(
+                          std::memory_order_relaxed) > risk0,
+                      "3272 AC1: host_forget_reclaimed_risk_total bumped");
+            } else {
+                CHECK(!h.must_wait_reclaimed, "3272 AC1: Soft no must_wait");
+            }
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+        }
+
+        std::println("\n--- #3272 AC2: ensure_reclaimed_cleanup after Timeout → cleanup ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 2048;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            // Body still running → first ensure also Times out (#2661).
+            if (aura::orch::production_reclaimed_must_wait()) {
+                auto wr = ensure_reclaimed_cleanup(h);
+                CHECK(wr.status == JoinStatus::Timeout || wr.status == JoinStatus::Ok,
+                      "3272 AC2: ensure while body live → Timeout or Ok");
+                CHECK(h.must_wait_reclaimed || h.reserved_memory_bytes != 0,
+                      "3272 AC2: still pending after ensure (no silent release)");
+            }
+            // Body exits → second ensure completes cleanup.
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            const auto wr2 = ensure_reclaimed_cleanup(h);
+            if (aura::orch::production_reclaimed_must_wait()) {
+                CHECK(wr2.status == JoinStatus::Ok && wr2.cleanup_completed,
+                      "3272 AC2: ensure after body exit → cleanup_completed");
+                CHECK(h.reserved_memory_bytes == 0,
+                      "3272 AC2: reservation reclaimed once body exits");
+                CHECK(!h.must_wait_reclaimed, "3272 AC2: must_wait cleared on Ok");
+            }
+            // Idempotent: third call is a no-op (Invalid), no double release.
+            const auto wr3 = ensure_reclaimed_cleanup(h);
+            CHECK(wr3.status == JoinStatus::Invalid,
+                  "3272 AC2: second ensure after cleanup is idempotent no-op");
+            if (aura::orch::production_reclaimed_must_wait()) {
+                CHECK(h.reserved_memory_bytes == 0,
+                      "3272 AC2: no double-release (reservation stays 0)");
+            } else {
+                // Soft / sandbox=off: ensure stays a zero-cost no-op
+                // (#3012 AC4); the RAII last-resort dtor path releases
+                // the residual reservation (#3012 AC3).
+                h.finish_reclaimed_cleanup_on_dtor();
+                CHECK(h.reserved_memory_bytes == 0, "3272 AC2: Soft dtor releases reservation");
+            }
+        }
+
+        std::println("\n--- #3272 AC3: never second-wait → dtor releases (no permanent leak) ---");
+        {
+            apply_production_audit_defaults();
+            set_mode(SandboxMode::Strict);
+            auto fiber_owned = std::make_unique<Fiber>([] {});
+            fiber_owned->mark_reclaimed();
+            AgentHandle h;
+            h.ok = true;
+            h.fiber = fiber_owned.get();
+            h.reserved_memory_bytes = 1024;
+            JoinPolicy policy{};
+            policy.primary_ms = 1;
+            policy.drain_ms = 0;
+            (void)join_agent(h, policy);
+            if (aura::orch::production_reclaimed_must_wait()) {
+                CHECK(h.must_wait_reclaimed, "3272 AC3: Timeout retained must_wait");
+                CHECK(h.reserved_memory_bytes == 1024, "3272 AC3: held pre-dtor");
+            }
+            // Host forgets the second wait; body exits; handle dropped →
+            // ~AgentHandle → finish_reclaimed_cleanup_on_dtor always
+            // releases the residual reservation (no permanent quota leak).
+            fiber_owned->set_state(FiberState::Done);
+            fiber_owned->note_body_exit_if_reclaimed();
+            h.finish_reclaimed_cleanup_on_dtor();
+            CHECK(h.reserved_memory_bytes == 0,
+                  "3272 AC3: dtor path releases residual reservation");
+            CHECK(!h.must_wait_reclaimed, "3272 AC3: dtor clears must_wait");
+            (void)note_reclaimed_pending_hold;
+            CHECK(kHostForgetWindowCloseIssue == 3272, "3272 stamp");
+        }
+
+        std::println("\n--- #3272 AC4/AC5: hash surface + no invent + no docs/design ---");
+        {
+            const auto spawn = read_file("src/orch/agent_spawn.h");
+            const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+            const auto build = read_file("build.py");
+            const auto readme = read_file("src/orch/README.md");
+            CHECK(spawn.find("kHostForgetWindowCloseIssue = 3272") != std::string::npos,
+                  "3272 AC4: issue constant");
+            CHECK(prim.find("cleanup-pending") != std::string::npos,
+                  "3272 AC4: agent-join hash cleanup-pending key");
+            CHECK(prim.find("cleanup-pending-count") != std::string::npos,
+                  "3272 AC4: scope-join-all cleanup-pending-count key");
+            CHECK(prim.find("schema-3272") != std::string::npos, "3272 AC4: schema-3272");
+            CHECK(prim.find("cleanup-pending-wired") != std::string::npos,
+                  "3272 AC4: cleanup-pending-wired");
+            CHECK(prim.find("query:cleanup-pending") == std::string::npos,
+                  "3272 AC4: no new query:* (reuse orch-module-stats)");
+            CHECK(spawn.find("ensure_reclaimed_cleanup") != std::string::npos,
+                  "3272 AC1: SSOT second-wait helper preserved");
+            CHECK(spawn.find("finish_reclaimed_cleanup_on_dtor") != std::string::npos,
+                  "3272 AC3: RAII last-resort helper preserved");
+            CHECK(readme.find("ensure_reclaimed_cleanup") != std::string::npos ||
+                      readme.find("cleanup-pending") != std::string::npos,
+                  "3272 AC5: README host-hold contract");
+            CHECK(build.find("check_host_forget_window_3272") != std::string::npos,
+                  "3272 AC5: build.py wires linter");
+            CHECK(read_file("tests/orch/test_issue_3272.cpp").empty() &&
+                      read_file("tests/issues/test_issue_3272.cpp").empty(),
+                  "3272 AC5: no test_issue_3272.cpp per #81967");
+            CHECK(read_file("docs/design/3272-host-forget-window.md").empty(),
+                  "3272 AC5: no docs/design/3272-* per #1655");
+        }
+
+        set_mode(SandboxMode::Off);
+        apply_dev_audit_defaults();
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;

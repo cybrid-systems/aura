@@ -4829,6 +4829,25 @@ def cmd_lint():
             "Issue #3245 ensure_reclaimed_cleanup adoption linter failed — run python3 scripts/coverage/checks/check_ensure_reclaimed_cleanup_adoption_3245.py"
         )
         return r
+    # Issue #3272: close the production host-forget residual after the
+    # Reclaimed auto-wait Timeout. On Timeout must_wait_reclaimed stays
+    # true and reservation/mailbox stay held (#2661); cleanup is deferred
+    # to ensure_reclaimed_cleanup (SSOT second-wait, #3087/#3245) / dtor
+    # last resort (#3012) — no second cleanup path, no process-global
+    # registry. Aura join / scope-join-all hashes surface cleanup-pending /
+    # cleanup-pending-count on the risk path only (additive; Soft / explicit
+    # wait stay zero-cost). Extends test_join_drain_reclaim (#81967); no
+    # docs/design/ (#1655); no new query:* (reuse query:orch-module-stats).
+    hfw3272_script = COVERAGE_CHECKS / "check_host_forget_window_3272.py"
+    if not hfw3272_script.exists():
+        fail(f"missing {hfw3272_script}")
+        return 1
+    r = run([sys.executable, str(hfw3272_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3272 host-forget window linter failed — run python3 scripts/coverage/checks/check_host_forget_window_3272.py"
+        )
+        return r
     # Issue #3148: cross-Evaluator lifecycle close via HandoffToken
     # (join_via_handoff C++ helper + orch:join-via-token Aura prim).
     # Closes the gap left by #3089 (proxy has no join/wait_reclaimed
