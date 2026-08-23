@@ -5,9 +5,11 @@
 #include "test_harness.hpp"
 
 #include "compiler/coercion_provenance_policy.hh"
+#include "compiler/lock_order_audit.h"
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 
+#include <cstdlib>
 #include <print>
 
 import std;
@@ -20,6 +22,8 @@ static void reset_member_face() {
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+    aura::compiler::lock_order::force_audit_mode_for_test(1);
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
 }
 
 extern int run_test_aether_denseness_residual();

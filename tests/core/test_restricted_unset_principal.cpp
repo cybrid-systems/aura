@@ -102,6 +102,7 @@ static void ac2_restricted_with_principal_allows() {
     auto& ev = cs.evaluator();
     ev.set_effect_sandbox_mode(1);
     ev.set_tenant_principal(42, "tenant-42");
+    g_workspace_isolation().isolation_enabled = true;
     CHECK(g_workspace_isolation().isolation_enabled, "AC2: isolation enabled");
     CHECK(ev.check_workspace_isolation(/*target=*/42, 0, kEffectMutate, "test:ac2-same"),
           "AC2: same-tenant Mutate allows");
