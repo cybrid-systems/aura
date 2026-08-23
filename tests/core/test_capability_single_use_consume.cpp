@@ -851,6 +851,153 @@ static void ac3144_4_additive_counter_and_source_cite() {
           "AC5: no tests/compiler/test_issue_3144.cpp");
 }
 
+// ── Issue #3279: session_bound orphan fail-closed sweep ─────────────
+// session_bound_orphan_detected_total was metric-only (declared, never
+// bumped). Under production long-run, a lost Guard / abort-without-mid-
+// clear / dual-Evaluator race / sticky escape can leave a live
+// session_bound grant whose bound_mutation_id is no longer in the live
+// mid set → privilege sticky. The SSOT sweep walks by_tenant under mtx,
+// counts orphans (bumps the existing counter), and under Restricted/
+// Strict revokes them with reason "session-orphan-sweep" (SE + audit
+// joinable by mid). Soft/Off: observe-only — never revoke/deny solely
+// due to the sweep.
+
+// AC1: SSOT detection + Soft observe-only (counter bumps, no revoke).
+static void ac3279_1_soft_observe_only() {
+    std::println("\n--- #3279 AC1: orphan detection SSOT + Soft observe-only ---");
+    reset_all();
+    set_mode(SandboxMode::Off);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 91;
+    ac3241_grant(tenant, "mut-3279-orphan", mid, 0);
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1,
+          "AC1: orphan grant live pre-sweep");
+    const auto before = g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+        std::memory_order_relaxed);
+    // Live mid set does NOT contain the orphan's bound mid.
+    const auto orphans =
+        g_capability_registry().sweep_session_bound_orphans({mid + 777}, /*fiber_id=*/0);
+    CHECK(orphans >= 1, "AC1: sweep detects >= 1 orphan");
+    const auto after = g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+        std::memory_order_relaxed);
+    CHECK(after > before, "AC1: existing orphan counter bumped (SSOT detection)");
+    // Soft/Off: observe-only — grant NOT revoked by the sweep.
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1,
+          "AC1: Soft observe-only — grant stays live");
+    CHECK(ac3241_grant_live(tenant, "mut-3279-orphan"),
+          "AC1: grant still live (never revoke solely due to sweep)");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+}
+
+// AC2: production (Restricted) sweep revokes orphan + clears live counter.
+static void ac3279_2_production_revoke() {
+    std::println("\n--- #3279 AC2: Restricted sweep revokes orphan (fail-closed) ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 92;
+    ac3241_grant(tenant, "mut-3279-revoke", mid, 0);
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() >= 1,
+          "AC2: live_session_grants > 0 pre-sweep");
+    const auto revoked =
+        g_capability_registry().sweep_session_bound_orphans({mid + 888}, /*fiber_id=*/0);
+    CHECK(revoked >= 1, "AC2: production sweep revoked >= 1 orphan");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC2: orphan cleared after sweep");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == 0,
+          "AC2: live_session_grants cleared");
+    CHECK(!ac3241_grant_live(tenant, "mut-3279-revoke"), "AC2: grant revoked (not consumable)");
+    const auto* se = ring_lookup_reason("session-orphan-sweep");
+    CHECK(se != nullptr, "AC2: SE reason 'session-orphan-sweep' emitted");
+    if (se != nullptr)
+        CHECK(se->mutation_id == mid, "AC2: SE joinable by bound mid");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+}
+
+// AC3: live grant (mid in live set) is NOT swept.
+static void ac3279_3_live_grant_not_swept() {
+    std::println("\n--- #3279 AC3: live mid in set → no orphan / no revoke ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 93;
+    ac3241_grant(tenant, "mut-3279-live", mid, 0);
+    const auto before = g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+        std::memory_order_relaxed);
+    const auto orphans = g_capability_registry().sweep_session_bound_orphans({mid}, /*fiber_id=*/0);
+    CHECK(orphans == 0, "AC3: live mid in set → zero orphans");
+    CHECK(g_capability_effect_metrics().session_bound_orphan_detected_total.load(
+              std::memory_order_relaxed) == before,
+          "AC3: counter unchanged (no orphan)");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1,
+          "AC3: live grant untouched");
+    (void)g_capability_registry().revoke_session_grants_for_mid(mid);
+}
+
+// AC4: peer-fiber grant skipped when sweeping with a current fiber id (#3241).
+static void ac3279_4_peer_fiber_skip() {
+    std::println("\n--- #3279 AC4: peer-fiber grant skipped (#3241) ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::bump_mutation_epoch(1);
+    const auto mid = aura::core::current_mutation_epoch();
+    constexpr std::uint64_t tenant = 94;
+    constexpr std::uint32_t fiber_peer = 777;
+    ac3241_grant(tenant, "mut-3279-peer", mid, fiber_peer);
+    // Sweep from a DIFFERENT fiber (fiber_id=1) with a live set that does
+    // not contain mid: peer-fiber grant stays (live on the peer).
+    const auto orphans =
+        g_capability_registry().sweep_session_bound_orphans({mid + 999}, /*fiber_id=*/1);
+    CHECK(orphans == 0, "AC4: peer-fiber grant not counted as orphan");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 1,
+          "AC4: peer grant untouched");
+    // Same sweep FROM the granting fiber would revoke it (its mid is gone).
+    const auto revoked =
+        g_capability_registry().sweep_session_bound_orphans({mid + 999}, /*fiber_id=*/fiber_peer);
+    CHECK(revoked >= 1, "AC4: owner-fiber sweep revokes its orphan");
+    CHECK(g_capability_registry().session_bound_entries_alive(tenant) == 0,
+          "AC4: owner-fiber sweep cleared it");
+}
+
+// AC5: source-cite + linter + no invent.
+static void ac3279_5_source_cite_and_linter() {
+    std::println("\n--- #3279 AC5: source-cite + linter + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("Issue #3279") != std::string::npos, "AC5: capability_model.hh cites #3279");
+    CHECK(cap.find("sweep_session_bound_orphans") != std::string::npos,
+          "AC5: sweep helper present");
+    CHECK(cap.find("count_session_bound_orphans_locked") != std::string::npos,
+          "AC5: SSOT detection present");
+    CHECK(cap.find("session-orphan-sweep") != std::string::npos,
+          "AC5: stable SE reason 'session-orphan-sweep'");
+    CHECK(cap.find("session_bound_orphan_detected_total") != std::string::npos,
+          "AC5: reuses existing orphan counter (no new metric)");
+    const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(boundary.find("Issue #3279") != std::string::npos,
+          "AC5: outermost Guard enter trigger cites #3279");
+    CHECK(boundary.find("sweep_session_bound_orphans") != std::string::npos,
+          "AC5: trigger calls sweep");
+    const auto lint = read_file("scripts/coverage/checks/check_session_bound_orphan_sweep_3279.py");
+    CHECK(!lint.empty() && lint.find("#3279") != std::string::npos,
+          "AC5: linter present and cites #3279");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_session_bound_orphan_sweep_3279.py") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!std::filesystem::exists("docs/design/3279-"), "AC5: no docs/design per #1655");
+    CHECK(!std::filesystem::exists("tests/issues/test_issue_3279.cpp"),
+          "AC5: no invent test per #81967");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3279.cpp"),
+          "AC5: no invent test per #81967");
+    CHECK(!std::filesystem::exists("tests/compiler/test_issue_3279.cpp"),
+          "AC5: no invent test per #81967");
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -1733,6 +1880,12 @@ int run_test_capability_single_use_consume() {
         ac3144_2_explicit_tenant_admin_no_strip();
         ac3144_3_soft_off_no_strip();
         ac3144_4_additive_counter_and_source_cite();
+        // Issue #3279: session_bound orphan fail-closed sweep.
+        ac3279_1_soft_observe_only();
+        ac3279_2_production_revoke();
+        ac3279_3_live_grant_not_swept();
+        ac3279_4_peer_fiber_skip();
+        ac3279_5_source_cite_and_linter();
 
         std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;

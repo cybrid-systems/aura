@@ -812,6 +812,105 @@ struct CapabilityRegistry {
         return n;
     }
 
+    // Issue #3279: SSOT orphan detection — caller MUST hold `mtx`.
+    // Walks by_tenant and counts session_bound && !revoked rows whose
+    // bound_mutation_id is not in live_mids (the live mid set: current
+    // fiber session mid, process hold mid, any live outermost Guard mid
+    // set). Bumps session_bound_orphan_detected_total (existing counter,
+    // #3142) per detected orphan — observe-only, no revoke here. Soft/Off
+    // may call this freely (never revokes / denies solely due to sweep).
+    // Issue #3241: fiber_id != 0 skips peer-fiber grants (both ids known
+    // and differ → live on the peer, not an orphan); fiber_id=0 is legacy
+    // mid-only (unknown / single-fiber). grant_fiber_id=0 is legacy and
+    // still matches (same rule as revoke_session_grants_for_mid_locked).
+    std::size_t count_session_bound_orphans_locked(const std::vector<std::uint64_t>& live_mids,
+                                                   std::uint32_t fiber_id = 0) noexcept {
+        std::size_t orphans = 0;
+        for (const auto& [tenant, vec] : by_tenant) {
+            (void)tenant;
+            for (const auto& g : vec) {
+                if (g.revoked || !g.session_bound)
+                    continue;
+                if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
+                    continue; // peer-fiber grant — live elsewhere (#3241)
+                bool live = false;
+                for (const auto lm : live_mids) {
+                    if (lm != 0 && lm == g.bound_mutation_id) {
+                        live = true;
+                        break;
+                    }
+                }
+                if (!live) {
+                    ++orphans;
+                    g_capability_effect_metrics().session_bound_orphan_detected_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+        }
+        return orphans;
+    }
+
+    // Issue #3279: production fail-closed orphan sweep (Option A).
+    // When live_session_grants diverge from the tracked live mids (lost
+    // Guard, abort without mid clear, dual-Evaluator race edge, sticky
+    // escape misuse), the long-run grant table accumulates session_bound
+    // rows whose mid is no longer live — privilege sticky relative to the
+    // epoch model. Restricted/Strict: revoke orphaned rows with reason
+    // "session-orphan-sweep" (SE + audit dual-write joinable by mid via
+    // record_audit), clear the live counter. Soft/Off: observe-only —
+    // detection may run (counter bumps) but never revokes/denies solely
+    // due to the sweep (contract). fiber_id: current fiber (peer-fiber
+    // grants skipped, #3241 — concurrent guards on other fibers stay live).
+    std::size_t sweep_session_bound_orphans(const std::vector<std::uint64_t>& live_mids,
+                                            std::uint32_t fiber_id = 0) {
+        auto& met = g_capability_effect_metrics();
+        const auto mode = sandbox_mode.load(std::memory_order_acquire);
+        const bool production =
+            (mode == EffectSandboxMode::Restricted || mode == EffectSandboxMode::Strict);
+        std::lock_guard<std::mutex> lock(mtx);
+        const auto orphans = count_session_bound_orphans_locked(live_mids, fiber_id);
+        if (!production || orphans == 0)
+            return orphans; // Soft/Off observe-only; production no-op on clean state
+        std::size_t revoked = 0;
+        auto ep = ::aura::core::current_mutation_epoch();
+        if (ep == 0)
+            ep = 1;
+        for (auto& [tenant, vec] : by_tenant) {
+            for (auto& g : vec) {
+                if (g.revoked || !g.session_bound)
+                    continue;
+                if (fiber_id != 0 && g.grant_fiber_id != 0 && g.grant_fiber_id != fiber_id)
+                    continue; // peer-fiber grant — live elsewhere (#3241)
+                bool live = false;
+                for (const auto lm : live_mids) {
+                    if (lm != 0 && lm == g.bound_mutation_id) {
+                        live = true;
+                        break;
+                    }
+                }
+                if (live)
+                    continue;
+                g.revoked = true;
+                g.effects = Effect::None;
+                g.revoke_epoch = ep;
+                g.session_bound = false; // no longer live
+                ++revoked;
+                met.capability_session_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_revoke_total.fetch_add(1, std::memory_order_relaxed);
+                met.capability_revoke_epoch_bound_total.fetch_add(1, std::memory_order_relaxed);
+                auto cur = met.capability_live_session_grants.load(std::memory_order_relaxed);
+                if (cur > 0)
+                    met.capability_live_session_grants.fetch_sub(1, std::memory_order_relaxed);
+                EffectProvenance audit_prov{};
+                audit_prov.mutation_id = g.bound_mutation_id;
+                audit_prov.epoch = ep;
+                record_audit(Effect::None, Effect::None, tenant, audit_prov,
+                             /*denied=*/false, "session-orphan-sweep", "session-orphan-sweep");
+            }
+        }
+        return revoked;
+    }
+
     // Issue #3207: caller MUST hold `mtx`. Body of mark_session_bound_stolen
     // without the lock_guard — steal paths that already hold mtx must use
     // this (std::mutex is non-recursive).
