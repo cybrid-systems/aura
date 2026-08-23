@@ -11,6 +11,7 @@ module;
 #include "core/sandbox.hh"          // Issue #2023: is_sandbox_active
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 #include "observability_metrics.h" // Issue #2021: CompilerMetrics snapshot
+#include "typed_mutation_audit.h" // Issue #3278: production_defaults_active() gate for cross-pool schema homology
 
 module aura.compiler.macro_expansion;
 
@@ -1194,6 +1195,58 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     if (!cross_flat)
         return;                             // AC4: single-flat path stays zero-overhead.
     restamp_after_expand(target, new_root); // #2171 first-pass restamp.
+    // Issue #3278: cross-FlatAST schema_cache / StringPool homology under
+    // concurrent steal × densify. clone_macro_body_at_depth copies the
+    // source node's schema_cache (a type-id index into the SOURCE type
+    // registry) into the target by raw integer. Under concurrent fiber
+    // steal mid-clone + densify/compact of either side, that integer can
+    // become non-homologous with the TARGET type environment / StringPool
+    // interning of gensym names — a stale id can short-circuit the type
+    // checker's schema_cache hit path (type_checker_impl.cpp
+    // cached_schema == tid.index) into a wrong-type cache hit. Same-pool
+    // clones are homologous (shared registry) → keep the #390 copy
+    // (zero extra). Cross-pool clones under production / force-hygienic:
+    // re-stamp against the target — clear copied schema ids (0 = re-infer
+    // in the target env, always safe). The homology check is fail-closed:
+    // any OOB id (≥ kSchemaIdMax, #2859 bound) surviving on the cloned
+    // subtree is drift → bump the existing
+    // g_hygiene_violation_in_macro_expand_total (Agent-visible via
+    // query:macro-provenance-stats cross-flat-violation-total) + audit;
+    // strict mode force-clears. Soft/Off: gate short-circuits before any
+    // walk (zero-cost contract preserved).
+    const bool schema_homology_prod =
+        aura::compiler::typed_audit::production_defaults_active() ||
+        g_macro_expand_sandbox_strict.load(std::memory_order_relaxed) != 0;
+    if (&target_pool != &source_pool && schema_homology_prod && new_root != aura::ast::NULL_NODE) {
+        constexpr std::uint32_t kSchemaIdMax = 1u << 24; // #2859 bound
+        std::size_t drift = 0;
+        std::vector<aura::ast::NodeId> stack;
+        stack.push_back(new_root);
+        while (!stack.empty()) {
+            auto cur = stack.back();
+            stack.pop_back();
+            if (cur == aura::ast::NULL_NODE || cur >= target.size())
+                continue;
+            const auto sid = target.schema_cache(cur);
+            if (sid != 0) {
+                if (sid >= kSchemaIdMax)
+                    ++drift;                     // non-homologous / OOB → fail-closed signal
+                target.set_schema_cache(cur, 0); // re-stamp against target env
+            }
+            const auto cv = target.get(cur);
+            for (auto child : cv.children) {
+                if (child != aura::ast::NULL_NODE)
+                    stack.push_back(child);
+            }
+        }
+        if (drift > 0) {
+            g_hygiene_violation_in_macro_expand_total.fetch_add(drift, std::memory_order_relaxed);
+            std::fprintf(stderr,
+                         "[#3278 cross-flat schema homology] drift=%zu "
+                         "target.size()=%zu new_root=%u (OOB schema id re-stamped fail-closed)\n",
+                         drift, target.size(), static_cast<unsigned>(new_root));
+        }
+    }
     // Issue #2235: production always-on validate (was #ifndef NDEBUG).
     // Normal-case: restamp auto-clears kMacroExpansion bit on every
     // MacroIntroduced node, so post-restamp violations == 0. Bumps

@@ -2003,6 +2003,22 @@ def cmd_lint():
             "Issue #3062 no-boundary expand limit linter failed — run python3 scripts/coverage/checks/check_macro_expand_noboundary_limit_3062.py"
         )
         return r
+    # Issue #3278: cross-FlatAST schema_cache / StringPool homology under
+    # concurrent steal × densify (clone residual). ensure_cross_flat_expand_consistency
+    # re-stamps cloned-subtree schema ids against the target env under
+    # production / force-hygienic (cross-pool clear; OOB → fail-closed bump
+    # of the existing violation counter). Extends test_macro_cross_flat_hygiene.cpp
+    # (#2235 suite home, #81967); no docs/design.
+    cfsh_script = COVERAGE_CHECKS / "check_cross_flat_schema_homology_3278.py"
+    if not cfsh_script.exists():
+        fail(f"missing {cfsh_script}")
+        return 1
+    r = run([sys.executable, str(cfsh_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3278 cross-flat schema homology linter failed — run python3 scripts/coverage/checks/check_cross_flat_schema_homology_3278.py"
+        )
+        return r
     # Issue #3030: abort/restore clears TypeLinearCommitProof + linear_fast_path
     # face. Extends test_escape_move_elision_gate + test_type_linear_commit_health
     # (#81967); no docs/design.
