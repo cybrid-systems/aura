@@ -1101,6 +1101,80 @@ int run_test_hold_budget_noncoop_force_edge() {
     return failed == 0 ? 0 : 1;
 }
 
+// Issue #3285: I1 residual of #3254/#3222 — the inbody watchdog must inject
+// the synthetic MutationBoundary edge within 1×SLO of cancel-arm (not only
+// at the 2×SLO hard bound) so a body that does hit a cooperative edge
+// consumes the pending cancel early and force-releases (dual-restore +
+// unlock + depth 0) inside the 2×SLO window. Cross-fiber never unlocks
+// (AC2) — it sets pending-cancel + urgent inbody poll via the #3223
+// helper. Soft / sandbox=off: observe-only (reject_enabled gate).
+int run_test_hold_budget_1slo_inject_3285() {
+    std::println("\n=== Issue #3285: 1×SLO synthetic-edge inject tier ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // AC1: source-cite — the poll has a 1×SLO inject tier before the
+    // 2×SLO bound, gated on reject_enabled (Soft observe-only).
+    {
+        std::println("\n--- AC1: 1×SLO inject tier in aura_hold_budget_poll_inbody_window ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        auto pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        CHECK(pos != std::string::npos, "3285 AC1: poll definition present");
+        auto win = fc.substr(pos, 3200);
+        CHECK(win.find("Issue #3285") != std::string::npos, "3285 AC1: cites #3285");
+        CHECK(win.find("mutation_hold_slo_us()") != std::string::npos,
+              "3285 AC1: 1×SLO tier keyed on mutation_hold_slo_us");
+        CHECK(win.find("elapsed_us > slo_us") != std::string::npos,
+              "3285 AC1: inject when elapsed > 1×SLO");
+        CHECK(win.find("mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3285 AC1: Soft gate via reject_enabled");
+        CHECK(win.find("inject_synthetic_mutation_boundary_yield()") != std::string::npos ||
+                  win.find("aura_fiber_request_urgent_inbody_poll") != std::string::npos,
+              "3285 AC1: same-fiber inject OR cross-fiber urgent poll nudge");
+        // 2×SLO hard bound still present after the tier (force path kept).
+        CHECK(win.find("inbody_window_exceeded_total") != std::string::npos,
+              "3285 AC1: 2×SLO hard-bound counter preserved");
+    }
+
+    // AC2: reuse existing counters — no new keys (forced_unlock_total /
+    // forced_fail_closed_total / inbody_window_exceeded_total stay the
+    // force-path signals).
+    {
+        std::println("\n--- AC2: counter reuse, no new bus ---");
+        auto mh = read_file("src/compiler/mutation_hold_budget.h");
+        CHECK(mh.find("g_mutation_hold_budget_forced_unlock_total") != std::string::npos,
+              "3285 AC2: forced_unlock_total exists");
+        CHECK(mh.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+              "3285 AC2: forced_fail_closed_total exists");
+        CHECK(mh.find("g_mutation_hold_budget_inbody_window_exceeded_total") != std::string::npos,
+              "3285 AC2: inbody_window_exceeded_total exists");
+    }
+
+    // AC3: no new Soft path under production lock — the tier is gated on
+    // reject_enabled and the 2×SLO force path is unchanged.
+    {
+        std::println("\n--- AC3: Soft zero-change + linter wiring ---");
+        auto fc = read_file("src/serve/fiber.cpp");
+        CHECK(fc.find("if (!mutation_hold_budget_reject_enabled())") != std::string::npos ||
+                  fc.find("!mutation_hold_budget_reject_enabled()") != std::string::npos,
+              "3285 AC3: Soft observe-only gate preserved");
+        auto build = read_file("build.py");
+        CHECK(build.find("check_noncoop_force_release_1slo_3285") != std::string::npos,
+              "3285 AC3: build.py wires linter");
+        CHECK(read_file("tests/serve/test_issue_3285.cpp").empty(),
+              "3285 AC3: no tests/serve/test_issue_3285.cpp");
+        CHECK(read_file("tests/issues/test_issue_3285.cpp").empty(),
+              "3285 AC3: no tests/issues/test_issue_3285.cpp");
+        CHECK(read_file("docs/design/3285-noncoop-force-release-1slo.md").empty(),
+              "3285 AC3: no docs/design/ (#1655)");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3285 1×SLO inject tier: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -1109,8 +1183,12 @@ int main() {
     const int rc4 = run_test_hold_budget_inbody_force_unlock();
     const int rc5 = run_test_hold_budget_cross_fiber_urgent_inbody_poll();
     const int rc6 = run_test_hold_budget_noncoop_force_edge();
+    const int rc7 = run_test_hold_budget_1slo_inject_3285();
     return rc1 != 0
                ? rc1
-               : (rc2 != 0 ? rc2 : (rc3 != 0 ? rc3 : (rc4 != 0 ? rc4 : (rc5 != 0 ? rc5 : rc6))));
+               : (rc2 != 0
+                      ? rc2
+                      : (rc3 != 0 ? rc3
+                                  : (rc4 != 0 ? rc4 : (rc5 != 0 ? rc5 : (rc6 != 0 ? rc6 : rc7)))));
 }
 #endif
