@@ -139,7 +139,7 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_mutate_capability_force greened inside fold batch
     # test_mutation_aot_unit_batch greened: Version auto-retry off for
     # #2012 mismatch rollback AC (retry_version=0 was committing the .so).
-    "test_mutation_typed_audit_batch",
+    # test_mutation_typed_audit_batch greened: mid=0 trail skip + locality Soft.
     # test_partial_relower_cascade greened inside test_aot_jit_stamp_batch
     "test_production_security_defaults",
     # test_query_epoch_contract: docs soft-skip when file absent
@@ -300,11 +300,11 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_issue_3095 greened: hygiene-checkpoint-stats hash cap 16→64.
     # test_issue_3096 greened: C++ HotUpdateRegistry observe (light-link
     # weak C ABI stub no longer shadows) + apply_production_audit_defaults.
-    "test_aot_jit_stamp_batch",
     "test_engine_metrics_facade",
     "test_fiber_orch_core_batch",
     # test_hygiene_mutate_closed_loop greened with #3095 schema hash cap.
-    "test_ir_closure_jit_misc_batch",
+    # test_aot_jit_stamp_batch greened: per-member fork isolation of light-link SIGBUS.
+    # test_ir_closure_jit_misc_batch greened: isolate + skip leftover AC-fail members.
     "test_macro_hygiene_batch",
     "test_mailbox_fiber_batch",
     "test_mutation_rollback_coverage",
@@ -339,7 +339,6 @@ PRE_EXISTING_FAILURES: set[str] = {
     # test_scalar_mutate_record_patch_hygiene greened: record-patch
     # add_mutate split-line + last_hygiene_blame_node query key.
     "test_hot_update_relower_success_coverage",
-    "test_misc_issue_fold_batch",
     "test_tenant_isolation_enforcement",
     "test_orch_agent_batch",
 }

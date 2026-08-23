@@ -4,9 +4,18 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/pipeline_policy.hh"
+#include "compiler/typed_mutation_audit.h"
+
 #include <print>
 
 import std;
+
+static void reset_member_face() {
+    aura::compiler::reset_tree_walker_fallback_policy_for_test();
+    aura::compiler::typed_audit::reset_for_test();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
 
 extern int run_test_audit_mid_fallback_slo();
 extern int run_test_audit_mutation_id_unify();
@@ -51,6 +60,7 @@ int main() {
     std::println("=== test_security_capability_batch (34 members) ===");
 
     std::println("\n──── test_audit_mid_fallback_slo ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_audit_mid_fallback_slo() != 0 || g_failed != 0) {
@@ -62,6 +72,7 @@ int main() {
     }
 
     std::println("\n──── test_audit_mutation_id_unify ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_audit_mutation_id_unify() != 0 || g_failed != 0) {
@@ -73,6 +84,7 @@ int main() {
     }
 
     std::println("\n──── test_audit_ring_publish ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_audit_ring_publish() != 0 || g_failed != 0) {
@@ -84,6 +96,7 @@ int main() {
     }
 
     std::println("\n──── test_cap_write_effect_matrix ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_cap_write_effect_matrix() != 0 || g_failed != 0) {
@@ -95,6 +108,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_effect_force ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_effect_force() != 0 || g_failed != 0) {
@@ -106,6 +120,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_high_risk_promote ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_high_risk_promote() != 0 || g_failed != 0) {
@@ -117,6 +132,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_string_matrix_unify ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_string_matrix_unify() != 0 || g_failed != 0) {
@@ -128,6 +144,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_unified ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_unified() != 0 || g_failed != 0) {
@@ -139,6 +156,7 @@ int main() {
     }
 
     std::println("\n──── test_grant_bound_mid_force ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_grant_bound_mid_force() != 0 || g_failed != 0) {
@@ -150,6 +168,7 @@ int main() {
     }
 
     std::println("\n──── test_grant_epoch_fiber_bind ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_grant_epoch_fiber_bind() != 0 || g_failed != 0) {
@@ -161,6 +180,7 @@ int main() {
     }
 
     std::println("\n──── test_grant_epoch_invalidation ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_grant_epoch_invalidation() != 0 || g_failed != 0) {
@@ -172,6 +192,7 @@ int main() {
     }
 
     std::println("\n──── test_grant_epoch_retain_restricted ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_grant_epoch_retain_restricted() != 0 || g_failed != 0) {
@@ -183,6 +204,7 @@ int main() {
     }
 
     std::println("\n──── test_grant_epoch_retain_window ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_grant_epoch_retain_window() != 0 || g_failed != 0) {
@@ -194,6 +216,7 @@ int main() {
     }
 
     std::println("\n──── test_grant_macro_self_evo_stamp ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_grant_macro_self_evo_stamp() != 0 || g_failed != 0) {
@@ -205,6 +228,7 @@ int main() {
     }
 
     std::println("\n──── test_hard_fiber_isolation ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_hard_fiber_isolation() != 0 || g_failed != 0) {
@@ -216,6 +240,7 @@ int main() {
     }
 
     std::println("\n──── test_hard_fiber_restricted ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_hard_fiber_restricted() != 0 || g_failed != 0) {
@@ -227,6 +252,7 @@ int main() {
     }
 
     std::println("\n──── test_require_effect_auto_isolation ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_require_effect_auto_isolation() != 0 || g_failed != 0) {
@@ -238,6 +264,7 @@ int main() {
     }
 
     std::println("\n──── test_require_effect_live_mid ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_require_effect_live_mid() != 0 || g_failed != 0) {
@@ -249,6 +276,7 @@ int main() {
     }
 
     std::println("\n──── test_security_audit_fold ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_audit_fold() != 0 || g_failed != 0) {
@@ -260,6 +288,7 @@ int main() {
     }
 
     std::println("\n──── test_security_audit_trail ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_audit_trail() != 0 || g_failed != 0) {
@@ -271,6 +300,7 @@ int main() {
     }
 
     std::println("\n──── test_security_audit_unify ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_audit_unify() != 0 || g_failed != 0) {
@@ -282,6 +312,7 @@ int main() {
     }
 
     std::println("\n──── test_security_audit_wal_force_restricted ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_audit_wal_force_restricted() != 0 || g_failed != 0) {
@@ -294,6 +325,7 @@ int main() {
     }
 
     std::println("\n──── test_security_event_wal_replay ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_event_wal_replay() != 0 || g_failed != 0) {
@@ -305,6 +337,7 @@ int main() {
     }
 
     std::println("\n──── test_security_health ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_health() != 0 || g_failed != 0) {
@@ -316,6 +349,7 @@ int main() {
     }
 
     std::println("\n──── test_security_posture_trail ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_posture_trail() != 0 || g_failed != 0) {
@@ -327,6 +361,7 @@ int main() {
     }
 
     std::println("\n──── test_security_schedule_mutate_admit ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_security_schedule_mutate_admit() != 0 || g_failed != 0) {
@@ -338,6 +373,7 @@ int main() {
     }
 
     std::println("\n──── test_side_effect_inherit ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_side_effect_inherit() != 0 || g_failed != 0) {
@@ -349,6 +385,7 @@ int main() {
     }
 
     std::println("\n──── test_side_effect_security_gate_hardfail ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_side_effect_security_gate_hardfail() != 0 || g_failed != 0) {
@@ -361,6 +398,7 @@ int main() {
     }
 
     std::println("\n──── test_tenant_scope_fiber_mandate ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_tenant_scope_fiber_mandate() != 0 || g_failed != 0) {
@@ -372,6 +410,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_audit_publish ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_audit_publish() != 0 || g_failed != 0) {
@@ -383,6 +422,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_effect_stats_snapshot ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_effect_stats_snapshot() != 0 || g_failed != 0) {
@@ -395,6 +435,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_registry_snapshot ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_registry_snapshot() != 0 || g_failed != 0) {
@@ -406,6 +447,7 @@ int main() {
     }
 
     std::println("\n──── test_capability_single_use_consume ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_capability_single_use_consume() != 0 || g_failed != 0) {
@@ -417,6 +459,7 @@ int main() {
     }
 
     std::println("\n──── test_restricted_unset_principal ────");
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_restricted_unset_principal() != 0 || g_failed != 0) {

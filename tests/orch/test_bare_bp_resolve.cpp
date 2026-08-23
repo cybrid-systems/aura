@@ -119,10 +119,12 @@ int run_test_bare_bp_resolve_3179() {
         AgentSpec spec_a;
         spec_a.name = "agent-bare-a";
         spec_a.attach_mailbox = true;
+        spec_a.body = [] {};
         auto h_a = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_a));
         AgentSpec spec_b;
         spec_b.name = "agent-bare-b";
         spec_b.attach_mailbox = true;
+        spec_b.body = [] {};
         auto h_b = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_b));
         CHECK(h_a.ok, "AC5 setup: spawn A admits");
         CHECK(h_b.ok, "AC5 setup: spawn B admits");

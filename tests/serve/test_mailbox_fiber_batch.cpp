@@ -8,6 +8,7 @@
 #include "compiler/pipeline_policy.hh"
 #include "compiler/typed_mutation_audit.h"
 
+#include <cstdlib>
 #include <print>
 
 import std;
@@ -17,6 +18,7 @@ static void reset_member_face() {
     aura::compiler::typed_audit::reset_for_test();
     aura::compiler::typed_audit::apply_dev_audit_defaults();
     aura::compiler::reset_coercion_provenance_miss_policy_for_test();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
 }
 
 extern int run_test_residual_gc_defer_assert();
@@ -53,6 +55,7 @@ int main() {
 
     std::println("\n──── test_residual_gc_defer_assert ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_residual_gc_defer_assert() != 0 || g_failed != 0) {
@@ -64,6 +67,7 @@ int main() {
     }
 
     std::println("\n──── test_fiber_native_keepalive ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -77,6 +81,7 @@ int main() {
 
     std::println("\n──── test_join_drain_reclaim ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_join_drain_reclaim() != 0 || g_failed != 0) {
@@ -89,6 +94,7 @@ int main() {
 
     std::println("\n──── test_mailbox_bp_admit ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mailbox_bp_admit() != 0 || g_failed != 0) {
@@ -100,6 +106,7 @@ int main() {
     }
 
     std::println("\n──── test_mailbox_bp_admit_default ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -117,6 +124,7 @@ int main() {
 #if 0
     std::println("\n──── test_chaos_mutate_steal_gc_mailbox ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_chaos_mutate_steal_gc_mailbox() != 0 || g_failed != 0) {
@@ -128,6 +136,7 @@ int main() {
     }
 
     std::println("\n──── test_fiber_migration_refresh ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -141,6 +150,7 @@ int main() {
 
     std::println("\n──── test_fiber_reclaim_orphan_release ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_fiber_reclaim_orphan_release() != 0 || g_failed != 0) {
@@ -153,6 +163,7 @@ int main() {
 
     std::println("\n──── test_is_stealable_snapshot_gate ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_is_stealable_snapshot_gate() != 0 || g_failed != 0) {
@@ -164,6 +175,7 @@ int main() {
     }
 
     std::println("\n──── test_join_drain_timeout ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -179,6 +191,7 @@ int main() {
 
     std::println("\n──── test_mailbox_hold_exit_drain ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mailbox_hold_exit_drain() != 0 || g_failed != 0) {
@@ -190,6 +203,7 @@ int main() {
     }
 
     std::println("\n──── test_mailbox_hold_starvation_hard ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -203,6 +217,7 @@ int main() {
 
     std::println("\n──── test_mailbox_recv_mutation_boundary ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_mailbox_recv_mutation_boundary() != 0 || g_failed != 0) {
@@ -214,6 +229,7 @@ int main() {
     }
 
     std::println("\n──── test_mailbox_tenant_principal ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -228,6 +244,7 @@ int main() {
 #if 0
     std::println("\n──── test_residual_defer_steal_hard_and ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_residual_defer_steal_hard_and() != 0 || g_failed != 0) {
@@ -239,6 +256,7 @@ int main() {
     }
 
     std::println("\n──── test_residual_force_safepoint ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -252,6 +270,7 @@ int main() {
 
     std::println("\n──── test_steal_complete_gc_defer ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_steal_complete_gc_defer() != 0 || g_failed != 0) {
@@ -263,6 +282,7 @@ int main() {
     }
 
     std::println("\n──── test_steal_complete_restamp_txn ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -276,6 +296,7 @@ int main() {
 
     std::println("\n──── test_steal_complete_strong_entry ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_steal_complete_strong_entry() != 0 || g_failed != 0) {
@@ -287,6 +308,7 @@ int main() {
     }
 
     std::println("\n──── test_steal_densify_linear_type_hard_and ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -301,6 +323,7 @@ int main() {
 
     std::println("\n──── test_steal_layout_stamp ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_steal_layout_stamp() != 0 || g_failed != 0) {
@@ -312,6 +335,7 @@ int main() {
     }
 
     std::println("\n──── test_steal_safety_ticket ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
@@ -325,6 +349,7 @@ int main() {
 
     std::println("\n──── test_steal_snapshot_hard_invariant ────");
     reset_member_face();
+    reset_member_face();
     g_passed = 0;
     g_failed = 0;
     if (run_test_steal_snapshot_hard_invariant() != 0 || g_failed != 0) {
@@ -336,6 +361,7 @@ int main() {
     }
 
     std::println("\n──── test_steal_snapshot_soft_production_lock ────");
+    reset_member_face();
     reset_member_face();
     g_passed = 0;
     g_failed = 0;
