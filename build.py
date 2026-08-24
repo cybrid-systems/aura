@@ -4469,6 +4469,25 @@ def cmd_lint():
             "Issue #3274 FFI opaque densify-cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_densify_cover_3274.py"
         )
         return r
+    # Issue #3291: every densify-tracked FFI opaque create site must be
+    # machine-checkable pin/slot/EXEMPT cover (I3 residual of #3274). The
+    # #3274 linter only checks helper presence per file; this linter
+    # enumerates EVERY opaque_heap_.push_back / oh->push_back site across
+    # src/ and classifies it (slot-cover / canary-cover / EXEMPT) — a
+    # future naked push site fails CI. EXEMPT reasons are whitelisted
+    # (libc-heap / external-native-addr only). Soft/Off zero extra.
+    # Extends test_moving_densify_fail_closed (#81967); no docs/design/
+    # (#1655).
+    focs3291_script = COVERAGE_CHECKS / "check_ffi_opaque_create_site_cover_3291.py"
+    if not focs3291_script.exists():
+        fail(f"missing {focs3291_script}")
+        return 1
+    r = run([sys.executable, str(focs3291_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3291 FFI opaque create-site cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_create_site_cover_3291.py"
+        )
+        return r
     # Issue #3023: leftover linear_roots unpin on abort / reclaim.
     # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
     lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"

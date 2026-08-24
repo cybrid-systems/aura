@@ -3011,6 +3011,70 @@ int run_test_moving_densify_fail_closed() {
         }
     }
 
+    // ── Issue #3291: every densify-tracked FFI opaque create site is
+    //    machine-checkable pin/slot/EXEMPT cover (I3 residual of #3274).
+    //    The #3274 linter only checks helper presence per file; this AC
+    //    block + the #3291 linter enumerate EVERY opaque push site and
+    //    classify it (slot-cover / canary-cover / EXEMPT). A future naked
+    //    push fails CI. No runtime change; Soft zero extra.
+    {
+        std::println("\n--- #3291 AC1: every opaque push site classified ---");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_ffi_opaque_create_site_cover_3291.py");
+        const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+        const auto ev = read_file("src/compiler/evaluator_eval_flat.cpp");
+        const auto arena = read_file("src/core/arena.ixx");
+        CHECK(lint.find("Issue #3291") != std::string::npos, "3291 AC1: linter cites #3291");
+        CHECK(lint.find("_PUSH") != std::string::npos ||
+                  lint.find("push_back") != std::string::npos,
+              "3291 AC1: linter enumerates opaque push sites");
+        CHECK(lint.find("naked") != std::string::npos, "3291 AC1: naked push site fails CI");
+        // The 4 known sites: eval_flat ffi-return-external → cover;
+        // ffi_primitives opaque-struct-copy → cover; native/libc → EXEMPT.
+        CHECK(ev.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+              "3291 AC1: eval_flat ffi-return-external wired (cover)");
+        CHECK(ffi.find("note_ffi_opaque_alias_densify_cover") != std::string::npos,
+              "3291 AC1: ffi_primitives opaque-struct-copy wired (cover)");
+        CHECK(ffi.find("note_ffi_opaque_create_exempt(\"libc-heap\")") != std::string::npos,
+              "3291 AC1: libc-heap EXEMPT (true non-arena)");
+        CHECK(ffi.find("note_ffi_opaque_create_exempt(\"external-native-addr\")") !=
+                  std::string::npos,
+              "3291 AC1: external-native-addr EXEMPT (true non-arena)");
+    }
+    {
+        std::println("\n--- #3291 AC2: EXEMPT reasons whitelist ---");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_ffi_opaque_create_site_cover_3291.py");
+        CHECK(lint.find("_ALLOWED_EXEMPT_REASONS") != std::string::npos,
+              "3291 AC2: linter whitelists EXEMPT reasons");
+        CHECK(lint.find("libc-heap") != std::string::npos &&
+                  lint.find("external-native-addr") != std::string::npos,
+              "3291 AC2: whitelist = libc-heap + external-native-addr");
+    }
+    {
+        std::println("\n--- #3291 AC3: Soft / Off zero extra ---");
+        const auto arena = read_file("src/core/arena.ixx");
+        const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+        CHECK(arena.find("moving_compact_enabled()") != std::string::npos,
+              "3291 AC3: Soft/Off gate preserved (zero extra)");
+        CHECK(arena.find("note_ffi_opaque_create_exempt(reason)") != std::string::npos,
+              "3291 AC3: Soft falls back to EXEMPT");
+        CHECK(ffi.find("g_3291_") == std::string::npos, "3291 AC3: no new g_3291_* counter");
+    }
+    {
+        std::println("\n--- #3291 AC4: source-cite + no invent ---");
+        const auto build = read_file("build.py");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_ffi_opaque_create_site_cover_3291.py");
+        CHECK(build.find("check_ffi_opaque_create_site_cover_3291") != std::string::npos,
+              "3291 AC4: build.py wires linter");
+        CHECK(!lint.empty() && lint.find("3291") != std::string::npos, "3291 AC4: linter present");
+        CHECK(read_file("docs/design/3291-ffi-opaque-create-site-cover.md").empty(),
+              "3291 AC4: no docs/design/ per #1655");
+        CHECK(read_file("tests/core/test_issue_3291.cpp").empty(),
+              "3291 AC4: no test_issue_3291.cpp per #81967");
+    }
+
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
     // clang-format on
