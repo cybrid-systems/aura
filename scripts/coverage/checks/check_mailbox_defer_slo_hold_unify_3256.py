@@ -60,7 +60,11 @@ def main() -> int:
     must("aura_hold_budget_poll_inbody_window", "AC2 poll", win)
     must("aura_fiber_request_hold_budget_cancel", "AC2 cancel retained", win)
     deg = win.find("aura_evaluator_force_degrade_outermost_holder")
-    poll = win.find("aura_hold_budget_poll_inbody_window")
+    # Order on the ARM path: force_degrade precedes the arm-time inbody
+    # poll (no second unlock). Anchor the poll lookup AFTER force_degrade
+    # — the #3289 armed-branch re-poll (watchdog) appears textually before
+    # force_degrade in the CAS-fail path and is NOT the arm poll.
+    poll = win.find("aura_hold_budget_poll_inbody_window", deg) if deg >= 0 else -1
     if deg < 0 or poll < 0 or deg > poll:
         fails.append("AC2: force_degrade must precede poll_inbody_window")
     must("ac3256_2_force_path_order_no_second_unlock", "AC2 test", t)

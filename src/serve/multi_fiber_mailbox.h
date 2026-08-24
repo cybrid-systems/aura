@@ -556,8 +556,21 @@ inline void maybe_mailbox_defer_slo_hold_cancel() noexcept {
     // One-shot arm for this open-defer window (AC3).
     std::uint8_t expected = 0;
     if (!g_mailbox_defer_slo_hold_cancel_armed.compare_exchange_strong(
-            expected, 1, std::memory_order_acq_rel, std::memory_order_relaxed))
+            expected, 1, std::memory_order_acq_rel, std::memory_order_relaxed)) {
+        // Issue #3289 (I5 residual): already armed for this open-defer
+        // window — keep driving the holder. The arm-time poll above sees
+        // elapsed≈0, so the #3285 1×SLO synthetic-edge tier and the 2×SLO
+        // hard bound cannot fire yet; a non-cooperative holder that never
+        // reaches its own cooperative edge would otherwise never be
+        // re-polled (the scheduler idle-tick poll is not a hard progress
+        // bound under load). Re-poll the hold-budget in-body window here
+        // so the holder is driven to the same force-release as hold-budget
+        // overtime (depth 0 + unlocked + dual restore) as the cancel arm
+        // ages. Soft / sandbox=off already returned above (observe-only);
+        // no new counters — reuses the existing force path (#3285 / #3035).
+        (void)aura_hold_budget_poll_inbody_window();
         return;
+    }
     const auto holder = aura::compiler::mutation_hold_live_snapshot();
     if (holder.fiber_id == 0) {
         g_mf_mailbox_stats.mailbox_defer_slo_no_holder_total.fetch_add(1,
