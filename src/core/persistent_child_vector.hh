@@ -133,6 +133,26 @@ struct PcvHotpathMetrics {
     std::atomic<std::uint32_t> stale_span_force_exclusive_enabled{0};
     std::atomic<std::uint64_t> stale_span_force_exclusive_total{0};
 };
+
+// Issue #3292: PcvHotpathMetrics is append-only at struct END (#2906).
+// Mid-struct field insertion breaks stale module BMIs that write at the
+// old offsets and corrupts neighboring heap (e.g. IR cache string keys →
+// double free) — the exact class of bug #2906 already paid for once.
+// These static_asserts pin the last metric's offset + the struct size so
+// any field inserted before the final metric fails the build (compile-time
+// only, zero runtime cost). When a NEW metric is legitimately appended,
+// update the expected values here deliberately (#2906 lineage).
+static_assert(offsetof(PcvHotpathMetrics, stale_span_force_exclusive_total) == 128,
+              "Issue #3292: PcvHotpathMetrics last metric must stay at offset 128 "
+              "(append-only at struct END, #2906)");
+static_assert(offsetof(PcvHotpathMetrics, pcv_span_stale_across_guard_total) == 112,
+              "Issue #3292: pcv_span_stale_across_guard_total must stay at offset 112 "
+              "(no mid-struct insert before the last metrics, #2906)");
+static_assert(offsetof(PcvHotpathMetrics, flatast_locked_move_out_exclusive_total) == 96,
+              "Issue #3292: flatast_locked_move_out_exclusive_total must stay at offset 96 "
+              "(#2906 exclusive metric anchor)");
+static_assert(sizeof(PcvHotpathMetrics) == 136, "Issue #3292: PcvHotpathMetrics size must stay 136 "
+                                                "(append-only at struct END, #2906)");
 inline PcvHotpathMetrics& g_pcv_hotpath_metrics() noexcept {
     static PcvHotpathMetrics m;
     return m;
