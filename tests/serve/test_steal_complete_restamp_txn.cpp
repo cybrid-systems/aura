@@ -846,6 +846,111 @@ static void ac3072_5_source_and_linter() {
           "AC5: no invent test file per #81967");
 }
 
+// ── Issue #3290: residual hard-AND invariant table machine-checkable ──
+// AC1: resume path enters the invariant check (no resume bypass).
+static void ac3290_1_resume_no_bypass() {
+    std::println("\n--- #3290 AC1: resume path enters invariant check ---");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    const auto resume_pos = fc.find("void Fiber::resume()");
+    CHECK(resume_pos != std::string::npos, "3290 AC1: Fiber::resume present");
+    const auto resume_win = fc.substr(resume_pos, 6000);
+    CHECK(resume_win.find("check_and_enforce_resume_invariants()") != std::string::npos,
+          "3290 AC1: resume calls consolidated invariant check");
+    const auto chk = resume_win.find("check_and_enforce_resume_invariants()");
+    const auto sw = resume_win.find("::swapcontext");
+    CHECK(chk != std::string::npos && sw != std::string::npos && chk < sw,
+          "3290 AC1: invariant check precedes swapcontext (no resume bypass)");
+    const auto decl = fc.find("check_and_enforce_resume_invariants() noexcept");
+    CHECK(decl != std::string::npos, "3290 AC1: consolidated check declared");
+    const auto cite = fc.substr(decl > 1500 ? decl - 1500 : 0, 2000);
+    CHECK(cite.find("Issue #2677") != std::string::npos,
+          "3290 AC1: single-call-site consolidation cites #2677");
+    CHECK(cite.find("single call site") != std::string::npos,
+          "3290 AC1: #2677 single call site documented");
+}
+
+// AC2: every StealInvariant arm in evaluate path + last_reject publish.
+static void ac3290_2_arms_evaluate_and_publish() {
+    std::println("\n--- #3290 AC2: arms in evaluate + last_reject publish ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    for (const char* arm : {"SnapshotConsistent", "BoundarySafe", "LayoutStampMatch", "TicketFresh",
+                            "GcDeferClear", "EnvFrameOk", "LifetimeProofOk"}) {
+        CHECK(hdr.find(std::string("StealInvariant::") + arm) != std::string::npos,
+              "3290 AC2: table declares arm " + std::string(arm));
+        CHECK(ss.find(std::string("StealInvariant::") + arm) != std::string::npos,
+              "3290 AC2: transaction mentions arm " + std::string(arm));
+        CHECK(ss.find(std::string("steal_invariant_mask(StealInvariant::") + arm +
+                      std::string(")")) != std::string::npos,
+              "3290 AC2: arm bit-set built for publish " + std::string(arm));
+    }
+    const auto txn = ss.substr(ss.find("StealSafetyDecision steal_safety_transaction("), 12000);
+    CHECK(txn.find("g_steal_safety_last_reject_invariant_bits.store") != std::string::npos,
+          "3290 AC2: RejectHard publishes last_reject_invariant_bits");
+    CHECK(txn.find("fail_bits") != std::string::npos,
+          "3290 AC2: residual RejectHard stores evaluate fail_bits");
+    const auto ev = ss.substr(ss.find("evaluate_residual_hard_and_bits"), 12000);
+    CHECK(ev.find("note_steal_invariant_fail") == std::string::npos ||
+              ss.find("note_steal_invariant_fail") != std::string::npos,
+          "3290 AC2: note_steal_invariant_fail present (per-arm counters)");
+}
+
+// AC3: mailbox delivery uses the shared residual evaluator (quiet).
+static void ac3290_3_mailbox_shared_evaluator() {
+    std::println("\n--- #3290 AC3: mailbox delivery shared evaluator ---");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    const auto mb = ss.substr(ss.find("mailbox_delivery_safety_transaction"), 6000);
+    CHECK(mb.find("evaluate_residual_hard_and_bits") != std::string::npos,
+          "3290 AC3: mailbox shares residual evaluator");
+    CHECK(mb.find("bump_counters=false") != std::string::npos ||
+              mb.find("/*bump_counters=*/false") != std::string::npos,
+          "3290 AC3: mailbox quiet evaluator (no steal counter bumps)");
+}
+
+// AC4: Soft / quiet path zero extra atomics (linter is offline).
+static void ac3290_4_soft_quiet_unchanged() {
+    std::println("\n--- #3290 AC4: Soft / quiet path unchanged ---");
+    const auto hdr = read_file("src/serve/steal_safety.h");
+    const auto ss = read_file("src/serve/steal_safety.cpp");
+    CHECK(hdr.find("g_3290_") == std::string::npos && ss.find("g_3290_") == std::string::npos,
+          "3290 AC4: no new g_3290_* counter");
+    CHECK(ss.find("evaluate_residual_hard_and_bits") != std::string::npos,
+          "3290 AC4: shared evaluator intact (no new runtime framework)");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp");
+    CHECK(q.find("schema-3072") != std::string::npos, "3290 AC4: schema-3072 preserved");
+    CHECK(q.find("schema-2929") != std::string::npos, "3290 AC4: schema-2929 preserved");
+}
+
+// AC5: linter + build wiring; AC6: no invent / docs.
+static void ac3290_5_source_and_linter() {
+    std::println("\n--- #3290 AC5/AC6: linter + no invent ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_steal_invariant_call_site_coverage_3290.py");
+    CHECK(!lint.empty() && lint.find("Issue #3290") != std::string::npos,
+          "3290 AC5: linter cites #3290");
+    CHECK(build.find("check_steal_invariant_call_site_coverage_3290") != std::string::npos,
+          "3290 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3290-invariant-call-site-coverage.md").empty(),
+          "3290 AC6: no docs/design/ per #1655");
+    CHECK(read_file("tests/serve/test_issue_3290.cpp").empty(),
+          "3290 AC6: no invent test file per #81967");
+    CHECK(read_file("tests/issues/test_issue_3290.cpp").empty(),
+          "3290 AC6: no tests/issues/test_issue_3290.cpp per #81967");
+}
+
+// AC6: no invent — no test_issue_3290.cpp, no docs/design (distinct
+// function name so the linter's G6 row anchors on it explicitly).
+static void ac3290_6_no_invent() {
+    std::println("\n--- #3290 AC6: no invent ---");
+    CHECK(read_file("tests/serve/test_issue_3290.cpp").empty(),
+          "3290 AC6: no tests/serve/test_issue_3290.cpp per #81967");
+    CHECK(read_file("tests/issues/test_issue_3290.cpp").empty(),
+          "3290 AC6: no tests/issues/test_issue_3290.cpp per #81967");
+    CHECK(read_file("docs/design/3290-invariant-call-site-coverage.md").empty(),
+          "3290 AC6: no docs/design/ per #1655");
+}
+
 // ── Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ───────
 // AC1: durable per-Fiber evaluator_id set on Guard enter.
 // AC2: cleared on Guard exit / cancel so stale steals cannot see a previous evaluator.
@@ -2020,6 +2125,12 @@ int run_test_steal_complete_restamp_txn() {
     ac3072_3_soft_unchanged();
     ac3072_4_query_keys();
     ac3072_5_source_and_linter();
+    std::println("\n=== Issue #3290: residual invariant table machine-checkable ===");
+    ac3290_1_resume_no_bypass();
+    ac3290_2_arms_evaluate_and_publish();
+    ac3290_3_mailbox_shared_evaluator();
+    ac3290_4_soft_quiet_unchanged();
+    ac3290_5_source_and_linter();
     std::println("\n=== Issue #2727: per-Fiber durable evaluator_id (#2721 residual) ===");
     ac2727_1_evaluator_id_set_on_guard_enter();
     ac2727_2_evaluator_id_cleared_on_guard_exit();

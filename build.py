@@ -625,6 +625,28 @@ def cmd_lint():
             "Issue #3072 steal enqueue sole-gate linter failed — run python3 scripts/coverage/checks/check_steal_enqueue_sole_gate_3072.py"
         )
         return r
+    # Issue #3290: residual hard-AND invariant table must be machine-
+    # checkable at every call site (I3 residual @ e2ac485). The StealInvariant
+    # table (#2929) is runtime-only; #3072 proves every stolen-fiber enqueue
+    # is dominated by steal_safety_transaction Ok, but resume bypass / arm
+    # coverage in evaluate + last_reject publish / mailbox shared-evaluator
+    # had no linter guarantee. This linter asserts: Fiber::resume calls
+    # check_and_enforce_resume_invariants before swapcontext; every arm in
+    # evaluate_residual_hard_and_bits + note_steal_invariant_fail; RejectHard
+    # publishes last_reject_invariant_bits with the arm bit-set; mailbox
+    # delivery shares the quiet evaluator. Soft/quiet path unchanged (linter
+    # offline). Extends test_steal_complete_restamp_txn (#81967); no
+    # docs/design/ (#1655).
+    sicc3290_script = COVERAGE_CHECKS / "check_steal_invariant_call_site_coverage_3290.py"
+    if not sicc3290_script.exists():
+        fail(f"missing {sicc3290_script}")
+        return 1
+    r = run([sys.executable, str(sicc3290_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3290 steal invariant call-site coverage linter failed — run python3 scripts/coverage/checks/check_steal_invariant_call_site_coverage_3290.py"
+        )
+        return r
     # Issue #2700: mailbox + long-hold MutationBoundary interleaving —
     # happens-before contract: outermost MutationBoundaryGuard held ⇒
     # mailbox StableNodeRef payloads require handoff_completed; otherwise
