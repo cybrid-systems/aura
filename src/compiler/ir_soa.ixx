@@ -212,6 +212,9 @@ export inline constexpr int kIrSoaBatchOnlyHardAbortIssue = 3105;
 // Issue #3201: production / Full pack default-on for the existing
 // ir_dirty_batch_only_hard abort (env unset no longer Soft-pass).
 export inline constexpr int kIrSoaBatchOnlyProductionDefaultIssue = 3201;
+// Issue #3293: production residual multi-via-single stays hard-abort by
+// default (machine-checked by check_ir_dirty_batch_only_production_default_
+// 3293.py; AC4 live SIGABRT fixture under production defaults).
 // Issue #2936: production-smoke-wired sentinel (additive observability).
 export inline std::atomic<std::uint64_t>&
 g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {

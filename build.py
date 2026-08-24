@@ -2359,6 +2359,23 @@ def cmd_lint():
             "Issue #3201 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3201.py"
         )
         return r
+    # Issue #3293: production residual multi-via-single stays hard-abort by
+    # default (machine-checkable residual of #3201, I3). #3201 wired
+    # production_defaults → hard face (env unset → strong probe); this
+    # linter machine-checks the production path arms the hard-abort (G1-G2),
+    # Soft stays metric-only (G3), batch APIs clear residual (G4), AC4 live
+    # SIGABRT fixture + source-cite ACs (G5), no invent (G6-G7). Extends
+    # test_batch_dirty_discipline; no docs/design/ (#1655).
+    irdb3293_script = COVERAGE_CHECKS / "check_ir_dirty_batch_only_production_default_3293.py"
+    if not irdb3293_script.exists():
+        fail(f"missing {irdb3293_script}")
+        return 1
+    r = run([sys.executable, str(irdb3293_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3293 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3293.py"
+        )
+        return r
     # Issue #3202: Production + Strict ground unify hard-rejects Int~String
     # (residual of #2992). Soft / balanced / permissive stay diagnostic-only.
     # Extends test_bidirectional_annotation; no docs/design / invent.

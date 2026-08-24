@@ -829,6 +829,83 @@ static void ac3201_4_source_and_linter() {
     CHECK(read_file("docs/design/3201-ir-dirty-batch-only.md").empty(), "3201 AC6: no docs/design");
 }
 
+// ── Issue #3293: production residual multi-via-single stays hard-abort ──
+// AC1 (issue AC4): live hard face — fork a child that injects a
+// single-mark residual under production defaults (2× mark_block_dirty on
+// the same fn with no batch between); the child must die by SIGABRT, not
+// slip through a Soft re-entry.
+static void ac3293_1_production_hard_face() {
+    std::println("\n--- #3293 AC1: production residual hard face (SIGABRT) ---");
+    CHECK(kIrSoaBatchOnlyProductionDefaultIssue == 3201, "3293 AC1: #3201 lineage");
+    const pid_t pid = ::fork();
+    if (pid == 0) {
+        // Child: silence stderr — the expected [#2936] FATAL line would
+        // otherwise be parsed as a suite failure (see ac3201_1 note).
+        std::freopen("/dev/null", "w", stderr);
+        // Production defaults + hard env. Light-link test binaries may not
+        // link the strong probe (weak stub returns 0), so force the hard
+        // face explicitly; the production probe wiring itself is
+        // machine-checked in AC3/linter (G1).
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "1", 1);
+        auto fn = make_n_block_fn(4);
+        fn.mark_block_dirty(1);
+        fn.mark_block_dirty(2); // streak==2 → residual → hard abort
+        ::_exit(0);             // unreachable if the hard face fires
+    }
+    CHECK(pid >= 0, "3293 AC1: fork");
+    int st = 0;
+    ::waitpid(pid, &st, 0);
+    CHECK(WIFSIGNALED(st) && WTERMSIG(st) == SIGABRT,
+          "3293 AC1: production residual → SIGABRT hard face");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+}
+
+// AC2 (issue AC2): Soft / env=0 residual stays metric-only — cascade
+// counter trips, hard-abort counter untouched, process survives.
+static void ac3293_2_soft_metric_only() {
+    std::println("\n--- #3293 AC2: Soft residual metric-only (no abort) ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(!ir_dirty_batch_only_hard(), "3293 AC2: env=0 hard=false");
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one); // clear streak
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto h0 = g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    fn.mark_block_dirty(2); // residual, but Soft → metric only
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) ==
+              r0 + 1,
+          "3293 AC2: Soft residual cascade metric trips");
+    CHECK(g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed) == h0,
+          "3293 AC2: Soft residual does NOT bump hard-abort counter");
+}
+
+// AC3 (issue AC5/AC6): source-cite + linter wiring + no invent.
+static void ac3293_3_source_and_linter() {
+    std::println("\n--- #3293 AC3: source-cite + linter + no invent ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto hooks = read_file("src/compiler/typed_mutation_audit_hooks.cpp");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3293.py");
+    const auto build = read_file("build.py");
+    CHECK(soa.find("Issue #3293") != std::string::npos, "3293 AC3: ir_soa cites #3293");
+    CHECK(soa.find("aura_production_defaults_active_probe") != std::string::npos,
+          "3293 AC3: production probe consulted");
+    CHECK(hooks.find("typed_audit::production_defaults_active()") != std::string::npos,
+          "3293 AC3: strong probe returns production_defaults_active()");
+    CHECK(!lint.empty() && lint.find("Issue #3293") != std::string::npos, "3293 AC3: linter");
+    CHECK(build.find("check_ir_dirty_batch_only_production_default_3293") != std::string::npos,
+          "3293 AC3: build.py wiring");
+    CHECK(t.find("ac3293_1_production_hard_face") != std::string::npos, "3293 AC3: AC1");
+    CHECK(read_file("tests/compiler/test_issue_3293.cpp").empty(), "3293 AC3: no invent");
+    CHECK(read_file("docs/design/3293-ir-dirty-batch-only.md").empty(), "3293 AC3: no docs/design");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -866,6 +943,10 @@ int run_test_batch_dirty_discipline() {
     ac3201_2_soft_env0();
     ac3201_3_batch_clears();
     ac3201_4_source_and_linter();
+    std::println("\n=== Issue #3293: production residual multi-via-single stays hard-abort ===");
+    ac3293_1_production_hard_face();
+    ac3293_2_soft_metric_only();
+    ac3293_3_source_and_linter();
     std::println("\n=== #2615/#2681/#2773/#2774/#2936/#3201: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
