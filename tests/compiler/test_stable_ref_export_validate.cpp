@@ -466,10 +466,34 @@ int run_test_stable_ref_export_validate() {
                 R"((orch:spawn-agent "ac2848-agent" (lambda () 1) :attach-mailbox #t :high-water 32))");
             CHECK(sp && is_hash(*sp), "2848 AC1: spawn-agent hash");
 
-            auto send = cs.eval(std::format(
-                R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "ok"))", nid));
-            CHECK(send && is_bool(*send) && as_bool(*send),
-                  "2848 AC1: agent-send StableNodeRef auto handoff → ok");
+            // The language path exports the StableNodeRef (handoff_ref) BEFORE
+            // the mailbox push. A send that races the async spawn body window
+            // therefore both (a) hits the #2312 delivery gate (target fiber
+            // holds the spawn soft boundary → transient Backpressure) and
+            // (b) runs evaluator workspace paths concurrently with the
+            // scheduler-thread body (observed heap corruption). Real callers
+            // wait for the agent to be ready; mirror that here with a bounded
+            // readiness poll (zero-cost plain-string sends touch no workspace),
+            // then a bounded retry on any residual transient BP.
+            bool agent_ready = false;
+            for (int attempt = 0; attempt < 20 && !agent_ready; ++attempt) {
+                auto ping =
+                    cs.eval(R"((hash-ref (orch:agent-send "ac2848-agent" "ready-ping") "ok"))");
+                agent_ready = ping && is_bool(*ping) && as_bool(*ping);
+                if (!agent_ready)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
+            CHECK(agent_ready, "2848 AC1: agent deliverable before StableNodeRef send");
+            bool send_ok = false;
+            for (int attempt = 0; attempt < 5 && !send_ok; ++attempt) {
+                auto send = cs.eval(std::format(
+                    R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "ok"))",
+                    nid));
+                send_ok = send && is_bool(*send) && as_bool(*send);
+                if (!send_ok)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            }
+            CHECK(send_ok, "2848 AC1: agent-send StableNodeRef auto handoff → ok");
 
             auto auto_h = cs.eval(std::format(
                 R"((hash-ref (orch:agent-send "ac2848-agent" (query:stable-ref {})) "auto-handoff"))",
