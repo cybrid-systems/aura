@@ -463,13 +463,22 @@ int run_test_query_epoch_contract() {
         CHECK(cs.eval("(set-code \"(define f (lambda (x) 1))\")").has_value(), "3231: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3231: eval");
         auto bare = cs.eval("(query :find \"f\")");
-        CHECK(bare.has_value() && !is_hash(*bare), "3231: Soft-default bare list (no keyword)");
+        // Issue #3286 (supersedes pre-3286 bare-list expectation): under
+        // production defaults the shared end_query_epoch_maybe_result finish
+        // auto-upgrades a bare match list to the schema-2 stamped hash (or a
+        // structured error) — never a green schema-1 list (I6 Agent memory
+        // durability). Soft/Off keeps the layout-only bare path (below).
+        CHECK(bare.has_value() && is_hash(*bare),
+              "3231: production bare find auto-upgrades to schema-2 (#3286)");
         auto qr = cs.eval("(query :find \"f\" :as-query-result)");
         CHECK(qr.has_value(), "3231: production :as-query-result returns");
         CHECK(is_hash(*qr), "3231: production QueryResult is schema-2 hash, not layout-only");
         apply_dev_audit_defaults();
         auto soft = cs.eval("(query :find \"f\" :as-query-result)");
         CHECK(soft.has_value(), "3231: Soft :as-query-result still returns");
+        auto soft_bare = cs.eval("(query :find \"f\")");
+        CHECK(soft_bare.has_value() && !is_hash(*soft_bare),
+              "3231: Soft-default bare list (no keyword) unchanged (#3286)");
         const auto hh = read_file("src/core/workspace_epoch.hh");
         const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
         CHECK(hh.find("kQueryResultLayoutOnlyRejectIssue") != std::string::npos, "3231: stamp");
