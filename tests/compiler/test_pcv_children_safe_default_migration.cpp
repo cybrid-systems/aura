@@ -272,6 +272,61 @@ static void ac2862_3_no_docs() {
           "#2862 AC3: lineage refs to #2036/#678/#655/#2861");
 }
 
+// ── Issue #3292: PcvHotpathMetrics append-only layout stamps ──
+// AC1: static_assert offsetof guards next to the struct (#2906 lineage).
+static void ac3292_1_layout_stamps_present() {
+    std::println("\n--- #3292 AC1: append-only layout stamps (#2906) ---");
+    const auto pcv = read_file("src/core/persistent_child_vector.hh");
+    CHECK(pcv.find("Issue #3292") != std::string::npos,
+          "3292 AC1: persistent_child_vector.hh cites #3292");
+    CHECK(pcv.find("#2906") != std::string::npos, "3292 AC1: #2906 lineage comment");
+    CHECK(pcv.find("append-only at struct END") != std::string::npos,
+          "3292 AC1: append-only discipline documented");
+    CHECK(pcv.find("static_assert(offsetof(PcvHotpathMetrics, "
+                   "stale_span_force_exclusive_total)") != std::string::npos,
+          "3292 AC1: last-metric offsetof assert present");
+    // Asserts sit immediately after the struct definition.
+    const auto struct_pos = pcv.find("struct PcvHotpathMetrics");
+    CHECK(struct_pos != std::string::npos, "3292 AC1: struct present");
+    const auto tail = pcv.substr(struct_pos, 3200);
+    CHECK(tail.find("static_assert(offsetof(PcvHotpathMetrics, "
+                    "stale_span_force_exclusive_total)") != std::string::npos,
+          "3292 AC1: last-metric assert next to the struct");
+}
+
+// AC2: pinned offsets — mid-struct insert fails the build.
+static void ac3292_2_offsets_pinned() {
+    std::println("\n--- #3292 AC2: pinned offsets ---");
+    const auto pcv = read_file("src/core/persistent_child_vector.hh");
+    CHECK(pcv.find("offsetof(PcvHotpathMetrics, stale_span_force_exclusive_total) == 128") !=
+              std::string::npos,
+          "3292 AC2: last metric pinned at offset 128");
+    CHECK(pcv.find("offsetof(PcvHotpathMetrics, pcv_span_stale_across_guard_total) == 112") !=
+              std::string::npos,
+          "3292 AC2: pcv_span pinned at offset 112");
+    CHECK(pcv.find("offsetof(PcvHotpathMetrics, flatast_locked_move_out_exclusive_total) == 96") !=
+              std::string::npos,
+          "3292 AC2: flatast exclusive pinned at offset 96");
+    CHECK(pcv.find("sizeof(PcvHotpathMetrics) == 136") != std::string::npos,
+          "3292 AC2: sizeof pinned to 136");
+}
+
+// AC3: no new runtime counters / atomics (compile-time only).
+static void ac3292_3_no_new_runtime() {
+    std::println("\n--- #3292 AC3: zero runtime cost ---");
+    const auto pcv = read_file("src/core/persistent_child_vector.hh");
+    CHECK(pcv.find("g_3292_") == std::string::npos, "3292 AC3: no new g_3292_* counter");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_pcv_hotpath_metrics_layout_3292") != std::string::npos,
+          "3292 AC3: build.py wires linter");
+    CHECK(read_file("docs/design/3292-pcv-hotpath-metrics-layout.md").empty(),
+          "3292 AC3: no docs/design/ per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3292.cpp").empty(),
+          "3292 AC3: no test_issue_3292.cpp per #81967");
+    CHECK(read_file("tests/issues/test_issue_3292.cpp").empty(),
+          "3292 AC3: no tests/issues/test_issue_3292.cpp per #81967");
+}
+
 } // namespace
 
 int main() {
@@ -287,6 +342,10 @@ int main() {
     ac4_counters();
     ac5_query();
     ac6_no_pmr_children();
+    std::println("\n=== #3292: PcvHotpathMetrics append-only layout stamps (#2906) ===");
+    ac3292_1_layout_stamps_present();
+    ac3292_2_offsets_pinned();
+    ac3292_3_no_new_runtime();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

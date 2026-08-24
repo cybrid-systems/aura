@@ -4488,6 +4488,24 @@ def cmd_lint():
             "Issue #3291 FFI opaque create-site cover linter failed — run python3 scripts/coverage/checks/check_ffi_opaque_create_site_cover_3291.py"
         )
         return r
+    # Issue #3292: PcvHotpathMetrics must stay append-only at struct END
+    # (#2906) with compile-time layout stamps. #2906 fixed the mid-struct
+    # insert that corrupted neighboring heap via stale module BMIs (IR
+    # cache string keys → double free); the discipline was comment + human
+    # review only. static_assert(offsetof(...)) on the last metrics + size
+    # makes a future mid-struct insert fail the build (compile-time only,
+    # zero runtime cost). Extends test_pcv_children_safe_default_migration
+    # (#81967); no docs/design/ (#1655).
+    phml3292_script = COVERAGE_CHECKS / "check_pcv_hotpath_metrics_layout_3292.py"
+    if not phml3292_script.exists():
+        fail(f"missing {phml3292_script}")
+        return 1
+    r = run([sys.executable, str(phml3292_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3292 PCV hotpath metrics layout linter failed — run python3 scripts/coverage/checks/check_pcv_hotpath_metrics_layout_3292.py"
+        )
+        return r
     # Issue #3023: leftover linear_roots unpin on abort / reclaim.
     # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
     lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"
