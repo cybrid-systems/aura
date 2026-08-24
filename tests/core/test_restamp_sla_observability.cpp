@@ -312,7 +312,9 @@ static void ac3019_2_order_node_stable_pin() {
     const auto uni = fm.find("Evaluator::unified_restamp_after_boundary");
     CHECK(uni != std::string::npos, "AC2: unified impl present");
     const auto triad = uni == std::string::npos ? std::string::npos : fm.find("if (ws) {", uni);
-    const auto body = triad == std::string::npos ? std::string{} : fm.substr(triad, 1600);
+    // Window 2800: unified restamp body grew past 1600 (comment block
+    // growth, #3287 alignment — check_unified_restamp_3019.py uses 2800).
+    const auto body = triad == std::string::npos ? std::string{} : fm.substr(triad, 2800);
     const auto node = body.find("restamp_all_node_generations");
     const auto stable = body.find("auto_restamp_pinned_stable_refs_at");
     const auto pin = body.find("restamp_all_pins_for_arena");

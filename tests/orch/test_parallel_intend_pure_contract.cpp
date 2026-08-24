@@ -635,9 +635,7 @@ int run_test_parallel_intend_pure_contract() {
     // `ev.workspace_flat_->make_ref(...)` so the build compiles + the
     // wire-up reaches the workspace through the captured `ev` reference.
     {
-        std::ifstream ag_2636("src/compiler/evaluator_primitives_agent.cpp");
-        const std::string ag_2636_src((std::istreambuf_iterator<char>(ag_2636)),
-                                      std::istreambuf_iterator<char>());
+        const auto ag_2636_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
         CHECK(ag_2636_src.find("ev.workspace_flat_->make_ref") != std::string::npos,
               "2636: parallel-intend handoff_ref wire-up uses ev.workspace_flat_ "
               "(lambda captures [&ev, ...]; bare workspace_flat_ was undeclared "
