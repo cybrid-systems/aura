@@ -2292,6 +2292,20 @@ def cmd_lint():
             "Issue #3237 type-export Full-audit gate linter failed — run python3 scripts/coverage/checks/check_type_export_full_audit_gate_3237.py"
         )
         return r
+    # Issue #3294: query:type durable export requires an outermost success
+    # face (Soft TIMEOUT "recovered" by local SOLVED must still refuse).
+    # Soft observe counter only; quiet SOLVED outermost zero extra.
+    # Extends test_solve_delta_unresolved_export.
+    teof3294_script = COVERAGE_CHECKS / "check_type_export_outermost_face_3294.py"
+    if not teof3294_script.exists():
+        fail(f"missing {teof3294_script}")
+        return 1
+    r = run([sys.executable, str(teof3294_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3294 type-export outermost-face linter failed — run python3 scripts/coverage/checks/check_type_export_outermost_face_3294.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.

@@ -1122,6 +1122,13 @@ void register_eval_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal mev
             return mev("no-typecheck-yet",
                        "call (typecheck-current) before query-annotate-functions");
         }
+        // Issue #3294: annotation suggestions are Agent-facing type export —
+        // refuse durable TypeIds without an outermost success face (same
+        // gate as get-inferred-type / query-type-of).
+        if (!ev.type_export_authoritative()) {
+            return mev(ev.type_export_inflight() ? "in-flight" : "not-authoritative",
+                       "type export not authoritative (no outermost success face)");
+        }
         // Filter: default "all"
         std::string filter = "all";
         if (!a.empty() && is_string(a[0])) {

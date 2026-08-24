@@ -2599,6 +2599,133 @@ static void ac3237_4_source_linter() {
           "3237 AC4: no docs/design");
 }
 
+// ── Issue #3294: outermost success face gates durable type export ──
+//
+// Residual of #3203/#3237 under multi-round Agent canary: a Soft
+// TIMEOUT that is later "recovered" by a local SOLVED (without an
+// outermost Full persist success face) must still refuse query:type /
+// get-inferred-type / query-annotate-functions durable TypeIds.
+// Evaluator now tracks `type_export_outermost_success_face_`: cleared
+// on TIMEOUT/CONFLICT/nested-inflight, re-armed only by the outermost
+// grant helper. Quiet SOLVED outermost stays zero extra cost.
+
+static void ac3294_1_soft_recovered_solved_refuses() {
+    std::println("\n--- #3294 AC1: Soft TIMEOUT → local SOLVED still refuses ---");
+    using aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total;
+    using aura::compiler::typed_audit::reset_type_export_soft_refuse_for_test;
+    apply_dev_audit_defaults();
+    reset_type_export_soft_refuse_for_test();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3294 AC1: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    // Soft TIMEOUT face: authority cleared, outermost success face dropped.
+    svc.evaluator().copy_infer_type_export_authority(false);
+    CHECK(!svc.evaluator().type_export_is_authoritative(), "3294 AC1: TIMEOUT not authoritative");
+    // "Recovered" by a later local SOLVED — must still refuse durable
+    // TypeId until an outermost success persist re-arms the face.
+    svc.evaluator().copy_infer_type_export_authority(true);
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "ac3294_1_soft_recovered_solved_refuses: local SOLVED cannot re-open");
+    CHECK(g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed) >= 1,
+          "3294 AC1: Soft observe counter bumped");
+    // Agent-visible export surfaces stay non-authoritative (no live TypeId).
+    auto git = svc.eval("(get-inferred-type 0)");
+    CHECK(git.has_value(), "3294 AC1: get-inferred-type returned");
+    auto qto = svc.eval("(query-type-of \"f\")");
+    CHECK(qto.has_value(), "3294 AC1: query-type-of returned");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    CHECK(prim.find("no outermost success face") != std::string::npos,
+          "3294 AC1: query-annotate-functions gate");
+    reset_type_export_soft_refuse_for_test();
+}
+
+static void ac3294_2_production_timeout_unchanged() {
+    std::println("\n--- #3294 AC2: Production TIMEOUT path unchanged ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+    CHECK(impl.find("delta_timeout_fail_closed_total") != std::string::npos,
+          "3294 AC2: #3003 fail-closed retained");
+    CHECK(impl.find("delta_timeout_reject_total") != std::string::npos,
+          "3294 AC2: #2277 reject retained");
+    CHECK(tc.find("production_defaults_active()") != std::string::npos &&
+              tc.find("clear_type_export_authority") != std::string::npos,
+          "3294 AC2: production still clears authority");
+}
+
+static void ac3294_3_outermost_grant_rearms() {
+    std::println("\n--- #3294 AC3: outermost success persist re-arms authority ---");
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3294 AC3: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    // Soft TIMEOUT drops the face; local SOLVED refuses...
+    svc.evaluator().copy_infer_type_export_authority(false);
+    svc.evaluator().copy_infer_type_export_authority(true);
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "3294 AC3: refused before outermost grant");
+    // ...outermost success persist grant re-arms durable authority.
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "ac3294_3_outermost_grant_rearms: outermost SOLVED grant re-opens");
+    auto qto = svc.eval("(query-type-of \"f\")");
+    CHECK(qto.has_value(), "3294 AC3: query-type-of returned after grant");
+}
+
+static void ac3294_4_quiet_solved_zero_extra() {
+    std::println("\n--- #3294 AC4: quiet SOLVED zero extra; observe-only counter ---");
+    using aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total;
+    using aura::compiler::typed_audit::reset_type_export_soft_refuse_for_test;
+    apply_dev_audit_defaults();
+    reset_type_export_soft_refuse_for_test();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3294 AC4: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    // Quiet SOLVED outermost: face true by default → direct grant, no bump.
+    svc.evaluator().copy_infer_type_export_authority(true);
+    CHECK(svc.evaluator().type_export_is_authoritative(), "3294 AC4: quiet SOLVED grants");
+    CHECK(g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed) == 0,
+          "ac3294_4_quiet_solved_zero_extra: zero extra on quiet SOLVED");
+    // Source-cite: observe-only counter, no hard reject path.
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(aud.find("g_type_export_soft_refuse_observe_total") != std::string::npos,
+          "3294 AC4: observe counter");
+    CHECK(aud.find("Soft observe counter only") != std::string::npos,
+          "3294 AC4: observe-only documented");
+    reset_type_export_soft_refuse_for_test();
+}
+
+static void ac3294_5_source_and_linter() {
+    std::println("\n--- #3294 AC5: source-cite + linter + no invent ---");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_eval.cpp");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_type_export_outermost_face_3294.py");
+    const auto build = read_file("build.py");
+    CHECK(ev.find("type_export_outermost_success_face_") != std::string::npos,
+          "3294 AC5: Evaluator outermost face flag");
+    CHECK(ev.find("Issue #3294") != std::string::npos, "3294 AC5: Evaluator cites #3294");
+    CHECK(aud.find("Issue #3294") != std::string::npos, "3294 AC5: audit cites #3294");
+    CHECK(aud.find("g_type_export_soft_refuse_observe_total") != std::string::npos,
+          "3294 AC5: observe counter");
+    CHECK(prim.find("Issue #3294") != std::string::npos, "3294 AC5: annotate gate cites #3294");
+    CHECK(t.find("ac3294_1_soft_recovered_solved_refuses") != std::string::npos,
+          "3294 AC5: AC1 in suite");
+    CHECK(!lint.empty() && lint.find("Issue #3294") != std::string::npos,
+          "3294 AC5: linter present");
+    CHECK(build.find("check_type_export_outermost_face_3294") != std::string::npos,
+          "3294 AC5: build.py registers linter");
+    CHECK(read_file("tests/compiler/test_issue_3294.cpp").empty(), "3294 AC5: no invent");
+    CHECK(read_file("docs/design/3294-type-export-outermost-face.md").empty(),
+          "3294 AC5: no docs/design");
+}
+
 // ── #3108: commit_readiness recover must re-gate on solve_status==SOLVED ─
 //
 // Closes the half-green residual of #2750 / #2909 / #2962 / #2911 /
@@ -2994,6 +3121,12 @@ int run_test_solve_delta_unresolved_export() {
     ac3237_2_soft_quiet();
     ac3237_3_lineage();
     ac3237_4_source_linter();
+    std::println("\n=== Issue #3294: outermost success face gates durable export ===");
+    ac3294_1_soft_recovered_solved_refuses();
+    ac3294_2_production_timeout_unchanged();
+    ac3294_3_outermost_grant_rearms();
+    ac3294_4_quiet_solved_zero_extra();
+    ac3294_5_source_and_linter();
     std::println("\n=== Issue #3108: commit_readiness recover re-gate ===");
     ac3108_1_recover_regate_wired();
     ac3108_2_production_rejects_via_existing_path();
