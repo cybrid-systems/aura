@@ -2483,6 +2483,59 @@ static void ac2847_6_source_and_linter() {
           "AC6: no invent test file per #81967");
 }
 
+// ── Issue #3289: mailbox under-boundary timeout re-polls the hold-budget
+//    in-body window so an already-held outermost Guard is driven to the
+//    same force-release as hold-budget overtime (depth 0 + unlocked +
+//    dual restore). I5 residual of #3285: the one-shot arm-time poll saw
+//    elapsed≈0 so the 1×SLO synthetic-edge tier never fired; non-coop
+//    holders never reach their own cooperative edge, and the scheduler
+//    idle-tick is not a hard progress bound under load. Soft observe-only.
+static void ac3289_1_mailbox_slo_repoll_source() {
+    std::println("\n--- #3289 AC1: mailbox SLO path re-polls hold-budget window ---");
+    const auto mfh = read_file("src/serve/multi_fiber_mailbox.h");
+    const auto fc = read_file("src/serve/fiber.cpp");
+    // Core: the armed branch re-polls aura_hold_budget_poll_inbody_window
+    // (reuses the same force-release path as hold-budget overtime).
+    CHECK(mfh.find("Issue #3289") != std::string::npos,
+          "3289 AC1: multi_fiber_mailbox.h cites #3289");
+    // Anchor at the CAS usage (not the declaration at the top of the
+    // file) so the window covers the armed-branch re-poll below it.
+    const auto pos = mfh.find("g_mailbox_defer_slo_hold_cancel_armed.compare_exchange_strong");
+    CHECK(pos != std::string::npos, "3289 AC1: armed CAS present");
+    const auto win = mfh.substr(pos, 2600);
+    CHECK(win.find("aura_hold_budget_poll_inbody_window()") != std::string::npos,
+          "3289 AC1: armed branch re-polls the in-body window");
+    CHECK(win.find("force-release as hold-budget") != std::string::npos,
+          "3289 AC1: reuses the same force-release path");
+    // The arm path still uses the same force-degrade / inject ABIs as
+    // hold-budget overtime (AC5 source-cite).
+    CHECK(mfh.find("aura_evaluator_force_degrade_outermost_holder") != std::string::npos,
+          "3289 AC1: mailbox arm calls force-degrade (same ABI)");
+    CHECK(mfh.find("aura_fiber_request_hold_budget_cancel") != std::string::npos,
+          "3289 AC1: mailbox arm calls hold-budget cancel (same ABI)");
+    // Soft observe-only preserved (AC2).
+    CHECK(mfh.find("mailbox_defer_slo_soft_observe_total") != std::string::npos,
+          "3289 AC1: Soft observe-only preserved");
+    CHECK(mfh.find("aura_production_defaults_active_probe() == 0") != std::string::npos,
+          "3289 AC1: Soft gate preserved");
+    // No new counters / second unlock path (AC3/AC4).
+    CHECK(mfh.find("g_3289_") == std::string::npos, "3289 AC1: no new g_3289_* counter");
+    // The poll itself keeps the #3285 1×SLO tier + 2×SLO hard bound.
+    const auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+    CHECK(poll_pos != std::string::npos, "3289 AC1: poll definition present");
+    const auto poll_win = fc.substr(poll_pos, 4200);
+    CHECK(poll_win.find("Issue #3285") != std::string::npos, "3289 AC1: 1×SLO tier preserved");
+    CHECK(poll_win.find("inbody_window_exceeded_total") != std::string::npos,
+          "3289 AC1: 2×SLO hard bound preserved");
+    // No docs / no invent test file.
+    CHECK(read_file("docs/design/3289-under-boundary-hold-progress.md").empty(),
+          "3289 AC1: no docs/design/ per #1655");
+    CHECK(read_file("tests/serve/test_issue_3289.cpp").empty(),
+          "3289 AC1: no test_issue_3289.cpp per #81967");
+    CHECK(read_file("tests/issues/test_issue_3289.cpp").empty(),
+          "3289 AC1: no tests/issues/test_issue_3289.cpp per #81967");
+}
+
 } // namespace
 
 int run_test_mailbox_hold_starvation_hard() {
@@ -2595,7 +2648,10 @@ int run_test_mailbox_hold_starvation_hard() {
     ac2847_4_zero_cost_quiet();
     ac2847_5_additive_and_preserved();
     ac2847_6_source_and_linter();
-    std::println("\n=== #2551..#2761 + #2847: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3289: mailbox under-boundary SLO re-polls hold-budget window ===");
+    ac3289_1_mailbox_slo_repoll_source();
+    std::println("\n=== #2551..#2761 + #2847 + #3289: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -1894,8 +1894,14 @@ static void ac3256_2_force_path_order_no_second_unlock() {
           "3256 AC2: hold-budget cancel retained");
     CHECK(win.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
           "3256 AC2: existing #3254 inbody poll paired");
+    // Order on the ARM path: force_degrade precedes the arm-time inbody
+    // poll (no second unlock). Anchor the poll lookup AFTER force_degrade
+    // — the #3289 armed-branch re-poll (watchdog) appears textually
+    // before force_degrade in the CAS-fail path and is NOT the arm poll.
     const auto deg_pos = win.find("aura_evaluator_force_degrade_outermost_holder");
-    const auto poll_pos = win.find("aura_hold_budget_poll_inbody_window");
+    const auto poll_pos = deg_pos == std::string::npos
+                              ? std::string::npos
+                              : win.find("aura_hold_budget_poll_inbody_window", deg_pos);
     CHECK(deg_pos != std::string::npos && poll_pos != std::string::npos && deg_pos < poll_pos,
           "3256 AC2: order force_degrade then poll_inbody (no second unlock)");
 }

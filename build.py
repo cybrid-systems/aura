@@ -5226,6 +5226,26 @@ def cmd_lint():
             "Issue #3288 production residual-sticky continuous gate linter failed — run python3 scripts/coverage/checks/check_production_residual_sticky_continuous_3288.py"
         )
         return r
+    # Issue #3289: mailbox under-boundary wait p99 must guarantee progress
+    # for an already-held outermost Guard (I5 residual of #3285). The
+    # mailbox SLO timeout path already armed the hold-budget cancel once,
+    # but the arm-time poll saw elapsed≈0 so the #3285 1×SLO synthetic-edge
+    # tier never fired; non-coop holders never reach their own edge and the
+    # scheduler idle-tick is not a hard bound under load. The armed branch
+    # now re-polls aura_hold_budget_poll_inbody_window (same force-release
+    # path as hold-budget overtime: depth 0 + unlocked + dual restore).
+    # Soft observe-only unchanged; no new counters. Extends
+    # test_mailbox_hold_starvation_hard (#81967); no docs/design/ (#1655).
+    ubh3289_script = COVERAGE_CHECKS / "check_under_boundary_hold_progress_3289.py"
+    if not ubh3289_script.exists():
+        fail(f"missing {ubh3289_script}")
+        return 1
+    r = run([sys.executable, str(ubh3289_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3289 under-boundary hold progress linter failed — run python3 scripts/coverage/checks/check_under_boundary_hold_progress_3289.py"
+        )
+        return r
     # Issue #3286: production QueryResult must force schema-2 full
     # provenance (layout-only matches rejected / auto-upgraded, I6). The
     # shared end_query_epoch_maybe_result finish auto-upgrades a bare match
