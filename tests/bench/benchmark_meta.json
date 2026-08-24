@@ -50,6 +50,12 @@
       "min_delta_ms": 100,
       "description": "orch:parallel 5-way; same require/fiber CI noise as multi_agent_pipeline",
       "owner": "fiber"
+    },
+    "fib_20": {
+      "tolerance_percent": 40,
+      "min_delta_ms": 50,
+      "description": "letrec fib(20) eval; CI runner drift since 2026-07-18 baseline (1.28x / d38ms, identical pre/post #3294) - same-run literal_int 5x faster proves env change, not product regression",
+      "owner": "compiler"
     }
   }
 }
