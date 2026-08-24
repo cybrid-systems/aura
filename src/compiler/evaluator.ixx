@@ -3635,6 +3635,11 @@ public:
     [[nodiscard]] bool type_export_is_authoritative() const noexcept {
         if (!last_type_solve_solved_)
             return false;
+        // Issue #3294: durable type export requires an outermost success
+        // face. Soft local SOLVED after a TIMEOUT / nested face must not
+        // re-open authority (residual of #3203/#3237 under Agent canary).
+        if (!type_export_outermost_success_face_)
+            return false;
         if (!type_export_authoritative_)
             return false;
         return aura::compiler::typed_audit::type_export_residual_faces_clear();
@@ -3656,18 +3661,24 @@ public:
             !aura::compiler::typed_audit::type_export_residual_faces_clear()) {
             type_export_authoritative_ = false;
             type_export_inflight_ = false;
+            type_export_outermost_success_face_ = false;
             return;
         }
         type_export_authoritative_ = true;
         type_export_inflight_ = false;
+        // Issue #3294: only the outermost success persist face re-opens
+        // durable authority (called from the outermost grant helper).
+        type_export_outermost_success_face_ = true;
     }
     void clear_type_export_authority() noexcept {
         type_export_authoritative_ = false;
         type_export_inflight_ = false;
+        type_export_outermost_success_face_ = false;
     }
     void note_type_export_inflight() noexcept {
         type_export_authoritative_ = false;
         type_export_inflight_ = true;
+        type_export_outermost_success_face_ = false;
     }
     // Issue #3082: typecheck / Soft infer must not promote a mid/nested
     // MutationBoundary occurrence to query:type authority. Nested enter
@@ -3681,10 +3692,26 @@ public:
             note_type_export_inflight();
             return;
         }
-        if (infer_authoritative)
+        if (infer_authoritative) {
+            // Issue #3294: Soft local SOLVED must not re-open durable
+            // authority without an outermost success face (e.g. after a
+            // Soft TIMEOUT "recovered" by a later local SOLVED). Only the
+            // outermost persist grant helper re-arms the face. Quiet path
+            // (face still true from last outermost success) grants as today.
+            if (!type_export_outermost_success_face_) {
+                // Soft observe only: refuse durable TypeId, no hard reject.
+                // Dedicated Soft observe counter (AC4: Soft observe counters
+                // only; zero extra on quiet SOLVED).
+                aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                type_export_authoritative_ = false;
+                type_export_inflight_ = false;
+                return;
+            }
             grant_type_export_authority();
-        else
+        } else {
             clear_type_export_authority();
+        }
     }
     // Issue #2308: opaque handle to the live commit TypeChecker (null
     // when no commit CS is currently live). Query primitives cast it
@@ -15319,6 +15346,11 @@ private:
     // Issue #3203: last infer face was SOLVED (default true = quiet path).
     // TIMEOUT/CONFLICT stays false so persist grant cannot override.
     bool last_type_solve_solved_ = true;
+    // Issue #3294: outermost success face. True only after the outermost
+    // persist grant helper succeeds (or quiet initial state). Cleared on
+    // TIMEOUT/CONFLICT/nested/mid so a Soft local SOLVED cannot re-open
+    // durable query:type authority without an outermost Full face.
+    bool type_export_outermost_success_face_ = true;
     // Issue #3170: staged occurrence-persist fingerprint (0 = unstaged).
     std::uint64_t expected_occurrence_fp_ = 0;
     // Opaque std::vector<TypeId>* — stashed occurrence span for commit.

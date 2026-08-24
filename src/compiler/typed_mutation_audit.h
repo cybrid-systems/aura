@@ -2747,6 +2747,19 @@ inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_recover_total{0};
 inline std::atomic<std::uint32_t> g_refined_consistency_wired{1};
+// Issue #3294: Soft query:type export refused without an outermost success
+// face (residual of #3203/#3237 — Soft TIMEOUT "recovered" by a later local
+// SOLVED must still refuse). Soft observe counter only; production/Full
+// refuse via existing delta_timeout_reject_total / clear authority. Quiet
+// SOLVED outermost: zero extra (one bool load, no bump).
+inline std::atomic<std::uint64_t> g_type_export_soft_refuse_observe_total{0};
+inline std::atomic<std::uint32_t> g_type_export_soft_refuse_wired{1};
+[[nodiscard]] inline std::uint64_t type_export_soft_refuse_observe_v_read() noexcept {
+    return g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_type_export_soft_refuse_for_test() noexcept {
+    g_type_export_soft_refuse_observe_total.store(0, std::memory_order_relaxed);
+}
 // Optional full-solve recover hook (wired by TypeChecker / Evaluator).
 // Returns true when SOLVED + occurrence roots restored. nullptr = no recover.
 using OccurrenceFullSolveRecoverFn = bool (*)(void* ctx) noexcept;
