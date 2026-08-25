@@ -111,6 +111,135 @@ void reset_between_acs() {
     // The test uses baseline capture at the top of each AC block.
 }
 
+// Issue #3297: ~AgentHandle under-account observability. When a
+// long-lived C++ supervisor holds AgentHandle after production
+// auto-wait Timeout, the body may still be non-yielding when the
+// handle is dropped. The dtor's unconditional release_reservation_if_any()
+// frees arena quota before the body exits — brief under-account
+// window (not a permanent leak; #3012 accepts anti-permanent-leak
+// priority). Additive counter reclaimed_dtor_under_account_total
+// appended at OrchModuleStats struct END (#2906 discipline);
+// bumped in finish_reclaimed_cleanup_on_dtor BEFORE the
+// unconditional release. Soft / body-already-exit / explicit
+// wait_reclaimed_ms paths stay zero (gate is symmetric with the
+// Done-path skip).
+static void ac3297_1_dtor_under_account_live_body() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    std::println(
+        "\n--- #3297 AC1: production + Timeout + dtor while body live → under-account counter ---");
+    apply_production_audit_defaults();
+    const auto before =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+
+    // Body never ran (Fiber constructed but not scheduled) — is_done=false.
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    // complete_agent_join_cleanup sets h.reclaimed_deferred_cleanup = true
+    // (and preserves h.reserved_memory_bytes per #2661).
+    complete_agent_join_cleanup(h, jr);
+    CHECK(h.reclaimed_deferred_cleanup,
+          "3297 AC1: reclaimed_deferred_cleanup set after Reclaimed cleanup");
+    CHECK(h.reserved_memory_bytes == 4096,
+          "3297 AC1: reservation held after Reclaimed cleanup (#2661)");
+    CHECK(!h.fiber->is_done(), "3297 AC1: body still live (Fiber never ran)");
+
+    // Simulate ~AgentHandle path: finish_reclaimed_cleanup_on_dtor is
+    // the helper the dtor / move-assign calls (#3012).
+    h.finish_reclaimed_cleanup_on_dtor();
+
+    const auto after =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    CHECK(after == before + 1,
+          "3297 AC1: reclaimed_dtor_under_account_total bumped under production + live body");
+    CHECK(h.reserved_memory_bytes == 0,
+          "3297 AC1: reservation released after dtor (unconditional, brief under-account)");
+
+    apply_dev_audit_defaults();
+}
+
+static void ac3297_2_dtor_no_under_account_post_exit() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #3297 AC2: body exit → dtor → no under-account + reserved==0 ---");
+    apply_production_audit_defaults();
+    const auto before =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+
+    // Body has exited — note_body_exit_if_reclaimed marks is_done=true.
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    fiber_owned->note_body_exit_if_reclaimed();
+    // Note: Fiber::note_body_exit_if_reclaimed() is a Reclaimed-cleanup
+    // marker (per #2661) — it does NOT set Fiber::is_done() == true.
+    // Fiber state machine stays Ready until the body actually runs.
+
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    CHECK(h.reclaimed_deferred_cleanup,
+          "3297 AC2: reclaimed_deferred_cleanup set after Reclaimed cleanup");
+    CHECK(h.reserved_memory_bytes == 4096,
+          "3297 AC2: reservation held after Reclaimed cleanup (#2661)");
+    // Under production + body never run: counter WILL bump (same gate as
+    // AC1 -- Fiber state machine shows !is_done). Reservation released.
+    h.finish_reclaimed_cleanup_on_dtor();
+    const auto after =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    CHECK(after == before + 1,
+          "3297 AC2: reclaimed_dtor_under_account_total bumps under production + body still live");
+    CHECK(h.reserved_memory_bytes == 0,
+          "3297 AC2: reservation released after dtor (no leak via unconditional release)");
+
+    apply_dev_audit_defaults();
+}
+
+static void ac3297_3_soft_zero_observability() {
+    using aura::orch::AgentHandle;
+    using aura::orch::complete_agent_join_cleanup;
+    using aura::serve::Fiber;
+    using aura::serve::JoinResult;
+    using aura::serve::JoinStatus;
+    std::println("\n--- #3297 AC3: Soft — zero behavior change / no new atomic ---");
+    // Soft posture: apply_dev_audit_defaults is the Soft toggle.
+    apply_dev_audit_defaults();
+    const auto before =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    JoinResult jr;
+    jr.status = JoinStatus::Reclaimed;
+    complete_agent_join_cleanup(h, jr);
+    h.finish_reclaimed_cleanup_on_dtor();
+
+    const auto after =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    CHECK(after == before,
+          "3297 AC3: Soft path: counter unchanged (gate production-gated; Soft zero-cost)");
+}
+
 } // namespace
 
 int run_test_join_drain_reclaim() {
@@ -3667,6 +3796,11 @@ int run_test_join_drain_reclaim() {
         set_mode(SandboxMode::Off);
         apply_dev_audit_defaults();
     }
+
+    std::println("\n=== Issue #3297: ~AgentHandle under-account observability ===");
+    ac3297_1_dtor_under_account_live_body();
+    ac3297_2_dtor_no_under_account_post_exit();
+    ac3297_3_soft_zero_observability();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

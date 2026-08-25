@@ -2337,6 +2337,24 @@ def cmd_lint():
             "Issue #3296 require_effect mid SSOT linter failed — run python3 scripts/coverage/checks/check_require_effect_mid_ssot_3296.py"
         )
         return r
+    # Issue #3297: ~AgentHandle under-account observability when the
+    # Reclaimed body is still non-yielding (long-lived C++ supervisor
+    # after production auto-wait Timeout). Additive counter
+    # reclaimed_dtor_under_account_total appended at OrchModuleStats
+    # struct END (#2906 discipline); bumped in
+    # finish_reclaimed_cleanup_on_dtor BEFORE unconditional
+    # release_reservation_if_any(). Zero behavior change; #2661 / #2009
+    # preserved. Extends test_join_drain_reclaim.
+    rdu3297_script = COVERAGE_CHECKS / "check_reclaimed_dtor_under_account_3297.py"
+    if not rdu3297_script.exists():
+        fail(f"missing {rdu3297_script}")
+        return 1
+    r = run([sys.executable, str(rdu3297_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3297 reclaimed dtor under-account linter failed — run python3 scripts/coverage/checks/check_reclaimed_dtor_under_account_3297.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
