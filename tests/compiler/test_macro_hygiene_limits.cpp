@@ -281,9 +281,16 @@ static void ac5_concurrent_process_wide() {
     std::atomic<int> seen{0};
     std::atomic<int> ok{1};
     std::thread setter([&] {
+        // Monotonic non-decreasing cap so the reader's `e <= rt` invariant
+        // is race-free: effective is computed from some rt' <= current rt,
+        // so e <= rt' <= rt always holds even when setter interleaves
+        // between the reader's two reads (5,6,7,7,7,...). The old cyclic
+        // 5,6,7,5,6,7 sequence could LOWER the cap between the reader's
+        // e-read and rt-read, spuriously failing "effective always <= runtime".
+        int cur = 5;
         for (int i = 0; i < 50; ++i) {
-            // Process-wide atomic set; reject only invalid ranges (not used here).
-            if (!set_hygiene_depth_cap(5 + (i % 3)))
+            cur = std::max(cur, 5 + (i % 3));
+            if (!set_hygiene_depth_cap(cur))
                 ok.store(0);
             std::this_thread::yield();
         }
