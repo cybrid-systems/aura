@@ -51,299 +51,13 @@ from issue_tier import (  # noqa: E402
     resolve_issue_targets,
 )
 
-# Pre-existing test failures (NOT caused by recent PRs).
-# Tracked separately from demotion-migration fallout (#1449/#1450).
-PRE_EXISTING_FAILURES: set[str] = {
-    # Constraint cache hit-rate AC drifted under current TypeChecker
-    # pipeline (misses dominate; not a surface-demotion regression).
-    "test_issue_1414",
-    # Arena compact pre-condition used() <= buffer_.size() — arena
-    # accounting bug under rebind stress (arena.ixx:525), not demotion.
-    "test_issue_1456_affected_subtree_locality",
-    # Fiber doomsday stress (200 fibers) intermittent SIGABRT/SIGSEGV.
-    "test_issue_226",
-    # Schema sentinel / SLO fixed-point drift under load (not demotion).
-    "test_issue_774",
-    "test_issue_776",
-    # consteval check count / tag_arity compact ACs.
-    "test_cpp26_contracts_hotpath_arena_soa_value_shape_pass",
-    "test_issue_490",
-    # late1/late5 members with pre-existing flakes.
-    "test_issue_218",
-    "test_issue_479",
-    # Minor AC flakes in long-standing jit-bundle members (cow-refused
-    # counter, concurrency fuzzer thresholds, per-block cascade edge,
-    # arena defrag flag) — not demotion-related.
-    "test_issue_141",
-    "test_issue_189",
-    "test_issue_196",
-    "test_issue_300",
-    # #1488 hang: stats:get "arena:adaptive-stats" hot loop never
-    # finishes on current main (verified with clean tree + 20s timeout).
-    # Not caused by #1482 env dual-path restore; track separately.
-    "test_issue_1488",
-    # #224 cascade dirty-block count AC drift (expects 2, unrelated to
-    # Env dual-path / bind_symid mirror restore).
-    "test_issue_224",
-    # Bundle-level flakes whose failing members are above, or AOT
-    # dlopen races under parallel load (/tmp/*.so gone).
-    "test_issues_jit_tests",
-    "test_issues_jit_late1",
-    "test_issues_jit_late3",
-    "test_issues_jit_late4",
-    "test_issues_jit_late5",
-    "test_issues_jit",
-    # Process-wide value-dispatch counters accumulate across tests /
-    # prior CompilerService instances (expected 0 on "fresh" fails).
-    "test_issue_723",
-    # panic-restore revalidate hits under guard/steal (EnvFrame dual-epoch
-    # path); not demotion-related.
-    "test_linear_ownership_postmutate_guard_steal_envframe",
-    # Mutation boundary / hygiene / coercion surface drift on main.
-    "test_issue_1489",
-    "test_issue_1637",
-    "test_issue_1644_ir_hygiene",
-    "test_issue_1954",
-    "test_issue_309",
-    # Arena defrag / safepoint registration gaps under EXCLUDE_FROM_ALL
-    # core pilots (g_arena_safepoint_check null).
-    "test_arena_batch",
-    "test_arena_defrag_concurrent",
-    # Compact family pilot: residual AC drift (defrag-requested?
-    # without safepoint, panic restore soft path). Wave 58+ soft smokes
-    # stay green; mark pre-existing so leftover EXCLUDE_FROM_ALL binary
-    # does not fail CI when residual CHECKs flake under parallel load.
-    "test_compact_batch",
-    # Long-running / timeout under parallel issue load.
-    "test_issue_1555",
-    # ── Full-tier AC drift / flakes (2026-07-31 CI, main build-test) ──
-    # After production security + pipeline strict defaults, these remain
-    # red under AURA_SANDBOX=off on selective local runs (schema lineage
-    # drift, docs/design removal, reemit/storm counters, AOT dlopen races
-    # under jobs=4). Track as pre-existing so full-tier CI is not red
-    # forever; individual ACs still fail visibly with ⚠. Follow-ups:
-    # rebaseline schema sentinels, re-enable docs soft-cites, fix reemit
-    # / storm isolation under parallel load.
-    # test_aot_incremental_reemit greened: remount env_gen 0=unstamped,
-    # call-time stale_deopt informational when no native fn.
-    "test_blame_complete_commit_gate",
-    "test_coercion_ban_weak_ir",
-    "test_coercion_provenance_miss_force_audit",
-    "test_coercion_reject_production_defaults",
-    "test_composite_txn_commit",
-    # test_dead_coercion_pipeline_wire: schema lineage rebaselined to 2130
-    # test_isolation_stamp_resolve greened inside test_aot_jit_stamp_batch
-    "test_lifetime_pin_batch_ffi_present_2048",
-    # test_linear_ownership_batch greened: skip Linear AST walk
-    # (children span OOB); 1596/1659 + wave smokes stay live.
-    # test_mutate_capability_force greened inside fold batch
-    # test_mutation_aot_unit_batch greened: Version auto-retry off for
-    # #2012 mismatch rollback AC (retry_version=0 was committing the .so).
-    # test_mutation_typed_audit_batch greened: mid=0 trail skip + locality Soft.
-    # test_partial_relower_cascade greened inside test_aot_jit_stamp_batch
-    "test_production_security_defaults",
-    # test_query_epoch_contract: docs soft-skip when file absent
-    "test_reemit_production_default_defer",
-    "test_reemit_production_default_defer_v2",
-    "test_render_agent_closedloop_2051",
-    # test_rollback_by_marker greened inside fold batch
-    "test_security_audit_unify",
-    "test_security_event_wal_replay",
-    "test_solve_delta_unresolved_export",
-    # test_storm_isolation greened inside test_shape_soa_storm_batch
-    # test_concurrent is discovered as a ninja target by the issues
-    # runner (name starts with test_) but is a multi-minute stress
-    # binary with a 60s default timeout → rc=124 under jobs=4.
-    # ── Full-tier flakes / crashers (2026-08-01 CI after #2521–#2526) ──
-    # Parallel-load races or typechecker UAF on mutate stress — not demotion.
-    # test_mutation_occurrence_dirty_batch: peek + query-hook cite greened
-    "test_fiber_native_keepalive",  # intermittent SIGSEGV/SIGBUS under jobs>1
-    "test_residual_gc_defer_assert",  # process-wide MutationHold race under parallel
-    # test_arena_compact_hook_concurrent: solo green; parallel flake → serial recovery
-    "test_concurrent",
-    # ── Full-tier flakes / crashers (2026-08-03 CI after #2573) ──
-    # 43 additional tests surfaced as CI-gating after the
-    # WorkerThread::stop() lost-wakeup fix (#2573) flipped test_concurrent
-    # behavior. Verified pre-existing: parent commit 4376f3cf reproduces
-    # the same test_pair_slot_lock malloc corruption, so these are
-    # long-standing full-tier flakes unrelated to #2573. Track so the
-    # issues suite stops gating CI on them; individual ACs remain visible
-    # with ⚠ markers. Categories:
-    #   - heap/UAF under mutate+parallel (test_pair_slot_lock malloc corruption)
-    #   - agent/orch scope races (test_agent_ask SIGSEGV)
-    #   - spec/doc rebaseline (batch 1 greened: stdlib/synthesize/core-builtins/
-    #     query-namespace/ast-workspace + static-reflect SlimSurface)
-    #   - type/coercion/constraint surface drift (rest)
-    # Follow-ups: rebaseline specs, fix malloc corruption under mutate
-    # stress, address SIGSEGV in agent_ask.
-    "test_adt_exhaustiveness_audit",
-    # test_agent_ask / test_agent_failure_policy greened inside orch_agent_batch
-    "test_agent_scope",
-    # test_audit_wal_force_multi_tenant greened inside fold batch
-    "test_boundary_yield_steal_metrics",
-    "test_cascade_incremental_pass_suite",
-    "test_chaos_fiber_mutation_gc_mailbox",
-    "test_contracts",
-    "test_dead_coercion_pipeline_wire",
-    "test_depth_safe_mutation_boundary_steal",
-    # test_dirty_aware_shape_linear_passes greened inside shape_soa_storm_batch
-    "test_hotpath_matrix_batch",
-    # test_instr_level_relower_pass / test_layout_stamp greened inside
-    # test_aot_jit_stamp_batch
-    # test_isolation_audit_mid greened inside fold batch
-    "test_join_drain_reclaim",
-    "test_mailbox_bp_admit",
-    "test_moving_compact",
-    "test_mutation_safety_snapshot_steal",
-    "test_pair_slot_lock",
-    # test_parallel_intend_pure_contract greened inside orch_agent_batch
-    # test_partial_relower_storm_gate greened inside test_aot_jit_stamp_batch
-    # test_query_and_replace_batch / test_query_epoch_contract greened
-    # inside test_module_query_batch
-    "test_root_remap_pin_contract_unified",
-    "test_safepoint_mutation",
-    # test_soa_dirty_aware_pipeline greened inside shape_soa_storm_batch
-    # test_ast_concurrency: solo 232/0; parallel flake → serial recovery
-    # test_macro_hygiene_limits: clone_macro_body depth_limit
-    # check trips on hard MAX_HYGIENE_DEPTH=1024 runtime_cap=3 — pre-existing
-    # AC drift, same wave.
-    "test_macro_hygiene_limits",
-    # ── Full-tier newly-buildable flakes (2026-08-03 after compile unlock) ──
-    # A wave of issue tests that previously failed to compile (missing
-    # usings / noexcept mismatch / wrong namespaces / ASTRena typo / etc.)
-    # now link. Runtime ACs still fail or SIGSEGV under full-tier load —
-    # not caused by the #2339 production-surface / aot_metrics compile
-    # fixes that unlocked them. Track as pre-existing so issues suite
-    # stops gating CI; ACs remain visible with ⚠. Follow-ups: rebaseline
-    # ACs, fix exit-path teardown crashers, fix schema query keys.
-    # test_agent_apply_mutex / test_agent_max_no_yield greened inside orch_agent_batch
-    # test_aot_hot_update_health greened inside test_aot_jit_stamp_batch
-    "test_arena_auto_compact_intelligent",
-    "test_atomic_batch_rollback_fiber_task1",
-    "test_capability_audit_publish",
-    "test_capability_unified",
-    "test_coercion_provenance_fast_strict",
-    "test_compiler_closure_env_safety_post_invalidate",
-    "test_densify_ownership_scan_fail_gate",
-    "test_dispatch_required_effects",
-    # test_exhausted_min_dirty_reemit greened inside test_aot_jit_stamp_batch
-    # test_fiber_orch_core_batch greened (112/0): skip extra Scheduler
-    # + later orch/spawn after mailbox AC7 (scheduler UAF).
-    # test_fiber_orch_parallel_quota_batch greened (104/0): skip AC4b
-    # soak + quota/join-timeout after stress AC2–AC4.
-    "test_force_compact_hard_mutex",
-    # test_force_jit_repromote greened inside test_ir_closure_jit_misc_batch
-    "test_grant_epoch_fiber_bind",
-    "test_grant_epoch_retain_window",
-    "test_incremental_perblock_closure_bridge_safety",
-    "test_issue_1990",
-    "test_issue_1993",
-    # test_live_closure_full_restamp greened inside test_aot_jit_stamp_batch
-    "test_lock_order_audit",
-    "test_join_drain_timeout",
-    "test_orch_agent_mutation_boundary",
-    "test_orch_soft_boundary_unified",
-    # test_orch_scope / test_per_scope_bp_admit greened inside orch_agent_batch
-    # test_reemit_mutation_boundary_handshake / reload_recovery /
-    # shape_storm_partial_relower / specjit_per_eval_storm_isolation /
-    # specjit_pereval_storm_e2e greened inside test_aot_jit_stamp_batch
-    "test_refinement_closed_loop",
-    "test_require_effect_live_mid",
-    "test_stable_ref_tenant_mandate",
-    "test_stats_module_unification",
-    "test_steal_complete_gc_defer",
-    "test_stable_ref_provenance_fiber_cow",
-    "test_atomic_batch_rollback_closed_loop",
-    "test_issue_1991",
-    # test_parallel_intend_pure greened inside orch_agent_batch
-    # ── Full-tier AC drift / crashers (2026-08-16 build-test after #3085) ──
-    # After HotUpdateRegistry DT_NEEDED + ownership-escape hash 64→128,
-    # these still fail as member AC drift, hygiene-pass-limit rc=1, or
-    # SIGSEGV under jobs=4. Same class as the 2026-08-03 wave: not caused
-    # by the load-time singleton / hash overflow. Track so issues suite
-    # stops gating CI; ACs remain visible with ⚠.
-    # Batch 3 greened: test_obs_misc_batch + test_production_hardening_batch
-    # (schema href via engine:metrics, source-cite type_stats, #2835
-    # Restricted multi-tenant, #2985 production-face admit).
-    # Batch 3 leftover greened: test_incremental_typed_selfmod_dirty_narrowing
-    # (mutate:rebind if/number? occurrence path; evaluate → eval).
-    # occurrence_coercion_batch greened: comment-aware source-cite,
-    # typecheck-current skip workspace re-lock under MutationBoundary (#3082),
-    # leftover SLO / evidence-loss reset between members.
-    # Batch 4 (rc=1 / 0-AC-fail class): greened test_macro_hygiene_batch
-    # (live rest-stamp) + test_stable_ref_validate_batch (restamp :node).
-    # Batch 5 crash/race: greened test_arena_compact_hook_concurrent +
-    # test_ast_concurrency (solo) + test_linear_misc_batch (face reset +
-    # light-link C epoch). fiber_orch_* / linear_ownership / mutation_hold
-    # greened this wave (skip leftover Scheduler / Linear AST walk /
-    # empty-log deref).
-    # Batch 6 reemit/storm: greened test_shape_soa_storm_batch (14/0).
-    # test_reemit_production_default_defer_v2 still not compile-fixed.
-    # test_epoch_invariant_misc_batch greened (4/0): count_behind no
-    # longer stubbed; inject + walk + fuse ACs follow physical clear.
-    # test_ir_closure_jit_misc_batch + test_module_query_batch greened
-    # (light-link residual tick; query-and-replace #t / pair-error).
-    # test_jit_macro_introduced_preserve greened: preserved-total cite
-    # via aura_query_prims_source (lifecycle TU).
-    # test_misc_issue_fold_batch greened (27/0): reset_member_face
-    # between members; query cites / eval-no-side-effects rebaselined.
-    # test_mutation_hold_boundary_batch greened (21/0): empty-log
-    # guard; hook stub + query cites / nested-depth leftover.
-    # test_orch_agent_batch greened (16/0): AURA_AGENT_MAX_NO_YIELD_MS=0
-    # + #3015/#3147 process-bucket rebaseline.
-    # test_security_capability_batch greened: grant-prov / source-cite
-    # rebase + skip leftover isolation/WAL/durable AC members.
-    # ── Full-tier leftover ACs / parallel flakes (2026-08-17 compile-unblock) ──
-    # Newly-built 3095/3096/3097: production-only helpers + schema lineage
-    # drift. Batches that finish 0-AC-fail then rc=1 / SIGBUS under jobs=4
-    # (mailbox / hygiene / aot stamp / ir-closure / engine-metrics).
-    # 3108 source-cite + rollback counter leftover stay visible with ⚠.
-    # test_issue_3095 greened: hygiene-checkpoint-stats hash cap 16→64.
-    # test_issue_3096 greened: C++ HotUpdateRegistry observe (light-link
-    # weak C ABI stub no longer shadows) + apply_production_audit_defaults.
-    "test_engine_metrics_facade",
-    "test_fiber_orch_core_batch",
-    # test_hygiene_mutate_closed_loop greened with #3095 schema hash cap.
-    # test_aot_jit_stamp_batch greened: per-member fork isolation of light-link SIGBUS.
-    # test_ir_closure_jit_misc_batch greened: isolate + skip leftover AC-fail members.
-    "test_macro_hygiene_batch",
-    # test_mailbox_fiber_batch greened (9/0): isolate residual-gc SIGABRT,
-    # hold-starvation Soft happy path, join-drain auto-wait gated on
-    # production_reclaimed_must_wait.
-    "test_mutation_rollback_coverage",
-    # test_occurrence_coercion_batch greened: drain latches pre-#3169 residual;
-    # #3189/#3108/#3190 source-cites rebaselined.
-    # Unregistered stale binaries (no cmake target): leftover heap crash
-    # (free(): invalid pointer) + annotation-counter AC drift. Source still
-    # exists for coverage linters; do not rediscover as NEW CI failures.
-    "test_bidirectional_annotation",
-    "test_bidirectional_stats",
-    # test_serve_legacy_issue_batch greened: spawn_quota !f release cite.
-    # test_aot_jit_stamp_batch greened (26/0): PerEval TLS no longer
-    # stubbed in first DSO; #2606 filter walks all eval maps; remount
-    # / exhaust ACs rebaselined to current production.
-    # test_shape_soa_storm_batch greened: PerEval default (#2683), region
-    # pump trips on first-window n>=threshold, Global pump uses process window.
-    # ── Full-tier leftovers (2026-08-18 after aura compile-unblock) ──
-    # #3128 source-cites (recovery counter lives in densify_consistency_report.h)
-    # still fail inside the densify batch; member ACs remain visible with ⚠.
-    # test_densify_pin_batch / test_moving_densify_fail_closed greened:
-    # #3128 recovery counters live in densify_consistency_report.h.
-    # Arena compact batch: g_arena_safepoint_check null (same class as
-    # test_arena_batch / test_arena_defrag_concurrent).
-    "test_gc_compact_batch",
-    # Latent AC / crash leftovers unlocked once the issue matrix compiled:
-    # SoA query:find lock cite, IntVal field name, restamp mask, record-patch
-    # substr OOB, lock-order canary, tenant grant heap-corruption, orch rc=1
-    # with 0 member AC fails. Not caused by the header compile-unblock.
-    # test_flatast_atomic_lock_batch greened: query:find SoA lock cite
-    # window from ["query:find"] impl, not an earlier comment.
-    # test_replace_value_audit_consistency greened: #2793 window widened.
-    # test_scalar_mutate_record_patch_hygiene greened: record-patch
-    # add_mutate split-line + last_hygiene_blame_node query key.
-    "test_hot_update_relower_success_coverage",
-    "test_tenant_isolation_enforcement",
-}
+# No pre-existing failures allowed (2026-08-25): every issue binary must
+# pass; any failure fails CI. The historical PRE_EXISTING_FAILURES list was
+# cleared — entries were either dead (no CMake target / absorbed into
+# src-aligned batches, so the runner never executes them) or fixed
+# (test_macro_hygiene_batch AC5 race; test_concurrent/test_contracts are in
+# _ISSUE_DISCOVERY_SKIP; test_lock_order_audit is
+# test_lock_order_audit_batch in CMake).
 
 _print_lock = Lock()
 
@@ -751,14 +465,10 @@ def _print_result(
     failed: int,
     rc: int,
     err: str,
-    *,
-    pre_existing: bool,
 ) -> None:
     with _print_lock:
         if rc == 0 and failed == 0:
             print(f"  {G}✓{N} {b} ({passed} passed)")
-        elif pre_existing:
-            print(f"  {Y}⚠{N} {b} ({passed} passed, {failed} failed, rc={rc}) [pre-existing]")
         else:
             print(f"  {R}✗{N} {b} ({passed} passed, {failed} failed, rc={rc})")
             if err:
@@ -773,40 +483,25 @@ def _classify_result(
     err: str,
     *,
     failures: list,
-    pre_existing_failures: list,
 ) -> None:
-    """Append to failures or pre_existing_failures and print."""
-    pre_members: list[str] = []
-    blob = (err or "") + "\n"
-    if "crashed during bundle member " in blob:
-        pre_members.append(blob.split("crashed during bundle member ", 1)[1].split()[0])
-    import re as _re
-
-    for m in _re.finditer(r"bundle member (test_[\w]+) (?:failed|crashed)", blob):
-        pre_members.append(m.group(1))
-    only_pre_members = bool(pre_members) and all(m in PRE_EXISTING_FAILURES for m in pre_members)
-    pre = b in PRE_EXISTING_FAILURES or only_pre_members
-    if pre and (rc != 0 or failed > 0):
-        pre_existing_failures.append((b, passed, failed, rc, err))
-        _print_result(b, passed, failed, rc, err, pre_existing=True)
-    elif rc == 0 and failed == 0:
-        _print_result(b, passed, failed, rc, err, pre_existing=False)
+    """Append to failures and print. Any non-zero result fails CI."""
+    if rc == 0 and failed == 0:
+        _print_result(b, passed, failed, rc, err)
     else:
         failures.append((b, passed, failed, rc, err))
-        _print_result(b, passed, failed, rc, err, pre_existing=False)
+        _print_result(b, passed, failed, rc, err)
 
 
-def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, int, list, list, list]:
+def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, int, list, list]:
     """Run binaries with a thread pool + serial recovery pass for crashers.
 
     Phase 1: parallel (jobs). Phase 2: any crash/signal/rc=127 failures are
-    rebuilt and re-run serially — catches load-induced flakes without
-    PRE_EXISTING waivers. Only phase-2 residual failures gate CI.
+    rebuilt and re-run serially — catches load-induced flakes. Only phase-2
+    residual failures gate CI; there are no pre-existing waivers.
     """
     total_passed = 0
     total_failed = 0
     failures: list[tuple] = []
-    pre_existing_failures: list[tuple] = []
     skipped: list[str] = []
 
     runnable = []
@@ -819,7 +514,7 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
             print(f"  {Y}⊘{N} {b} (not built, no source)")
 
     if not runnable:
-        return total_passed, total_failed, failures, pre_existing_failures, skipped
+        return total_passed, total_failed, failures, skipped
 
     # Phase 0: bulk refresh when a modest number of bins are SO-stale.
     # Large skew (local half-rebuilt trees) rebuilds on-demand in run_one
@@ -860,13 +555,11 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
             b, passed, failed, rc, err = fut.result()
             phase1[b] = (passed, failed, rc, err)
 
-    # Phase 2: serial recovery for any non-PRE failure from phase 1.
+    # Phase 2: serial recovery for any failure from phase 1.
     # Crash/timeout/symbol get a rebuild first; pure AC (rc=1) get a clean
     # solo re-run (rules out /tmp collisions and parallel resource pressure).
     recovery: list[str] = []
     for b, (_passed, failed, rc, _err) in phase1.items():
-        if b in PRE_EXISTING_FAILURES:
-            continue
         if rc != 0 or failed > 0:
             recovery.append(b)
 
@@ -906,10 +599,9 @@ def run_bins_parallel(bins: list[str], jobs: int, timeout: int) -> tuple[int, in
             rc,
             err,
             failures=failures,
-            pre_existing_failures=pre_existing_failures,
         )
 
-    return total_passed, total_failed, failures, pre_existing_failures, skipped
+    return total_passed, total_failed, failures, skipped
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1006,7 +698,7 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"{B}═══ Running {len(bins)} test_issue_* binaries (tier={tier}, jobs={jobs}) ═══{N}\n")
     t0 = time.time()
-    total_passed, total_failed, failures, pre_existing_failures, skipped = run_bins_parallel(bins, jobs, args.timeout)
+    total_passed, total_failed, failures, skipped = run_bins_parallel(bins, jobs, args.timeout)
     elapsed = time.time() - t0
 
     print(f"\n{B}════════════════════════════════════════{N}")
@@ -1014,20 +706,15 @@ def main(argv: list[str] | None = None) -> int:
         f"Tests: {G}{len(bins) - len(failures) - len(skipped)}{N} ran, "
         f"{G}{total_passed} passed{N}, "
         f"{R}{total_failed} failed{N}, "
-        f"{Y}{len(skipped)} skipped{N}, "
-        f"{Y}{len(pre_existing_failures)} pre-existing{N}"
+        f"{Y}{len(skipped)} skipped{N}"
     )
     print(f"Time: {elapsed:.1f}s (tier={tier}, jobs={jobs})")
     if failures:
-        print(f"\n{R}NEW Failures (will fail CI):{N}")
+        print(f"\n{R}Failures (will fail CI):{N}")
         for b, p, f, rc, err in failures:
             print(f"  - {b}: rc={rc}, {p} passed, {f} failed")
             if err:
                 print(f"      {err[:200]}")
-    if pre_existing_failures:
-        print(f"\n{Y}Pre-existing Failures (NOT failing CI, tracked separately):{N}")
-        for b, p, f, rc, _err in pre_existing_failures:
-            print(f"  - {b}: rc={rc}, {p} passed, {f} failed")
     if args.json:
         # Issue #886: machine-readable summary for CI dashboards.
         import json
@@ -1041,7 +728,6 @@ def main(argv: list[str] | None = None) -> int:
             "passed": total_passed,
             "failed": total_failed,
             "skipped": len(skipped),
-            "pre_existing": len(pre_existing_failures),
             "failures": [{"binary": b, "passed": p, "failed": f, "rc": rc} for b, p, f, rc, _ in failures],
         }
         print(json.dumps(report, indent=2))
