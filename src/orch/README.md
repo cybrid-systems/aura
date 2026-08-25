@@ -30,6 +30,15 @@ AST/mutate safety is preserved across fibers. The batch hash carries `eval-seria
   :timeout-ms 5000)
 ```
 
+**Multi-agent mutate batches MUST supply `:region-keys`** (#3299, #2886
+recommended path). Production `!pure` batches with < 2 distinct non-zero
+`region_key`s stay **Serialized** on the shared `eval_mu` — real throughput
+is host-discipline-dependent. The batch hash always projects
+`isolation-level` + `region-key-missing-serialized` +
+`serialized-reason=missing-or-overlap-keys` so a missing-keys condition is
+observable; `AURA_PARALLEL_REQUIRE_REGION_KEYS=1` turns it into a
+structured deny (`status=invalid`, default off).
+
 - Per-task `region_key` is stamped into TLS for the task body.
 - When region concurrency is enabled, `MutationBoundaryGuard::try_acquire`
   redirects to `try_acquire_for_region` so **disjoint** keys admit concurrent
