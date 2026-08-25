@@ -72,7 +72,6 @@ class RunReport:
     passed: int = 0
     failed: int = 0
     skipped: int = 0
-    pre_existing: int = 0
     elapsed_s: float = 0.0
     exit_code: int = 0
     extra: dict[str, Any] = field(default_factory=dict)
@@ -84,11 +83,7 @@ class RunReport:
     def print_human(self) -> None:
         status = f"{G}PASS{N}" if self.ok else f"{R}FAIL{N}"
         print(f"\n{B}── {self.category} ──{N} {status}")
-        print(
-            f"  passed={self.passed} failed={self.failed} "
-            f"skipped={self.skipped} pre_existing={self.pre_existing} "
-            f"time={self.elapsed_s:.1f}s"
-        )
+        print(f"  passed={self.passed} failed={self.failed} skipped={self.skipped} time={self.elapsed_s:.1f}s")
         if self.extra:
             for k, v in self.extra.items():
                 print(f"  {k}={v}")
