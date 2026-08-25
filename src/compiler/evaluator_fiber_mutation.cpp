@@ -3061,6 +3061,28 @@ extern "C" void aura_fiber_install_tenant_scope_for_resume(void* fiber_ptr) noex
     const auto mode = static_cast<std::uint8_t>(ev->effect_sandbox_mode());
     if (mode == 0)
         return;
+    // Issue #3320 AC1: steal/migration resume must not observe residual
+    // session grants (or a stale principal) before the first effect gate.
+    // A fiber stolen while holding live session_bound grants can resume on
+    // a different Evaluator host before the original outermost dtor /
+    // steal-abort revoke completed. If this resume carries the steal Ok
+    // marker (resume safety ticket — stamped only by
+    // steal_safety_transaction on its Ok path) and the fiber still holds a
+    // live session mid, take the capability lock and revoke now
+    // (idempotent: a steal-complete that already ran is a no-op, AC3;
+    // zero-cost when session_mid==0 or no live grants under Soft, AC4).
+    if (f->has_resume_safety_ticket() && f->session_mid() != 0) {
+        const auto resume_mid = f->session_mid();
+        auto& reg = ::aura::core::capability::g_capability_registry();
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        (void)::aura::core::capability::revoke_session_grants_on_steal_or_abort_locked(
+            resume_mid, /*steal=*/true, static_cast<std::uint32_t>(f->id()));
+        f->clear_session_mid();
+        if (aura::compiler::g_mutation_hold_live_session_mid.load(std::memory_order_acquire) ==
+            resume_mid) {
+            aura::compiler::g_mutation_hold_live_session_mid.store(0, std::memory_order_release);
+        }
+    }
     // Mismatch detection: if the worker's ambient principal diverges
     // from the fiber's stamped tenant, bump the metric. The Scope
     // install itself still proceeds (mandate re-bind entry contract) —
