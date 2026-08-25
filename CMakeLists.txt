@@ -2980,6 +2980,7 @@ add_executable(test_security_capability_batch
     tests/compiler/test_side_effect_security_gate_hardfail.cpp
     tests/compiler/test_sandbox_mode_authority.cpp
     tests/compiler/test_tenant_scope_fiber_mandate.cpp
+    tests/compiler/test_typed_summary_full_gate.cpp
     tests/core/test_capability_audit_publish.cpp
     tests/core/test_capability_effect_stats_snapshot.cpp
     tests/core/test_capability_registry_snapshot.cpp
