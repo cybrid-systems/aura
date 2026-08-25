@@ -62,6 +62,7 @@ extern int run_test_security_schedule_mutate_admit();
 extern int run_test_side_effect_inherit();
 extern int run_test_side_effect_security_gate_hardfail();
 extern int run_test_tenant_scope_fiber_mandate();
+extern int run_test_typed_summary_full_gate();
 extern int run_test_capability_audit_publish();
 extern int run_test_capability_effect_stats_snapshot();
 extern int run_test_capability_registry_snapshot();
@@ -406,6 +407,18 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_restricted_unset_principal ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_typed_summary_full_gate ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_typed_summary_full_gate() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_typed_summary_full_gate ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_typed_summary_full_gate ({} checks)", g_passed);
     }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,

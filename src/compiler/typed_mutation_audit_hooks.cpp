@@ -30,11 +30,14 @@ namespace aura::compiler::typed_audit {
 
 void maybe_persist_typed_summary(const TypedMutationAuditEvent& ev) noexcept {
     // Issue #3242: production + mutation WAL → compact typed summary.
-    // Soft / WAL-off: two loads, no fwrite. mid=0 already dropped by
-    // capture_audit_event_forced (no invented Success summary).
+    // Issue #3298: gate must match the Full hard face — Full-only / embed /
+    // never-apply-production-defaults deployments audit fully in-memory but
+    // would never persist the sidecar (trail wrap loses "what changed").
+    // Soft / Sampled / WAL-off: two loads, no fwrite. mid=0 already dropped
+    // by capture_audit_event_forced (no invented Success summary).
     if (ev.mutation_id == 0)
         return;
-    if (!production_defaults_active())
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return;
     auto& wal = ::aura::core::audit_wal::g_mutation_audit_wal();
     if (!wal.is_enabled())

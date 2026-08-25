@@ -71,9 +71,13 @@ def main() -> int:
         'insert_kv("schema-3284", 3284)' in src and 'insert_kv("issue-3284", 3284)' in src,
         "G5: schema-3284 + issue-3284 sentinels additive",
     )
+    # Issue #3298: durable read-back gate aligned to the Full hard face —
+    # production_defaults_active() || get_strategy() == AuditStrategy::Full.
+    # Soft / Sampled (non-production, non-Full) still skip disk I/O (AC3).
     must(
-        "if (want_durable && join_mid != 0 && production_defaults_active())" in src,
-        "G6: durable WAL path still gated (AC3 zero disk I/O)",
+        "want_durable && join_mid != 0" in src
+        and "production_defaults_active() || get_strategy() == AuditStrategy::Full" in src,
+        "G6: durable WAL path gated on production/Full (AC3 zero disk I/O for Soft)",
     )
     must(
         "ac8_3284_se_mid_miss" in test and "Issue #3284" in test,

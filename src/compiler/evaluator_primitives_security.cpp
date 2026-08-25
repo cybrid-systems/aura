@@ -4669,6 +4669,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:security-audit", [&ev](std::span<const EvalValue> a) -> EvalValue {
             using aura::compiler::typed_audit::AuditOutcome;
+            using aura::compiler::typed_audit::AuditStrategy;
+            using aura::compiler::typed_audit::get_strategy;
             using aura::compiler::typed_audit::kTypedMutationAuditTrailSize;
             using aura::compiler::typed_audit::MutationKind;
             using aura::compiler::typed_audit::production_defaults_active;
@@ -4800,8 +4802,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 int typed_summary_from_wal = 0;
                 const char* typed_outcome_wal = "-";
                 const char* typed_kind_wal = "-";
-                if (typed_miss && production_defaults_active() &&
-                    g_mutation_audit_wal().is_enabled()) {
+                // Issue #3298: gate matches the Full hard face — Full-only /
+                // embed deployments (strategy=Full, production_defaults=0)
+                // must also recover the sidecar on typed miss.
+                const bool summary_scan_ok =
+                    production_defaults_active() || get_strategy() == AuditStrategy::Full;
+                if (typed_miss && summary_scan_ok && g_mutation_audit_wal().is_enabled()) {
                     if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
                             e.mutation_id, 2)) {
                         typed_summary_from_wal = 1;
@@ -5414,6 +5420,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
     ObservabilityPrims::register_stats_impl(
         "query:evolution-audit-decision", [&ev](const auto& args) -> EvalValue {
             using aura::compiler::typed_audit::AuditOutcome;
+            using aura::compiler::typed_audit::AuditStrategy;
             using aura::compiler::typed_audit::commit_readiness;
             using aura::compiler::typed_audit::commit_readiness_live_policy;
             using aura::compiler::typed_audit::g_last_stamped_audit_mid;
@@ -5651,7 +5658,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         want_durable = true;
                 }
             }
-            if (want_durable && join_mid != 0 && production_defaults_active()) {
+            if (want_durable && join_mid != 0 &&
+                (production_defaults_active() || get_strategy() == AuditStrategy::Full)) {
                 using ::aura::core::audit_wal::g_mutation_audit_wal;
                 using ::aura::core::security_event_wal::g_security_event_wal;
                 auto& se_wal = g_security_event_wal();
