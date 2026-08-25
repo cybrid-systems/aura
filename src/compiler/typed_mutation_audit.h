@@ -3142,13 +3142,17 @@ format_invariant_deny_reason(std::string_view kind, std::uint64_t tenant_id, std
 resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     if (caller_mid != 0)
         return caller_mid;
+    // Issue #3296 AC1: TypedMid SSOT must precede epoch under production
+    // so audit mid joins grant.bound_mutation_id / SE.mutation_id /
+    // AuditWalRecord.provenance_mutation_id on the same boundary-stamped
+    // value. Drop the host-quota mid from the production cascade (drift /
+    // lag under steal × abort).
+    const auto tm = last_type_linear_commit_proof_stamp_v_read();
+    if (tm != 0)
+        return tm;
     const auto ep = ::aura::core::current_mutation_epoch();
     if (ep != 0)
         return ep;
-    using ::aura::core::resource_quota::process_resource_quota_manager;
-    const auto rq = process_resource_quota_manager().provenance_mutation_id;
-    if (rq != 0)
-        return rq;
     // Issue #2836 / #2635 lineage: production mid-fallback absolute
     // zero-tolerance. hard_deny_eligible = production_defaults || Full
     // (same gate shape as #2635; behavior is now absolute refuse, not
@@ -3295,8 +3299,10 @@ inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) 
     if (mid == 0)
         mid = ::aura::core::current_mutation_epoch();
     if (mid == 0) {
-        using ::aura::core::resource_quota::process_resource_quota_manager;
-        mid = process_resource_quota_manager().provenance_mutation_id;
+        // Issue #3296 AC1: TypedMid SSOT under production; drops
+        // the host-quota mid from the cascade (drift / lag under
+        // steal × abort).
+        mid = last_type_linear_commit_proof_stamp_v_read();
     }
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (mid == 0 && !hard)

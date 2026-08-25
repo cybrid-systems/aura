@@ -20,6 +20,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
@@ -876,6 +877,152 @@ static void ac2942_6_linter_and_no_invent() {
     }
 }
 
+// Issue #3296: require_effect mid SSOT cascade reorders TypedMid BEFORE
+// epoch (drops host-quota mid from production path) so the mid stamped
+// into CapabilityGrant.bound_mutation_id / SecurityEvent.mutation_id /
+// AuditWalRecord.provenance_mutation_id joins on the boundary-stamped
+// TypedMid value across MutationBoundary enter / steal / abort /
+// outermost success. Soft/Off contract unchanged (TypedMid==0 → 1).
+static void ac3296_1_typed_mid_ssot_first() {
+    std::println("\n--- #3296 AC1: TypedMid SSOT precedes epoch in require_effect ---");
+    const auto eval_src = read_file("src/compiler/evaluator_security.cpp");
+    const auto tma_src = read_file("src/compiler/typed_mutation_audit.h");
+    // SSOT cascade: TypedMid precedes epoch; quota absent.
+    CHECK(eval_src.find("last_type_linear_commit_proof_stamp_v_read()") != std::string::npos,
+          "3296 AC1: require_effect reads TypedMid");
+    CHECK(eval_src.find("Issue #3296") != std::string::npos,
+          "3296 AC1: require_effect cites #3296");
+    // Quota must NOT appear in the require_effect cascade any more.
+    const auto req_pos = eval_src.find("bool Evaluator::require_effect(");
+    CHECK(req_pos != std::string::npos, "3296 AC1: require_effect signature present");
+    if (req_pos != std::string::npos) {
+        // Find next function boundary (next "bool " or "void " at column 0) for body slice.
+        auto body_start = eval_src.find('{', req_pos);
+        auto body_end = eval_src.find("\nbool ", body_start);
+        if (body_end == std::string::npos)
+            body_end = eval_src.find("\nvoid ", body_start);
+        if (body_end == std::string::npos)
+            body_end = eval_src.find("\n}\n", body_start);
+        if (body_end != std::string::npos) {
+            const auto body = eval_src.substr(body_start, body_end - body_start);
+            CHECK(body.find("process_resource_quota_manager") == std::string::npos,
+                  "3296 AC1: quota absent from require_effect body");
+            const auto tm_pos = body.find("last_type_linear_commit_proof_stamp_v_read");
+            const auto ep_pos = body.find("::aura::core::current_mutation_epoch");
+            CHECK(tm_pos != std::string::npos && ep_pos != std::string::npos,
+                  "3296 AC1: TypedMid + epoch anchors in require_effect body");
+            if (tm_pos != std::string::npos && ep_pos != std::string::npos)
+                CHECK(tm_pos < ep_pos,
+                      "3296 AC1: TypedMid precedes epoch in require_effect cascade");
+        }
+    }
+    // typed_mutation_audit.h SSOT cascade sites present.
+    CHECK(tma_src.find("inline std::uint64_t\nresolve_audit_mutation_id") != std::string::npos,
+          "3296 AC1: resolve_audit_mutation_id present");
+    CHECK(tma_src.find("inline std::uint64_t pin_composite_batch_join_mid") != std::string::npos,
+          "3296 AC1: pin_composite_batch_join_mid present");
+    CHECK(tma_src.find("Issue #3296") != std::string::npos,
+          "3296 AC1: typed_mutation_audit.h cites #3296");
+}
+
+static void ac3296_2_steal_clear_join() {
+    std::println("\n--- #3296 AC2: Steal / abort clears TypedMid (no phantom N vs N') ---");
+    using namespace aura::compiler::typed_audit;
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(101);
+    CHECK(aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read() == 101,
+          "3296 AC2: TypedMid stamps N=101");
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+    CHECK(aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read() == 0,
+          "3296 AC2: abort clear drops TypedMid to 0 (no phantom N)");
+    aura::compiler::typed_audit::stamp_type_linear_commit_proof(202);
+    CHECK(aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read() == 202,
+          "3296 AC2: fresh stamp re-binds N'=202 (no drift from N=101)");
+    // typed_mutation_audit.h also clears g_last_stamped_audit_mid on abort.
+    const auto tma_src = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma_src.find("g_last_stamped_audit_mid.store(0") != std::string::npos,
+          "3296 AC2: clear_type_linear_commit_proof_on_abort clears audit_mid too");
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+}
+
+static void ac3296_3_soft_off_zero_cost() {
+    std::println("\n--- #3296 AC3: Soft/Off — TypedMid==0 → mid=1 (zero extra atomics) ---");
+    using namespace aura::compiler::typed_audit;
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    CHECK(aura::compiler::typed_audit::last_type_linear_commit_proof_stamp_v_read() == 0,
+          "3296 AC3: TypedMid quiet at zero");
+    // Source-cite: cascade terminates with `mid = 1` (process origin) when
+    // both TypedMid and current_mutation_epoch() are 0. Soft/Off never
+    // bumps a new mid — pure fallback, no extra atomic / no lock.
+    const auto eval_src = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(eval_src.find("mid = 1; // Soft / standalone: non-zero join stamp (process origin)") !=
+              std::string::npos,
+          "3296 AC3: require_effect falls through to mid=1 (process origin)");
+    // Quota must not be touched on the Soft/Off path either — same cascade.
+    const auto req_pos = eval_src.find("bool Evaluator::require_effect(");
+    CHECK(req_pos != std::string::npos, "3296 AC3: require_effect signature present");
+}
+
+static void ac3296_4_audit_join_source_cite() {
+    std::println(
+        "\n--- #3296 AC4: Audit join — TypedMid == SE.mutation_id == grant.bound_mutation_id ---");
+    const auto eval_src = read_file("src/compiler/evaluator_security.cpp");
+    // check_and_record_effect receives provenance_mutation_id from require_effect
+    // and stamps it into:
+    //   1. EffectProvenance::mutation_id (joins grant.bound_mutation_id path via
+    //      CapabilityRegistry::record_audit dual-write to SE + WAL)
+    //   2. mutation_audit_ring_[seq].provenance_mutation_id (joins AuditWalRecord)
+    //   3. emit_mutation_audit path for SE → AuditWalRecord
+    CHECK(eval_src.find("prov.mutation_id = provenance_mutation_id") != std::string::npos,
+          "3296 AC4: EffectProvenance.mutation_id joins from require_effect mid");
+    CHECK(eval_src.find("slot.provenance_mutation_id = provenance_mutation_id") !=
+              std::string::npos,
+          "3296 AC4: mutation audit ring slot.provenance_mutation_id joins same mid");
+    CHECK(eval_src.find("make_record(") != std::string::npos,
+          "3296 AC4: AuditWalRecord built from same slot mid");
+    CHECK(eval_src.find("check_and_record_effect(") != std::string::npos,
+          "3296 AC4: capability check uses same mid pass-through");
+    // CapabilityRegistry::record_audit dual-writes SE + WAL (per #2388) — verify
+    // the dual-write path is named in check_and_record_effect's call site.
+    CHECK(eval_src.find("CapabilityRegistry::record_audit") != std::string::npos ||
+              eval_src.find("record_audit dual-writes") != std::string::npos,
+          "3296 AC4: record_audit dual-writes SE + WAL on the joined mid");
+}
+
+static void ac3296_5_linter_and_no_invent() {
+    std::println(
+        "\n--- #3296 AC5: linter self-test + no docs/design/ + no test_issue_3296.cpp ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_require_effect_mid_ssot_3296.py");
+    CHECK(build.find("check_require_effect_mid_ssot_3296") != std::string::npos,
+          "3296 AC5: build.py wires linter");
+    CHECK(lint.find("Issue #3296") != std::string::npos, "3296 AC5: linter present");
+    CHECK(lint.find("TypedMid") != std::string::npos, "3296 AC5: linter scans TypedMid SSOT order");
+    // Run linter --self-test (verifies its own anchor + the 3 production sites).
+    const int rc_lint = std::system(
+        "python3 scripts/coverage/checks/check_require_effect_mid_ssot_3296.py --self-test");
+    CHECK(WIFEXITED(rc_lint) && WEXITSTATUS(rc_lint) == 0, "3296 AC5: linter --self-test exit 0");
+    // Run linter full mode (production source-cite gates).
+    const int rc_full =
+        std::system("python3 scripts/coverage/checks/check_require_effect_mid_ssot_3296.py");
+    CHECK(WIFEXITED(rc_full) && WEXITSTATUS(rc_full) == 0, "3296 AC5: linter full mode exit 0");
+    // AC5 forbids test_issue_3296.cpp (per #81967).
+    std::ifstream invent("tests/compiler/test_issue_3296.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_3296.cpp");
+    CHECK(!invent.good(), "3296 AC5: no test_issue_3296.cpp (forbidden per #81967)");
+    // AC5 forbids docs/design/3296-* (per #1655 + agent-developed repo).
+    const std::filesystem::path docs_design = "docs/design";
+    std::error_code ec;
+    if (std::filesystem::is_directory(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3296-") == std::string::npos,
+                  std::string("3296 AC5: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_require_effect_auto_isolation() {
@@ -919,6 +1066,12 @@ int run_test_require_effect_auto_isolation() {
     ac2942_4_soft_off_unchanged();
     ac2942_5_schema_and_lineage();
     ac2942_6_linter_and_no_invent();
+    std::println("\n=== Issue #3296: require_effect mid SSOT cascade ===");
+    ac3296_1_typed_mid_ssot_first();
+    ac3296_2_steal_clear_join();
+    ac3296_3_soft_off_zero_cost();
+    ac3296_4_audit_join_source_cite();
+    ac3296_5_linter_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

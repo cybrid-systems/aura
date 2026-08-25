@@ -52,7 +52,10 @@ def main() -> int:
     manifest = _read("scripts/coverage/manifests/3143.json")
 
     # ── AC1: TypedMid first in stamp order ──────────────────────────
-    must("Issue #3143", "AC1 cite in eval_sec", eval_sec)
+    # (#3296 refines the cascade: TypedMid precedes epoch; host-quota mid
+    # no longer wins when set. AC1 cite accepts Issue #3143 OR Issue #3296.)
+    if "Issue #3143" not in eval_sec and "Issue #3296" not in eval_sec:
+        fails.append("AC1 cite in eval_sec: missing 'Issue #3143' or 'Issue #3296'")
     must("last_type_linear_commit_proof_stamp_v_read", "AC1 TypedMid reader in eval_sec", eval_sec)
     # Stamp order doc-block must mention TypedMid first.
     if "TypedMid" not in eval_sec:

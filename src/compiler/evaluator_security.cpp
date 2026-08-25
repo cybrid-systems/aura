@@ -408,22 +408,15 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
                                        /*ref_tenant=*/ref_tenant, req_bits, op))
             return false; // IsolationDeny emitted (single-count, #2388)
     }
-    std::uint64_t mid =
-        aura::core::resource_quota::process_resource_quota_manager().provenance_mutation_id;
-    // Issue #3143 AC1: TypedMid (typed_mutation_audit.h:1176
-    // `last_type_linear_commit_proof_stamp_v_read()`) is SSOT for mid in
-    // require_effect. Boundary-aware (updated on each linear commit proof
-    // stamp at MutationBoundary enter / composite commit) joins
-    // TypedMutationAudit.last_mid + SecurityEvent.mutation_id +
-    // AuditWalRecord.provenance_mutation_id + CapabilityGrant.bound_mutation_id
-    // on the same value. Falls through to current_mutation_epoch() (process-
-    // global atomic) when TypedMid == 0, then 1 (process origin) when
-    // nothing else pinned. AC3: TypedMid stamped at boundary enter uses
-    // the same epoch value as the preflight's TypedMid (or bumps to a
-    // boundary-aligned value); subsequent require_effect after boundary
-    // matches TypedMutationAudit.last_mid (no drift across enter).
-    if (mid == 0)
-        mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
+    // Issue #3296 AC1: SSOT order under Restricted/Strict is TypedMid
+    // (boundary-stamped) first, then the process-global epoch fallback,
+    // then 1 for Soft / standalone. Drop the host-quota mid from the
+    // production cascade: quota can drift / lag relative to the
+    // TypedMid that was live when the grant was issued (steal × abort
+    // × boundary enter clears quota + epoch while TypedMid remains).
+    // Soft / Off contract unchanged: TypedMid == 0 falls through to 1
+    // with zero extra atomics.
+    std::uint64_t mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
     if (mid == 0)
         mid = ::aura::core::current_mutation_epoch();
     if (mid == 0)

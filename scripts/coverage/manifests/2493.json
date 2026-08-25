@@ -17,7 +17,8 @@
       "ac": "AC2",
       "path": "src/compiler/typed_mutation_audit.h",
       "contains": [
-        "process_resource_quota_manager().provenance_mutation_id"
+        "Issue #3296",
+        "last_type_linear_commit_proof_stamp_v_read"
       ]
     },
     {
