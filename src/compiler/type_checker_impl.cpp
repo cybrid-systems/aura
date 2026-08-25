@@ -9625,6 +9625,46 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         }
     }
 
+    // Issue #3295: dirty-only re-sim can miss cross-function / closure
+    // linear flows (callee locals / closure captures outside the dirty
+    // set). Production/Full forces the full ownership walk when the
+    // escape gate or densify-pending is present; Soft observes only.
+    if (flat.root != aura::ast::NULL_NODE && flat.root < flat.size() &&
+        aura::compiler::typed_audit::linear_force_full_validate_needed()) {
+        std::vector<OwnershipNote> full_notes;
+        const bool full_pass =
+            OwnershipEnv::validate_ownership_full(flat, pool, types, flat.root, full_notes);
+        record_linear_ownership_mutation_metrics(metrics_, true, full_notes, full_pass);
+        if (metrics_) {
+            auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+            m->linear_post_mutation_full_validate_total.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (!full_pass) {
+            last_partial_linear_revalidate_fail_ = true;
+            const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
+            const auto ek = hard ? ErrorKind::TypeError : ErrorKind::Warning;
+            if (metrics_) {
+                auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+                m->linear_partial_revalidate_fail_total.fetch_add(1, std::memory_order_relaxed);
+                if (hard)
+                    m->linear_partial_revalidate_hard_fail_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
+            for (const auto& n : full_notes) {
+                diag.report(aura::diag::Diagnostic(ek, n.message, aura::diag::SourceLocation{})
+                                .with_blame(aura::diag::BlameInfo{aura::diag::BlameParty::System,
+                                                                  "", "compile"})
+                                .with_suggestion(
+                                    "fix linear ownership in the full scope (cross-function / "
+                                    "closure capture) before committing; see OwnershipNote kind=" +
+                                    n.kind));
+                if (n.node != aura::ast::NULL_NODE && n.node < flat.size()) {
+                    flat.set_node_error(n.node, static_cast<std::uint8_t>(ErrorKind::TypeError));
+                }
+            }
+        }
+    }
+
     // Issue #692: ADT DefineType + match exhaustiveness incremental
     // re-validation + pattern NarrowingRecord provenance refresh.
     {

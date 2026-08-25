@@ -1827,6 +1827,49 @@ inline constexpr int kLinearFastPathLiveMutationDensifyIssue = 3238;
     return true;
 }
 
+// Issue #3295: dirty-only OwnershipEnv re-sim in infer_flat_partial can
+// miss cross-function / closure-captured linear flows after a structural
+// mutate (callee locals / closure captures outside the dirty set).
+// Production/Full forces the full ownership walk when the escape gate or
+// densify-pending is present; Soft observes only. Quiet: no escape and no
+// densify-pending → one escape-gate load + one densify load, no bump.
+inline constexpr int kLinearForceFullValidateIssue = 3295;
+inline std::atomic<std::uint64_t> g_linear_force_full_validate_total{0};
+inline std::atomic<std::uint64_t> g_linear_force_full_validate_observe_total{0};
+inline std::atomic<std::uint32_t> g_linear_force_full_validate_wired{1};
+
+[[nodiscard]] inline std::uint64_t linear_force_full_validate_total_v_read() noexcept {
+    return g_linear_force_full_validate_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_force_full_validate_observe_total_v_read() noexcept {
+    return g_linear_force_full_validate_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_linear_force_full_validate_for_test() noexcept {
+    g_linear_force_full_validate_total.store(0, std::memory_order_relaxed);
+    g_linear_force_full_validate_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Purpose: decide whether the dirty-only re-sim must be followed by the
+// full ownership walk (validate_ownership_full) in infer_flat_partial.
+// Pre: none (relaxed loads only)
+// Post: true (hard) → caller must run the full walk; false with observe
+//       bump under Soft; false quiet (no escape / densify-pending).
+[[nodiscard]] inline bool linear_force_full_validate_needed() noexcept {
+    const bool escape_or_densify =
+        aura_escape_move_gate_active() != 0 ||
+        g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.load(
+            std::memory_order_relaxed) > 0;
+    if (!escape_or_densify)
+        return false; // quiet: no escape, no densify-pending → zero extra
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard) {
+        g_linear_force_full_validate_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    g_linear_force_full_validate_observe_total.fetch_add(1, std::memory_order_relaxed);
+    return false; // Soft observe only
+}
+
 // Purpose: single pure eligibility for Linear IR fast-path + boundary revalidate
 // Pre: none (relaxed loads only)
 // Post: true iff proof fresh, linear_ok, outermost, no escape, no densify-pending

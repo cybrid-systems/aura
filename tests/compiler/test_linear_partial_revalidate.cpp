@@ -12,6 +12,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
+#include "compiler/ownership_escape_lowering_gate.h"
 #include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
@@ -36,11 +37,13 @@ using aura::ast::NodeId;
 using aura::ast::NodeTag;
 using aura::ast::NULL_NODE;
 using aura::ast::StringPool;
+using aura::compiler::clear_escape_move_elision_gate;
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
 using aura::compiler::discover_linear_bindings_in_subtree;
 using aura::compiler::OwnershipEnv;
 using aura::compiler::OwnershipState;
+using aura::compiler::set_escape_move_elision_gate;
 using aura::compiler::TypeChecker;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
@@ -173,6 +176,106 @@ static void ac5_zero_cost_and_schema() {
           "AC5: zero-cost comment");
 }
 
+// ── Issue #3295: dirty-only re-sim must force full walk under Production ──
+// Residual of #2460/#3006: infer_flat_partial's dirty-only validate can miss
+// cross-function / closure-captured linear flows when the dirty set omits
+// callee locals. Production/Full forces validate_ownership_full when the
+// escape gate or densify-pending is present; Soft observes only.
+static void ac3295_1_production_escape_forces_full() {
+    std::println("\n--- #3295 AC1: Production + escape → force full validate ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    reset_linear_force_full_validate_for_test();
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    CHECK(kLinearForceFullValidateIssue == 3295, "3295 AC1: issue stamp");
+    // Quiet: no escape, no densify → false, no bump.
+    CHECK(!linear_force_full_validate_needed(), "3295 AC1: quiet no force");
+    CHECK(linear_force_full_validate_total_v_read() == 0, "3295 AC1: quiet no bump");
+    // Escape gate active under Production → force full walk.
+    set_escape_move_elision_gate(true, {"x"});
+    CHECK(linear_force_full_validate_needed(),
+          "ac3295_1_production_escape_forces_full: force full under escape");
+    CHECK(linear_force_full_validate_total_v_read() == 1, "3295 AC1: total bump");
+    clear_escape_move_elision_gate();
+    // Densify-pending also forces.
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        1, std::memory_order_relaxed);
+    CHECK(linear_force_full_validate_needed(), "3295 AC1: densify forces full");
+    CHECK(linear_force_full_validate_total_v_read() == 2, "3295 AC1: densify bump");
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+
+    // Source-cite: infer_flat_partial wires the full walk after dirty-only.
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("linear_force_full_validate_needed") != std::string::npos,
+          "3295 AC1: impl calls helper");
+    CHECK(tci.find("validate_ownership_full") != std::string::npos,
+          "3295 AC1: impl runs full walk");
+    CHECK(tci.find("Issue #3295") != std::string::npos, "3295 AC1: cites #3295");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_linear_force_full_validate_for_test();
+    clear_escape_move_elision_gate();
+}
+
+static void ac3295_2_soft_observe_only() {
+    std::println("\n--- #3295 AC2: Soft observe-only; quiet zero extra ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    reset_linear_force_full_validate_for_test();
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    apply_dev_audit_defaults();
+    // Soft + escape → observe bump only, no force.
+    set_escape_move_elision_gate(true, {"y"});
+    CHECK(!linear_force_full_validate_needed(), "ac3295_2_soft_observe_only: Soft no force");
+    CHECK(linear_force_full_validate_total_v_read() == 0, "3295 AC2: no total bump");
+    CHECK(linear_force_full_validate_observe_total_v_read() == 1, "3295 AC2: observe bump");
+    clear_escape_move_elision_gate();
+    // Quiet → no bump at all.
+    CHECK(!linear_force_full_validate_needed(), "3295 AC2: quiet false");
+    CHECK(linear_force_full_validate_observe_total_v_read() == 1,
+          "3295 AC2: quiet no observe bump");
+    reset_linear_force_full_validate_for_test();
+}
+
+static void ac3295_3_lineage() {
+    std::println("\n--- #3295 AC3: lineage #2460/#3006/#2964 ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tci.find("Issue #2460") != std::string::npos, "3295 AC3: #2460 retained");
+    CHECK(aud.find("kLinearFastPathDirtyRevalidateIssue") != std::string::npos,
+          "3295 AC3: #3006 retained");
+    CHECK(aud.find("linear_fast_path_ok") != std::string::npos, "3295 AC3: #2964 retained");
+    CHECK(aud.find("aura_escape_move_gate_active") != std::string::npos,
+          "3295 AC3: escape gate retained");
+}
+
+static void ac3295_4_source_linter() {
+    std::println("\n--- #3295 AC4: source-cite + linter + no invent ---");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_linear_force_full_validate_3295.py");
+    const auto build = read_file("build.py");
+    CHECK(aud.find("kLinearForceFullValidateIssue = 3295") != std::string::npos, "3295 AC4: stamp");
+    CHECK(tci.find("linear_force_full_validate_needed") != std::string::npos,
+          "3295 AC4: impl helper");
+    CHECK(tci.find("validate_ownership_full") != std::string::npos, "3295 AC4: full walk");
+    CHECK(!lint.empty() && lint.find("Issue #3295") != std::string::npos, "3295 AC4: linter");
+    CHECK(build.find("check_linear_force_full_validate_3295") != std::string::npos,
+          "3295 AC4: build.py registers linter");
+    CHECK(read_file("tests/compiler/test_issue_3295.cpp").empty(), "3295 AC4: no invent");
+    CHECK(read_file("docs/design/3295-linear-force-full-validate.md").empty(),
+          "3295 AC4: no docs/design");
+}
+
 } // namespace
 
 int run_test_linear_partial_revalidate() {
@@ -182,7 +285,12 @@ int run_test_linear_partial_revalidate() {
     ac3_soft_vs_hard();
     ac4_escape_retained();
     ac5_zero_cost_and_schema();
-    std::println("\n=== #2460 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== Issue #3295: dirty-only re-sim forces full walk under Production ===");
+    ac3295_1_production_escape_forces_full();
+    ac3295_2_soft_observe_only();
+    ac3295_3_lineage();
+    ac3295_4_source_linter();
+    std::println("\n=== #2460+#3295 results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
