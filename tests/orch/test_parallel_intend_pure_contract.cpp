@@ -1451,6 +1451,152 @@ int run_test_parallel_intend_pure_contract() {
         cs.evaluator().set_effect_sandbox_mode(0);
     }
 
+    // ── #3299: multi-agent mutate batches need explicit region-keys ──
+    // post-#3243 residual: production multi-agent **mutate** batches run
+    // Serialized via eval_mu unless the host supplies ≥2 distinct non-zero
+    // region_keys. Observe/deny mechanisms (#3243) already landed; this
+    // block soaks real mutate:set-body batches with/without :region-keys.
+    {
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test;
+        using aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test;
+        using aura::compiler::typed_audit::clear_partial_cone_truncate_for_test;
+        using aura::compiler::typed_audit::g_refined_consistency_drift_face;
+        using aura::compiler::typed_audit::g_region_type_cross_talk_face;
+        using aura::compiler::typed_audit::reset_for_test;
+        using aura::serve::parallel_orch::g_parallel_orch_stats;
+
+        auto href_iso = [](CompilerService& c, const char* snippet,
+                           const char* key) -> std::string {
+            auto r = c.eval(std::format("(let ((h {})) (hash-ref h \"{}\"))", snippet, key));
+            if (!r || !is_string(*r))
+                return {};
+            const auto idx = as_string_idx(*r);
+            const auto heap = c.evaluator().string_heap();
+            if (idx >= heap.size())
+                return {};
+            return std::string(heap[idx]);
+        };
+        auto href_int = [](CompilerService& c, const char* snippet,
+                           const char* key) -> std::int64_t {
+            auto r = c.eval(std::format("(let ((h {})) (hash-ref h \"{}\"))", snippet, key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+        auto href_flag = [](CompilerService& c, const char* snippet,
+                            const char* key) -> std::int64_t {
+            auto r =
+                c.eval(std::format("(let ((h {})) (if (hash-ref h \"{}\") 1 0))", snippet, key));
+            if (!r || !is_int(*r))
+                return -1;
+            return as_int(*r);
+        };
+
+        // Two distinct mutating thunks (sf/sg) — real multi-agent mutate
+        // soak: host either omits :region-keys (Serialized + missing signal)
+        // or supplies ≥2 distinct keys (RegionConcurrent).
+        constexpr const char* kMutateSeed =
+            "(begin (set-code \"(define (sf x) (+ x 1)) (define (sg x) (+ x 1))\") "
+            "(eval-current) 1)";
+        constexpr const char* kMutateZeroKeys = R"m3299(
+            (parallel-intend (vector (lambda () (begin (mutate:set-body "sf" "(+ x 2)") 1))
+                                     (lambda () (begin (mutate:set-body "sg" "(+ x 3)") 2)))
+                             :max-concurrency 2
+                             :collect-errors #t
+                             :timeout-ms 5000)
+        )m3299";
+        constexpr const char* kMutateTwoKeys = R"m3299(
+            (parallel-intend (vector (lambda () (begin (mutate:set-body "sf" "(+ x 2)") 1))
+                                     (lambda () (begin (mutate:set-body "sg" "(+ x 3)") 2)))
+                             :max-concurrency 2
+                             :region-keys (vector 1 2)
+                             :collect-errors #t
+                             :timeout-ms 5000)
+        )m3299";
+        constexpr const char* kMutateOverlapKeys = R"m3299(
+            (parallel-intend (vector (lambda () (begin (mutate:set-body "sf" "(+ x 2)") 1))
+                                     (lambda () (begin (mutate:set-body "sg" "(+ x 3)") 2)))
+                             :max-concurrency 2
+                             :region-keys (vector 7 7)
+                             :collect-errors #t
+                             :timeout-ms 5000)
+        )m3299";
+
+        std::println("\n--- #3299 AC1: Soft mutate batch — zero behavior change ---");
+        reset_for_test();
+        CompilerService scs;
+        scs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(scs.eval(kMutateSeed).has_value(), "3299 AC1: seed mutate defines");
+        CHECK(href_iso(scs, kMutateZeroKeys, "isolation-level") == "serialized",
+              "3299 AC1: Soft mutate batch stays serialized");
+        CHECK(href_int(scs, kMutateZeroKeys, "region-key-missing-serialized") == 0,
+              "3299 AC1: Soft mutate no missing signal");
+        CHECK(href_iso(scs, kMutateZeroKeys, "serialized-reason").empty(),
+              "3299 AC1: Soft mutate no serialized-reason");
+
+        std::println("\n--- #3299 AC2: production + multi-task mutate + all-0 keys ---");
+        reset_for_test();
+        clear_partial_cone_truncate_for_test();
+        clear_cone_outside_goal_drop_for_test();
+        clear_occurrence_empty_after_fence_for_test();
+        g_region_type_cross_talk_face.store(0, std::memory_order_relaxed);
+        g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+        apply_production_audit_defaults();
+        CompilerService pcs;
+        pcs.evaluator().set_effect_sandbox_mode(0);
+        CHECK(pcs.eval(kMutateSeed).has_value(), "3299 AC2: seed mutate defines");
+        const auto miss1 = g_parallel_orch_stats.region_key_missing_serialized_total.load();
+        CHECK(href_iso(pcs, kMutateZeroKeys, "isolation-level") == "serialized",
+              "3299 AC2: production mutate zero keys serialized (no false concurrent)");
+        CHECK(href_iso(pcs, kMutateZeroKeys, "serialized-reason") == "missing-or-overlap-keys",
+              "3299 AC2: mutate serialized-reason");
+        CHECK(href_int(pcs, kMutateZeroKeys, "region-key-missing-serialized") == 1,
+              "3299 AC2: mutate missing-keys=1");
+        CHECK(g_parallel_orch_stats.region_key_missing_serialized_total.load() > miss1,
+              "3299 AC2: counter bumped for mutate batch");
+
+        std::println(
+            "\n--- #3299 AC3: production + mutate + ≥2 distinct keys → RegionConcurrent ---");
+        CHECK(href_iso(pcs, kMutateTwoKeys, "isolation-level") == "region-concurrent",
+              "3299 AC3: mutate + two keys region-concurrent");
+        CHECK(href_flag(pcs, kMutateTwoKeys, "region-concurrent-eligible") == 1,
+              "3299 AC3: eligible=1");
+        CHECK(href_int(pcs, kMutateTwoKeys, "region-key-missing-serialized") == 0,
+              "3299 AC3: mutate missing-keys=0 with disjoint keys");
+        CHECK(href_iso(pcs, kMutateTwoKeys, "serialized-reason").empty(),
+              "3299 AC3: serialized-reason empty when concurrent");
+
+        std::println("\n--- #3299 AC4: overlap keys mutate → Serialized + missing ---");
+        CHECK(href_iso(pcs, kMutateOverlapKeys, "isolation-level") == "serialized",
+              "3299 AC4: overlap mutate serialized");
+        CHECK(href_int(pcs, kMutateOverlapKeys, "region-key-missing-serialized") == 1,
+              "3299 AC4: overlap mutate missing=1");
+
+        std::println("\n--- #3299 AC5: require-keys=1 deny on mutate batch ---");
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        CHECK(href_iso(pcs, kMutateZeroKeys, "status") == "invalid",
+              "3299 AC5: env deny mutate batch");
+        CHECK(href_iso(pcs, kMutateZeroKeys, "serialized-reason") == "missing-or-overlap-keys",
+              "3299 AC5: deny reason");
+        CHECK(href_iso(pcs, kMutateTwoKeys, "isolation-level") == "region-concurrent",
+              "3299 AC5: env deny does not block supplied keys");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+
+        std::println("\n--- #3299 AC6: source-cite + README guidance ---");
+        const auto md3299 = read_file("src/orch/README.md");
+        CHECK(md3299.find("multi-agent mutate") != std::string::npos ||
+                  md3299.find(":region-keys") != std::string::npos,
+              "3299 AC6: README region-keys guidance");
+        std::ifstream invent3299("tests/orch/test_issue_3299.cpp");
+        if (!invent3299.good())
+            invent3299.open("../tests/orch/test_issue_3299.cpp");
+        CHECK(!invent3299.good(), "3299 AC6: no test_issue_3299.cpp per #81967");
+
+        reset_for_test();
+        scs.evaluator().set_effect_sandbox_mode(0);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed ? 1 : 0;
