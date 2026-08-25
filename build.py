@@ -2306,6 +2306,21 @@ def cmd_lint():
             "Issue #3294 type-export outermost-face linter failed — run python3 scripts/coverage/checks/check_type_export_outermost_face_3294.py"
         )
         return r
+    # Issue #3295: dirty-only OwnershipEnv re-sim forces full ownership
+    # walk under Production/Full when escape gate or densify-pending is
+    # present (cross-function / closure-captured linear flows outside the
+    # dirty set). Soft observe only; quiet zero extra. Extends
+    # test_linear_partial_revalidate.
+    lffv3295_script = COVERAGE_CHECKS / "check_linear_force_full_validate_3295.py"
+    if not lffv3295_script.exists():
+        fail(f"missing {lffv3295_script}")
+        return 1
+    r = run([sys.executable, str(lffv3295_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3295 linear force-full-validate linter failed — run python3 scripts/coverage/checks/check_linear_force_full_validate_3295.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
