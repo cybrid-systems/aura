@@ -876,6 +876,16 @@ struct OrchModuleStats {
     // struct end (#2906); agent_join_fail_total still counts the
     // Timeout/Cancelled observation.
     std::atomic<std::uint64_t> agent_join_fail_action_cancel_total{0};
+    // Issue #3297: ~AgentHandle called while the Reclaimed body is
+    // still non-yielding (`reclaimed_deferred_cleanup && fiber &&
+    // !fiber->is_done()`). The dtor unconditionally calls
+    // release_reservation_if_any() even though the body may still run,
+    // so `agent_arena_usage_bytes` is briefly under-accounted relative
+    // to live body until the body exits. Not a permanent leak (#3012
+    // accepts "anti-permanent-leak" priority); only observable. Soft
+    // / body-already-exit / explicit `wait_reclaimed_ms` paths stay
+    // zero. Appended at struct end (#2906 discipline).
+    std::atomic<std::uint64_t> reclaimed_dtor_under_account_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -2418,6 +2428,19 @@ inline void AgentHandle::finish_reclaimed_cleanup_on_dtor() noexcept {
         serve::JoinResult done_jr;
         done_jr.status = serve::JoinStatus::Ok;
         complete_agent_join_cleanup(*this, done_jr);
+    }
+    // Issue #3297: bump under-account counter BEFORE unconditional
+    // release_reservation_if_any() when the body may still run under
+    // production posture (reclaimed_deferred_cleanup && fiber &&
+    // !fiber->is_done() && production_defaults_active()).
+    // Production-gated to match #3297 acceptance "Soft / Off 零行为变化 /
+    // 无新 atomic": Soft / Off paths stay zero. Soft / body-already-exit /
+    // explicit wait_reclaimed_ms paths stay zero by the gate condition
+    // (production-off OR fiber done).
+    if (reclaimed_deferred_cleanup && fiber && !fiber->is_done() &&
+        aura::compiler::typed_audit::production_defaults_active()) {
+        g_orch_module_stats.reclaimed_dtor_under_account_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
     }
     release_reservation_if_any();
     must_wait_reclaimed = false;
