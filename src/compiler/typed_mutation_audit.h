@@ -3146,8 +3146,13 @@ resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
     // so audit mid joins grant.bound_mutation_id / SE.mutation_id /
     // AuditWalRecord.provenance_mutation_id on the same boundary-stamped
     // value. Drop the host-quota mid from the production cascade (drift /
-    // lag under steal × abort).
-    const auto tm = last_type_linear_commit_proof_stamp_v_read();
+    // lag under steal × abort). TypedMid is authoritative only while a
+    // boundary is live on this thread (TLS-noted); a stale process-global
+    // stamp from a completed / foreign boundary must not shadow the
+    // current epoch (#3016 AC4 cross-evaluator isolation).
+    const auto tm = (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+                        ? last_type_linear_commit_proof_stamp_v_read()
+                        : 0;
     if (tm != 0)
         return tm;
     const auto ep = ::aura::core::current_mutation_epoch();
@@ -3301,8 +3306,13 @@ inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) 
     if (mid == 0) {
         // Issue #3296 AC1: TypedMid SSOT under production; drops
         // the host-quota mid from the cascade (drift / lag under
-        // steal × abort).
-        mid = last_type_linear_commit_proof_stamp_v_read();
+        // steal × abort). TypedMid is authoritative only while a
+        // boundary is live on this thread (TLS-noted); a stale
+        // process-global stamp must not pin a fresh composite batch
+        // to an old join mid (#3066 AC1/AC3).
+        mid = (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+                  ? last_type_linear_commit_proof_stamp_v_read()
+                  : 0;
     }
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
     if (mid == 0 && !hard)
