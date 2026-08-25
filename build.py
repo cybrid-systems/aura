@@ -2321,6 +2321,22 @@ def cmd_lint():
             "Issue #3295 linear force-full-validate linter failed — run python3 scripts/coverage/checks/check_linear_force_full_validate_3295.py"
         )
         return r
+    # Issue #3296: require_effect mid SSOT cascade reorders TypedMid BEFORE
+    # epoch (drops host-quota mid from production path) so CapabilityGrant.
+    # bound_mutation_id / SE.mutation_id / AuditWalRecord.provenance_mutation_id
+    # join on the boundary-stamped TypedMid across MutationBoundary enter /
+    # steal / abort / outermost success. Soft/Off contract unchanged. Extends
+    # test_require_effect_auto_isolation.
+    rssot3296_script = COVERAGE_CHECKS / "check_require_effect_mid_ssot_3296.py"
+    if not rssot3296_script.exists():
+        fail(f"missing {rssot3296_script}")
+        return 1
+    r = run([sys.executable, str(rssot3296_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3296 require_effect mid SSOT linter failed — run python3 scripts/coverage/checks/check_require_effect_mid_ssot_3296.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
