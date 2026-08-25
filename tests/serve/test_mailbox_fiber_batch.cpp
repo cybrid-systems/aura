@@ -68,6 +68,7 @@ extern int run_test_mailbox_recv_mutation_boundary();
 extern int run_test_mailbox_tenant_principal();
 extern int run_test_residual_defer_steal_hard_and();
 extern int run_test_residual_force_safepoint();
+extern int run_test_resume_session_revoke();
 extern int run_test_steal_complete_gc_defer();
 extern int run_test_steal_complete_restamp_txn();
 extern int run_test_steal_complete_strong_entry();
@@ -389,6 +390,18 @@ int main() {
         std::println("OK member test_steal_snapshot_soft_production_lock ({} checks)", g_passed);
     }
 #endif
+
+    std::println("\n──── test_resume_session_revoke ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_resume_session_revoke() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_resume_session_revoke ({}/{})", g_passed, g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_resume_session_revoke ({} checks)", g_passed);
+    }
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);

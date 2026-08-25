@@ -3112,6 +3112,7 @@ add_executable(test_mailbox_fiber_batch
     tests/serve/test_mailbox_tenant_principal.cpp
     tests/serve/test_residual_defer_steal_hard_and.cpp
     tests/serve/test_residual_force_safepoint.cpp
+    tests/serve/test_resume_session_revoke.cpp
     tests/serve/test_steal_complete_gc_defer.cpp
     tests/serve/test_steal_complete_restamp_txn.cpp
     tests/serve/test_steal_complete_strong_entry.cpp
