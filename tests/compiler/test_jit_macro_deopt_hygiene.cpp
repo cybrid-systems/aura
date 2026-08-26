@@ -319,22 +319,19 @@ static void ac6_source_wiring() {
 // marker loss regressions.
 static void ac7_aot_marker_parity_2177() {
     std::println("\n--- AC7: #2177 AOT marker propagation parity ---");
-    std::ifstream ab("src/compiler/aura_jit_bridge.cpp");
-    std::string ab_contents((std::istreambuf_iterator<char>(ab)), std::istreambuf_iterator<char>());
+    const auto ab_contents = read_file("src/compiler/aura_jit_bridge.cpp");
     CHECK(ab_contents.find("aura_2177_aot_macro_marker_propagated_total") != std::string::npos,
           "AC7: C-linkage accessor aura_2177_aot_macro_marker_propagated_total");
     CHECK(ab_contents.find("aura_2177_aot_macro_marker_stripped_total") != std::string::npos,
           "AC7: C-linkage accessor aura_2177_aot_macro_marker_stripped_total");
     CHECK(ab_contents.find("aura_2177_record_aot_marker_propagated") != std::string::npos,
           "AC7: bump helper aura_2177_record_aot_marker_propagated");
-    std::ifstream om("src/compiler/observability_metrics.h");
-    std::string om_contents((std::istreambuf_iterator<char>(om)), std::istreambuf_iterator<char>());
+    const auto om_contents = read_file("src/compiler/observability_metrics.h");
     CHECK(om_contents.find("aot_macro_marker_propagated_total") != std::string::npos,
           "AC7: CompilerMetrics field aot_macro_marker_propagated_total");
     CHECK(om_contents.find("aot_macro_marker_stripped_total") != std::string::npos,
           "AC7: CompilerMetrics field aot_macro_marker_stripped_total");
-    std::ifstream lo("src/compiler/lowering_impl.cpp");
-    std::string lo_contents((std::istreambuf_iterator<char>(lo)), std::istreambuf_iterator<char>());
+    const auto lo_contents = read_file("src/compiler/lowering_impl.cpp");
     CHECK(lo_contents.find("aura_2177_record_aot_marker_propagated") != std::string::npos,
           "AC7: lowering_impl.cpp calls aura_2177_record_aot_marker_propagated");
     CHECK(lo_contents.find("Issue #2177") != std::string::npos,
