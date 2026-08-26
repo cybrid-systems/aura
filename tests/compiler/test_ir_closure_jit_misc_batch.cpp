@@ -52,6 +52,7 @@ extern int run_test_live_closure_stable_id_only();
 extern int run_test_must_deopt_before_next_call();
 extern int run_test_named_closure_stable_id_at_create();
 extern int run_test_partial_recompile_single_evict();
+extern int run_test_peer_jit_name_soft_stale();
 extern int run_test_primcall_narg();
 extern int run_test_primcall_str_intern();
 extern int run_test_region_priority_deopt_throttle();
@@ -86,6 +87,7 @@ int main() {
 
         {"test_named_closure_stable_id_at_create", run_test_named_closure_stable_id_at_create},
         {"test_partial_recompile_single_evict", run_test_partial_recompile_single_evict},
+        {"test_peer_jit_name_soft_stale", run_test_peer_jit_name_soft_stale},
         {"test_primcall_narg", run_test_primcall_narg},
         {"test_primcall_str_intern", run_test_primcall_str_intern},
 
