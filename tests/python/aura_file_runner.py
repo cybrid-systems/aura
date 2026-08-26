@@ -104,6 +104,29 @@ def judge(exit_code: int, stdout: str, stderr: str, expect: str | None) -> tuple
     return True, ""
 
 
+def format_failure_detail(
+    detail: str,
+    *,
+    stdout: str,
+    stderr: str,
+    max_tail: int = 240,
+) -> str:
+    """Attach captured aura output to a failed case.
+
+    Signal deaths (SIGABRT/SIGSEGV) previously dropped stderr, so the
+    ``=== AURA CRASH ===`` / ``FATAL:`` lines never reached the suite
+    summary (CI #4910 printed only ``: SIGABRT``).
+    """
+    tail = (stderr or stdout or "").strip()
+    if tail:
+        clip = tail[-max_tail:] if len(tail) > max_tail else tail
+        clip = " ".join(clip.split())
+        if not detail:
+            return clip
+        return f"{detail}: {clip}"
+    return detail or "failed"
+
+
 @dataclass(frozen=True)
 class SnippetSpec:
     """In-memory snippet (integ JSON / p0 fixture cases)."""
@@ -372,13 +395,7 @@ def run_aura_file_suite(
         ok_case, detail = judge(proc.returncode, proc.stdout or "", proc.stderr or "", case.expect)
         if ok_case:
             return case.rel, True, ""
-        if not detail:
-            detail = ((proc.stderr or proc.stdout or "")[:80]) or "failed"
-        elif proc.returncode != 0 and "exit" in detail:
-            tail = (proc.stderr or proc.stdout or "").strip()[:80]
-            if tail:
-                detail = f"{detail}: {tail}"
-        return case.rel, False, detail
+        return case.rel, False, format_failure_detail(detail, stdout=proc.stdout or "", stderr=proc.stderr or "")
 
     work = discovered.cases
     results: list[tuple[str, bool, str]]

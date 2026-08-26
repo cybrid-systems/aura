@@ -99,6 +99,25 @@ class BenchmarkGate1936(unittest.TestCase):
         finally:
             m.run_all = original  # type: ignore[method-assign]
 
+    def test_fib_20_ci_runner_drift_within_meta(self) -> None:
+        # CI #4909: 133.7ms → 190.4ms (1.42×, Δ56.8ms) on a JIT-only commit.
+        import json
+
+        meta = json.loads((ROOT / "tests" / "bench" / "benchmark_meta.json").read_text())
+        thr, md, cat = self.m.case_thresholds(
+            "fib_20",
+            tolerance_percent=20,
+            min_delta_s=0.02,
+            catastrophic_ratio=3.0,
+            meta=meta,
+        )
+        hit = self.m.classify_regression(0.1337, 0.1904, ratio_threshold=thr, min_delta_s=md, catastrophic_ratio=cat)
+        self.assertIsNone(hit, "1.42× / 57ms CI runner drift must stay under fib_20 meta")
+        hit3 = self.m.classify_regression(0.1337, 0.4011, ratio_threshold=thr, min_delta_s=md, catastrophic_ratio=cat)
+        self.assertIsNotNone(hit3)
+        assert hit3 is not None
+        self.assertTrue(hit3.catastrophic)
+
     def test_docs_and_meta_exist(self) -> None:
         self.assertTrue((ROOT / "docs" / "benchmark.md").is_file())
         self.assertTrue((ROOT / "tests" / "bench" / "benchmark_meta.json").is_file())

@@ -16,6 +16,7 @@ from aura_file_runner import (  # noqa: E402
     SnippetSpec,
     discover_aura_files,
     first_expect,
+    format_failure_detail,
     judge,
     judge_snippet,
     stdin_payload,
@@ -45,6 +46,20 @@ class TestAuraFileRunner(unittest.TestCase):
         self.assertTrue(judge(1, "", "user error", "no-error")[0])
         self.assertFalse(judge(0, "", "Internal Error: x", "no-error")[0])
         self.assertTrue(judge(2, "", "", "no-timeout")[0])
+
+    def test_format_failure_detail_keeps_signal_stderr(self) -> None:
+        # CI #4910: SIGABRT dropped === AURA CRASH === because only "exit" details
+        # attached stderr. Signal deaths must keep the crash / FATAL tail.
+        detail = format_failure_detail(
+            "SIGABRT",
+            stdout="  pass: fanout-plain returns 4\n",
+            stderr="=== AURA CRASH: SIGABRT (signal 6) ip=0x1 ===\nFATAL: residual\n",
+        )
+        self.assertTrue(detail.startswith("SIGABRT:"))
+        self.assertIn("AURA CRASH", detail)
+        self.assertIn("FATAL", detail)
+        self.assertEqual(format_failure_detail("", stdout="", stderr=""), "failed")
+        self.assertEqual(format_failure_detail("exit 1", stdout="", stderr=""), "exit 1")
 
     def test_discover_skip_exclude_allow(self) -> None:
         with tempfile.TemporaryDirectory() as td:

@@ -19206,6 +19206,26 @@ def cmd_gate():
     return 0
 
 
+def _report_ci_slice_failures(link_rc: int, early_rc: int, late_rc: int) -> int:
+    """OR the three cmd_ci slices and print which one failed.
+
+    Heavy/stress always runs even when cheap/medium already failed, so the
+    last printed line is often ``All 2 test suites passed`` while the
+    process still exits 1 (CI #4910). Surface the earlier slice here.
+    """
+    if not (link_rc or early_rc or late_rc):
+        return 0
+    print(f"\n{'═' * 50}")
+    fail("CI failed — later wave summary is not the whole result:")
+    if link_rc:
+        print(f"  {R}✗{N} overlap ninja (test_concurrent / issue binaries) rc={link_rc}")
+    if early_rc:
+        print(f"  {R}✗{N} cheap/medium wave (search log for 'Waves cheap, medium') rc={early_rc}")
+    if late_rc:
+        print(f"  {R}✗{N} heavy/stress wave rc={late_rc}")
+    return 1
+
+
 def cmd_ci():
     """CI build + test (parallel suites when AURA_TEST_JOBS>1).
 
@@ -19249,7 +19269,7 @@ def cmd_ci():
             os.environ["AURA_TEST_JOBS"] = saved_jobs
 
     late_rc = cmd_test(["ci"], waves=("heavy", "stress"))
-    return 1 if (link_rc or early_rc or late_rc) else 0
+    return _report_ci_slice_failures(link_rc, early_rc, late_rc)
 
 
 def cmd_list():

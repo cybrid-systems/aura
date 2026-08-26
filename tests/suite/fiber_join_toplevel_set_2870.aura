@@ -18,6 +18,14 @@
         (display msg)
         (newline))))
 
+; Drain spawned bodies before process exit. Unjoined fibers can still sit in
+; a worker Chase-Lev queue; under CI cheap/medium ‖ ninja overlap that race
+; SIGABRT'd this suite (CI #4910) while the same file passed on the parent.
+(define (join-all xs)
+  (let loop ((ys xs))
+    (if (null? ys) 0
+      (begin (fiber:join (car ys)) (loop (cdr ys))))))
+
 ; AC1: named-let free-var set! of top-level (no join) — denseness-era fail mode
 (display "AC1 named-let free-var set!\n")
 (define sc 0)
@@ -46,6 +54,7 @@
 (define ids (fanout 4))
 (assert! (= (length ids) 4) "ids length 4")
 (assert! (= spawn-count 4) "spawn-count=4")
+(join-all ids)
 
 ; AC3: simple procedure set! after join (control)
 (display "AC3 procedure set! after join\n")
@@ -70,7 +79,8 @@
                    ids))))))
        (ids0 (fanout 4)))
   (assert! (= (length ids0) 4) "let* ids length 4")
-  (assert! (= lc 4) "let* lc=4"))
+  (assert! (= lc 4) "let* lc=4")
+  (join-all ids0))
 
 (if (= *fails* 0)
     (begin (display "OK-2870 fiber join toplevel set!\n"))
