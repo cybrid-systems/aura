@@ -955,6 +955,8 @@ inline void apply_dev_audit_defaults() noexcept {
     aura::core::set_query_epoch_strict(false);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(0);
+    // Issue #3302: Soft / sandbox=off never default-arms fail-closed.
+    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
 }
 
 // Issue #2818: one-shot warn when Sampled under-samples without apply_dev

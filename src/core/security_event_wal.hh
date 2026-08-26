@@ -81,8 +81,8 @@ static_assert(sizeof(SecurityEventWalRecord) == 8 + 8 + 1 + 1 + 2 + 8 + 8 + 8 + 
 
 // Issue #3109: production WAL append fail-closed option (SE + mutation
 // audit trail integrity). Process-local overflow ring (capacity 256) that
-// captures events lost to fwrite fail when AURA_WAL_APPEND_FAIL_CLOSED
-// is set AND production_defaults_active(). Soft/Off / no-env: zero cost
+// captures events lost to fwrite fail when wal_append_fail_closed_active()
+// (#3109 env opt-in, #3302 force_wal default). Soft/Off: zero cost
 // (overflow ring never written, AC1). Mid can join from overflow ring
 // for in-process replay; it does NOT replace durable WAL replay
 // (process-local only, crash recovery path unchanged per #2225).
@@ -118,7 +118,7 @@ inline std::atomic<std::uint32_t>& wal_overflow_ring_count() noexcept {
 }
 
 // Push one record to the overflow ring. Called only when
-// wal_append_fail_closed_active() returns true (production + env).
+// wal_append_fail_closed_active() returns true (production fail-closed).
 // Thread-safe under WAL's std::lock_guard.
 inline void wal_overflow_ring_push(const WalOverflowRecord& rec) noexcept {
     auto* ring = wal_overflow_ring_storage();

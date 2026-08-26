@@ -9,10 +9,17 @@
 //   AC6: source-cite
 
 #include "test_harness.hpp"
+#include "compiler/security_capabilities.h"
+#include "compiler/security_defaults.hh"
+#include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
+#include "core/security_event_wal.hh"
+#include "core/wal_append_fail_slo.h"
 #include "core/workspace_epoch.hh"
+#include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -23,6 +30,10 @@ import aura.compiler.value;
 
 namespace {
 using aura::compiler::CompilerService;
+using aura::compiler::security::apply_production_security_defaults;
+using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::capability::Effect;
@@ -140,7 +151,155 @@ int run_test_security_posture_trail() {
     CHECK(slo.find("kWalAppendFailSloIssue = 3056") != std::string::npos,
           "3109 AC5: #3056 lineage preserved");
 
-    std::println("\n=== #2534/#3109: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3302: force_wal default-arms fail-closed ───────────────────────
+    {
+        std::println("\n--- #3302 force_wal default fail-closed ---");
+        const char* prev_sb = std::getenv("AURA_SANDBOX");
+        const std::string prev_sb_s = prev_sb ? prev_sb : "";
+        const char* prev_open = std::getenv("AURA_WAL_APPEND_FAIL_OPEN");
+        const std::string prev_open_s = prev_open ? prev_open : "";
+        const char* prev_closed = std::getenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        const std::string prev_closed_s = prev_closed ? prev_closed : "";
+        auto restore_env = [&] {
+            if (prev_sb_s.empty())
+                ::unsetenv("AURA_SANDBOX");
+            else
+                ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+            if (prev_open_s.empty())
+                ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+            else
+                ::setenv("AURA_WAL_APPEND_FAIL_OPEN", prev_open_s.c_str(), 1);
+            if (prev_closed_s.empty())
+                ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+            else
+                ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", prev_closed_s.c_str(), 1);
+            apply_dev_audit_defaults();
+            aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+            aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+            aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        };
+
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
+
+        // AC1: Soft / sandbox=off never arms fail-closed.
+        ::setenv("AURA_SANDBOX", "off", 1);
+        apply_production_security_defaults();
+        CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3302 AC1: Soft fail-closed inactive");
+        CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() == 0,
+              "3302 AC1: Soft defaulted-by-force-wal=0");
+        CHECK(href(cs, "wal-fail-closed-active") == 0, "3302 AC1: query fail-closed-active=0");
+        CHECK(href(cs, "wal-fail-closed-defaulted-by-force-wal") == 0,
+              "3302 AC1: query defaulted=0");
+
+        // AC2: Restricted force_wal (no FAIL_OPEN) default-arms fail-closed.
+        ::setenv("AURA_SANDBOX", "restricted", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        apply_production_security_defaults();
+        CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0,
+              "3302 AC2: force_wal defaulted flag");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3302 AC2: fail-closed active under Restricted force_wal");
+        CHECK(href(cs, "wal-fail-closed-active") == 1, "3302 AC2: query fail-closed-active=1");
+        CHECK(href(cs, "wal-fail-closed-defaulted-by-force-wal") == 1,
+              "3302 AC2: query defaulted=1");
+        {
+            namespace fs = std::filesystem;
+            const auto dir = fs::temp_directory_path() / "aura-3302-ac2-XXXXXX";
+            fs::remove_all(dir);
+            fs::create_directories(dir);
+            CHECK(ev.enable_security_event_wal(dir.string()), "3302 AC2: enable SE WAL");
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+                1, std::memory_order_relaxed);
+            const bool fail_ret = aura::core::security_event_wal::persist_security_event(
+                aura::core::security_event::SecurityEventKind::EffectDeny, 7, 0x3302, 1, 0,
+                "test:3302-ac2", "inject", true, 1, 0);
+            CHECK(!fail_ret, "3302 AC2: inject fail returns false");
+            CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() >= 1,
+                  "3302 AC2: overflow ring captured inject");
+            ev.disable_security_event_wal();
+            fs::remove_all(dir);
+        }
+
+        // AC3: explicit FAIL_OPEN restores fail-open (no overflow push).
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        ::setenv("AURA_WAL_APPEND_FAIL_OPEN", "1", 1);
+        CHECK(!aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3302 AC3: FAIL_OPEN opts out");
+        CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() != 0,
+              "3302 AC3: defaulted flag still set (force_wal happened)");
+        {
+            namespace fs = std::filesystem;
+            const auto dir = fs::temp_directory_path() / "aura-3302-ac3-XXXXXX";
+            fs::remove_all(dir);
+            fs::create_directories(dir);
+            CHECK(ev.enable_security_event_wal(dir.string()), "3302 AC3: enable SE WAL");
+            aura::core::wal_slo::g_wal_append_fail_slo_counters.inject_fail_remaining.store(
+                1, std::memory_order_relaxed);
+            (void)aura::core::security_event_wal::persist_security_event(
+                aura::core::security_event::SecurityEventKind::EffectDeny, 7, 0x3303, 1, 0,
+                "test:3302-ac3", "inject", true, 1, 0);
+            CHECK(aura::core::security_event_wal::wal_overflow_ring_depth() == 0,
+                  "3302 AC3: overflow ring not written under FAIL_OPEN");
+            ev.disable_security_event_wal();
+            fs::remove_all(dir);
+        }
+        ::unsetenv("AURA_WAL_APPEND_FAIL_OPEN");
+
+        // AC4: explicit FAIL_CLOSED still forces on without force_wal flag.
+        apply_dev_audit_defaults();
+        aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+        ::setenv("AURA_WAL_APPEND_FAIL_CLOSED", "1", 1);
+        apply_production_audit_defaults();
+        CHECK(aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal() == 0,
+              "3302 AC4: explicit CLOSED is not force_wal-defaulted");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3302 AC4: FAIL_CLOSED=1 still forces on");
+        ::unsetenv("AURA_WAL_APPEND_FAIL_CLOSED");
+
+        // AC5: Strict + overflow full → require_effect deny (#3109 path).
+        ::setenv("AURA_SANDBOX", "strict", 1);
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+        apply_production_security_defaults();
+        aura::core::security_event_wal::wal_overflow_ring_clear_for_test();
+        for (std::uint32_t i = 0; i < aura::core::security_event_wal::kWalOverflowRingCapacity;
+             ++i) {
+            aura::core::security_event_wal::WalOverflowRecord rec{};
+            rec.mid = i + 1;
+            rec.reason = "test:3302-fill";
+            aura::core::security_event_wal::wal_overflow_ring_push(rec);
+        }
+        CHECK(aura::core::security_event_wal::wal_overflow_ring_full(),
+              "3302 AC5: overflow ring full");
+        CHECK(aura::core::wal_slo::wal_append_fail_closed_active(),
+              "3302 AC5: fail-closed active under Strict force_wal");
+        CHECK(!ev.require_effect(kEffectMutate, "test:3302-ac5", 0),
+              "3302 AC5: require_effect denies when overflow full");
+
+        CHECK(href(cs, "schema-3302") == 3302, "3302 AC6: schema-3302");
+        CHECK(href(cs, "issue-3302") == 3302, "3302 AC6: issue-3302");
+        const auto slo3302 = read_file("src/core/wal_append_fail_slo.h");
+        CHECK(slo3302.find("AURA_WAL_APPEND_FAIL_OPEN") != std::string::npos,
+              "3302 AC6: FAIL_OPEN env");
+        CHECK(slo3302.find("kWalAppendFailClosedForceWalIssue = 3302") != std::string::npos,
+              "3302 AC6: issue stamp");
+        const auto build3302 = read_file("build.py");
+        CHECK(build3302.find("check_wal_fail_closed_force_wal_3302") != std::string::npos,
+              "3302 AC6: build.py wires 3302 linter");
+        CHECK(build3302.find("check_wal_append_fail_closed_3109") != std::string::npos,
+              "3302 AC6: 3109 linter still wired");
+        if (std::FILE* f = std::fopen("tests/compiler/test_issue_3302.cpp", "r")) {
+            std::fclose(f);
+            CHECK(false, "3302 AC6: no invent test_issue_3302.cpp");
+        }
+
+        restore_env();
+    }
+
+    std::println("\n=== #2534/#3109/#3302: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
