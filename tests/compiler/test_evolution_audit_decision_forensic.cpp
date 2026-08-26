@@ -191,10 +191,12 @@ static void ac8_3284_se_mid_miss() {
     CHECK(src.find("insert_kv(\"se-mid-miss\", se_mid_miss)") != std::string::npos,
           "se-mid-miss key inserted");
     // Soft / no :durable still zero disk I/O: the WAL path remains gated on
-    // want_durable + production_defaults_active().
-    CHECK(src.find("if (want_durable && join_mid != 0 && production_defaults_active())") !=
-              std::string::npos,
+    // want_durable + (production_defaults_active() || Full strategy), per #3298.
+    CHECK(src.find("if (want_durable && join_mid != 0 &&") != std::string::npos,
           "durable WAL path still gated (AC3 zero disk I/O)");
+    CHECK(src.find("(production_defaults_active() || get_strategy() == AuditStrategy::Full)") !=
+              std::string::npos,
+          "gate aligned with Full hard face (#3298)");
 }
 
 } // namespace

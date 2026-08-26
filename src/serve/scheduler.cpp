@@ -564,7 +564,14 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
         // fiber's destructor runs at this point if no other ref
         // holds it. The body stack is freed here; non-yielding
         // bodies leak stack until return — documented limitation).
-        {
+        // Issue #2468 residual: if a worker may still hold this fiber
+        // (queued_ set — in its local queue, or popped and being
+        // processed), destroying the object now leaves the worker a
+        // dangling pointer → resume-on-reclaimed hot loop → SIGSEGV
+        // (CI batch). The worker drops reclaimed fibers on pop; the
+        // object stays in owned_fibers_ until scheduler teardown
+        // (same lifecycle as normally-completed fibers).
+        if (!f->is_queued()) {
             ::aura::compiler::lock_order::AuditedMutexLock ol(
                 owned_fibers_mutex_, ::aura::compiler::lock_order::Level::OwnedFibers);
             for (auto oit = owned_fibers_.begin(); oit != owned_fibers_.end(); ++oit) {
@@ -574,7 +581,10 @@ std::size_t Scheduler::reap_orphans_now() noexcept {
                 }
             }
         }
-        // Release process fiber quota (paired with spawn).
+        // Release process fiber quota (paired with spawn). Always:
+        // the fiber is logically reclaimed (maps/joiners cleaned,
+        // reclaimed_ set) and the worker never notifies a reclaimed
+        // fiber, so this is the single quota release.
         aura::core::resource_quota::process_resource_quota().release(
             aura::core::resource_quota::Dimension::Fibers, 1);
         if (metrics_on_) {

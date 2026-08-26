@@ -200,14 +200,13 @@ void WorkerThread::enqueue(Fiber* fiber) {
     if (!fiber || fiber->is_done())
         return;
 
+    fiber->set_queued();
     local_queue_.push(fiber);
     pending_.fetch_add(1, std::memory_order_release);
 
     if (worker_metrics_) {
         worker_metrics_->local_pushes.fetch_add(1, std::memory_order_relaxed);
     }
-
-    // Wake the worker if it was sleeping
     if (wake_evfd_ >= 0) {
         uint64_t val = 1;
         ::write(wake_evfd_, &val, sizeof(val));
@@ -542,7 +541,15 @@ void WorkerThread::run() {
                 my_metrics->local_pops.fetch_add(1, std::memory_order_relaxed);
             }
 
-            if (fiber->is_done()) {
+            if (fiber->is_done() || fiber->is_reclaimed()) {
+                // Issue #XXXX: a hard-reclaimed fiber may still sit in
+                // this worker's local queue (the reaper marks it but
+                // cannot remove it from the Chase-Lev deque). resume()
+                // would no-op via the #2468 guard; re-queueing would
+                // hot-loop until the reaper destroys the object (UAF).
+                // Drop it like a done fiber (reaper already cleaned up
+                // maps/quota/joiners — no notify).
+                fiber->clear_queued();
                 pending_.fetch_sub(1, std::memory_order_release);
                 continue;
             }
@@ -563,8 +570,19 @@ void WorkerThread::run() {
             fiber->resume();
             gc_state_.running_fiber_count.fetch_sub(1, std::memory_order_acq_rel);
 
+            // Issue #XXXX: the fiber may have been reclaimed while it
+            // was running (reaper marked it during resume). resume()
+            // no-op'd via the #2468 guard; never re-queue a reclaimed
+            // fiber — drop it (reaper did the cleanup).
+            if (fiber->is_reclaimed()) {
+                fiber->clear_queued();
+                pending_.fetch_sub(1, std::memory_order_release);
+                continue;
+            }
+
             // After resume: fiber either yielded or finished
             if (fiber->is_done()) {
+                fiber->clear_queued();
                 pending_.fetch_sub(1, std::memory_order_release);
                 notify_fiber_done(fiber);
                 continue;
@@ -573,6 +591,7 @@ void WorkerThread::run() {
             auto fb_state = fiber->state();
             if (fb_state == FiberState::Waiting) {
                 // Yielded for event — leave off queue, epoll will wake
+                fiber->clear_queued();
                 pending_.fetch_sub(1, std::memory_order_release);
                 if (my_metrics) {
                     my_metrics->fibers_waiting.fetch_add(1, std::memory_order_relaxed);
