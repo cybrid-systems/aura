@@ -158,7 +158,15 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     // CompilerService::invalidate_function / mark_define_dirty.
     aura_hot_update_bump_bridge_epoch();
     aura_hot_update_bump_defuse_version();
+    const std::uint64_t epoch_before = aura_aot_func_table_epoch();
     aura_aot_bump_func_table_epoch();
+    // Issue #3300: owner-scoped hard success does not advance
+    // g_aot_table_epoch (preserve #2841/#2951) — peers' dual-fresh stays
+    // green, so arm the name-level peer JIT soft-stale bit. Global-bump
+    // (force) paths skip here: peers are already epoch force-staled.
+    // mark itself no-ops unless multi-eval live > 1 (Soft/Off zero-cost).
+    if (aura_aot_func_table_epoch() == epoch_before && aura_aot_state_map_size() > 1)
+        aura_aot_mark_peer_jit_name_soft_stale(name);
     aura_aot_note_cross_eval_hard_owner_scoped();
     // Issue #3150: publish the mutated define into the dirty set that
     // aura_reemit_aot_for_dirty reads. Without this, production-path

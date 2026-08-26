@@ -1960,6 +1960,140 @@ extern "C" int aura_aot_slot_is_soft_stale(std::int64_t func_id) {
     return g_aot_func_slots[idx].soft_stale.load(std::memory_order_acquire) != 0 ? 1 : 0;
 }
 
+// ── Issue #3300: name-level peer pure-JIT soft-stale side-table ───────
+// Owner-scoped hard invalidate marks peer AOT slots soft-stale (#3070),
+// but the pure-JIT path is a per-CompilerService / per-eval name cache:
+// the peer eval receives no name-level signal, and because bridge_epoch
+// is intentionally not advanced (#2841/#2951), peer dual-fresh
+// (aura_is_jit_closure_fresh / is_bridge_stale) still treats captured
+// closures as fresh → long-running peer fibers can keep executing
+// pre-invalidate native. This table arms a name-level soft-stale bit so
+// aura_closure_call can MustDeopt before JIT native entry.
+//
+// Bit / generation side-table keyed by stable name hash (FNV-1a).
+// Zero-cost when empty: g_peer_jit_name_soft_stale_live == 0 → probe
+// returns 0 after one relaxed load. Single-eval / Soft / Off skip
+// fanout entirely (mark is a no-op unless multi-eval live > 1).
+namespace {
+constexpr unsigned kPeerJitNameSoftStaleCap = 256;
+
+struct PeerJitNameSlot {
+    std::atomic<std::uint64_t> name_hash{0}; // 0 = empty
+    std::atomic<std::uint8_t> stale{0};
+};
+
+PeerJitNameSlot g_peer_jit_name_soft_stale[kPeerJitNameSoftStaleCap];
+std::mutex g_peer_jit_name_soft_stale_mtx; // writers only; probe is lock-free
+std::atomic<std::uint32_t> g_peer_jit_name_soft_stale_live{0};
+std::atomic<std::uint64_t> g_peer_jit_name_soft_stale_mark_total{0};
+std::atomic<std::uint64_t> g_peer_jit_name_soft_stale_clear_total{0};
+std::atomic<std::uint64_t> g_peer_jit_name_soft_stale_deopt_total{0};
+
+std::uint64_t peer_jit_name_hash(const char* name) noexcept {
+    std::uint64_t h = 1469598103934665603ULL; // FNV-1a 64 offset
+    for (const unsigned char* p = reinterpret_cast<const unsigned char*>(name); *p; ++p) {
+        h ^= static_cast<std::uint64_t>(*p);
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+} // namespace
+
+// Issue #3300: arm name-level peer soft-stale. Only acts when multi-eval
+// live (>1) — single-eval / Soft / Off stay zero-cost. Called on the
+// owner-scoped hard invalidate path (production facade) after the bump
+// confirmed no global g_aot_table_epoch advance. Writers serialized by
+// g_peer_jit_name_soft_stale_mtx; readers probe atomics lock-free.
+extern "C" void aura_aot_mark_peer_jit_name_soft_stale(const char* name) {
+    if (!name || !*name)
+        return;
+    if (aura_aot_state_map_size() <= 1)
+        return; // no multi-eval live → skip fanout (zero extra work)
+    const std::uint64_t h = peer_jit_name_hash(name);
+    {
+        std::lock_guard<std::mutex> lock(g_peer_jit_name_soft_stale_mtx);
+        for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
+            auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
+            const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
+            if (cur == h) {
+                slot.stale.store(1, std::memory_order_release);
+                g_peer_jit_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            if (cur == 0) {
+                slot.name_hash.store(h, std::memory_order_release);
+                slot.stale.store(1, std::memory_order_release);
+                g_peer_jit_name_soft_stale_live.fetch_add(1, std::memory_order_relaxed);
+                g_peer_jit_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+        }
+        // Table full (kPeerJitNameSoftStaleCap distinct stale names):
+        // drop the mark (observability only, never correctness).
+        g_peer_jit_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #3300: lock-free probe. Zero-cost when the table is empty.
+extern "C" int aura_aot_peer_jit_name_is_soft_stale(const char* name) {
+    if (!name || !*name)
+        return 0;
+    if (g_peer_jit_name_soft_stale_live.load(std::memory_order_acquire) == 0)
+        return 0;
+    const std::uint64_t h = peer_jit_name_hash(name);
+    for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
+        const auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
+        const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
+        if (cur == 0)
+            return 0;
+        if (cur == h)
+            return slot.stale.load(std::memory_order_acquire) != 0 ? 1 : 0;
+    }
+    return 0;
+}
+
+// Issue #3300: clear name-level soft-stale on successful local reemit /
+// register for that name (owner or peer).
+extern "C" void aura_aot_clear_peer_jit_name_soft_stale(const char* name) {
+    if (!name || !*name)
+        return;
+    if (g_peer_jit_name_soft_stale_live.load(std::memory_order_acquire) == 0)
+        return;
+    const std::uint64_t h = peer_jit_name_hash(name);
+    std::lock_guard<std::mutex> lock(g_peer_jit_name_soft_stale_mtx);
+    for (unsigned i = 0; i < kPeerJitNameSoftStaleCap; ++i) {
+        auto& slot = g_peer_jit_name_soft_stale[(h + i) % kPeerJitNameSoftStaleCap];
+        const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
+        if (cur == 0)
+            return;
+        if (cur == h) {
+            if (slot.stale.exchange(0, std::memory_order_acq_rel) != 0) {
+                g_peer_jit_name_soft_stale_live.fetch_sub(1, std::memory_order_relaxed);
+                g_peer_jit_name_soft_stale_clear_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return;
+        }
+    }
+}
+
+// Issue #3300: read accessors (file-scope counter style — light-link
+// test bundles query without the production CompilerMetrics TU).
+extern "C" void aura_aot_note_peer_jit_name_soft_stale_deopt(void) {
+    g_peer_jit_name_soft_stale_deopt_total.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" std::uint64_t peer_jit_name_soft_stale_mark_total_v_read(void) {
+    return g_peer_jit_name_soft_stale_mark_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t peer_jit_name_soft_stale_clear_total_v_read(void) {
+    return g_peer_jit_name_soft_stale_clear_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t peer_jit_name_soft_stale_deopt_total_v_read(void) {
+    return g_peer_jit_name_soft_stale_deopt_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint32_t peer_jit_name_soft_stale_live_v_read(void) {
+    return g_peer_jit_name_soft_stale_live.load(std::memory_order_relaxed);
+}
+
 extern "C" void aura_aot_bump_func_table_epoch(void) {
     // Issue #2841 / #2744 / #2951: multi-eval cascade tax action. When >1
     // live AotState and throttle is armed (production default, or env),
@@ -3922,6 +4056,11 @@ extern "C" std::uint64_t aura_reemit_aot_for_dirty(std::uint64_t current_defuse_
         auto note_reemit = [&](std::uint32_t sid, int preserved, bool count_emit_success,
                                bool count_llvm_metric) {
             aura::compiler::hot_update_registry().on_stable_func_id_preserve(preserved != 0);
+            // Issue #3300: successful local reemit for this name makes the
+            // name fresh again — clear the peer-JIT soft-stale bit so
+            // peers' next call may proceed (owner or peer reemit).
+            if (count_emit_success)
+                aura_aot_clear_peer_jit_name_soft_stale(name);
             if (aot_metrics()) {
                 if (count_emit_success) {
                     aot_metrics()->aot_incremental_reemit_success_total.fetch_add(

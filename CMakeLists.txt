@@ -3381,6 +3381,7 @@ add_executable(test_ir_closure_jit_misc_batch
     tests/compiler/test_must_deopt_before_next_call.cpp
     tests/compiler/test_named_closure_stable_id_at_create.cpp
     tests/compiler/test_partial_recompile_single_evict.cpp
+    tests/compiler/test_peer_jit_name_soft_stale.cpp
     tests/compiler/test_primcall_narg.cpp
     tests/compiler/test_primcall_str_intern.cpp
     tests/compiler/test_region_priority_deopt_throttle.cpp

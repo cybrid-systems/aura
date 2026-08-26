@@ -236,6 +236,28 @@ extern "C" __attribute__((weak)) void aura_aot_mark_peer_slots_soft_stale(void* 
 extern "C" __attribute__((weak)) int aura_aot_slot_is_soft_stale(std::int64_t /*func_id*/) {
     return 0;
 }
+// Issue #3300: name-level peer pure-JIT soft-stale (light-link no-ops;
+// zero-cost when the production table is empty).
+extern "C" __attribute__((weak)) void aura_aot_mark_peer_jit_name_soft_stale(const char* /*name*/) {
+}
+extern "C" __attribute__((weak)) int aura_aot_peer_jit_name_is_soft_stale(const char* /*name*/) {
+    return 0;
+}
+extern "C" __attribute__((weak)) void
+aura_aot_clear_peer_jit_name_soft_stale(const char* /*name*/) {}
+extern "C" __attribute__((weak)) void aura_aot_note_peer_jit_name_soft_stale_deopt(void) {}
+extern "C" __attribute__((weak)) std::uint64_t peer_jit_name_soft_stale_mark_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t peer_jit_name_soft_stale_clear_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint64_t peer_jit_name_soft_stale_deopt_total_v_read(void) {
+    return 0;
+}
+extern "C" __attribute__((weak)) std::uint32_t peer_jit_name_soft_stale_live_v_read(void) {
+    return 0;
+}
 extern "C" __attribute__((weak)) bool
 aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                           std::uint64_t captured_defuse_or_env_version) {

@@ -768,6 +768,16 @@ std::uint64_t reemit_owner_missing_reject_total_v_read(void);
 // Issue #3070: peer soft-stale after owner-scoped invalidate (no epoch bump).
 void aura_aot_mark_peer_slots_soft_stale(void* owner);
 int aura_aot_slot_is_soft_stale(std::int64_t func_id);
+// Issue #3300: name-level peer pure-JIT soft-stale (owner-scoped hard
+// invalidate must also signal peer JIT name caches; zero-cost when empty).
+void aura_aot_mark_peer_jit_name_soft_stale(const char* name);
+int aura_aot_peer_jit_name_is_soft_stale(const char* name);
+void aura_aot_clear_peer_jit_name_soft_stale(const char* name);
+void aura_aot_note_peer_jit_name_soft_stale_deopt(void);
+std::uint64_t peer_jit_name_soft_stale_mark_total_v_read(void);
+std::uint64_t peer_jit_name_soft_stale_clear_total_v_read(void);
+std::uint64_t peer_jit_name_soft_stale_deopt_total_v_read(void);
+std::uint32_t peer_jit_name_soft_stale_live_v_read(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)

@@ -3505,8 +3505,13 @@ void aura_register_fn_named(const char* name, int64_t func_id, int64_t (*fn)(int
         register_fn_entry(func_id, fn, local_count, arg_count, env_count);
     else
         register_fn_entry(func_id, fn, local_count, arg_count, env_count);
-    if (name && *name)
+    if (name && *name) {
         g_jit_fns_by_name[std::string(name)] = {fn, local_count, arg_count, env_count};
+        // Issue #3300: successful local register for this name makes the
+        // name fresh again — clear the peer-JIT soft-stale bit (owner or
+        // peer register; Soft/Off zero-cost when the table is empty).
+        aura_aot_clear_peer_jit_name_soft_stale(name);
+    }
     aura_unlock_workspace_write();
 }
 
@@ -3679,6 +3684,25 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
                 aura_unlock_workspace_read();
                 return 0;
             }
+        }
+        // Issue #3300: name-level peer pure-JIT soft-stale complement.
+        // Owner-scoped hard invalidate does not advance g_aot_table_epoch
+        // (preserve #2841/#2951), so dual-fresh stays green for peers;
+        // consult the name side-table armed by the owner-scoped facade.
+        // Hit → MustDeopt / one-shot local recompile (same as remount-fail
+        // path) — never run pre-invalidate native for a peer-eval closure.
+        const char* peer_cname = (cid < g_closure_names.size() && !g_closure_names[cid].empty())
+                                     ? g_closure_names[cid].c_str()
+                                     : nullptr;
+        if (peer_cname != nullptr && aura_aot_peer_jit_name_is_soft_stale(peer_cname) != 0) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
+            aura_aot_note_peer_jit_name_soft_stale_deopt();
+            invalidate_closure_cache_for(closure_id);
+            return 0;
         }
     }
 
