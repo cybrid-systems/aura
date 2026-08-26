@@ -878,6 +878,18 @@ public:
     [[nodiscard]] bool is_reclaimed() const noexcept {
         return reclaimed_.load(std::memory_order_acquire);
     }
+    // Issue #2468 residual: true while a WorkerThread may still hold
+    // this fiber (in its local queue, or popped and being processed).
+    // The reaper must not destroy a fiber with this set — destroying
+    // it would leave the worker a dangling pointer (resume-on-reclaimed
+    // hot loop → UAF, CI batch segfault). Set on push to a worker
+    // queue; cleared when the worker finishes with the fiber (done /
+    // waiting / dropped).
+    [[nodiscard]] bool is_queued() const noexcept {
+        return queued_.load(std::memory_order_acquire);
+    }
+    void set_queued() noexcept { queued_.store(true, std::memory_order_release); }
+    void clear_queued() noexcept { queued_.store(false, std::memory_order_release); }
     // Issue #2227 / #2397: set reclaimed_ (idempotent). When the body
     // has not yet returned (state_!=Done), bumps process-wide
     // still-running gauge so operators can distinguish logical
@@ -1306,6 +1318,8 @@ private:
     // documented limitation, same as #2153 cooperative cancel
     // protocol.
     std::atomic<bool> reclaimed_{false};
+    // Issue #2468 residual: see is_queued() — worker-queue / worker-hands marker.
+    std::atomic<bool> queued_{false};
     // Issue #2533: cooperative force-safepoint after hard-reclaim.
     std::atomic<bool> force_safepoint_requested_{false};
     // Issue #2491: fiber-local assigned tenant id. Stamped at
