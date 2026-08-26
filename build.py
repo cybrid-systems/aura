@@ -5025,6 +5025,19 @@ def cmd_lint():
             "Issue #3178 WAL overflow mid linter failed — run python3 scripts/coverage/checks/check_wal_overflow_mid_3178.py"
         )
         return r
+    # Issue #3302: force_wal production path default-arms fail-closed
+    # (#3109 residual). Soft/Off zero cost; AURA_WAL_APPEND_FAIL_OPEN
+    # opt-out; AURA_WAL_APPEND_FAIL_CLOSED still forces on.
+    wfc3302_script = COVERAGE_CHECKS / "check_wal_fail_closed_force_wal_3302.py"
+    if not wfc3302_script.exists():
+        fail(f"missing {wfc3302_script}")
+        return 1
+    r = run([sys.executable, str(wfc3302_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3302 WAL fail-closed force_wal linter failed — run python3 scripts/coverage/checks/check_wal_fail_closed_force_wal_3302.py"
+        )
+        return r
     # Issue #3110: Production C++ join auto-wait (close host-forget cleanup
     # window). join_agent / join_agents auto-wait via wait_reclaimed_body
     # (50 ms production default) when production + Reclaimed + unset wait,
@@ -9548,6 +9561,32 @@ def cmd_wal_append_fail_schedule_3211():
     """
     print(f"{B}=== wal append-fail schedule (#3211) ==={N}")
     return cmd_wal_append_fail_schedule_3211_coverage()
+
+
+def cmd_wal_fail_closed_force_wal_3302_coverage():
+    """Issue #3302: force_wal default-arms WAL fail-closed (static)."""
+    print(f"{B}=== wal fail-closed force_wal coverage (#3302) ==={N}")
+    script = COVERAGE_CHECKS / "check_wal_fail_closed_force_wal_3302.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("wal fail-closed force_wal (#3302) coverage contract rows failed")
+        return 1
+    ok("wal fail-closed force_wal (#3302) coverage clean")
+    return 0
+
+
+def cmd_wal_fail_closed_force_wal_3302():
+    """Issue #3302: force_wal pairs durable WAL with fail-closed by default.
+
+    Soft / AURA_SANDBOX=off stays fail-open. Explicit
+    AURA_WAL_APPEND_FAIL_OPEN=1 opts out; AURA_WAL_APPEND_FAIL_CLOSED=1
+    still forces on. #3109 overflow ring / Strict entry deny unchanged.
+    """
+    print(f"{B}=== wal fail-closed force_wal (#3302) ==={N}")
+    return cmd_wal_fail_closed_force_wal_3302_coverage()
 
 
 def cmd_bp_threshold_ssot_2948_coverage():
@@ -20179,6 +20218,8 @@ def main():
         "wal-append-fail-slo-3056-coverage": cmd_wal_append_fail_slo_3056_coverage,
         "wal-append-fail-schedule-3211": cmd_wal_append_fail_schedule_3211,
         "wal-append-fail-schedule-3211-coverage": cmd_wal_append_fail_schedule_3211_coverage,
+        "wal-fail-closed-force-wal-3302": cmd_wal_fail_closed_force_wal_3302,
+        "wal-fail-closed-force-wal-3302-coverage": cmd_wal_fail_closed_force_wal_3302_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,

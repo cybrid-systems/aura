@@ -201,6 +201,19 @@ inline void note_wal_append_ok() noexcept {
     return false;
 }
 
+inline std::atomic<int>& wal_fail_closed_defaulted_by_force_wal_flag() noexcept {
+    static std::atomic<int> v{0};
+    return v;
+}
+
+inline void set_wal_fail_closed_defaulted_by_force_wal(bool v) noexcept {
+    wal_fail_closed_defaulted_by_force_wal_flag().store(v ? 1 : 0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline int wal_fail_closed_defaulted_by_force_wal() noexcept {
+    return wal_fail_closed_defaulted_by_force_wal_flag().load(std::memory_order_relaxed);
+}
+
 inline void reset_wal_append_fail_slo_for_test() noexcept {
     auto& c = g_wal_append_fail_slo_counters;
     c.checks_total.store(0, std::memory_order_relaxed);
@@ -213,30 +226,39 @@ inline void reset_wal_append_fail_slo_for_test() noexcept {
     c.last_would_arm_degraded.store(0, std::memory_order_relaxed);
     c.last_force_reason_code.store(0, std::memory_order_relaxed);
     c.inject_fail_remaining.store(0, std::memory_order_relaxed);
+    set_wal_fail_closed_defaulted_by_force_wal(false);
 }
 
 // Issue #3109: production WAL append fail-closed option (SE + mutation
-// audit trail integrity). Thin helper — only effective when
-// AURA_WAL_APPEND_FAIL_CLOSED env is set AND production_defaults_active().
-// Soft/Off / no-env: helper returns false → today's fail-open behavior
-// preserved (zero new cost, AC1). Caller pattern:
+// audit trail integrity). Issue #3302 residual: when force_wal actually
+// enabled WAL (Restricted / Strict / multi_tenant), default fail-closed
+// so durable + evidence capture stay paired. Explicit opt-out:
+// AURA_WAL_APPEND_FAIL_OPEN=1. Explicit AURA_WAL_APPEND_FAIL_CLOSED=1
+// still forces on. Soft / production_defaults_active()==0: always false
+// (zero new cost, AC1). Caller pattern:
 //   if (wal_append_fail_closed_active()) wal_overflow_ring_push(rec);
-// Falls back to fail-open + #3056 SLO arm when env unset / non-production.
-[[nodiscard]] inline bool wal_append_fail_closed_active() noexcept {
-    const char* e = std::getenv("AURA_WAL_APPEND_FAIL_CLOSED");
+inline constexpr int kWalAppendFailClosedForceWalIssue = 3302;
+
+[[nodiscard]] inline bool wal_env_flag_truthy(const char* name) noexcept {
+    const char* e = std::getenv(name);
     if (e == nullptr || e[0] == '\0')
         return false;
-    const bool parsed =
-        (std::strcmp(e, "1") == 0 || std::strcmp(e, "true") == 0 || std::strcmp(e, "on") == 0 ||
-         std::strcmp(e, "TRUE") == 0 || std::strcmp(e, "ON") == 0 || std::strcmp(e, "True") == 0 ||
-         std::strcmp(e, "On") == 0 || std::strcmp(e, "yes") == 0 || std::strcmp(e, "YES") == 0 ||
-         std::strcmp(e, "Yes") == 0);
-    if (!parsed)
+    return std::strcmp(e, "1") == 0 || std::strcmp(e, "true") == 0 || std::strcmp(e, "on") == 0 ||
+           std::strcmp(e, "TRUE") == 0 || std::strcmp(e, "ON") == 0 ||
+           std::strcmp(e, "True") == 0 || std::strcmp(e, "On") == 0 || std::strcmp(e, "yes") == 0 ||
+           std::strcmp(e, "YES") == 0 || std::strcmp(e, "Yes") == 0;
+}
+
+[[nodiscard]] inline bool wal_append_fail_closed_active() noexcept {
+    // Soft / no production_defaults: fail-closed never active (AC1).
+    if (aura_production_defaults_active_probe() == 0)
         return false;
-    // Only effective when production_defaults_active() is true (AC2:
-    // production-only). Probe is the C-linkage SSOT — this header must
-    // not include typed_audit.h (core ↛ compiler).
-    return aura_production_defaults_active_probe() != 0;
+    if (wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_OPEN"))
+        return false; // #3302 explicit opt-out
+    if (wal_env_flag_truthy("AURA_WAL_APPEND_FAIL_CLOSED"))
+        return true; // #3109 explicit opt-in (AC4)
+    // #3302: force_wal arm sets this process flag in security_defaults.
+    return wal_fail_closed_defaulted_by_force_wal() != 0;
 }
 
 } // namespace aura::core::wal_slo

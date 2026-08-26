@@ -4452,7 +4452,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->audit_wal_bytes_written.store(snap.bytes_written, std::memory_order_relaxed);
             }
             // Capacity 32: pre-#2150 keys + force/schema-2150/flush-every.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(35));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(40));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -4538,6 +4538,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::security_event_wal::wal_overflow_ring_depth()));
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
+                // Issue #3302: force_wal default-arms fail-closed. Additive.
+                insert_kv("wal-fail-closed-defaulted-by-force-wal",
+                          static_cast<std::int64_t>(
+                              ::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal()));
+                insert_kv("schema-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
+                insert_kv("issue-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
@@ -5063,7 +5069,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3040: +4 keys (schema/issue/wired/total).
             // Issue #3056: +4 keys (breach/wired/schema/issue).
             // Issue #3113: +5 keys (wrap-risk/wrap-total/window/schema/issue).
-            constexpr std::size_t kSecurityPosturePlannedKeys = 80;
+            // Issue #3302: +3 keys (defaulted-by-force-wal / schema / issue).
+            constexpr std::size_t kSecurityPosturePlannedKeys = 88;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -5203,6 +5210,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::security_event_wal::wal_overflow_ring_depth()));
                 insert_kv("schema-3109", 3109);
                 insert_kv("issue-3109", 3109);
+                // Issue #3302: force_wal default-arms fail-closed. Additive.
+                insert_kv("wal-fail-closed-defaulted-by-force-wal",
+                          static_cast<std::int64_t>(
+                              ::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal()));
+                insert_kv("schema-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
+                insert_kv("issue-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
             }
             // Issue #3113: typed trail 256 wrap vs SE 1024 — Agent wrap-risk
             // so a mid-join miss is not read as "no audit". Additive.

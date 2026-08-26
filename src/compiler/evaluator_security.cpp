@@ -398,7 +398,8 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
 // window after #2658 for paths outside `mutate:force`.
 bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast::NodeId target_node,
                                std::uint64_t ref_tenant) noexcept {
-    // #3109: fail-closed deny at entry (Strict + overflow ring full; production+env only).
+    // #3109: fail-closed deny at entry (Strict + overflow ring full).
+    // #3302: fail-closed is force_wal-defaulted or AURA_WAL_APPEND_FAIL_CLOSED.
     if (req_bits != 0 && ::aura::core::wal_slo::wal_append_fail_closed_active() &&
         ::aura::core::security_event_wal::wal_overflow_ring_full() &&
         ::aura::core::sandbox::is_strict())

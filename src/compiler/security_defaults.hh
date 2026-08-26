@@ -17,6 +17,7 @@
 #include "core/capability_model.hh"
 #include "core/lifetime_pin.hh" // #2597 g_general_object_pin_required_pref
 #include "core/mutation_audit_wal.hh"
+#include "core/wal_append_fail_slo.h" // #3302 force_wal default fail-closed arm
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
 #include "core/workspace_isolation.hh"
@@ -198,6 +199,7 @@ inline void apply_production_security_defaults() noexcept {
     //    Override: AURA_TYPED_AUDIT=full|sampled|off
     if (dev_off) {
         apply_dev_audit_defaults();
+        ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
     } else {
         const char* aud = std::getenv("AURA_TYPED_AUDIT");
         if (aud && *aud) {
@@ -254,6 +256,12 @@ inline void apply_production_security_defaults() noexcept {
             // Process-wide enable; ring replay happens when an Evaluator
             // later calls enable_mutation_audit_wal on the same path.
             if (g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0)) {
+                // Issue #3302: force_wal means "this deploy is durable".
+                // Pair fail-closed so fwrite miss captures overflow ring
+                // (opt-out: AURA_WAL_APPEND_FAIL_OPEN=1). Soft/dev_off
+                // never reaches this block.
+                if (force_wal)
+                    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
                 if (force_wal && !has_explicit) {
                     g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
                         1, std::memory_order_relaxed);
@@ -288,8 +296,14 @@ inline void apply_production_security_defaults() noexcept {
                         }
                     }
                 }
+            } else if (force_wal) {
+                ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
             }
+        } else {
+            ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
         }
+    } else {
+        ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
     }
 
     // 5) Issue #2136: kernel principal (tenant 0) always holds Render under

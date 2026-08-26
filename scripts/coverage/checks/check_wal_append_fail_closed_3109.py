@@ -65,10 +65,11 @@ def main() -> int:
         )
     must("3109 AC1", "AC1 test marker", test)
 
-    # ── AC2: Default unchanged + #3056 SLO arm + require_effect deny ─────
-    # Helper must be zero-cost when env unset (returns false early).
-    must("if (e == nullptr || e[0] == '\\0')", "AC2 early-exit on no-env", slo)
-    must("return false;", "AC2 no-env returns false", slo)
+    # ── AC2: Soft/no-prod still fail-open + #3056 SLO arm + require_effect
+    # #3302 residual: force_wal deployments default fail-closed (FAIL_OPEN
+    # opt-out). Soft still early-returns false via production probe == 0.
+    must("aura_production_defaults_active_probe() == 0", "AC2 Soft/no-prod early false", slo)
+    must("AURA_WAL_APPEND_FAIL_CLOSED", "AC2 explicit opt-in env", slo)
     # require_effect wires fail-closed + overflow full + Strict
     must("wal_append_fail_closed_active()", "AC2 helper call in require_effect", ev)
     must("wal_overflow_ring_full()", "AC2 overflow full check in require_effect", ev)
