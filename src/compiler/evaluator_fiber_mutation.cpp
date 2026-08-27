@@ -27,7 +27,8 @@ module;
 #include "orch/security_schedule_gate.h"      // Issue #3251: body try_acquire schedule-gate class
 #include "core/layout_stamp.hh"               // Issue #2519: full 8-field LayoutStamp equality
 #include "core/lifetime_consistency_proof.hh" // Issue #2888: unified proof header
-#include "core/flatast_restamp.hh"            // Issue #3019: unified restamp counters
+#include "core/densify_consistency_report.h" // Issue #3308: g_moving_post_moving_stale_total on steal-complete re-consult
+#include "core/flatast_restamp.hh"     // Issue #3019: unified restamp counters
 #include "core/security_event_wal.hh"  // Issue #2839: IsolationDeny SE on fiber principal mismatch
 #include "serve/multi_fiber_mailbox.h" // Issue #3111: revalidate_held_ref_after_steal
 #include "core/workspace_epoch.hh"     // Issue #2839: Mutation epoch mid for SE

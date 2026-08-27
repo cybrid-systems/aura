@@ -299,6 +299,20 @@ bool set_hygiene_pass_cap(int n) noexcept {
 
 extern std::atomic<std::uint8_t> g_macro_hygiene_last_limit_reason;
 
+// Issue #3304 CI build fix: hook defined here (module purview sees the
+// exported atomic) backing the declaration in core/capability_model.hh,
+// which is included by non-module header TUs that cannot see the module
+// export. Stamps the kHygieneLimitReasonCapabilityDeny (7) sentinel into
+// the unified hygiene last-limit-reason atomic.
+// Issue #3304 CI build fix: extern "C" bridge backing the declaration in
+// core/capability_model.hh (non-module header TUs cannot see the module
+// export of g_macro_hygiene_last_limit_reason). Stamps the
+// kHygieneLimitReasonCapabilityDeny (7) sentinel into the unified hygiene
+// last-limit-reason atomic.
+extern "C" void aura_macro_hygiene_capability_deny_sentinel(void) noexcept {
+    g_macro_hygiene_last_limit_reason.store(7, std::memory_order_relaxed);
+}
+
 void reset_hygiene_runtime_caps_for_test() noexcept {
     g_runtime_hygiene_depth_cap.store(MAX_HYGIENE_DEPTH, std::memory_order_release);
     g_runtime_hygiene_pass_cap.store(0, std::memory_order_release);

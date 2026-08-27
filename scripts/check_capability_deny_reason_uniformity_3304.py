@@ -116,7 +116,7 @@ def _check_capability_family(cap: str) -> list[str]:
     return failures
 
 
-def _check_deny_sites(cap: str) -> list[str]:
+def _check_deny_sites(cap: str, me: str = "") -> list[str]:
     """AC4: 4 deny sites stamp new code; AC5: also stamps unified sentinel."""
     failures: list[str] = []
     sites = (
@@ -140,8 +140,24 @@ def _check_deny_sites(cap: str) -> list[str]:
     for needle, msg in sites:
         if needle not in cap:
             failures.append(msg)
-    # AC5: unified hygiene atomic stamped with sentinel 7.
-    if not re.search(r"g_macro_hygiene_last_limit_reason\.store\s*\(\s*7\s*,", cap):
+    # AC5: unified hygiene atomic stamped with sentinel 7. Accepted shapes:
+    #   (a) direct store(7,...) in capability_model.hh, or
+    #   (b) CI-build-fix bridge routing (module export invisible to non-module
+    #       header TUs): header calls aura_macro_hygiene_capability_deny_sentinel()
+    #       and macro_expansion.cpp defines the extern "C" bridge that performs
+    #       g_macro_hygiene_last_limit_reason.store(7,...).
+    ac5_direct = re.search(r"g_macro_hygiene_last_limit_reason\.store\s*\(\s*7\s*,", cap)
+    ac5_bridge_call = "aura_macro_hygiene_capability_deny_sentinel()" in cap
+    ac5_bridge_def = (
+        ac5_bridge_call
+        and me != ""
+        and re.search(
+            r'extern "C" void aura_macro_hygiene_capability_deny_sentinel\(void\) noexcept \{[^}]*'
+            r"g_macro_hygiene_last_limit_reason\.store\s*\(\s*7\s*,",
+            me,
+        )
+    )
+    if not (ac5_direct or ac5_bridge_def):
         failures.append("AC5: unified g_macro_hygiene_last_limit_reason stamped with sentinel 7")
     return failures
 
@@ -166,7 +182,7 @@ def run_strict() -> list[str]:
     failures.extend(_check_ixx_sentinel(ixx))
     failures.extend(_check_case_seven(me))
     failures.extend(_check_capability_family(cap))
-    failures.extend(_check_deny_sites(cap))
+    failures.extend(_check_deny_sites(cap, me))
     failures.extend(_check_no_direct_stores(me))
     return failures
 
