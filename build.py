@@ -10008,6 +10008,47 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
+    """Issue #3307: budget-allow must hard-latch pending residual face
+    (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
+
+    Closes the production residual where escalate_locality_slo_if_
+    production's budget-allow path returns SOLVED with dirty bits still
+    set and merges roots into pending_full_solve_roots_, but does NOT
+    call note_pending_full_solve_residual(residual, /*hard=*/true).
+    Without this, mid-batch IR / Agent poll observes SOLVED face +
+    empty residual face while CS still has dirty + pending roots between
+    #2994 handoff and #3190/#3031 drain. The fix is additive: one new
+    note_pending_full_solve_residual(residual, true) call under if
+    (hard) — Soft path stays observe-only, quiet path zero extra cost.
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: budget-allow path under if (hard) calls
+           note_pending_full_solve_residual(residual, /*hard=*/true)
+      AC2: Soft path (if !hard) does NOT call
+           note_pending_full_solve_residual (observe-only via existing
+           #2994 contract)
+      AC3: quiet residual==0 path does NOT call
+           note_pending_full_solve_residual (zero extra atomics)
+      AC4: drain_pending_full_solve_before_commit clears face via
+           note_pending_full_solve_residual(0, true) on SOLVED
+      AC5: commit_readiness_live_policy still reads
+           pending_full_solve_residual_face_hit() (no new query key)
+    """
+    print(f"{B}=== pending full solve residual hardlatch (#3307) ==={N}")
+    script = ROOT / "scripts" / "check_pending_full_solve_residual_hardlatch_3307.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pending full solve residual hardlatch (#3307) contract rows failed")
+        return 1
+    ok("pending full solve residual hardlatch (#3307) clean")
+    return 0
+
+
 def cmd_intermediate_create_value_only_soak_3306_coverage():
     """Issue #3306: defense-in-depth — densify entry fail-close now also
     fail-closes when intermediate_create_value_only_total > 0 under required.
