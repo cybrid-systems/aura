@@ -122,7 +122,9 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
         qr.matches[i].boundary_pinned = 0;
         // Issue #3231: schema-2 marker even if wrap/tenant/fiber/cow/mid
         // are still 0 (single-tenant never-wrapped production).
-        qr.matches[i].reserved = aura::core::kQueryResultMatchSchema2;
+        qr.matches[i].reserved = aura::compiler::typed_audit::production_defaults_active()
+                                     ? aura::core::kQueryResultMatchSchema2Prod
+                                     : aura::core::kQueryResultMatchSchema2;
     }
     aura::core::note_query_result_full_provenance();
     (void)flat;
@@ -146,6 +148,17 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
         // Issue #3231: production never treats layout-only as fresh.
         if (hard)
             aura::core::note_query_result_full_provenance_stale();
+        return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
+    }
+    // Issue #3311: Soft → Production arm invalidates any cached Soft-only
+    // schema-2 result. Under production a Soft-stamped match (reserved ==
+    // kQueryResultMatchSchema2) must re-stamp (reserved gets bumped to
+    // kQueryResultMatchSchema2Prod) before it can be treated as durable
+    // memory — no silent promotion of layout-only / Soft provenance to
+    // Hard memory across the canary window. Soft keeps the existing
+    // gate (any non-zero reserved accepted).
+    if (hard && qr.matches[0].reserved != aura::core::kQueryResultMatchSchema2Prod) {
+        aura::core::note_query_result_full_provenance_stale();
         return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
     }
     const auto live_mutation = aura::core::current_mutation_epoch();
