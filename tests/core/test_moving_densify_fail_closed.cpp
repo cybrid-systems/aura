@@ -2587,12 +2587,16 @@ static void ac3308_6_source_and_linter() {
     std::println(
         "\n--- #3308 AC6: no docs/design/3308-*; no test_issue_3308.cpp; linter present ---");
     // No docs/design/3308-* (per #1655).
-    for (const auto& f : std::filesystem::directory_iterator("docs/design")) {
-        auto name = f.path().filename().string();
-        CHECK(name.find("3308-") == std::string::npos,
-              "3308 AC6: no docs/design/3308-* plan doc (#1655)");
-        (void)name;
-        break;
+    // #1655 removed docs/design/ entirely; the directory may not exist in
+    // CI checkouts — absence trivially satisfies "no 3308-* plan doc".
+    if (std::filesystem::exists("docs/design")) {
+        for (const auto& f : std::filesystem::directory_iterator("docs/design")) {
+            auto name = f.path().filename().string();
+            CHECK(name.find("3308-") == std::string::npos,
+                  "3308 AC6: no docs/design/3308-* plan doc (#1655)");
+            (void)name;
+            break;
+        }
     }
     // No invent test_issue_3308.cpp (per #81934) — we EXTEND existing
     // test_moving_densify_fail_closed instead.

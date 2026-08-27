@@ -3091,7 +3091,9 @@ static void ac3307_2_soft_observe_only() {
 static void ac3307_3_quiet_zero_cost() {
     std::println("\n--- #3307 AC3: quiet residual==0 → no face latch, no extra atomics ---");
     const auto impl = read_file("src/compiler/type_checker_impl.cpp");
-    const auto quiet_pos = impl.find("escalate_locality_slo_if_production");
+    // Anchor at the DEFINITION, not the first call site (the call at the
+    // solve entry precedes the def and its 800-char window has no guard).
+    const auto quiet_pos = impl.find("escalate_locality_slo_if_production(SolveResult prior");
     if (quiet_pos == std::string::npos) {
         CHECK(false, "3307 AC3: escalate_locality_slo_if_production not found");
         return;
@@ -3128,7 +3130,9 @@ static void ac3307_4_drain_clears_face() {
 static void ac3307_5_existing_surfaces_preserved() {
     std::println("\n--- #3307 AC5: existing surfaces (commit_readiness / drain) preserved ---");
     const auto ixx = read_file("src/compiler/typed_mutation_audit.h");
-    const auto live_pos = ixx.find("commit_readiness_live_policy()");
+    // Anchor at the DEFINITION (a forward declaration precedes it by
+    // ~2900 lines and its 2500-char window contains no body).
+    const auto live_pos = ixx.find("commit_readiness_live_policy() noexcept {");
     if (live_pos == std::string::npos) {
         CHECK(false, "3307 AC5: commit_readiness_live_policy not found");
         return;
