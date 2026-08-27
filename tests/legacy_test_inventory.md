@@ -1375,7 +1375,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_query_and_replace_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — Issue #2527: mutate:query-and-replace-batch — first-class sugar
 - `tests/compiler/test_query_by_marker_provenance.cpp` (—) [domain_suite, theme_compiler] — AC1: all 3 individual primitives are registered and return schema=2242
 - `tests/compiler/test_query_mutate_consistency.cpp` (—) [domain_suite, theme_compiler] — test_query_mutate_consistency.cpp — Issue #1374:
-- `tests/compiler/test_query_result_full_provenance.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_query_result_full_provenance.cpp --
+- `tests/compiler/test_query_result_full_provenance.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_query_result_full_provenance.cpp --
 - `tests/compiler/test_rebind_parse_failure_no_leak.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind parse-error path cites #2791 + free_orphan_nodes_from
 - `tests/compiler/test_rebind_rollback_nodeid_validity.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind source cites #2795; old_value after parse + live check
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp` (—) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):

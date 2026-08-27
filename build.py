@@ -13558,6 +13558,26 @@ def cmd_fiber_spawn_cli_dtor_drain_coverage():
     return 0
 
 
+def cmd_query_result_soft_prod_transition_coverage():
+    """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
+
+    Production stamp sets kQueryResultMatchSchema2Prod; freshness under
+    hard requires the Prod marker → cached Soft-stamped matches fail closed
+    (SoftOnlyNoProvenance + stale counter). Soft stays observe-only.
+    """
+    print(f"{B}=== query-result Soft→Production transition (#3311) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_result_soft_prod_transition_3311.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-result Soft→Production transition (#3311) coverage rows failed")
+        return 1
+    ok("query-result Soft→Production transition (#3311) coverage clean")
+    return 0
+
+
 def cmd_partial_cone_commit_gate_coverage():
     """Issue #2621: partial cone truncate → commit fidelity (no silent prod success).
 
@@ -20756,6 +20776,7 @@ def main():
         "subsecond-clock": cmd_subsecond_clock_coverage,
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
+        "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
         "cone-truncate-force-closure-2909-coverage": cmd_cone_truncate_force_closure_2909_coverage,

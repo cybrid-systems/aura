@@ -523,6 +523,13 @@ inline constexpr int kQueryResultFullProvenanceIssue = 3103;
 inline constexpr int kQueryResultLayoutOnlyRejectIssue = 3231;
 inline constexpr const char* kQueryResultLayoutOnlyErrorKind = "query-result-layout-only";
 inline constexpr std::uint8_t kQueryResultMatchSchema2 = 1;
+// Issue #3311: production-stamped variant. Under production_defaults the
+// stamp path sets reserved == kQueryResultMatchSchema2Prod instead of
+// kQueryResultMatchSchema2 so Soft → Production arm invalidates any cached
+// Soft-only schema-2 result (reserved == 1 → 2 mismatch under hard). Soft
+// / Off still sets the Soft marker; production validation gates on the
+// Prod marker.
+inline constexpr std::uint8_t kQueryResultMatchSchema2Prod = 2;
 
 // Issue #3103: full-provenance path observability (additive; production/Full
 // keeps the schema-1 Soft counters untouched). Bumped at capture-time when
