@@ -91,6 +91,16 @@ export inline bool was_no_safepoint_warned() noexcept {
     return arena_no_safepoint_detail::no_safepoint_warned_flag().load(std::memory_order_acquire);
 }
 
+// Test-only: reset the one-shot no-safepoint warning so a suite can
+// deterministically assert the initial "not fired" state even when
+// earlier allocation pressure fired it first — e.g. the #743 small-tier
+// exhaustion auto-path calls request_defrag() during AC1 / service
+// construction on slower CI hosts before the suite's own request.
+// Never call from production code.
+export inline void reset_no_safepoint_warned_for_test() noexcept {
+    arena_no_safepoint_detail::no_safepoint_warned_flag().store(false, std::memory_order_release);
+}
+
 // Issue #658: small-object tier exhaustion fallbacks to main pmr arena.
 export inline std::atomic<std::uint64_t> arena_small_tier_fallback_total{0};
 
