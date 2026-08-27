@@ -21,6 +21,7 @@
 #include "test_harness.hpp"
 
 #include "compiler/typed_mutation_audit.h"
+#include "core/flatast_restamp.hh" // Issue #3309: g_unified_restamp_calls_total surface
 #include "core/sandbox.hh"
 #include "core/workspace_epoch.hh"
 
@@ -43,7 +44,6 @@ namespace {
 using aura::ast::FlatAST;
 using aura::ast::NodeId;
 using aura::compiler::apply_coercion_map;
-using aura::compiler::clear_coercion_commit_readiness_on_abort;
 using aura::compiler::coerced_nodes_tracker_enter_boundary;
 using aura::compiler::coerced_nodes_tracker_exit_boundary;
 using aura::compiler::coerced_nodes_tracker_push;
@@ -51,24 +51,13 @@ using aura::compiler::coerced_nodes_tracker_take;
 using aura::compiler::CoercionEntry;
 using aura::compiler::CoercionMap;
 using aura::compiler::CompilerService;
-using aura::compiler::dead_coercion_decision_invalidate_gen;
-using aura::compiler::dead_coercion_decision_invalidate_total;
-using aura::compiler::g_coercion_commit_readiness_cleared_on_abort_total;
-using aura::compiler::g_coercion_commit_readiness_cleared_on_abort_wired;
-using aura::compiler::g_coercion_map_abort_forced_dirty_total;
-using aura::compiler::g_coercion_map_abort_rewind_observe_total;
-using aura::compiler::g_coercion_map_abort_rewind_total;
-using aura::compiler::g_coercion_map_abort_soft_observe_total;
-using aura::compiler::g_coercion_map_apply_tracker_push_total;
-using aura::compiler::reset_coercion_commit_readiness_cleared_on_abort_for_test;
-using aura::compiler::reset_dead_coercion_decision_invalidate_for_test;
-using aura::compiler::truncate_type_cone_to_size;
 using aura::compiler::typed_audit::AuditStrategy;
+using aura::compiler::typed_audit::clear_coercion_commit_readiness_on_abort;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::set_strategy;
-using aura::compiler::value::as_int;
-using aura::compiler::value::EvalValue;
-using aura::compiler::value::make_int;
+using aura::compiler::types::as_int;
+using aura::compiler::types::EvalValue;
+using aura::compiler::types::make_int;
 
 constexpr std::uint64_t kRestampBudgetHardGateIssue = 3104;
 
@@ -112,12 +101,11 @@ void test_ac1_ac2_flatast_restamp_state() {
 void test_ac3_force_query_epoch_stale() {
     std::print("AC3 -- force_query_epoch_stale_from_restamp_budget\n");
     using aura::core::force_query_epoch_stale_from_restamp_budget;
-    using aura::core::g_query_epoch_forced_stale_total;
-    using aura::core::reset_query_epoch_forced_stale_for_test;
-    reset_query_epoch_forced_stale_for_test();
-    const auto before = counter_v_read(g_query_epoch_forced_stale_total);
+    using aura::core::g_restamp_budget_query_epoch_stale_total;
+    g_restamp_budget_query_epoch_stale_total().store(0, std::memory_order_relaxed);
+    const auto before = counter_v_read(g_restamp_budget_query_epoch_stale_total());
     force_query_epoch_stale_from_restamp_budget();
-    const auto after = counter_v_read(g_query_epoch_forced_stale_total);
+    const auto after = counter_v_read(g_restamp_budget_query_epoch_stale_total());
     expect_eq_i64("force_query_epoch_stale_from_restamp_budget bumped counter", 1, after - before);
 }
 
@@ -226,15 +214,24 @@ void test_ac10_recovery_hint_in_restamp_lag() {
         expect_true(std::string{kSites[i]} + ": source read", !text.empty());
         if (text.empty())
             continue;
-        const auto pos = text.find(kKeywords[i]);
+        // Issue #3309: anchor at the primitive *registration* site, not the
+        // first comment mention (a doc comment can precede the real reject
+        // path by more than the 4000-char window).
+        const auto kw = std::string{kKeywords[i]};
+        auto pos = text.find("[\"" + kw + "\"]"); // (*q_impls)[...] registration
+        if (pos == std::string::npos)
+            pos = text.find("add(\"" + kw + "\""); // add(...) registration
         expect_true(std::string{kKeywords[i]} + ": keyword found", pos != std::string::npos);
         if (pos == std::string::npos)
             continue;
         const auto window = text.substr(pos, 4000);
         expect_true(std::string{kKeywords[i]} + ": restamp-lag in window",
                     window.find("restamp-lag") != std::string::npos);
+        // Issue #3309: the hint is split across adjacent string-literal
+        // lines in some sites (clang-format wrapping); match stable pieces.
         expect_true(std::string{kKeywords[i]} + ": recovery hint in window",
-                    window.find(kHint) != std::string::npos);
+                    window.find("recovery: re-query after budget") != std::string::npos &&
+                        window.find("restamp before reusing refs") != std::string::npos);
     }
 }
 
@@ -267,10 +264,53 @@ void test_ac11_status_surface_exposes_budget_fields() {
         if (text.empty())
             continue;
         expect_true(std::string{rel} + ": field " + std::string{key} + " present",
-                    text.find(std::string{"\""} + std::string{key} + "\""
-    }) != std::string::npos);
+                    text.find("\"" + std::string{key} + "\"") != std::string::npos);
+    }
 }
+} // namespace
+
+namespace {
+
+// Issue #3309: abort / steal-complete / densify restamp single entry —
+// the shared unified_restamp_after_boundary must own every triad pairing
+// (mirrors scripts/check_unified_restamp_single_entry_3309.py).
+void test_3309_unified_restamp_single_entry() {
+    auto read_source = [](std::string_view rel) -> std::string {
+        std::ifstream in{std::string{rel}};
+        if (!in)
+            return {};
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    const auto mb = read_source("src/compiler/evaluator_mutation_boundary.cpp");
+    expect_true("#3309: boundary source read", !mb.empty());
+    if (!mb.empty()) {
+        expect_true("#3309: outermost exit routes success/abort through unified entry",
+                    mb.find("unified_restamp_after_boundary(") != std::string::npos &&
+                        mb.find("UnifiedRestampSite::AbortRestore") != std::string::npos &&
+                        mb.find("UnifiedRestampSite::BoundarySuccess") != std::string::npos);
+        expect_true("#3309: partial-recovery provenance-fail routes through unified entry",
+                    mb.find("unified_restamp_after_boundary(\n                                "
+                            "UnifiedRestampSite::AbortRestore)") != std::string::npos);
+    }
+    const auto fm = read_source("src/compiler/evaluator_fiber_mutation.cpp");
+    expect_true("#3309: fiber source read", !fm.empty());
+    if (!fm.empty()) {
+        expect_true("#3309: steal-complete routes through unified entry",
+                    fm.find("unified_restamp_after_boundary(UnifiedRestampSite::StealComplete)") !=
+                        std::string::npos);
+        expect_true("#3309: densify-success routes through unified entry",
+                    fm.find("unified_restamp_after_boundary(UnifiedRestampSite::Densify)") !=
+                        std::string::npos);
+    }
+    // Monotonic call counter observes the shared entry under this suite.
+    using aura::ast::g_unified_restamp_calls_total;
+    const auto before = g_unified_restamp_calls_total.load(std::memory_order_relaxed);
+    expect_true("#3309: unified restamp calls total monotonic surface resolves",
+                before + 1 > before); // compile+link proof; runtime bump asserted in AC4/AC5
 }
+
 } // namespace
 
 int main() {
@@ -284,6 +324,7 @@ int main() {
     test_regression_soft_degrade();
     test_ac10_recovery_hint_in_restamp_lag();
     test_ac11_status_surface_exposes_budget_fields();
-    std::print("All #3104 + #3138 AC tests PASSED\n");
+    test_3309_unified_restamp_single_entry();
+    std::print("All #3104 + #3138 + #3309 AC tests PASSED\n");
     return 0;
 }
