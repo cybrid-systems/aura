@@ -3098,6 +3098,18 @@ ConstraintSystem::escalate_locality_slo_if_production(SolveResult prior,
             static_cast<struct CompilerMetrics*>(metrics_)
                 ->delta_locality_budget_allow_total.fetch_add(1, std::memory_order_relaxed);
         }
+        // Issue #3307: hard-latch the pending-full-solve residual face
+        // under production / Full so commit_readiness_live_policy()
+        // (which reads pending_full_solve_residual_face_hit()) denies
+        // IR entry / query:* stamps between this SOLVED return and the
+        // next outermost/composite drain_pending_full_solve_before_commit.
+        // Without this, mid-batch IR / Agent poll observes SOLVED face +
+        // empty residual face while CS still has dirty + pending roots.
+        // Soft path: keep observe-only (no hard latch) per AC4 — single
+        // production_defaults_active load decides.
+        if (hard) {
+            aura::compiler::typed_audit::note_pending_full_solve_residual(residual, /*hard=*/true);
+        }
         return prior;
     }
     if (budget > 0) {

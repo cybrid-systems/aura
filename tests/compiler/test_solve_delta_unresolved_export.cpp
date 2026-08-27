@@ -3042,6 +3042,128 @@ static void ac3253_6_source_and_linter() {
           "3253 AC6: no docs/design");
 }
 
+
+// ── Issue #3307: budget-allow must hard-latch pending residual face ──
+// (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994)
+static void ac3307_1_production_budget_allow_hard_latch() {
+    std::println("\n--- #3307 AC1: production budget-allow hard-latches pending residual face ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto budget_pos = impl.find(
+        "if (budget > 0 && residual > 0 && residual <= static_cast<std::size_t>(budget)) {");
+    if (budget_pos == std::string::npos) {
+        CHECK(false,
+              "3307 AC1: budget-allow branch not found in escalate_locality_slo_if_production");
+        return;
+    }
+    const std::string scope = impl.substr(budget_pos, 2500);
+    CHECK(scope.find("Issue #3307: hard-latch the pending-full-solve residual face") !=
+              std::string::npos,
+          "3307 AC1: comment documents the hard-latch rationale");
+    CHECK(scope.find("aura::compiler::typed_audit::note_pending_full_solve_residual(") !=
+              std::string::npos,
+          "3307 AC1: note_pending_full_solve_residual called in budget-allow path");
+    CHECK(scope.find("/*hard=*/true") != std::string::npos,
+          "3307 AC1: hard=true flag (face=1) used");
+    CHECK(scope.find("if (hard)") != std::string::npos,
+          "3307 AC1: gated on production / Full (if (hard))");
+    CHECK(scope.find("return prior;") != std::string::npos,
+          "3307 AC1: still returns SOLVED (prior) — handoff face is the gate");
+}
+
+static void ac3307_2_soft_observe_only() {
+    std::println("\n--- #3307 AC2: Soft path stays observe-only (no hard latch) ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto soft_pos = impl.find("if (!hard) {");
+    if (soft_pos == std::string::npos) {
+        CHECK(false, "3307 AC2: Soft branch not found in escalate_locality_slo_if_production");
+        return;
+    }
+    const std::string scope = impl.substr(soft_pos, 800);
+    CHECK(scope.find("solve_delta_locality_slo_observe_total") != std::string::npos,
+          "3307 AC2: Soft path bumps observe counter (existing #2994 contract)");
+    CHECK(scope.find("note_pending_full_solve_residual(") == std::string::npos,
+          "3307 AC2: Soft path does NOT call note_pending_full_solve_residual (no hard latch per "
+          "AC4)");
+    CHECK(scope.find("return prior;") != std::string::npos,
+          "3307 AC2: Soft path still returns SOLVED (prior) without hard latch");
+}
+
+static void ac3307_3_quiet_zero_cost() {
+    std::println("\n--- #3307 AC3: quiet residual==0 → no face latch, no extra atomics ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto quiet_pos = impl.find("escalate_locality_slo_if_production");
+    if (quiet_pos == std::string::npos) {
+        CHECK(false, "3307 AC3: escalate_locality_slo_if_production not found");
+        return;
+    }
+    const std::string scope = impl.substr(quiet_pos, 800);
+    CHECK(scope.find("if (prior != SolveResult::SOLVED)") != std::string::npos,
+          "3307 AC3: quiet early-return guard on prior != SOLVED");
+    CHECK(scope.find("last_locality_pruned_ == 0 && dirty_count_ == 0") != std::string::npos,
+          "3307 AC3: quiet early-return guard on zero residual / dirty");
+    const auto early_return = scope.find("return prior;");
+    if (early_return != std::string::npos) {
+        const std::string quiet_scope = scope.substr(0, early_return);
+        CHECK(quiet_scope.find("note_pending_full_solve_residual(") == std::string::npos,
+              "3307 AC3: quiet path does not call note_pending_full_solve_residual (zero extra "
+              "atomics per AC5)");
+    }
+}
+
+static void ac3307_4_drain_clears_face() {
+    std::println(
+        "\n--- #3307 AC4: drain_pending_full_solve_before_commit clears face on SOLVED ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto drain_pos = impl.find("ConstraintSystem::drain_pending_full_solve_before_commit(std:"
+                                     ":vector<Constraint>* unresolved_out)");
+    if (drain_pos == std::string::npos) {
+        CHECK(false, "3307 AC4: drain_pending_full_solve_before_commit not found");
+        return;
+    }
+    const std::string scope = impl.substr(drain_pos, 2500);
+    CHECK(scope.find("note_pending_full_solve_residual(0, true)") != std::string::npos,
+          "3307 AC4: drain clears face via note_pending_full_solve_residual(0, true)");
+}
+
+static void ac3307_5_existing_surfaces_preserved() {
+    std::println("\n--- #3307 AC5: existing surfaces (commit_readiness / drain) preserved ---");
+    const auto ixx = read_file("src/compiler/typed_mutation_audit.h");
+    const auto live_pos = ixx.find("commit_readiness_live_policy()");
+    if (live_pos == std::string::npos) {
+        CHECK(false, "3307 AC5: commit_readiness_live_policy not found");
+        return;
+    }
+    const std::string scope = ixx.substr(live_pos, 2500);
+    CHECK(scope.find("pending_full_solve_residual_face_hit()") != std::string::npos,
+          "3307 AC5: commit_readiness_live_policy still reads "
+          "pending_full_solve_residual_face_hit() (no new query key)");
+    CHECK(ixx.find("pending_full_solve_residual_face") != std::string::npos,
+          "3307 AC5: existing pending_full_solve_residual_face atomics reused (no second model)");
+}
+
+static void ac3307_6_source_and_linter() {
+    std::println("\n--- #3307 AC6: no docs/design/3307-*; no test_issue_3307.cpp ---");
+    const auto docs = std::string("docs/design/");
+    if (std::filesystem::exists(docs)) {
+        for (const auto& f : std::filesystem::directory_iterator(docs)) {
+            auto name = f.path().filename().string();
+            CHECK(name.find("3307-") == std::string::npos,
+                  "3307 AC6: no docs/design/3307-* plan doc (#1655)");
+            (void)name;
+            break;
+        }
+    }
+    for (const auto& rel : {std::string("tests/issues/test_issue_3307.cpp"),
+                            std::string("tests/compiler/test_issue_3307.cpp"),
+                            std::string("tests/serve/test_issue_3307.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3307 AC6: forbidden {} per #81967", rel));
+    }
+    CHECK(std::filesystem::exists("scripts/check_pending_full_solve_residual_hardlatch_3307.py"),
+          "3307 AC6: source-cite linter script present");
+}
+
 } // namespace
 
 int run_test_solve_delta_unresolved_export() {
@@ -3155,6 +3277,15 @@ int run_test_solve_delta_unresolved_export() {
     ac3169_4_additive_counter_only();
     ac3169_5_existing_3003_2963_2913_preserved();
     ac3169_6_source_and_linter();
+    // ── Issue #3307: budget-allow must hard-latch pending residual face
+    // (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994)
+    std::println("\n=== Issue #3307: budget-allow hard-latch pending residual face ===");
+    ac3307_1_production_budget_allow_hard_latch();
+    ac3307_2_soft_observe_only();
+    ac3307_3_quiet_zero_cost();
+    ac3307_4_drain_clears_face();
+    ac3307_5_existing_surfaces_preserved();
+    ac3307_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
