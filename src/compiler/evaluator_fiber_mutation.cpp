@@ -2626,6 +2626,35 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         }
     }
 
+    // Issue #3308: re-consult the LCP stamped by the densify success
+    // path BEFORE stamping the new steal-complete proof. If the last
+    // densify had objects_moved > 0 (tracked via g_lcp_last_mutation_epoch()
+    // being set only when objects_moved > 0 in arena.ixx densify
+    // success path) AND the LCP says deny (would_allow_commit == false),
+    // the canary race window between densify rewrite and canary clear
+    // may have left stale known ptrs observable to steal. Soft-degrade
+    // publish (set a metric, bump entry counter, refuse restamp commit)
+    // so the next consumer observes a clean state. Single atomic load
+    // pair (would_allow + epoch) on quiet path; zero extra atomics.
+    {
+        using aura::core::lifetime_consistency_proof::g_lcp_last_mutation_epoch;
+        using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
+        const auto last_would_allow =
+            g_lcp_last_would_allow_commit().load(std::memory_order_acquire);
+        const auto last_epoch = g_lcp_last_mutation_epoch().load(std::memory_order_acquire);
+        if (last_epoch != 0 && !last_would_allow) {
+            // Last densify had objects_moved > 0 AND was incomplete
+            // (stale canary or other incomplete condition). Soft-degrade:
+            // bump a metric, set a flag, refuse restamp commit.
+            aura::core::densify_consistency::g_moving_post_moving_stale_total.fetch_add(
+                1, std::memory_order_relaxed);
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics())) {
+                m->linear_join_enforcement_total.fetch_add(1, std::memory_order_relaxed);
+            }
+            return;
+        }
+    }
+
     // Issue #2888: stamp unified LifetimeConsistencyProof on steal-complete
     // (mirrors the densify Phase-5 stamp). Composes envframe (#2711) +
     // type-linear (#2854) + pin (#2265) + layout (#2170) + residual (#2846)

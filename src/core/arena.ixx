@@ -19,7 +19,8 @@ module;
 #include "core/cpp26_contract_stats.h"
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2973 pre-densify counters
-#include "core/moving_densify_health.hh"     // Issue #3123 production auto-arm + clear reason
+#include "core/lifetime_consistency_proof.hh" // Issue #3308: stamp LCP BEFORE post_moving_live_canaries_.clear()
+#include "core/moving_densify_health.hh" // Issue #3123 production auto-arm + clear reason
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
 export module aura.core.arena;
 import std;
@@ -2343,6 +2344,39 @@ public:
                         }
                     }
                 }
+            }
+            // Issue #3308: stamp unified LifetimeConsistencyProof BEFORE
+            // post_moving_live_canaries_.clear() so steal-complete paths
+            // (aura_evaluator_on_steal_complete in evaluator_fiber_mutation.cpp
+            // + worker.cpp call_steal_complete) can observe a would_allow
+            // signal that reflects the post-canary stale check. Without
+            // this, the clear() releases the canary inventory before steal
+            // reads g_lcp_last_would_allow_commit, opening a window where
+            // steal can observe the old address between rewrite and clear
+            // (the interleaving residual after #3210/#3182/#3055).
+            //
+            // The proof mirrors the local result state — when stale > 0,
+            // would_allow_commit=false + force_reason carries the residual
+            // reason; when stale == 0, would_allow_commit=true (healthy
+            // Moving window). steal-complete then re-consults
+            // g_lcp_last_would_allow_commit().load() and refuses/soft-degrades
+            // publish when last densify had objects_moved > 0 AND LCP says deny.
+            // Pure atomics on the existing LCP face SSOT — no new model,
+            // no new counter, no new query key.
+            {
+                auto proof =
+                    aura::core::lifetime_consistency_proof::make_lifetime_consistency_proof();
+                proof.would_allow_commit =
+                    !result.moving_incomplete_remap && result.pin_contract_held &&
+                    result.untracked_kept_count == 0 && result.post_moving_stale_count == 0;
+                if (!proof.would_allow_commit) {
+                    proof.force_reason_code |=
+                        aura::core::lifetime_consistency_proof::kProofReasonResidualDefer;
+                }
+                if (result.objects_moved > 0) {
+                    proof.mutation_epoch = aura::core::current_mutation_epoch();
+                }
+                aura::core::lifetime_consistency_proof::stamp_lifetime_consistency_proof(proof);
             }
             post_moving_live_canaries_.clear();
         }

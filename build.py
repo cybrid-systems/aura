@@ -10008,6 +10008,54 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_post_moving_canary_steal_lcp_3308_coverage():
+    """Issue #3308: post-Moving temporary/known canary × steal×compact race
+    (hold-pin + LCP joint residual after #3210/#3182/#3055).
+
+    Closes the production residual where the canary inventory
+    (post_moving_live_canaries_) is cleared BEFORE the unified
+    LifetimeConsistencyProof (LCP) is stamped. A steal that races
+    densify could observe SOLVED + empty residual face while the CS
+    still had dirty + pending known ptrs between rewrite and clear.
+    Fix is additive + ordering + reuse existing LCP face SSOT:
+
+      1. arena.ixx densify success path stamps the LCP
+         (make_lifetime_consistency_proof + stamp) BEFORE
+         post_moving_live_canaries_.clear(). Proof.would_allow_commit
+         reflects stale canary / pin_contract / untracked / residual state.
+      2. evaluator_fiber_mutation.cpp steal_complete path re-consults
+         g_lcp_last_would_allow_commit + g_lcp_last_mutation_epoch
+         BEFORE the Issue #2888 stamp helper (which overwrites densify
+         state). If last densify had objects_moved > 0 (epoch != 0) AND
+         LCP says deny → bump g_moving_post_moving_stale_total + refuse.
+
+    Contract rows (AC1-AC6 from the test file):
+
+      AC1: arena.ixx densify success path stamps LCP BEFORE canary clear
+      AC2: arena.ixx includes core/lifetime_consistency_proof.hh
+      AC3: LCP proof.would_allow_commit reflects incomplete state
+           (moving_incomplete_remap / pin_contract_held /
+            untracked_kept_count / post_moving_stale_count)
+      AC4: steal_complete re-consults LCP atomics BEFORE the Issue #2888
+           stamp helper (whole-file scope — fix may live in helper or
+           strong def)
+      AC5: refuse/soft-degrade on 'last_epoch != 0 && !last_would_allow'
+           + bumps g_moving_post_moving_stale_total
+      AC6: no docs/design/3308-*; no test_issue_3308.cpp; linter present
+    """
+    print(f"{B}=== post moving canary steal LCP (#3308) ==={N}")
+    script = ROOT / "scripts" / "check_post_moving_canary_steal_lcp_3308.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("post moving canary steal LCP (#3308) contract rows failed")
+        return 1
+    ok("post moving canary steal LCP (#3308) clean")
+    return 0
+
+
 def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
     """Issue #3307: budget-allow must hard-latch pending residual face
     (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
