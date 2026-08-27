@@ -1957,16 +1957,14 @@ std::uint64_t HotUpdateRegistry::deferred_reemit_deadline_hit_total() const noex
 std::uint64_t HotUpdateRegistry::force_drain_deadline_ms() noexcept {
     // Env-cached force-drain gate (distinct from #2748 observe-only deadline).
     // Default 0 = disabled (no force drain body).
-    static std::atomic<std::uint64_t> cached{0};
-    static std::atomic<bool> loaded{false};
-    if (!loaded.load(std::memory_order_acquire)) {
+    if (!g_force_drain_deadline_loaded_.load(std::memory_order_acquire)) {
         std::uint64_t v = 0;
         if (const char* e = std::getenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS"); e && *e)
             v = static_cast<std::uint64_t>(std::strtoull(e, nullptr, 10));
-        cached.store(v, std::memory_order_relaxed);
-        loaded.store(true, std::memory_order_release);
+        g_force_drain_deadline_cached_.store(v, std::memory_order_relaxed);
+        g_force_drain_deadline_loaded_.store(true, std::memory_order_release);
     }
-    return cached.load(std::memory_order_relaxed);
+    return g_force_drain_deadline_cached_.load(std::memory_order_relaxed);
 }
 
 std::uint64_t HotUpdateRegistry::reemit_deferred_force_drain_deadline_hit_env_read() noexcept {
@@ -2028,6 +2026,8 @@ void HotUpdateRegistry::reset_reemit_force_drain_for_test() noexcept {
     g_reemit_deferred_force_drain_double_prevented_total_.store(0, std::memory_order_relaxed);
     g_reemit_force_drain_in_flight_.store(false, std::memory_order_relaxed);
     g_force_drain_deadline_hit_total_.store(0, std::memory_order_relaxed);
+    g_force_drain_deadline_cached_.store(0, std::memory_order_relaxed);
+    g_force_drain_deadline_loaded_.store(false, std::memory_order_release);
 }
 
 void HotUpdateRegistry::reset_reemit_boundary_handshake_for_test() noexcept {

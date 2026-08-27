@@ -304,6 +304,10 @@ public:
     inline static std::atomic<std::uint64_t> g_dual_track_bypass_total{0};
     inline static std::atomic<std::uint64_t> g_force_drain_deadline_hit_total_{
         0}; // mirrors deadline_hit_total_; force gate
+    // Env cache for force_drain_deadline_ms(); reset_reemit_force_drain_for_test
+    // clears loaded so back-to-back ACs can change AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS.
+    inline static std::atomic<std::uint64_t> g_force_drain_deadline_cached_{0};
+    inline static std::atomic<bool> g_force_drain_deadline_loaded_{false};
     // Issue #2855 process-wide atomics (static members; mirror deadline_hit).
     inline static std::atomic<std::uint64_t> g_reemit_deferred_force_drain_total_{0};
     inline static std::atomic<std::uint64_t> g_reemit_deferred_force_drain_skipped_reentered_total_{

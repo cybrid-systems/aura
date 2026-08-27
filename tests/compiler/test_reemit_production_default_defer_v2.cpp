@@ -89,12 +89,15 @@ static bool emit_fn(const char* name, std::uint64_t /*region*/, void* userdata) 
     return true;
 }
 
-static std::int64_t href(CompilerService& cs, std::string_view key) {
-    auto r = cs.eval(
-        std::format("(hash-ref (engine:metrics \"query:hot-update-registry-stats\") \"{}\")", key));
+static std::int64_t href_q(CompilerService& cs, std::string_view query, std::string_view key) {
+    auto r = cs.eval(std::format("(hash-ref (engine:metrics \"{}\") \"{}\")", query, key));
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+static std::int64_t href(CompilerService& cs, std::string_view key) {
+    return href_q(cs, "query:hot-update-registry-stats", key);
 }
 
 static std::string read_file(const char* path) {
@@ -276,20 +279,29 @@ static void ac2855_1_production_force_drain() {
     setenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS", "1", 1);
     CHECK(aura::compiler::HotUpdateRegistry::force_drain_deadline_ms() == 1,
           "AC1: deadline inline-read = 1ms");
-    aura_hot_update_set_reemit_boundary_policy(0);
-    aura_hot_update_set_in_mutation_boundary_for_reemit(0);
-    bool ok = true;
-    {
-        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
-        aura_reemit_aot_for_dirty(42);
-    }
+    aura_hot_update_set_reemit_boundary_policy(1); // Defer: outside-boundary reemit pendings
+    ReemitFixture rf;
+    EmitFixture ef;
+    wire_reemit(rf, ef);
+    CHECK(aura_hot_update_in_mutation_boundary_for_reemit() == 0, "AC1: outside boundary");
+    CHECK(aura_reemit_aot_for_dirty(42) == 0, "AC1: Defer returns 0 outside");
     CHECK(aura_hot_update_has_deferred_reemit() == 1, "AC1: deferred pending set");
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
     const auto age_pre = hot_update_registry().deferred_reemit_age_ms();
     CHECK(age_pre >= 1, "AC1: age >= 1ms deadline");
-    const bool drained = hot_update_registry().force_drain_deferred_reemit();
+    // Drain must run where aura_reemit_aot_for_dirty can complete:
+    // decide_and_reemit still honors Defer, so an outside-boundary drain
+    // would re-pend. BoundaryExit-equivalent force-drain is the Guard.
+    CompilerService cs;
+    bool ok = true;
+    bool drained = false;
+    {
+        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+        rf.cursor = 0;
+        drained = hot_update_registry().force_drain_deferred_reemit();
+        CHECK(aura_hot_update_has_deferred_reemit() == 0, "AC1: pending cleared after force-drain");
+    }
     CHECK(drained, "AC1: force_drain_deferred_reemit returned true");
-    CHECK(aura_hot_update_has_deferred_reemit() == 0, "AC1: pending cleared after force-drain");
     CHECK(hot_update_registry().reemit_deferred_force_drain_total() >= 1,
           "AC1: force-drain total bumped");
     CHECK(!hot_update_registry().should_force_drain_deferred_reemit(),
@@ -352,17 +364,16 @@ static void ac2855_4_concurrent_reentry() {
     ProdLockTestGuard prod(true);
     unsetenv("AURA_SANDBOX");
     setenv("AURA_REEMIT_FORCE_DRAIN_DEADLINE_MS", "1", 1);
-    aura_hot_update_set_reemit_boundary_policy(0);
-    aura_hot_update_set_in_mutation_boundary_for_reemit(0);
-    bool ok = true;
-    {
-        Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
-        aura_reemit_aot_for_dirty(42);
-    }
+    aura_hot_update_set_reemit_boundary_policy(1); // Defer
+    ReemitFixture rf;
+    EmitFixture ef;
+    wire_reemit(rf, ef);
+    CHECK(aura_hot_update_in_mutation_boundary_for_reemit() == 0, "AC4: outside boundary");
+    CHECK(aura_reemit_aot_for_dirty(42) == 0, "AC4: Defer returns 0 outside");
     CHECK(aura_hot_update_has_deferred_reemit() == 1, "AC4: pending set");
     std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    aura::compiler::HotUpdateRegistry::on_reemit_pipeline_call(0, 0);
-    aura::compiler::HotUpdateRegistry::on_reemit_pipeline_call(0, 0);
+    hot_update_registry().on_reemit_pipeline_call(0, 0);
+    hot_update_registry().on_reemit_pipeline_call(0, 0);
     CHECK(hot_update_registry().reemit_deferred_force_drain_total() >= 1,
           "AC4: at least one force-drain fired");
     const auto skipped =
@@ -378,30 +389,35 @@ static void ac2855_5_query_schema_2855() {
     std::println("\n--- #2855 AC5: query schema-2855 ---");
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "AC5: warm eval");
-    CHECK(href(cs, "schema-2855") == 2855, "AC5: schema-2855 live");
-    CHECK(href(cs, "issue-2855") == 2855, "AC5: issue-2855 live");
-    CHECK(href(cs, "reemit-deferred-force-drain-wired") == 1,
+    // #2855 keys live on query:mutation-boundary-hold-stats (obs_eval), not
+    // query:hot-update-registry-stats. Lineage sentinels stay on their
+    // original dashboards.
+    constexpr std::string_view kHold = "query:mutation-boundary-hold-stats";
+    CHECK(href_q(cs, kHold, "schema-2855") == 2855, "AC5: schema-2855 live");
+    CHECK(href_q(cs, kHold, "issue-2855") == 2855, "AC5: issue-2855 live");
+    CHECK(href_q(cs, kHold, "reemit-deferred-force-drain-wired") == 1,
           "AC5: reemit-deferred-force-drain-wired sentinel live");
-    CHECK(href(cs, "reemit_deferred_force_drain_wired") == 1,
+    CHECK(href_q(cs, kHold, "reemit_deferred_force_drain_wired") == 1,
           "AC5: reemit_deferred_force_drain_wired camelCase live");
-    CHECK(href(cs, "reemit-deferred-force-drain-total") >= 0,
+    CHECK(href_q(cs, kHold, "reemit-deferred-force-drain-total") >= 0,
           "AC5: reemit-deferred-force-drain-total key live");
-    CHECK(href(cs, "reemit_deferred_force_drain_total") >= 0,
+    CHECK(href_q(cs, kHold, "reemit_deferred_force_drain_total") >= 0,
           "AC5: reemit_deferred_force_drain_total camelCase live");
-    CHECK(href(cs, "reemit-deferred-force-drain-skipped-reentered-total") >= 0,
+    CHECK(href_q(cs, kHold, "reemit-deferred-force-drain-skipped-reentered-total") >= 0,
           "AC5: skipped-reentered key live");
-    CHECK(href(cs, "reemit_deferred_force_drain_skipped_reentered_total") >= 0,
+    CHECK(href_q(cs, kHold, "reemit_deferred_force_drain_skipped_reentered_total") >= 0,
           "AC5: skipped_reentered camelCase live");
-    CHECK(href(cs, "reemit-deferred-force-drain-double-prevented-total") >= 0,
+    CHECK(href_q(cs, kHold, "reemit-deferred-force-drain-double-prevented-total") >= 0,
           "AC5: double-prevented key live");
-    CHECK(href(cs, "reemit_deferred_force_drain_double_prevented_total") >= 0,
+    CHECK(href_q(cs, kHold, "reemit_deferred_force_drain_double_prevented_total") >= 0,
           "AC5: double_prevented camelCase live");
-    CHECK(href(cs, "reemit-deferred-force-drain-deadline-ms") >= 0, "AC5: deadline-ms key live");
-    CHECK(href(cs, "reemit_deferred_force_drain_deadline_ms") >= 0,
+    CHECK(href_q(cs, kHold, "reemit-deferred-force-drain-deadline-ms") >= 0,
+          "AC5: deadline-ms key live");
+    CHECK(href_q(cs, kHold, "reemit_deferred_force_drain_deadline_ms") >= 0,
           "AC5: deadline_ms camelCase live");
     CHECK(href(cs, "schema-2748") == 2748, "AC5: schema-2748 preserved");
-    CHECK(href(cs, "schema-2690") == 2690, "AC5: schema-2690 preserved");
-    CHECK(href(cs, "schema-2604") == 2604, "AC5: schema-2604 preserved");
+    CHECK(href_q(cs, "query:soa-dirty-stats", "schema-2690") == 2690, "AC5: schema-2690 preserved");
+    CHECK(href_q(cs, "query:aot-stats", "schema-2604") == 2604, "AC5: schema-2604 preserved");
     CHECK(href(cs, "schema-2205") == 2205, "AC5: schema-2205 preserved");
     CHECK(href(cs, "schema-2208") == 2208, "AC5: schema-2208 preserved");
 }

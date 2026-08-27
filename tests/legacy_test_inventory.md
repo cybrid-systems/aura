@@ -1734,7 +1734,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_pereval_reemit_region_independence.cpp` (—) [domain_suite, theme_compiler] — AC1: Dual eval; dirty candidates A+B under reemit owner A → only A
 - `tests/compiler/test_primcall_narg.cpp` (—) [domain_suite, theme_compiler] — AC1: string-append 3 strings → ABC under default JIT
 - `tests/compiler/test_reemit_production_default_defer.cpp` (—) [domain_suite, theme_compiler] — AC1: Production default (reset / process init) → policy Defer;
-- `tests/compiler/test_reemit_production_default_defer_v2.cpp` (—) [domain_suite, theme_compiler] — AC1: Default policy is Defer; SoftEnter requires explicit set.
+- `tests/compiler/test_reemit_production_default_defer_v2.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Default policy is Defer; SoftEnter requires explicit set.
 - `tests/compiler/test_region_priority_deopt_throttle.cpp` (—) [domain_suite, theme_compiler] — AC1: should_throttle_reemit(region) vs no-arg global decision
 - `tests/compiler/test_reload_recovery_query.cpp` (—) [large, domain_suite, theme_compiler] — AC1: soft empty path — idle recovery → recovery-active=0, zeros free
 - `tests/compiler/test_relower_fallback_reason.cpp` (—) [domain_suite, theme_compiler] — AC1: RelowerFallbackReason enum defined
