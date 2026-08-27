@@ -106,15 +106,17 @@ struct LifetimeConsistencyProof {
 // function only classifies — never mutates atomics or env. Mirrors
 // make_lifetime_contract_snapshot() (#2300).
 [[nodiscard]] inline LifetimeConsistencyProof make_lifetime_consistency_proof(
-    std::uint64_t envframe_hold_gen, std::uint64_t envframe_compact_gen,
-    std::uint64_t envframe_scans_run, std::uint64_t envframe_densify_scan_total,
-    std::uint64_t envframe_densify_scan_fail, std::uint64_t envframe_hold_gen_mismatch_total,
-    std::uint8_t type_linear_outcome, std::uint64_t type_linear_linear_root_count,
-    std::uint64_t type_linear_stamped_after_rebind_total,
-    std::uint64_t type_linear_reject_after_rebind_fail_total, std::uint64_t pin_contract_fail_total,
-    std::uint64_t pin_remap_miss_total, std::uint64_t layout_arena_gen,
-    std::uint64_t layout_flat_gen, std::uint64_t layout_env_gen,
-    std::uint64_t residual_defer_after_exit_total, std::uint64_t mutation_epoch) noexcept {
+    std::uint64_t envframe_hold_gen = 0, std::uint64_t envframe_compact_gen = 0,
+    std::uint64_t envframe_scans_run = 0, std::uint64_t envframe_densify_scan_total = 0,
+    std::uint64_t envframe_densify_scan_fail = 0,
+    std::uint64_t envframe_hold_gen_mismatch_total = 0, std::uint8_t type_linear_outcome = 0,
+    std::uint64_t type_linear_linear_root_count = 0,
+    std::uint64_t type_linear_stamped_after_rebind_total = 0,
+    std::uint64_t type_linear_reject_after_rebind_fail_total = 0,
+    std::uint64_t pin_contract_fail_total = 0, std::uint64_t pin_remap_miss_total = 0,
+    std::uint64_t layout_arena_gen = 0, std::uint64_t layout_flat_gen = 0,
+    std::uint64_t layout_env_gen = 0, std::uint64_t residual_defer_after_exit_total = 0,
+    std::uint64_t mutation_epoch = 0) noexcept {
     LifetimeConsistencyProof p;
     p.envframe_hold_gen = envframe_hold_gen;
     p.envframe_compact_gen = envframe_compact_gen;
