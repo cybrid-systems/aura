@@ -2515,6 +2515,23 @@ aura_add_issue_test(test_issue_3097)
 aura_issue_test_link_light(test_issue_3097)
 add_dependencies(all_test_issue_targets test_issue_3097)
 
+# Issue #3310: production fail-closed on unknown ImpactScope (refine
+# #3034 / #3068 / #3097). impact_upper_bound_for_entry_ returns 0 for
+# no-flat / no-root windows; under production defaults that 0 must be
+# treated as unknown impact → force full. Soft / Off keeps zero-cost
+# threshold partial. The new helper
+# `should_partial_relower_impact_checked_prod` lives in ir_cache_pure
+# (pure, testable); service.ixx relower_dirty_defines_from_workspace
+# partial branch consults it with production_consult derived from
+# production_defaults_active() || AuditStrategy::Full. Reuses
+# partial_forced_full_by_impact_total (no new query key); -1 sentinel
+# path through should_partial_relower_impact_checked untouched.
+# Test home: tests/compiler/test_issue_3310_impact_ub_production.cpp
+# (helper unit tests + production_consult strategy matrix).
+aura_add_issue_test(test_partial_relower_impact_production)
+aura_issue_test_link_light(test_partial_relower_impact_production)
+add_dependencies(all_test_issue_targets test_partial_relower_impact_production)
+
 # Issue #3112: production invalidate/reemit must route through
 # HotUpdateRegistry facade (owner-scope + AotReloadConsistencyProof stamp).
 # Audit linter + regression test pins the dual-track closure: facade is

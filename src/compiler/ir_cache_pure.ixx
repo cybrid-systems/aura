@@ -1284,6 +1284,32 @@ should_partial_relower_impact_checked(std::size_t dirty_count,
     return should_partial_relower(dirty_count);
 }
 
+// ── Issue #3310: production fail-closed when ImpactScope cannot be
+// computed ──────────────────────────────────────────────────────────────
+// impact_upper_bound_for_entry_ returns 0 when the workspace flat / pool
+// is missing or the define root is not found — that 0 is *unknown*
+// impact (cannot prove the cone), not *empty* impact. Under production
+// defaults, an unknown impact on a non-zero dirty window must fail-closed
+// to full: silent under-cascade on a partial peel would under-mark
+// cross-fn callee edges that only the hybrid DepGraph / ImpactScope walk
+// would have seen. Soft / Off keeps zero-cost threshold partial when
+// ub==0 (existing contract).
+//
+// Cross-check contract (monotonic — only upgrades partial → full):
+//   - dirty_count == 0               → false (clean, no work)
+//   - production && impact_ub == 0   → false (unknown → force full)
+//   - impact_ub > dirty_count        → false (existing #3034 gate)
+//   - otherwise                       → existing should_partial_relower
+[[nodiscard]] inline bool should_partial_relower_impact_checked_prod(std::size_t dirty_count,
+                                                                     std::size_t impact_upper_bound,
+                                                                     bool production) noexcept {
+    if (dirty_count == 0)
+        return false;
+    if (production && impact_upper_bound == 0)
+        return false; // unknown impact under production → fail closed
+    return should_partial_relower_impact_checked(dirty_count, impact_upper_bound);
+}
+
 // Issue #3034: estimate_relower_blocks with an optional impact
 // upper-bound. When the pure estimate is lower than the impact /
 // hybrid-cascade size, return the sentinel full value (-1) instead of

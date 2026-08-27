@@ -7118,8 +7118,19 @@ public:
                     metrics_.partial_forced_full_by_impact_total.fetch_add(
                         1, std::memory_order_relaxed);
                 } else if (want_partial) {
+                    // Issue #3310: production must fail-closed when
+                    // ImpactScope cannot be computed (impact_upper_bound_for_entry_
+                    // returns 0 for no-flat / no-root). Soft/Off keeps
+                    // zero-cost threshold partial (existing contract). The
+                    // map-empty sentinel -1 path through
+                    // should_partial_relower_impact_checked is untouched (AC3).
                     const std::size_t impact_ub = impact_upper_bound_for_entry_(name, it->second);
-                    if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
+                    const bool production_consult =
+                        aura::compiler::typed_audit::production_defaults_active() ||
+                        aura::compiler::typed_audit::get_strategy() ==
+                            aura::compiler::typed_audit::AuditStrategy::Full;
+                    if (!should_partial_relower_impact_checked_prod(dirty_n, impact_ub,
+                                                                    production_consult)) {
                         want_partial = false;
                         it->second.mark_all_blocks_dirty();
                         it->second.dirty = true;
