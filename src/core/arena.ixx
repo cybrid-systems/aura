@@ -1993,8 +1993,22 @@ public:
             // registered as a #2837/#2935 external-root slot. Uncovered
             // live creates fail-closed: pin_contract_held=false + sticky
             // densify-off + no relocate.
+            // Issue #3306: defense-in-depth — also fail-close if
+            // intermediate_create_value_only_total > 0 under required.
+            // note_intermediate_create_with_cover_ already routes
+            // required+both-null through the inventory path (no
+            // value-only bump per #3156), but older call sites that
+            // still hit note_intermediate_create_auto_wire_ under
+            // required densify-tracked allocates leave a value-only
+            // intermediate. The has_unpinned_intermediate_creates_()
+            // scan should already catch it via push_back, but this OR
+            // clause belt-and-suspenders the soak invariant
+            // (intermediate_create_value_only_total_v_read() == 0
+            // under production required, per AC2). Single atomic load
+            // (Soft / pref<=0 short-circuit before this block).
             if (aura::core::lifetime::general_object_pin_required_active() &&
-                has_unpinned_intermediate_creates_()) {
+                (has_unpinned_intermediate_creates_() ||
+                 intermediate_create_value_only_total_v_read() > 0)) {
                 result.pin_contract_held = false;
                 result.moving_incomplete_remap = true;
                 result.moving_blocked_precondition = true;

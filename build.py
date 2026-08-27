@@ -10008,6 +10008,44 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_intermediate_create_value_only_soak_3306_coverage():
+    """Issue #3306: defense-in-depth — densify entry fail-close now also
+    fail-closes when intermediate_create_value_only_total > 0 under required.
+
+    Closes the dual-track residual where older call sites still hit
+    note_intermediate_create_auto_wire_ under required densify-tracked
+    allocates (leaving a value-only intermediate in intermediate_creates_
+    that the existing has_unpinned_intermediate_creates_() scan should
+    already catch via push_back, but this OR clause belt-and-suspenders
+    the soak invariant — value_only_total == 0 under production required,
+    per AC2 of #3306). #3156 already routes required+both-null through
+    the inventory path; this is the soak-invariant enforcement.
+
+    Contract rows (AC1-AC4 from the test file):
+
+      AC1: densify entry fail-close OR-condition includes
+           intermediate_create_value_only_total_v_read() > 0
+      AC2: existing fail-close fields preserved (pin_contract_held=false,
+           moving_incomplete_remap=true, moving_blocked_precondition=true,
+           soft_gated=true, sticky densify-off via
+           g_moving_incomplete_remap_sticky_densify_off)
+      AC3: comment block documents the #3306 defense-in-depth close
+      AC4: no docs/design/3306-*; no test_issue_3306.cpp (extend existing
+           test_general_object_pin_coverage_gate instead)
+    """
+    print(f"{B}=== intermediate create value only soak (#3306) ==={N}")
+    script = ROOT / "scripts" / "check_intermediate_create_value_only_soak_3306.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("intermediate create value only soak (#3306) contract rows failed")
+        return 1
+    ok("intermediate create value only soak (#3306) clean")
+    return 0
+
+
 def cmd_ir_typed_entry_proof_authority_3305_coverage():
     """Issue #3305: dual-authority close — ir_typed_entry_commit_readiness_ok
     must also consult the last TypeLinearCommitProof face (same SSOT as
