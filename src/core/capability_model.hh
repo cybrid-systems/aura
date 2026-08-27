@@ -120,6 +120,15 @@ inline constexpr std::uint8_t kCapabilityDenyReasonLimitsZero =
 // deny site in check_macro_self_evo (and any future capability gate).
 inline std::atomic<std::uint8_t> g_capability_deny_last_reason{0};
 
+// Issue #3304 CI build fix: cannot extern-declare
+// aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason here —
+// this header is #included inside the aura.compiler.macro_expansion module
+// purview, where a non-module extern declaration conflicts with the module's
+// export. Instead, route through an extern "C" bridge hook (defined in the
+// macro_expansion.cpp global module fragment, alongside the existing
+// aura_macro_* weak bridges) that performs the sentinel store.
+extern "C" void aura_macro_hygiene_capability_deny_sentinel(void) noexcept;
+
 // Issue #3304: public API mirroring note_hygiene_last_limit_reason.
 // Stamps both g_capability_deny_last_reason (capability-side atomic)
 // and g_macro_hygiene_last_limit_reason (with the kHygieneLimitReason
@@ -131,7 +140,7 @@ inline void note_capability_deny_last_reason(std::uint8_t code) noexcept {
     // Also bump the unified hygiene atomic so the agent's existing
     // last_limit_reason_string() reads "capability-deny" (case 7 in
     // macro_expansion.cpp). One unified surface; two parallel families.
-    g_macro_hygiene_last_limit_reason.store(7, std::memory_order_relaxed);
+    aura_macro_hygiene_capability_deny_sentinel();
 }
 
 // Issue #3304: stable string for the last capability-deny reason code.
