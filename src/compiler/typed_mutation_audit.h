@@ -1703,6 +1703,7 @@ inline void reset_type_linear_proof_same_transaction_counters_for_test() noexcep
 }
 inline constexpr uint8_t kTypeLinearProofOutcomeQuiet = 0;
 inline constexpr uint8_t kTypeLinearProofOutcomeStamped = 1;
+inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
 // Issue #2981: same-transaction TypeLinearCommitProof bind. Production/Full
 // + #2704 hard face + empty CS goals → proof must not be green (prefer
@@ -1728,7 +1729,10 @@ type_linear_proof_reject_empty_after_fence_total_v_read() noexcept {
 inline void reset_type_linear_proof_reject_empty_after_fence_for_test() noexcept {
     g_type_linear_proof_reject_empty_after_fence_total.store(0, std::memory_order_relaxed);
 }
-// kTypeLinearProofOutcomeReject = 2 declared below with publish helpers.
+// kTypeLinearProofOutcomeReject = 2 now declared above (next to the
+// sibling outcome constants) — use-before-declaration in
+// ir_typed_entry_commit_readiness_ok was tripping -Werror on any TU
+// that included this header via cpp26_contract_stats.h.
 
 [[nodiscard]] inline std::uint8_t last_proof_would_allow_commit_v_read() noexcept {
     return g_last_proof_would_allow_commit.load(std::memory_order_relaxed);
@@ -2076,7 +2080,6 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
     g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
     return false;
 }
-inline constexpr uint8_t kTypeLinearProofOutcomeReject = 2;
 
 // Issue #3030: abort / force-rollback must drop the last TypeLinearCommitProof
 // + linear_fast_path face so a later IR Move/Drop cannot elide on a
