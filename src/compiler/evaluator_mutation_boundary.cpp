@@ -1431,9 +1431,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                         if (!first.provenance_ok) {
                             ac.partial_recovery_provenance_total.fetch_add(
                                 1, std::memory_order_relaxed);
-                            if (workspace_flat_)
-                                workspace_flat_->restamp_all_node_generations();
-                            (void)restamp_pinned_stable_refs();
+                            // Issue #3309: route through the unified entry
+                            // (single budget/torn decision + node-gen /
+                            // pinned-stable pairing) instead of adjacent
+                            // direct calls — abort-partial-recovery shares
+                            // the same restamp family as outermost abort.
+                            (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
                             (void)post_mutation_reflect_validate();
                         }
                         // Issue #2223: ADT renarrow / revalidate before re-audit.
