@@ -21,7 +21,7 @@
 #         note_capability_deny_last_reason(kCapabilityDenyReason*) at all
 #         4 deny sites (NotGranted, ProvenanceFence, PolicyMissing, LimitsZero)
 #   AC5 — note_capability_deny_last_reason also stamps
-#         g_macro_hygiene_last_limit_reason(7) so the unified last_limit_reason
+#         g_macro_hygiene_last_reason(7) so the unified last_limit_reason
 #         surface routes to capability_deny_last_reason_string()
 #   AC6 — no remaining direct g_macro_hygiene_last_limit_reason.store(2,...)
 #         or store(3,...) sites (refactored to note_hygiene_last_limit_reason)
@@ -56,7 +56,7 @@ def _read(rel: str) -> str:
 def _check_ixx_sentinel(ixx: str) -> list[str]:
     """AC1: ixx declares kHygieneLimitReasonCapabilityDeny = 7."""
     failures: list[str] = []
-    if "kHygieneLimitReasonCapabilityDeny = 7" not in ixx:
+    if not re.search(r"kHygieneLimitReasonCapabilityDeny\s*=\s*7", ixx):
         failures.append("AC1: kHygieneLimitReasonCapabilityDeny = 7 not declared in ixx")
     return failures
 
@@ -75,19 +75,32 @@ def _check_case_seven(me: str) -> list[str]:
 
 
 def _check_capability_family(cap: str) -> list[str]:
-    """AC3: kCapabilityDenyReason* family + accessors declared."""
+    """AC3: kCapabilityDenyReason* family + accessors declared.
+
+    Note: clang-format splits long constant declarations across two lines
+    (e.g. ``kCapabilityDenyReasonLimitsZero =\\n    4;``) so the literal
+    ``kCapabilityDenyReasonLimitsZero = 4`` may not appear contiguously.
+    Use regex with ``\\s*`` between ``=`` and the numeric value to
+    tolerate this reflow."""
     failures: list[str] = []
-    required = (
-        ("kCapabilityDenyReasonNone = 0", "AC3: kCapabilityDenyReasonNone = 0"),
-        ("kCapabilityDenyReasonNotGranted = 1", "AC3: kCapabilityDenyReasonNotGranted = 1"),
-        ("kCapabilityDenyReasonProvenanceFence = 2", "AC3: kCapabilityDenyReasonProvenanceFence = 2"),
-        ("kCapabilityDenyReasonPolicyMissing = 3", "AC3: kCapabilityDenyReasonPolicyMissing = 3"),
-        ("kCapabilityDenyReasonLimitsZero = 4", "AC3: kCapabilityDenyReasonLimitsZero = 4"),
+    # Regex patterns (constant declarations — clang-format may split).
+    required_regex = (
+        (r"kCapabilityDenyReasonNone\s*=\s*0", "AC3: kCapabilityDenyReasonNone = 0"),
+        (r"kCapabilityDenyReasonNotGranted\s*=\s*1", "AC3: kCapabilityDenyReasonNotGranted = 1"),
+        (r"kCapabilityDenyReasonProvenanceFence\s*=\s*2", "AC3: kCapabilityDenyReasonProvenanceFence = 2"),
+        (r"kCapabilityDenyReasonPolicyMissing\s*=\s*3", "AC3: kCapabilityDenyReasonPolicyMissing = 3"),
+        (r"kCapabilityDenyReasonLimitsZero\s*=\s*4", "AC3: kCapabilityDenyReasonLimitsZero = 4"),
+    )
+    for pattern, msg in required_regex:
+        if not re.search(pattern, cap):
+            failures.append(msg)
+    # Literal patterns (no whitespace issue).
+    required_literal = (
         ("g_capability_deny_last_reason", "AC3: g_capability_deny_last_reason atomic"),
         ("note_capability_deny_last_reason", "AC3: note_capability_deny_last_reason"),
         ("capability_deny_last_reason_string", "AC3: capability_deny_last_reason_string"),
     )
-    for needle, msg in required:
+    for needle, msg in required_literal:
         if needle not in cap:
             failures.append(msg)
     # Stable strings in switch.
