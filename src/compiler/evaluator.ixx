@@ -1607,6 +1607,11 @@ public:
     // noexcept — joins with a short timeout so a misbehaving agent body
     // can't stall Evaluator teardown.
     void cleanup_orch_agents() noexcept;
+    // Issue #3394: join outstanding thread-backend fiber workers (the
+    // fiber:spawn CLI fallback captured `this` by reference) before
+    // arena/workspace teardown. Bounded best-effort — same contract as
+    // cleanup_orch_agents. Defined in evaluator_primitives_messaging.cpp.
+    void drain_thread_fibers() noexcept;
     // Issue #67: destructor walks modules_ and runs each env's
     // destructor to free their std::vector bindings_ heap allocations.
     // Without this, arena-allocated Envs leak at process exit (the

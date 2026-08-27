@@ -11841,6 +11841,14 @@ public:
     // mutation checkpoints before arena teardown so PCV
     // children_snapshot copies do not race ~workspace_flat_.
     ~CompilerService() {
+        // Issue #3394: drain outstanding thread-backend fiber workers
+        // BEFORE any service teardown touches the workspace/AST —
+        // release_children_for_teardown() below frees the flat children
+        // vectors a still-running fiber body may be reading (UAF →
+        // PersistentChildVector OOB abort). ~Evaluator drains again for
+        // bare-Evaluator users; this site covers the earlier service-body
+        // window.
+        evaluator_.drain_thread_fibers();
         // Issue #2576-lifecycle: unregister the storm listener before the
         // SpecJITController (member spec_jit_) is destroyed. The listener
         // captures `this`; without removal a later deopt storm (any test /

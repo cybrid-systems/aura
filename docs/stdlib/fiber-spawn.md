@@ -140,6 +140,23 @@ names must not crash or leave names unbound.
   …)
 ```
 
+## Shutdown / lifetime (dtor drain)
+
+Issue #3394: thread-fallback workers are **joinable**, not detached. The
+spawn path registers each worker in a registry keyed by fiber id; a
+successful `fiber:join` joins it immediately, and `~Evaluator` drains any
+still-unjoined workers **before** arena/workspace teardown (bounded
+best-effort — a body not ready after a 2s wait is detached with a
+`[fiber:drain]` WARN so a stuck fiber cannot stall evaluator teardown;
+same contract as orch agents, #2078). Before #3394 an abandoned spawn
+could still be evaluating its body while the service tore down the
+workspace — a use-after-free that surfaced as a flaky
+`PersistentChildVector` out-of-bounds abort in `test_fiber_spawn_cli`.
+
+Hosts should still prefer explicit `fiber:join` (or sequential `let*`
+spawn+join per the binding discipline above); the dtor drain is a safety
+net for abandoned fibers, not a substitute for joining.
+
 ## Sequential-yield surrogate
 
 When spawn is capability-denied or a host deliberately avoids OS threads,
