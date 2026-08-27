@@ -1951,6 +1951,14 @@ aura_issue_test_link_light(test_concurrent_clone_steal_abort_visibility)
 # sites to public note_hygiene_last_limit_reason API).
 aura_add_issue_test(test_capability_macro_self_evo_reason_uniformity)
 aura_issue_test_link_light(test_capability_macro_self_evo_reason_uniformity)
+# Issue #3305: dual-authority close — ir_typed_entry_commit_readiness_ok
+# must also consult the last TypeLinearCommitProof face (same SSOT as
+# linear_fast_path_ok / linear_move_drop_elision_ok). P0 typed-mutation
+# residual: commit_readiness_live_policy() doesn't fill solve_status /
+# linear_ok from the last proof, so mid-boundary IR entry could return
+# true after a Reject proof was stamped while Move/Drop correctly blocks.
+aura_add_issue_test(test_ir_typed_entry_proof_authority)
+aura_issue_test_link_light(test_ir_typed_entry_proof_authority)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)

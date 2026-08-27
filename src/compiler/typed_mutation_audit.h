@@ -2050,6 +2050,26 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
         depth = aura_evaluator_mutation_boundary_depth();
     if (depth == 0)
         return true;
+    // Issue #3305: dual-authority close — also consult the last
+    // TypeLinearCommitProof face (same SSOT as linear_fast_path_ok /
+    // linear_move_drop_elision_ok). commit_readiness_live_policy()
+    // fills faces only; solve_status / linear_ok / blame_ok stay at
+    // their defaults (solve_status=0, linear_ok=true), so mid-boundary
+    // IR entry could return true after a Reject proof was stamped
+    // while Move/Drop correctly blocks. Close the gap by consulting
+    // the proof atomics directly (pure loads, no CS walk). Reuses the
+    // existing g_linear_fast_path_elide_blocked_production_total
+    // counter so #3305 ships additive — no new query key.
+    if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+        kTypeLinearProofOutcomeReject) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
+        g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     const auto cr = commit_readiness(commit_readiness_live_policy());
     if (cr.would_allow_commit)
         return true;

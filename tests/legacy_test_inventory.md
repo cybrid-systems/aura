@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 860 | Preferred destination suites |
-| **Total scanned** | **860** | |
+| `tests/core/test_*.cpp` | 861 | Preferred destination suites |
+| **Total scanned** | **861** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 254 | 254 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 255 | 255 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 106 | 106 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
@@ -539,6 +539,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_ir_soa_dual_emit_batch.cpp`
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp`
 - `tests/compiler/test_ir_soa_layout_stamp.cpp`
+- `tests/compiler/test_ir_typed_entry_proof_authority.cpp`
 - `tests/serve/test_is_stealable_snapshot_gate.cpp`
 - `tests/compiler/test_isolation_audit_mid.cpp`
 - `tests/compiler/test_isolation_stamp_resolve.cpp`
@@ -1175,13 +1176,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (254)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (255)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (254)
+#### domain/ (255)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1289,6 +1290,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/core/test_incoming_parent_dirty_atomic.cpp` (—) [domain_suite, theme_core] — AC1: flag is atomic (behavior: concurrent mark + ensure/collect)
 - `tests/compiler/test_incremental_typed_selfmod_dirty_narrowing.cpp` (—) [domain_suite, theme_compiler] — test_incremental_typed_selfmod_dirty_narrowing.cpp — Merged #509/#518/#526/#536/#537/#550 +
 - `tests/compiler/test_invalidate_cascade_order.cpp` (—) [domain_suite, theme_compiler] — test_invalidate_cascade_order.cpp — Issue #1378:
+- `tests/compiler/test_ir_typed_entry_proof_authority.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC6 from the issue body):
 - `tests/compiler/test_isolation_audit_mid.cpp` (—) [domain_suite, theme_compiler] — AC1: Isolation deny SecurityEvent.mutation_id is Mutation epoch space,
 - `tests/compiler/test_issue_3095.cpp` (#3095) [domain_suite, theme_compiler] — AC1: After dual-topology abort, the helper is invoked; on a
 - `tests/compiler/test_issues_819_829_batch.cpp` (#819) [batch_driver, domain_suite, theme_compiler] — test_issues_819_829_batch.cpp — Phase 1 close for Issues #819–#829.

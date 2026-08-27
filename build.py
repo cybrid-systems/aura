@@ -10008,6 +10008,44 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_ir_typed_entry_proof_authority_3305_coverage():
+    """Issue #3305: dual-authority close — ir_typed_entry_commit_readiness_ok
+    must also consult the last TypeLinearCommitProof face (same SSOT as
+    linear_fast_path_ok / linear_move_drop_elision_ok).
+
+    Closes the P0 typed-mutation residual where
+    commit_readiness_live_policy() fills faces only — solve_status /
+    linear_ok / blame_ok stay at their defaults (solve_status=0,
+    linear_ok=true). Mid-boundary IR entry could therefore return true
+    after a Reject proof was stamped while Move/Drop correctly blocks.
+    The fix is additive: pure atomic loads against the proof-face SSOT
+    (g_last_type_linear_proof_outcome + g_last_proof_would_allow_commit
+    + g_last_proof_linear_ok), reusing the existing
+    g_linear_fast_path_elide_blocked_production_total counter (no new
+    query key).
+
+    Contract rows (AC1-AC4 from the test file):
+
+      AC1: ir_typed_entry_commit_readiness_ok consults the last proof face
+      AC2: linear_move_drop_elision_ok / linear_fast_path_ok still consult
+           the proof-face SSOT (no regression of #3186 / #2964)
+      AC3: Soft / depth==0 production guard preserved (zero extra cost)
+      AC4: Existing counter bumped in >=3 reject paths (Reject +
+           would_allow=0 + linear_ok=0 + cr.would_allow_commit=false)
+    """
+    print(f"{B}=== ir typed entry proof authority (#3305) ==={N}")
+    script = ROOT / "scripts" / "check_ir_typed_entry_proof_authority_3305.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ir typed entry proof authority (#3305) contract rows failed")
+        return 1
+    ok("ir typed entry proof authority (#3305) clean")
+    return 0
+
+
 def cmd_capability_deny_reason_uniformity_3304_coverage():
     """Issue #3304: unify Agent-stable reject reasons + harden lightweight
     / fine_rollback MacroIntroduced restore.
