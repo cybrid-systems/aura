@@ -696,6 +696,61 @@ int run_test_general_object_pin_coverage_gate() {
         const std::ifstream test_probe("tests/core/test_issue_3093.cpp");
         CHECK(!test_probe.good(), "#3093 AC5: no test_issue_3093.cpp (per #81934)");
     }
+
+    // ── Issue #3306: defense-in-depth — densify entry also fail-closes
+    // when intermediate_create_value_only_total > 0 under required.
+    // Closes the dual-track residual where older call sites still hit
+    // note_intermediate_create_auto_wire_ under required densify-tracked
+    // allocates (leaving a value-only intermediate in
+    // intermediate_creates_ that the has_unpinned_intermediate_creates_()
+    // scan catches via push_back, but this OR clause belt-and-suspenders
+    // the soak invariant — value_only_total == 0 under production
+    // required (per AC2 of #3306).
+    {
+        const auto arena = read_file("src/core/arena.ixx");
+        // Locate the densify entry fail-close block (around line 1996).
+        const auto fail_close_pos =
+            arena.find("aura::core::lifetime::general_object_pin_required_active() &&\n"
+                       "                (has_unpinned_intermediate_creates_() ||\n"
+                       "                 intermediate_create_value_only_total_v_read() > 0)");
+        CHECK(fail_close_pos != std::string::npos,
+              "#3306 AC1: densify entry fail-close now OR-condition on value_only_total > 0 under "
+              "required");
+        // Verify the existing fail-close fields (pin_contract_held=false,
+        // moving_incomplete_remap=true, moving_blocked_precondition=true,
+        // soft_gated=true) are preserved in the surrounding block.
+        if (fail_close_pos != std::string::npos) {
+            const std::string scope = arena.substr(fail_close_pos, 1500);
+            CHECK(scope.find("result.pin_contract_held = false") != std::string::npos,
+                  "#3306 AC2: pin_contract_held=false preserved in fail-close block");
+            CHECK(scope.find("result.moving_incomplete_remap = true") != std::string::npos,
+                  "#3306 AC2: moving_incomplete_remap=true preserved");
+            CHECK(scope.find("result.moving_blocked_precondition = true") != std::string::npos,
+                  "#3306 AC2: moving_blocked_precondition=true preserved");
+            CHECK(scope.find("result.soft_gated = true") != std::string::npos,
+                  "#3306 AC2: soft_gated=true preserved");
+            CHECK(scope.find("g_moving_incomplete_remap_sticky_densify_off.exchange(") !=
+                      std::string::npos,
+                  "#3306 AC2: sticky densify-off via g_moving_incomplete_remap_sticky_densify_off "
+                  "preserved");
+        }
+        // Verify the comment block documents #3306.
+        CHECK(arena.find("Issue #3306: defense-in-depth") != std::string::npos,
+              "#3306 AC3: comment documents the defense-in-depth close (soak invariant)");
+    }
+    // AC4: no docs/design/3306-* plan doc (per #1655).
+    {
+        const std::ifstream docs_probe("docs/design/3306-value-only-soak.md");
+        CHECK(!docs_probe.good(), "#3306 AC4: no docs/design/3306-* (per #1655)");
+    }
+    // AC5: no invent test_issue_3306.cpp (per #81934) — we EXTEND
+    // test_general_object_pin_coverage_gate instead.
+    {
+        const std::ifstream test_probe("tests/core/test_issue_3306.cpp");
+        CHECK(!test_probe.good(),
+              "#3306 AC5: no test_issue_3306.cpp (per #81934 — extend existing)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
