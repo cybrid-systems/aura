@@ -47,7 +47,10 @@ def main() -> int:
         ab_win = ""
     else:
         # Body spans pre-batch setup + full sub-op loop (~16KB+).
-        ab_win = mut[pos : pos + 22000]
+        # Issue #3301: batch-level MacroIntroduced audit added ~1.6KB to
+        # the pre-batch setup (target walk table + deny block), pushing
+        # the #2794 no-op path past 22000; bump to 26000.
+        ab_win = mut[pos : pos + 26000]
 
     # AC1: soft no-op path
     must("Issue #2794", "AC1", ab_win)

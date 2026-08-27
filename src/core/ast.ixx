@@ -1244,6 +1244,13 @@ private:
         cap_require_count_[id] = 0;
         line_[id] = 0;
         col_[id] = 0;
+        // Issue #3301 residual: marker_ can lag tag_ when a parse
+        // fast-path appended via add_raw_node without growing every SoA
+        // column; free-list reuse then OOBs here. Guard-resize like the
+        // ppa_dirty_/verify_dirty_ entries below (User default = safe
+        // hygiene fallback for an unstamped slot).
+        if (id >= marker_.size())
+            marker_.resize(static_cast<std::size_t>(id) + 1, SyntaxMarker::User);
         marker_[id] = m;
         type_id_[id] = 0;
         dirty_[id] = 0;
@@ -2321,6 +2328,8 @@ public:
     // :allow-macro? (parity with move-node / replace-subtree). Healthy
     // User-only renames stay 0.
     mutable std::atomic<std::uint64_t> rename_symbol_hygiene_reject_total_{0};
+    // Issue #3301: lockless batch :rebind MacroIntroduced hygiene reject.
+    mutable std::atomic<std::uint64_t> rebind_hygiene_reject_total_{0};
     // Issue #2961: replace-pattern refused MacroIntroduced match without
     // :allow-macro? (matcher may include macros; mutate still fail-closed).
     // Healthy User-only multi-match stays 0.
@@ -8912,6 +8921,14 @@ public:
     }
     void note_rename_symbol_hygiene_reject() noexcept {
         rename_symbol_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #3301: lockless batch :rebind MacroIntroduced hygiene reject
+    // (parity with move-node / rename-symbol lockless gates).
+    [[nodiscard]] std::uint64_t rebind_hygiene_reject_total() const noexcept {
+        return rebind_hygiene_reject_total_.load(std::memory_order_relaxed);
+    }
+    void note_rebind_hygiene_reject() noexcept {
+        rebind_hygiene_reject_total_.fetch_add(1, std::memory_order_relaxed);
     }
     // Issue #2961: replace-pattern MacroIntroduced hygiene reject.
     [[nodiscard]] std::uint64_t replace_pattern_hygiene_reject_total() const noexcept {

@@ -2105,6 +2105,20 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
             aura::diag::ErrorKind::ArityMismatch,
             "batch :rebind: no existing Define for '" + name +
                 "' (new-binding path not yet supported; use standalone mutate:rebind)"});
+    // Issue #3301: batch-level hygiene parity — lockless :rebind is a
+    // name-based helper (no node-id arg), so the batch-entry target walk
+    // cannot see its define; gate like standalone mutate:rebind (#373)
+    // and the other lockless helpers (#3027/#3213). Pre-parse fail-fast:
+    // a deny must not even parse the (potentially macro-derived) new code.
+    if (flat.is_macro_introduced(old_define) &&
+        !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
+        flat.note_rebind_hygiene_reject();
+        record_hygiene_violation_attempt();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+        return std::unexpected(aura::diag::Diagnostic{
+            aura::diag::ErrorKind::InternalError,
+            "batch :rebind: cannot rebind MacroIntroduced define without :allow-macro? #t"});
+    }
     // Issue #1685 / #1687: snapshot + re-resolve after parse_to_flat.
     const auto size_before_parse = static_cast<std::size_t>(flat.size());
     auto pr = aura::parser::parse_to_flat(string_heap_[code_idx], flat, *workspace_pool_);
