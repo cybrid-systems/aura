@@ -10008,6 +10008,41 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_capability_deny_reason_uniformity_3304_coverage():
+    """Issue #3304: unify Agent-stable reject reasons + harden lightweight
+    / fine_rollback MacroIntroduced restore.
+
+    Closes the production residual where (1) some deny paths only bump
+    counters without stamping kHygieneLimitReason*, and (2) MacroSelfEvo
+    capability deny uses free-form text — weaker for Agent replay tooling
+    than structured codes. The fix introduces a parallel
+    kCapabilityDenyReason* family (4 codes: NotGranted, ProvenanceFence,
+    PolicyMissing, LimitsZero) plus a unified kHygieneLimitReason
+    CapabilityDeny=7 sentinel so the agent's existing last_limit_reason
+    surface routes correctly.
+
+    Contract rows (AC1-AC6 from the test file):
+
+      AC1: ixx declares kHygieneLimitReasonCapabilityDeny = 7
+      AC2: hygiene_last_limit_reason_string() returns "capability-deny" for code 7
+      AC3: kCapabilityDenyReason* family + atomic + accessors in capability_model.hh
+      AC4: 4 MacroSelfEvo deny sites stamp new code via note_capability_deny_last_reason
+      AC5: note_capability_deny_last_reason also stamps unified sentinel 7
+      AC6: no remaining direct store(2,...) / store(3,...) sites
+    """
+    print(f"{B}=== capability deny reason uniformity (#3304) ==={N}")
+    script = ROOT / "scripts" / "check_capability_deny_reason_uniformity_3304.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("capability deny reason uniformity (#3304) contract rows failed")
+        return 1
+    ok("capability deny reason uniformity (#3304) clean")
+    return 0
+
+
 def cmd_steal_abort_reason_coverage_3303_coverage():
     """Issue #3303: ConcurrentCloneGuard nested steal visibility + stable reason.
 

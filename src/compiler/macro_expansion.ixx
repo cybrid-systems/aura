@@ -159,6 +159,14 @@ export inline constexpr std::uint8_t kHygieneLimitReasonRestUnmarked = 5;
 // reasons. The new code 6 lets agent replay distinguish "hygiene ceiling
 // failed" (3) from "fiber-steal during expand walk" (6).
 export inline constexpr std::uint8_t kHygieneLimitReasonStealAbort = 6;
+// Issue #3304: capability-deny sentinel. Capability denials (MacroSelfEvo
+// not granted / provenance fence / policy missing / zero limits) are
+// stamped via the parallel kCapabilityDenyReason* family in
+// capability_model.hh. The last_limit_reason atomic family stores either
+// a hygiene code (0..6) or the sentinel 7 to signal "see capability
+// reason instead". Agent tooling keys on the 7 sentinel to switch into
+// capability-replay mode (which uses capability_deny_last_reason_string()).
+export inline constexpr std::uint8_t kHygieneLimitReasonCapabilityDeny = 7;
 export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
 export [[nodiscard]] const char* hygiene_last_limit_reason_string() noexcept;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).

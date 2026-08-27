@@ -96,6 +96,61 @@ struct MacroSelfEvoCheck {
     const char* deny_reason = nullptr; // stable string literal when !allowed
 };
 
+// Issue #3304: parallel capability-deny reason family (analogous to
+// kHygieneLimitReason* but for capability denials — MacroSelfEvo sits
+// outside the hygiene taxonomy because it is a capability gate, not a
+// hygiene ceiling/depth/pass. Agent tooling keys on these codes via
+// capability_deny_last_reason_string() to distinguish "capability not
+// granted" from "provenance fence" from "policy missing" from "limits
+// are zero". Each code also stamps kHygieneLimitReasonCapabilityDeny (7)
+// into the unified g_macro_hygiene_last_limit_reason atomic so the
+// agent's existing last_limit_reason query routes correctly (the 7
+// sentinel switches the agent into capability-replay mode).
+//
+// Order is stable — agents rely on the numeric code (do NOT renumber).
+inline constexpr std::uint8_t kCapabilityDenyReasonNone = 0;
+inline constexpr std::uint8_t kCapabilityDenyReasonNotGranted = 1;      // !has_bit && !wildcard_ok
+inline constexpr std::uint8_t kCapabilityDenyReasonProvenanceFence = 2; // epoch/fiber/mid mismatch
+inline constexpr std::uint8_t kCapabilityDenyReasonPolicyMissing = 3; // !has_policy && !wildcard_ok
+inline constexpr std::uint8_t kCapabilityDenyReasonLimitsZero =
+    4; // pol.max_depth==0 || pol.max_expansion_passes==0
+
+// Issue #3304: per-fibre global atomic for the last capability-deny
+// reason (parallel to g_macro_hygiene_last_limit_reason). Set on every
+// deny site in check_macro_self_evo (and any future capability gate).
+inline std::atomic<std::uint8_t> g_capability_deny_last_reason{0};
+
+// Issue #3304: public API mirroring note_hygiene_last_limit_reason.
+// Stamps both g_capability_deny_last_reason (capability-side atomic)
+// and g_macro_hygiene_last_limit_reason (with the kHygieneLimitReason
+// CapabilityDeny=7 sentinel). The unified last_limit_reason API surface
+// routes the agent to capability_deny_last_reason_string() when it
+// sees the 7 sentinel.
+inline void note_capability_deny_last_reason(std::uint8_t code) noexcept {
+    g_capability_deny_last_reason.store(code, std::memory_order_relaxed);
+    // Also bump the unified hygiene atomic so the agent's existing
+    // last_limit_reason_string() reads "capability-deny" (case 7 in
+    // macro_expansion.cpp). One unified surface; two parallel families.
+    g_macro_hygiene_last_limit_reason.store(7, std::memory_order_relaxed);
+}
+
+// Issue #3304: stable string for the last capability-deny reason code.
+// Order matches the kCapabilityDenyReason* constants above.
+[[nodiscard]] inline const char* capability_deny_last_reason_string() noexcept {
+    switch (g_capability_deny_last_reason.load(std::memory_order_relaxed)) {
+        case 1:
+            return "capability-not-granted";
+        case 2:
+            return "capability-provenance-fence";
+        case 3:
+            return "capability-policy-missing";
+        case 4:
+            return "capability-limits-zero";
+        default:
+            return "";
+    }
+}
+
 [[nodiscard]] constexpr Effect operator|(Effect a, Effect b) noexcept {
     return static_cast<Effect>(static_cast<std::uint16_t>(a) | static_cast<std::uint16_t>(b));
 }
@@ -2078,6 +2133,9 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo capability not granted";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3304: stamp parallel capability-deny code so Agent tooling
+        // can key on it via capability_deny_last_reason_string().
+        note_capability_deny_last_reason(kCapabilityDenyReasonNotGranted);
         reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }
@@ -2088,6 +2146,8 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         out.deny_reason = "MacroSelfEvo provenance fence (epoch/fiber/mid)";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
         met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3304: stamp parallel capability-deny code (epoch / fiber / mid).
+        note_capability_deny_last_reason(kCapabilityDenyReasonProvenanceFence);
         reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }
@@ -2102,6 +2162,8 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo policy missing";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3304: stamp parallel capability-deny code (policy missing).
+        note_capability_deny_last_reason(kCapabilityDenyReasonPolicyMissing);
         reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }
@@ -2111,6 +2173,8 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo limits are zero";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3304: stamp parallel capability-deny code (limits zero).
+        note_capability_deny_last_reason(kCapabilityDenyReasonLimitsZero);
         reg.record_audit(Effect::MacroSelfEvo, held, tenant, call_prov, true, "macro-self-evo");
         return out;
     }

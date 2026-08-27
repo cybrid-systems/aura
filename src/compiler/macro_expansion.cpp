@@ -333,6 +333,12 @@ const char* hygiene_last_limit_reason_string() noexcept {
         // owns name_map consistency for the whole subtree).
         case 6:
             return "steal-abort";
+        // Issue #3304: capability-deny sentinel — paired with
+        // kCapabilityDenyReason* family in capability_model.hh.
+        // Agent tooling keys on this to switch into capability-replay
+        // mode (which uses capability_deny_last_reason_string()).
+        case 7:
+            return "capability-deny";
         default:
             return "";
     }
@@ -1579,7 +1585,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     else if (depth_limit <= 0)
         depth_limit = combine_depth_limit(0);
     if (hygiene_depth >= depth_limit) {
-        g_macro_hygiene_last_limit_reason.store(2, std::memory_order_relaxed);
+        // Issue #3304: refactored from direct store to the public API for
+        // consistency with all other deny sites (clone / expand / mutate
+        // / capability — all now route through note_hygiene_last_limit_reason).
+        note_hygiene_last_limit_reason(kHygieneLimitReasonDepthLimit);
         if (!s_warned_this_call) {
             s_warned_this_call = true;
             // Issue #1247: include macro-origin provenance in the diagnostic
@@ -2570,8 +2579,9 @@ aura::ast::NodeId expand_inner_macros(
     if (root == NULL_NODE)
         return root;
     if (depth >= max_depth) {
+        // Issue #3304: refactored from direct store to the public API.
         // Issue #3029: pass/depth of inner expand — stable Agent reason.
-        g_macro_hygiene_last_limit_reason.store(3, std::memory_order_relaxed);
+        note_hygiene_last_limit_reason(kHygieneLimitReasonPassLimit);
         return root;
     }
     // Issue #158: unwrap qq-built cons chains whose head is a
@@ -2955,7 +2965,8 @@ static aura::ast::NodeId macro_expand_all_body(aura::ast::FlatAST& flat,
     // Issue #121 / #3029 / #3062: pass limit with macros still in the tree.
     // Stable Agent reason + refuse partial write (checkpoint restore when
     // one exists; production always returns original_root even without).
-    g_macro_hygiene_last_limit_reason.store(3, std::memory_order_relaxed);
+    // Issue #3304: refactored from direct store to the public API.
+    note_hygiene_last_limit_reason(kHygieneLimitReasonPassLimit);
     if (root != NULL_NODE) {
         std::println(std::cerr,
                      "warning: macro_expand_all hit pass limit ({}); "
