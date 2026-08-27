@@ -1945,6 +1945,12 @@ aura_issue_test_link_light(test_concurrent_clone_hygiene_depth)
 # was semantically wrong for steal-abort).
 aura_add_issue_test(test_concurrent_clone_steal_abort_visibility)
 aura_issue_test_link_light(test_concurrent_clone_steal_abort_visibility)
+# Issue #3304: unify Agent-stable reject reasons + harden lightweight /
+# fine_rollback MacroIntroduced restore (MacroSelfEvo deny uses parallel
+# kCapabilityDenyReason* family; refactored direct store(2,...) / store(3,...)
+# sites to public note_hygiene_last_limit_reason API).
+aura_add_issue_test(test_capability_macro_self_evo_reason_uniformity)
+aura_issue_test_link_light(test_capability_macro_self_evo_reason_uniformity)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)
