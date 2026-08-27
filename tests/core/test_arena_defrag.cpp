@@ -261,21 +261,22 @@ static void ac3269_4_compact_under_guard() {
     {
         auto gr =
             aura::compiler::Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
-        CHECK(gr.has_value(), "3269 AC4: Guard");
-        // Diagnosis probe (2026-08-28, arena_defrag CI/local failure): the
-        // ok out-param was never asserted and the TLS boundary state was
-        // never probed from the test side. Mirror both to stderr so the
-        // issues runner's stderr tail pinpoints which side broke:
-        // ok=false → try_acquire silently degraded the admit;
-        // boundary=false → the Guard never registered in the TLS slot.
-        std::println(std::cerr, "[arena_defrag] AC4 probe: try_acquire ok={} boundary_tls={}", ok,
-                     cs.evaluator().any_active_mutation_boundary());
-        auto paused = cs.eval("(arena:compact)");
-        if (paused && aura::compiler::types::is_int(*paused))
-            std::println(std::cerr, "[arena_defrag] AC4 probe: compact-under-Guard returned {}",
-                         aura::compiler::types::as_int(*paused));
-        CHECK(paused.has_value() && aura::compiler::types::is_int(*paused) &&
-                  aura::compiler::types::as_int(*paused) == 0,
+        CHECK(gr.has_value() && ok, "3269 AC4: Guard");
+        CHECK(cs.evaluator().any_active_mutation_boundary(),
+              "3269 AC4: TLS depth slot armed on this thread");
+        // cs.eval() under an outermost unique workspace lock inverts
+        // Mutate→Workspace lock order (JIT/eval takes mutate_mtx_ first)
+        // and never reaches the arena:compact prim — paused counter stays
+        // 0 and eval returns a non-int. Drive the prim directly so the
+        // #3269 TLS skip (with_arena_compact_idle) is what we measure.
+        auto& prims = cs.evaluator().primitives();
+        const auto slot = prims.slot_for_name("arena:compact");
+        auto fnopt = prims.slot_lookup_fast(slot);
+        CHECK(fnopt.has_value(), "3269 AC4: arena:compact slot");
+        if (!fnopt)
+            return;
+        auto paused = (*fnopt)(std::span<const aura::compiler::types::EvalValue>{});
+        CHECK(aura::compiler::types::is_int(paused) && aura::compiler::types::as_int(paused) == 0,
               "3269 AC4: compact under Guard returns 0");
         CHECK(cs.evaluator().compaction_paused_by_boundary() >= 1, "3269 AC4: paused counter");
     }
