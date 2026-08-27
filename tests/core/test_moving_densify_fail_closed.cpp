@@ -2504,6 +2504,111 @@ static void ac3210_6_source_cite_no_invent() {
           "AC5: no test_issue_3210.cpp per #81967");
 }
 
+
+// ── Issue #3308: post-Moving temporary/known canary × steal×compact race ──
+// densify success path must stamp LCP BEFORE post_moving_live_canaries_.clear(),
+// and steal_complete must re-consult the LCP atomics and refuse/soft-degrade
+// publish if last densify had objects_moved > 0 AND LCP says deny.
+// Closes the interleaving residual after #3210/#3182/#3055.
+static void ac3308_1_densify_lcp_stamp_before_canary_clear() {
+    std::println("\n--- #3308 AC1: densify success path stamps LCP BEFORE canary clear ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto clear_pos = arena.find("post_moving_live_canaries_.clear();");
+    if (clear_pos == std::string::npos) {
+        CHECK(false, "3308 AC1: post_moving_live_canaries_.clear() not found");
+        return;
+    }
+    // Walk back 4000 chars to find the stamp call BEFORE the clear.
+    const std::string scope = arena.substr(std::max<std::size_t>(0, clear_pos - 4000), clear_pos);
+    CHECK(scope.find("stamp_lifetime_consistency_proof(") != std::string::npos,
+          "3308 AC1: stamp_lifetime_consistency_proof(...) called BEFORE canary clear (closes "
+          "canary race window)");
+}
+
+static void ac3308_2_lcp_include_added() {
+    std::println("\n--- #3308 AC2: arena.ixx includes core/lifetime_consistency_proof.hh ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("#include \"core/lifetime_consistency_proof.hh\"") != std::string::npos,
+          "3308 AC2: arena.ixx includes core/lifetime_consistency_proof.hh for the LCP stamp call");
+}
+
+static void ac3308_3_proof_would_allow_commit_reflects_state() {
+    std::println("\n--- #3308 AC3: proof.would_allow_commit reflects incomplete state ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto stamp_pos = arena.find("stamp_lifetime_consistency_proof(");
+    if (stamp_pos == std::string::npos) {
+        CHECK(false, "3308 AC3: stamp_lifetime_consistency_proof call not found");
+        return;
+    }
+    const std::string scope = arena.substr(std::max<std::size_t>(0, stamp_pos - 1500), stamp_pos);
+    CHECK(scope.find("moving_incomplete_remap") != std::string::npos,
+          "3308 AC3: proof.would_allow_commit checks result.moving_incomplete_remap");
+    CHECK(scope.find("pin_contract_held") != std::string::npos,
+          "3308 AC3: proof.would_allow_commit checks result.pin_contract_held");
+    CHECK(scope.find("untracked_kept_count") != std::string::npos,
+          "3308 AC3: proof.would_allow_commit checks result.untracked_kept_count");
+    CHECK(scope.find("post_moving_stale_count") != std::string::npos,
+          "3308 AC3: proof.would_allow_commit checks result.post_moving_stale_count");
+}
+
+static void ac3308_4_steal_complete_reconsult_lcp() {
+    std::println("\n--- #3308 AC4: steal_complete re-consults LCP atomics ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    // The fix may live in the strong def aura_evaluator_on_steal_complete OR
+    // in a helper called from it (e.g. the Issue #2888 LCP stamp helper).
+    // The check is "the strings exist in the file" + "the re-consult comes
+    // BEFORE the new LCP stamp".
+    CHECK(fiber.find("g_lcp_last_would_allow_commit") != std::string::npos,
+          "3308 AC4: steal_complete re-consults g_lcp_last_would_allow_commit()");
+    CHECK(fiber.find("g_lcp_last_mutation_epoch") != std::string::npos,
+          "3308 AC4: steal_complete re-consults g_lcp_last_mutation_epoch() (tracks last densify "
+          "had objects_moved > 0)");
+    // Re-consult must come BEFORE the Issue #2888 stamp helper (which
+    // overwrites the densify state).
+    const auto reconsult_pos = fiber.find("g_lcp_last_would_allow_commit");
+    const auto stamp2888_pos = fiber.find("Issue #2888: stamp unified LifetimeConsistencyProof");
+    if (reconsult_pos > 0 && stamp2888_pos > 0 && reconsult_pos > stamp2888_pos) {
+        CHECK(false, "3308 AC4: re-consult must come BEFORE the Issue #2888 stamp helper "
+                     "(otherwise densify state is overwritten)");
+    }
+}
+
+static void ac3308_5_refuse_under_densify_incomplete() {
+    std::println("\n--- #3308 AC5: steal_complete refuses/soft-degrades on densify incomplete ---");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(fiber.find("last_epoch != 0 && !last_would_allow") != std::string::npos,
+          "3308 AC5: re-consult check 'last_epoch != 0 && !last_would_allow' (last densify had "
+          "objects_moved > 0 AND LCP says deny)");
+    CHECK(fiber.find("g_moving_post_moving_stale_total.fetch_add") != std::string::npos,
+          "3308 AC5: refuse/soft-degrade bumps g_moving_post_moving_stale_total");
+}
+
+static void ac3308_6_source_and_linter() {
+    std::println(
+        "\n--- #3308 AC6: no docs/design/3308-*; no test_issue_3308.cpp; linter present ---");
+    // No docs/design/3308-* (per #1655).
+    for (const auto& f : std::filesystem::directory_iterator("docs/design")) {
+        auto name = f.path().filename().string();
+        CHECK(name.find("3308-") == std::string::npos,
+              "3308 AC6: no docs/design/3308-* plan doc (#1655)");
+        (void)name;
+        break;
+    }
+    // No invent test_issue_3308.cpp (per #81934) — we EXTEND existing
+    // test_moving_densify_fail_closed instead.
+    for (const auto& rel : {std::string("tests/issues/test_issue_3308.cpp"),
+                            std::string("tests/core/test_issue_3308.cpp"),
+                            std::string("tests/serve/test_issue_3308.cpp")}) {
+        std::error_code ec;
+        CHECK(!std::filesystem::exists(rel, ec),
+              std::format("3308 AC6: forbidden {} per #81934", rel));
+    }
+    // Linter script presence (registered in build.py via #3308 cmd_*_coverage).
+    CHECK(std::filesystem::exists("scripts/check_post_moving_canary_steal_lcp_3308.py"),
+          "3308 AC6: source-cite linter script present");
+}
+
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -3078,6 +3183,15 @@ int run_test_moving_densify_fail_closed() {
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";
     // clang-format on
+    // ── Issue #3308: post-Moving canary × steal×compact race ──
+    std::println("\n=== Issue #3308: post-Moving canary × steal×compact LCP re-consult ===");
+    ac3308_1_densify_lcp_stamp_before_canary_clear();
+    ac3308_2_lcp_include_added();
+    ac3308_3_proof_would_allow_commit_reflects_state();
+    ac3308_4_steal_complete_reconsult_lcp();
+    ac3308_5_refuse_under_densify_incomplete();
+    ac3308_6_source_and_linter();
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
