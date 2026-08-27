@@ -142,8 +142,8 @@ REQUIRED_PATTERNS = (
         MACRO_EXPANSION_CPP,
     ),
     (
-        "g_macro_clone_last_reject_reason.store(3) preserved",
-        re.compile(r"g_macro_clone_last_reject_reason\.store\s*\(\s*3"),
+        "g_macro_clone_last_reject_reason.store(kHygieneLimitReasonStealAbort) preserved (was store(3); #3303 promoted to stable agent-facing reason code 6)",
+        re.compile(r"g_macro_clone_last_reject_reason\.store\s*\(\s*kHygieneLimitReasonStealAbort"),
         1,
         MACRO_EXPANSION_CPP,
     ),
