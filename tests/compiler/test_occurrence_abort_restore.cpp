@@ -238,3 +238,9 @@ int run_test_occurrence_abort_restore() {
                  aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_occurrence_abort_restore();
+}
+#endif

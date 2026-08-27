@@ -136,7 +136,8 @@ static void ac1_2_6_clone_at_depth_installs_and_restores() {
 
     // AC1: ExpandCheckpointGuard struct definition lives inside clone_macro_body_at_depth
     // (after NameMapCheckpoint, mirroring the macro_expand_all_body pattern).
-    const auto sig_pos = macro_exp.find("static aura::ast::NodeId clone_macro_body_at_depth(");
+    // Forward decl then definition; rfind the definition (has a body).
+    const auto sig_pos = macro_exp.rfind("static aura::ast::NodeId clone_macro_body_at_depth(");
     CHECK(sig_pos != std::string::npos, "AC1+AC2+AC6: clone_macro_body_at_depth signature present");
     if (sig_pos == std::string::npos)
         return;
@@ -147,18 +148,21 @@ static void ac1_2_6_clone_at_depth_installs_and_restores() {
     if (open == std::string::npos)
         return;
 
-    // We don't need to find the exact close — we can scan a large window for
-    // the specific anchors. Walk up to 8 KB past the open for the install site
-    // and use a regex-free substring search.
-    const auto install_scan_end = std::min(macro_exp.size(), open + 8192);
+    // Bound the install-site scan to this function. ExpandCheckpointGuard
+    // sits after NameMapCheckpoint (~20 KB past `{`); a fixed 8 KB window
+    // misses it and can also pick up the later macro_expand_all_body copy.
+    const auto close = find_function_body_close_(macro_exp, open);
+    CHECK(close != std::string::npos, "AC1+AC2+AC6: clone_macro_body_at_depth body closes");
+    if (close == std::string::npos)
+        return;
 
     // AC1: ExpandCheckpointGuard struct + ensure_installed call gated on
     // hygiene_depth == 0 && production_surface.
     const auto ecg_struct_pos = macro_exp.find("ExpandCheckpointGuard", open);
-    CHECK(ecg_struct_pos != std::string::npos && ecg_struct_pos < install_scan_end,
+    CHECK(ecg_struct_pos != std::string::npos && ecg_struct_pos < close,
           "AC1: ExpandCheckpointGuard struct present in clone_macro_body_at_depth");
     const auto install_pos = macro_exp.find("expand_ckpt.ensure_installed", open);
-    CHECK(install_pos != std::string::npos && install_pos < install_scan_end,
+    CHECK(install_pos != std::string::npos && install_pos < close,
           "AC1: expand_ckpt.ensure_installed call present");
     if (install_pos != std::string::npos) {
         const auto prod_pos = macro_exp.find("production_surface", install_pos - 1024);
@@ -223,9 +227,11 @@ static void ac4_existing_steal_counters_preserved() {
     const auto steal_abort_pos = macro_exp.find("g_macro_clone_steal_abort_total.fetch_add(1");
     CHECK(steal_abort_pos != std::string::npos,
           "AC4: g_macro_clone_steal_abort_total counter present (issue-required invariant)");
-    const auto reject_reason_pos = macro_exp.find("g_macro_clone_last_reject_reason.store(3");
-    CHECK(reject_reason_pos != std::string::npos,
-          "AC4: g_macro_clone_last_reject_reason=3 still fires (issue-required invariant)");
+    const auto reject_reason_pos =
+        macro_exp.find("g_macro_clone_last_reject_reason.store(kHygieneLimitReasonStealAbort");
+    CHECK(
+        reject_reason_pos != std::string::npos,
+        "AC4: g_macro_clone_last_reject_reason=steal-abort still fires (issue-required invariant)");
 
     // Both must be in the steal-fail block.
     if (steal_abort_pos != std::string::npos && reject_reason_pos != std::string::npos) {
@@ -293,3 +299,9 @@ int run_test_macro_clone_target_atomicity() {
                  aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_macro_clone_target_atomicity();
+}
+#endif

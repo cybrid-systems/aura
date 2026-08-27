@@ -265,8 +265,12 @@ int run_test_resume_session_revoke_3320() {
     return g_failed == 0 ? 0 : 1;
 }
 
+int run_test_resume_session_revoke() {
+    return run_test_resume_session_revoke_3320();
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
-    return run_test_resume_session_revoke_3320();
+    return run_test_resume_session_revoke();
 }
 #endif

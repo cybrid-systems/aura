@@ -3778,7 +3778,7 @@ target_compile_definitions(test_reemit_defer_batch PRIVATE
 aura_test_compile_options(test_reemit_defer_batch)
 target_link_libraries(test_reemit_defer_batch PRIVATE
     aura_test_objects pthread stdc++ stdc++exp aura-reflect)
-aura_issue_test_link_light(test_reemit_defer_batch)
+aura_issue_test_link_llvm_jit(test_reemit_defer_batch)
 add_test(NAME test_reemit_defer_batch_verification COMMAND ./test_reemit_defer_batch)
 if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_reemit_defer_batch)
