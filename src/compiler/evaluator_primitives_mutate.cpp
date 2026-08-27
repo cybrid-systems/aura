@@ -5061,11 +5061,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         if (a.size() < 1) {
             return mev("bad-arg", "usage: (mutate:atomic-batch (list ...) [\"summary\"] "
                                   "[:snapshot? #t] [:tenant-target N] "
-                                  "[:sync-query-index? #t|#f])");
+                                  "[:sync-query-index? #t|#f] [:allow-macro? #t|#f])");
         }
         bool want_snapshot = false;
         std::uint64_t tenant_target = 0;
         bool have_tenant_target = false;
+        // Issue #3301: batch-form MacroIntroduced opt-out. #t skips the
+        // batch-level audit for the whole batch (per-sub-op :allow-macro?
+        // and the global flag still apply independently). Default #f.
+        bool batch_allow_macro = false;
         // Issue #1913: default true — commit always refreshes index.
         bool sync_query_index = ev.atomic_batch_sync_query_index_default();
         for (std::size_t ai = 1; ai < a.size(); ++ai) {
@@ -5090,6 +5094,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     tenant_target = static_cast<std::uint64_t>(as_int(a[ai + 1]));
                     have_tenant_target = true;
                     ++ai;
+                } else if (kw == ":allow-macro?") {
+                    // Issue #3301: batch-level opt-out — same parse shape as
+                    // the per-prim :allow-macro? kwarg (default #f).
+                    if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                        if (is_bool(a[ai + 1]))
+                            batch_allow_macro = as_bool(a[ai + 1]);
+                        else
+                            batch_allow_macro = (as_int(a[ai + 1]) != 0);
+                        ++ai;
+                    } else {
+                        batch_allow_macro = true;
+                    }
                 } else if (kw == ":sync-query-index?") {
                     // Issue #1913: opt out of post-commit index sync.
                     if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
@@ -5236,6 +5252,116 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // #2796: no linear_post_mutate_enforce_all() on abort path
             // (#2559 inventory: enforce remains on non-abort mutate paths)
         };
+
+        // ── Issue #3301: batch-level MacroIntroduced fail-closed audit ──
+        // The dispatcher must not depend on every current AND future
+        // lockless helper carrying its own hygiene gate: a helper appended
+        // to kAtomicBatchLocklessOps without the gate would inherit a
+        // default-deny hole under production defaults (Restricted + Strict).
+        // Walk each sub-op's primary target node-id arg ONCE, before any
+        // sub-op runs, and deny the whole batch (atomic rollback) if a
+        // target is MacroIntroduced and no opt-out applies:
+        //   - global (hygiene:set-allow-macro-mutate! #t)
+        //   - batch form :allow-macro? #t (Issue #3301 new keyword)
+        //   - per sub-op :allow-macro? #t (Issue #3213 dual-track)
+        // Soft/Off stays zero-cost: the walk is gated to production
+        // sandbox (AC4 — Soft semantics remain owned by per-op gates).
+        // Deny face matches reject_structural_macro_hygiene: stamps
+        // kHygieneLimitReasonMacroIntroduced (AC3) + typed audit trail +
+        // bumps atomic_batch_domain_.hygiene_violations_total (the
+        // never-wired #790 counter — this is its planned batch-body site).
+        using AtomicBatchOpFn = EvalResult (Evaluator::*)(std::span<const types::EvalValue>);
+        struct AtomicBatchOpEntry {
+            const char* name;
+            AtomicBatchOpFn fn;
+            // Issue #3301: index of the primary target node-id arg in the
+            // sub-op args; -1 = name/string-based (no node-id arg — covered
+            // by the helper's own gate). New helpers MUST set this so the
+            // batch-level audit backstops them even if they forget a gate.
+            int target_arg;
+        };
+        // Issue #1899: single source of truth for supported batch ops.
+        static constexpr AtomicBatchOpEntry kAtomicBatchLocklessOps[] = {
+            {"mutate:rebind", &Evaluator::eval_flat_apply_mutate_rebind, -1},
+            {"mutate:replace-value", &Evaluator::eval_flat_apply_mutate_replace_value, 0},
+            {"mutate:tweak-literal", &Evaluator::eval_flat_apply_mutate_tweak_literal, 0},
+            {"mutate:remove-node", &Evaluator::eval_flat_apply_mutate_remove_node, 0},
+            {"mutate:insert-child", &Evaluator::eval_flat_apply_mutate_insert_child, 0},
+            {"mutate:set-body", &Evaluator::eval_flat_apply_mutate_set_body, -1},
+            {"mutate:replace-pattern", &Evaluator::eval_flat_apply_mutate_replace_pattern, -1},
+            {"mutate:replace-subtree", &Evaluator::eval_flat_apply_mutate_replace_subtree, 0},
+            {"mutate:splice", &Evaluator::eval_flat_apply_mutate_splice, 0},
+            {"mutate:wrap", &Evaluator::eval_flat_apply_mutate_wrap, 0},
+            {"mutate:rename-symbol", &Evaluator::eval_flat_apply_mutate_rename_symbol, -1},
+            {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node, 0},
+            {"mutate:inline-call", &Evaluator::eval_flat_apply_mutate_inline_call, 0},
+        };
+        static constexpr std::size_t kAtomicBatchLocklessOpCount =
+            sizeof(kAtomicBatchLocklessOps) / sizeof(kAtomicBatchLocklessOps[0]);
+        static_assert(kAtomicBatchLocklessOpCount == 13, "atomic-batch lockless table size drift");
+        {
+            const bool prod_sandbox =
+                aura::core::sandbox::is_sandbox_active() || ev.effect_sandbox_mode() != 0;
+            if (prod_sandbox && !ev.get_allow_macro_mutate() && !batch_allow_macro) {
+                EvalValue audit_list = op_list;
+                while (is_pair(audit_list)) {
+                    EvalValue op = pair_car(audit_list);
+                    audit_list = pair_cdr(audit_list);
+                    if (!is_pair(op))
+                        break;
+                    EvalValue op_name_ev = pair_car(op);
+                    if (!is_string(op_name_ev))
+                        break;
+                    std::vector<EvalValue> op_args = list_to_vec(pair_cdr(op));
+                    std::string op_name = safe_str(op_name_ev);
+                    if (parse_allow_macro_opt_out(ev, op_args))
+                        continue; // Issue #3213 per-sub-op opt-out
+                    for (const auto& e : kAtomicBatchLocklessOps) {
+                        if (op_name != e.name || e.target_arg < 0)
+                            continue;
+                        if (static_cast<std::size_t>(e.target_arg) >= op_args.size() ||
+                            !is_int(op_args[e.target_arg]))
+                            break; // malformed; sub-op loop reports it
+                        auto node = static_cast<aura::ast::NodeId>(as_int(op_args[e.target_arg]));
+                        if (node == aura::ast::NULL_NODE || node >= ev.workspace_flat_->size() ||
+                            !ev.workspace_flat_->is_live_node(node))
+                            break;
+                        if (!ev.workspace_flat_->is_macro_introduced(node))
+                            break;
+                        // Fail closed: deny the whole batch before any sub-op.
+                        ev.record_hygiene_violation_attempt();
+                        aura::compiler::macro_exp::note_hygiene_last_limit_reason(
+                            aura::compiler::macro_exp::kHygieneLimitReasonMacroIntroduced);
+                        if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
+                            m->naked_macro_mutate_attempt.fetch_add(1, std::memory_order_relaxed);
+                            m->macro_hygiene_provenance_hits_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                            m->last_hygiene_blame_node = static_cast<std::uint32_t>(node);
+                        }
+                        typed_audit::capture_macro_hygiene_audit(
+                            "hygiene-protected", typed_audit::AuditOutcome::Error,
+                            static_cast<std::uint32_t>(node),
+                            static_cast<std::int64_t>(aura_fiber_current_id()),
+                            ev.capability_tenant_id());
+                        ev.bump_atomic_batch_hygiene_violation(); // #790 wire-up (#3301)
+                        abort_batch_workspace();
+                        ev.atomic_batch_domain_.rollbacks++;
+                        ev.bump_edsl_nested_atomic_rollback();
+                        if (batch_snap_id >= 0 && ev.restore_workspace_snapshot_under_lock(
+                                                      static_cast<std::size_t>(batch_snap_id)))
+                            ev.bump_atomic_batch_snapshot_rollback();
+                        ev.rollback_atomic_batch_pinning();
+                        guard_ok = false;
+                        return ev.make_merr(
+                            "hygiene", ("mutate:atomic-batch: target node " + std::to_string(node) +
+                                        " was produced by a hygienic macro expansion; pass :*** #t "
+                                        "on the batch form or per sub-op, or call "
+                                        "(hygiene:set-allow-macro-mutate! #t) to opt out")
+                                           .c_str());
+                    }
+                }
+            }
+        }
         while (is_pair(op_list)) {
             EvalValue op = pair_car(op_list);
             op_list = pair_cdr(op_list);
@@ -5257,39 +5383,14 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // non-recursive shared_mutex — the batch already
             // holds the lock via its outer guard.
             //
-            // Issue #1900 / #1899: dispatch expanded from 5 → 14 ops
-            // via data-driven table kAtomicBatchLocklessOps (append
-            // a row to extend; no if/else growth). Helpers in
-            // evaluator_eval_flat.cpp are stripped of Guard / yield /
-            // COW / typecheck / defuse / dep-graph (outer batch owns
-            // those). Outer Guard holds workspace_mtx_ unique for
-            // the entire batch → STRONG atomicity (#1878/#1899).
-            using AtomicBatchOpFn = EvalResult (Evaluator::*)(std::span<const types::EvalValue>);
-            struct AtomicBatchOpEntry {
-                const char* name;
-                AtomicBatchOpFn fn;
-            };
-            // Issue #1899: single source of truth for supported batch ops.
-            static constexpr AtomicBatchOpEntry kAtomicBatchLocklessOps[] = {
-                {"mutate:rebind", &Evaluator::eval_flat_apply_mutate_rebind},
-                {"mutate:replace-value", &Evaluator::eval_flat_apply_mutate_replace_value},
-                {"mutate:tweak-literal", &Evaluator::eval_flat_apply_mutate_tweak_literal},
-                {"mutate:remove-node", &Evaluator::eval_flat_apply_mutate_remove_node},
-                {"mutate:insert-child", &Evaluator::eval_flat_apply_mutate_insert_child},
-                {"mutate:set-body", &Evaluator::eval_flat_apply_mutate_set_body},
-                {"mutate:replace-pattern", &Evaluator::eval_flat_apply_mutate_replace_pattern},
-                {"mutate:replace-subtree", &Evaluator::eval_flat_apply_mutate_replace_subtree},
-                {"mutate:splice", &Evaluator::eval_flat_apply_mutate_splice},
-                {"mutate:wrap", &Evaluator::eval_flat_apply_mutate_wrap},
-                {"mutate:rename-symbol", &Evaluator::eval_flat_apply_mutate_rename_symbol},
-                {"mutate:move-node", &Evaluator::eval_flat_apply_mutate_move_node},
-                {"mutate:inline-call", &Evaluator::eval_flat_apply_mutate_inline_call},
-            };
-            static constexpr std::size_t kAtomicBatchLocklessOpCount =
-                sizeof(kAtomicBatchLocklessOps) / sizeof(kAtomicBatchLocklessOps[0]);
-            static_assert(kAtomicBatchLocklessOpCount == 13,
-                          "atomic-batch lockless table size drift");
-
+            // Issue #1900 / #1899: dispatch via the hoisted
+            // kAtomicBatchLocklessOps table (defined pre-loop with
+            // target-arg metadata for the Issue #3301 batch-level
+            // hygiene audit). Helpers in evaluator_eval_flat.cpp are
+            // stripped of Guard / yield / COW / typecheck / defuse /
+            // dep-graph (outer batch owns those). Outer Guard holds
+            // workspace_mtx_ unique for the entire batch → STRONG
+            // atomicity (#1878/#1899).
             AtomicBatchOpFn op_fn = nullptr;
             for (const auto& e : kAtomicBatchLocklessOps) {
                 if (op_name == e.name) {

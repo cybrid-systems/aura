@@ -5038,6 +5038,23 @@ def cmd_lint():
             "Issue #3302 WAL fail-closed force_wal linter failed — run python3 scripts/coverage/checks/check_wal_fail_closed_force_wal_3302.py"
         )
         return r
+    # Issue #3301: atomic-batch batch-level MacroIntroduced fail-closed
+    # audit. Dispatcher walks each sub-op's target node-id arg before the
+    # sub-op loop and denies the whole batch if a target is MacroIntroduced
+    # under production sandbox (Restricted/Strict) with no opt-out.
+    # Soft/Off zero-cost; batch-form :allow-macro? #t + per-sub-op opt-out
+    # + global allow all respected. Lockless :rebind gets a name-based
+    # parity gate. New hygiene-violations + schema-3301 stats-hash keys.
+    abma3301_script = COVERAGE_CHECKS / "check_atomic_batch_macro_audit_3301.py"
+    if not abma3301_script.exists():
+        fail(f"missing {abma3301_script}")
+        return 1
+    r = run([sys.executable, str(abma3301_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3301 atomic-batch macro audit linter failed — run python3 scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py"
+        )
+        return r
     # Issue #3110: Production C++ join auto-wait (close host-forget cleanup
     # window). join_agent / join_agents auto-wait via wait_reclaimed_body
     # (50 ms production default) when production + Reclaimed + unset wait,
@@ -9587,6 +9604,36 @@ def cmd_wal_fail_closed_force_wal_3302():
     """
     print(f"{B}=== wal fail-closed force_wal (#3302) ==={N}")
     return cmd_wal_fail_closed_force_wal_3302_coverage()
+
+
+def cmd_atomic_batch_macro_audit_3301_coverage():
+    """Issue #3301: atomic-batch batch-level MacroIntroduced audit (static)."""
+    print(f"{B}=== atomic-batch macro audit coverage (#3301) ==={N}")
+    script = COVERAGE_CHECKS / "check_atomic_batch_macro_audit_3301.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("atomic-batch macro audit (#3301) coverage contract rows failed")
+        return 1
+    ok("atomic-batch macro audit (#3301) coverage clean")
+    return 0
+
+
+def cmd_atomic_batch_macro_audit_3301():
+    """Issue #3301: atomic-batch dispatcher batch-level MacroIntroduced audit.
+
+    The dispatcher must not depend on every current AND future lockless
+    helper carrying its own hygiene gate: a helper appended to
+    kAtomicBatchLocklessOps without the gate inherits a default-deny hole
+    under production defaults (Restricted + Strict). #3301 adds a
+    batch-entry target walk (table target_arg metadata) that denies the
+    whole batch before any sub-op runs; batch-form :allow-macro? #t /
+    per-sub-op opt-out / global allow all respected. Soft/Off zero-cost.
+    """
+    print(f"{B}=== atomic-batch macro audit (#3301) ==={N}")
+    return cmd_atomic_batch_macro_audit_3301_coverage()
 
 
 def cmd_bp_threshold_ssot_2948_coverage():
@@ -20220,6 +20267,8 @@ def main():
         "wal-append-fail-schedule-3211-coverage": cmd_wal_append_fail_schedule_3211_coverage,
         "wal-fail-closed-force-wal-3302": cmd_wal_fail_closed_force_wal_3302,
         "wal-fail-closed-force-wal-3302-coverage": cmd_wal_fail_closed_force_wal_3302_coverage,
+        "atomic-batch-macro-audit-3301": cmd_atomic_batch_macro_audit_3301,
+        "atomic-batch-macro-audit-3301-coverage": cmd_atomic_batch_macro_audit_3301_coverage,
         "moving-pre-densify-completeness-2973": cmd_moving_pre_densify_completeness_2973,
         "moving-pre-densify-completeness-2973-coverage": cmd_moving_pre_densify_completeness_2973_coverage,
         "moving-incomplete-remap-3017": cmd_moving_incomplete_remap_3017,

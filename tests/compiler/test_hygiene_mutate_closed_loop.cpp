@@ -16,6 +16,11 @@
 #include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
+#include "core/sandbox.hh"
+#include "core/workspace_isolation.hh"
+#include "core/capability_model.hh"
+#include "compiler/security_capabilities.h"
+#include "compiler/grant_test_support.hh"
 
 #include <cstdint>
 #include <format>
@@ -2096,6 +2101,237 @@ static void ac3213_6_linter_no_docs() {
           "3213 AC6: no tests/compiler/test_issue_3213");
 }
 
+// ── Issue #3301: batch-level MacroIntroduced fail-closed audit ──
+// The atomic-batch dispatcher must not depend on every current AND
+// future lockless helper carrying its own hygiene gate: a helper
+// appended to kAtomicBatchLocklessOps without the gate inherits a
+// default-deny hole under production defaults (Restricted + Strict).
+// #3301 adds a batch-entry target walk (table target_arg metadata)
+// that denies the WHOLE batch before any sub-op runs if a target is
+// MacroIntroduced and no opt-out applies (global / batch-form
+// :allow-macro? / per-sub-op :allow-macro?). Deny stamps
+// kHygieneLimitReasonMacroIntroduced + bumps the
+// atomic_batch_domain_.hygiene_violations_total counter (new
+// "hygiene-violations" + schema-3301 keys on
+// query:atomic-batch-stats-hash). Soft/Off stays zero-cost: the walk
+// is gated to production sandbox (AC4 — Soft semantics stay owned by
+// the per-op gates). Lockless :rebind also gets a hygiene gate
+// (name-based parity — the batch walk cannot see its define).
+// Tests extend this suite; no test_issue_3301.cpp per #81967;
+// no docs/design/3301-* per #1655.
+
+static void grant_3301_production_mutate(CompilerService& cs) {
+    // Under Restricted the mutate wrapper's require_effect runs
+    // check_workspace_isolation FIRST: with the default principal (tenant 0)
+    // + side-effect bits it denies via the #2385 unset-principal footgun.
+    // Mirror test_mutate_capability_force AC4: set a non-zero principal +
+    // workspace-isolation current tenant, grant while sandbox is still Off
+    // (#3141 fence blocks wildcard string pushes under Restricted), then
+    // arm Restricted via the Evaluator setter.
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(1);
+    aura::core::workspace_isolation::g_workspace_isolation().set_current_tenant(1, "3301-tenant");
+    // The grant's bound_mutation_id must equal require_effect's mid under
+    // Restricted's fail-closed join. require_effect prefers the TypedMid
+    // stamp (last_type_linear_commit_proof_stamp_v_read) over the mutation
+    // epoch; earlier ACs in this process may leave a stale stamp → mid
+    // mismatch → capability-denied. Clear it so both sides use the epoch
+    // (aura_test_grant_prov stamps current_mutation_epoch()).
+    aura::compiler::typed_audit::clear_type_linear_commit_proof_for_test();
+    aura::core::capability::g_capability_registry().grant(
+        1, "tenant-admin", aura::core::capability::Effect::TenantAdmin, aura_test_grant_prov());
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov());
+    ev.grant_capability(std::string(aura::compiler::security::kCapWildcard));
+    ev.set_effect_sandbox_mode(1); // Restricted — after grants
+    // Arming Restricted routes through the sandbox authority which bumps
+    // the mutation epoch; require_effect's fail-closed mid join then reads
+    // the NEW epoch. Re-grant after arming so bound_mutation_id matches the
+    // mid the batch wrapper will compute (provenance_ok_locked).
+    aura::core::capability::g_capability_registry().grant(
+        1, aura::compiler::security::kCapWildcard,
+        aura::core::capability::effect_for_cap_name(aura::compiler::security::kCapWildcard),
+        aura_test_grant_prov());
+}
+
+static void ac3301_1_batch_level_deny_production() {
+    std::println("\n--- 3301 AC1: production batch-level MacroIntroduced deny ---");
+    CompilerService cs;
+    // Setup (set-code + eval + stamp) while sandbox is still Off, then arm
+    // Restricted after grants — the marker primitive and the grants both
+    // need the fence-free path.
+    CHECK(cs.eval("(set-code \"(define a 10) (define b 20)\")").has_value(), "3301 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3301 AC1: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3301 AC1: workspace");
+    auto a = nth_lit_int(ws, 0);
+    CHECK(a != aura::ast::NULL_NODE, "3301 AC1: LiteralInt");
+    const auto old_a = ws->get(a).int_value;
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3301 AC1: stamp");
+    CHECK(ws->is_macro_introduced(a), "3301 AC1: marked");
+    grant_3301_production_mutate(cs);
+    aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason.store(0,
+                                                                       std::memory_order_relaxed);
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-deny\")) "
+        "\"3301-deny\")",
+        a));
+    CHECK(r.has_value(), "3301 AC1: batch returns");
+    CHECK(merr_kind_3027(cs, *r) == "hygiene", "3301 AC1: batch-level hygiene deny");
+    CHECK(ws->get(a).int_value == old_a, "3301 AC1: value unchanged after batch deny");
+    const auto* rs = aura::compiler::macro_exp::hygiene_last_limit_reason_string();
+    CHECK(rs != nullptr && std::string(rs) == "hygiene-macro-introduced",
+          "3301 AC1: reason hygiene-macro-introduced");
+    auto hv = cs.eval(
+        "(hash-ref (engine:metrics \"query:atomic-batch-stats-hash\") \"hygiene-violations\")");
+    CHECK(hv && is_int(*hv) && as_int(*hv) >= 1, "3301 AC1: hygiene-violations >= 1");
+    auto sc =
+        cs.eval("(hash-ref (engine:metrics \"query:atomic-batch-stats-hash\") \"schema-3301\")");
+    CHECK(sc && is_int(*sc) && as_int(*sc) == 3301, "3301 AC1: schema-3301");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3301_2_batch_form_allow_macro() {
+    std::println(
+        "\n--- 3301 AC2: batch-form :allow-macro? #t skips batch audit; per-op allow commits ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "3301 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3301 AC2: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3301 AC2: workspace");
+    auto a = nth_lit_int(ws, 0);
+    CHECK(a != aura::ast::NULL_NODE, "3301 AC2: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3301 AC2: stamp");
+    CHECK(ws->is_macro_introduced(a), "3301 AC2: marked");
+    grant_3301_production_mutate(cs);
+    // Batch-form :allow-macro? #t skips the batch-level audit; the per-op
+    // lockless gate (replace-value) still requires per-sub-op :allow-macro?
+    // (#3213 dual-track). Both together permit the commit.
+    auto r = cs.eval(std::format(
+        "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-allow\" "
+        ":allow-macro? #t)) \"3301-allow\" :allow-macro? #t)",
+        a));
+    CHECK(r.has_value(), "3301 AC2: batch returns");
+    CHECK(ws->get(a).int_value == 99, "3301 AC2: opted-in batch commits");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3301_3_per_op_allow_still_respected() {
+    std::println("\n--- 3301 AC3: per-sub-op :allow-macro? still respected (#3213) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "3301 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3301 AC3: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3301 AC3: workspace");
+    auto a = nth_lit_int(ws, 0);
+    CHECK(a != aura::ast::NULL_NODE, "3301 AC3: LiteralInt");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3301 AC3: stamp");
+    grant_3301_production_mutate(cs);
+    auto r = cs.eval(
+        std::format("(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-op\" "
+                    ":allow-macro? #t)) \"3301-op\")",
+                    a));
+    CHECK(r.has_value(), "3301 AC3: batch returns");
+    CHECK(ws->get(a).int_value == 99, "3301 AC3: per-op opt-in commits");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+}
+
+static void ac3301_4_soft_off_contract() {
+    std::println("\n--- 3301 AC4: Soft/Off contract unchanged (audit production-gated) ---");
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+    {
+        // Macro target in Soft: per-op lockless gate still denies (contract
+        // unchanged from before #3301); the batch audit is production-gated
+        // so it does not add a batch-level deny here.
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "3301 AC4: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3301 AC4: eval");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "3301 AC4: workspace");
+        auto a = nth_lit_int(ws, 0);
+        CHECK(a != aura::ast::NULL_NODE, "3301 AC4: LiteralInt");
+        const auto old_a = ws->get(a).int_value;
+        CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", a)).has_value(), "3301 AC4: stamp");
+        auto r = cs.eval(std::format(
+            "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 99 \"3301-soft\")) "
+            "\"3301-soft\")",
+            a));
+        CHECK(r.has_value(), "3301 AC4: batch returns");
+        CHECK(ws->get(a).int_value == old_a, "3301 AC4: per-op gate still denies in Soft");
+    }
+    {
+        // Non-macro batch commits normally in Soft (zero extra cost).
+        // Mirrors the proven ac3213_5 shape (first literal, fresh service):
+        // a second-literal target here tripped an unrelated core
+        // marker-column assert on batch commit (pre-existing; follow-up).
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "3301 AC4: set-code2");
+        CHECK(cs.eval("(eval-current)").has_value(), "3301 AC4: eval2");
+        auto* ws = cs.evaluator().workspace_flat();
+        CHECK(ws != nullptr, "3301 AC4: workspace2");
+        auto a2 = nth_lit_int(ws, 0);
+        CHECK(a2 != aura::ast::NULL_NODE, "3301 AC4: LiteralInt2");
+        auto r2 = cs.eval(std::format(
+            "(mutate:atomic-batch (list (list \"mutate:replace-value\" {} 7 \"3301-nm\")) "
+            "\"3301-nm\")",
+            a2));
+        CHECK(r2.has_value(), "3301 AC4: non-macro batch returns");
+        CHECK(ws->get(a2).int_value == 7, "3301 AC4: non-macro batch commits in Soft");
+    }
+}
+
+static void ac3301_5_lockless_rebind_gate() {
+    std::println("\n--- 3301 AC5: lockless batch :rebind hygiene gate (name-based parity) ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define a 10)\")").has_value(), "3301 AC5: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3301 AC5: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3301 AC5: workspace");
+    auto def = first_tag(ws, aura::ast::NodeTag::Define);
+    CHECK(def != aura::ast::NULL_NODE, "3301 AC5: Define");
+    CHECK(cs.eval(std::format("(syntax:set-marker {} 1)", def)).has_value(), "3301 AC5: stamp");
+    CHECK(ws->is_macro_introduced(def), "3301 AC5: define marked");
+    const auto body0 = ws->get(def).child(0);
+    auto r =
+        cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:rebind\" \"a\" \"(+ a 1)\" "
+                            "\"3301-rebind\")) \"3301-rebind\")"));
+    CHECK(r.has_value(), "3301 AC5: batch returns");
+    CHECK(merr_kind_3027(cs, *r) != "", "3301 AC5: rebind MacroIntroduced define denied");
+    CHECK(ws->get(def).child(0) == body0, "3301 AC5: define body unchanged");
+    auto r2 =
+        cs.eval(std::format("(mutate:atomic-batch (list (list \"mutate:rebind\" \"a\" \"(+ a 1)\" "
+                            "\"3301-rebind-ok\" :allow-macro? #t)) \"3301-rebind-ok\")"));
+    CHECK(r2.has_value(), "3301 AC5: allowed rebind returns");
+}
+
+static void ac3301_6_source_and_linter() {
+    std::println("\n--- 3301 AC6: source-cite + linter + no docs/design / no invent ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto efl = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py");
+    CHECK(mut.find("Issue #3301") != std::string::npos, "3301 AC6: mutate.cpp #3301");
+    CHECK(mut.find("target_arg") != std::string::npos, "3301 AC6: table target_arg metadata");
+    CHECK(mut.find("kHygieneLimitReasonMacroIntroduced") != std::string::npos,
+          "3301 AC6: batch deny stamps reason");
+    CHECK(mut.find("bump_atomic_batch_hygiene_violation") != std::string::npos,
+          "3301 AC6: batch hygiene counter wired");
+    CHECK(mut.find("batch_allow_macro") != std::string::npos, "3301 AC6: batch :allow-macro?");
+    CHECK(efl.find("batch :rebind: cannot rebind MacroIntroduced define") != std::string::npos,
+          "3301 AC6: lockless rebind gate");
+    CHECK(build.find("check_atomic_batch_macro_audit_3301") != std::string::npos,
+          "3301 AC6: build.py wires linter");
+    CHECK(!lint.empty() && lint.find("Issue #3301") != std::string::npos, "3301 AC6: linter");
+    CHECK(read_file("docs/design/3301-atomic-batch-macro-audit.md").empty(),
+          "3301 AC6: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3301.cpp").empty(),
+          "3301 AC6: no tests/issues/test_issue_3301");
+    CHECK(read_file("tests/compiler/test_issue_3301.cpp").empty(),
+          "3301 AC6: no tests/compiler/test_issue_3301");
+}
+
 // ── Issue #3239: residual EDA/SV mutate surface retired ──
 // mutate:sv-add-coverpoint / mutate:sv-weaken-property, kSvaDirty,
 // sv_mutate_* counters, and maybe_sv_hardware_closedloop are gone.
@@ -3267,6 +3503,13 @@ int main() {
     ac3213_4_surgical_sibling_denied();
     ac3213_5_soft_non_macro_zero_extra();
     ac3213_6_linter_no_docs();
+    std::println("\n=== Issue #3301: batch-level MacroIntroduced fail-closed audit ===");
+    ac3301_1_batch_level_deny_production();
+    ac3301_2_batch_form_allow_macro();
+    ac3301_3_per_op_allow_still_respected();
+    ac3301_4_soft_off_contract();
+    ac3301_5_lockless_rebind_gate();
+    ac3301_6_source_and_linter();
     std::println(
         "\n=== Issue #3192: force all structural mutate through mutate_dispatch_try_acquire ===");
     ac3192_1_set_body_uses_ssol_acquire();

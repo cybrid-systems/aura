@@ -720,6 +720,13 @@ void register_mutation_primitives(PrimRegistrar add, Evaluator& ev) {
             insert_kv("tenant-isolation-denials",
                       static_cast<std::int64_t>(ev.atomic_batch_tenant_isolation_denials_total()));
             insert_kv("schema-1878", 1878);
+            // Issue #3301: batch-level MacroIntroduced fail-closed denials
+            // (bumped at batch entry when a target node is MacroIntroduced
+            // and no :allow-macro? / global opt-out applies). Additive key;
+            // Soft/Off stays 0 because the batch audit is production-gated.
+            insert_kv("hygiene-violations",
+                      static_cast<std::int64_t>(ev.atomic_batch_hygiene_violations_total()));
+            insert_kv("schema-3301", 3301);
             // Issue #1893: marker/provenance/dirty metadata snapshot/restore.
             std::int64_t meta_cap = 0, meta_rest = 0;
             if (ev.workspace_flat_) {
