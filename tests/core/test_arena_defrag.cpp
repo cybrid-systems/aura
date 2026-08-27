@@ -112,12 +112,19 @@ bool test_ac2_warn_no_safepoint_primitive() {
     std::println("\n--- AC2: (engine:metrics \"arena:warn-no-safepoint\") ---");
     aura::compiler::CompilerService cs;
 
+    // CI robustness: the #743 small-tier-exhaustion auto-path can call
+    // request_defrag() during AC1 / service construction (slower hosts,
+    // heavier allocation pressure) and fire the one-shot warning before
+    // this suite's own request. Reset so the "not fired initially"
+    // contract below is deterministic for THIS suite.
+    aura::ast::reset_no_safepoint_warned_for_test();
+
     // AC2a: initially — warning hasn't fired
     auto r0 = cs.eval("(engine:metrics \"arena:warn-no-safepoint\")");
     bool b0 =
         (r0 && aura::compiler::types::is_bool(*r0)) ? aura::compiler::types::as_bool(*r0) : true;
     std::println("  AC2: initial warn-no-safepoint = {}", b0);
-    CHECK(!b0, "AC2a: warning hasn't fired initially (clean process state)");
+    CHECK(!b0, "AC2a: warning hasn't fired initially (reset for this suite)");
 
     // AC2b: trigger request_defrag — in stdin mode without
     // scheduler, no safepoint is registered, so the one-shot

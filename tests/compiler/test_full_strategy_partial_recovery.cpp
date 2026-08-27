@@ -171,11 +171,14 @@ static void ac6_provenance_restamp_path() {
     std::println("\n--- AC6: provenance restamp on recover ---");
     auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
     CHECK(bound.find("restamp_all_node_generations") != std::string::npos, "restamp generations");
-    CHECK(bound.find("restamp_pinned_stable_refs") != std::string::npos, "restamp pins");
+    // Issue #3309 routed abort partial-recovery restamp through the
+    // unified entry (restamp_all_node_generations + pinned-stable
+    // pairing inside); the old free helpers are gone.
+    CHECK(bound.find("unified_restamp_after_boundary") != std::string::npos, "restamp pins");
     CHECK(bound.find("post_mutation_reflect_validate") != std::string::npos, "reflect revalidate");
     // Order: restamp then reflect (source contains both in recover block)
     const auto p_gen = bound.find("restamp_all_node_generations");
-    const auto p_pin = bound.find("restamp_pinned_stable_refs");
+    const auto p_pin = bound.find("unified_restamp_after_boundary");
     // Multiple sites exist; just ensure both present near partial_recovery_provenance
     const auto p_prov = bound.find("partial_recovery_provenance_total");
     CHECK(p_prov != std::string::npos, "prov counter site");
