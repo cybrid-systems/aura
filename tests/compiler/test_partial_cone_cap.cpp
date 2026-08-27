@@ -196,9 +196,13 @@ static void ac3189_partial_impact_upper_bound_unified() {
         CHECK(svc.find("should_partial_relower_impact_checked(dirty_n, impact_ub)") !=
                   std::string::npos,
               "ac3189 AC1: try_partial_invalidate_relower calls helper (dirty_n, impact_ub)");
-        // Site 2: apply_partial_relower_storm_gate (service.ixx:7021) — #2246 sibling
-        CHECK(sixx.find("should_partial_relower_impact_checked(dirty_n, impact_ub)") !=
-                  std::string::npos,
+        // Site 2: apply_partial_relower_storm_gate (service.ixx:7021) — #2246 sibling.
+        // #3310 wrapped the call as should_partial_relower_impact_checked_prod —
+        // accept the pre-#3310 name or the _prod wrapper.
+        CHECK((sixx.find("should_partial_relower_impact_checked(dirty_n, impact_ub)") !=
+                   std::string::npos ||
+               sixx.find("should_partial_relower_impact_checked_prod(dirty_n, impact_ub") !=
+                   std::string::npos),
               "ac3189 AC1: apply_partial_relower_storm_gate calls helper (dirty_n, impact_ub)");
         // Site 3: invalidate_bridge_with_impact (L1163) — #3189 NEW
         CHECK(

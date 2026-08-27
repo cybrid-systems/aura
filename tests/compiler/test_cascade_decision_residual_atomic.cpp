@@ -237,7 +237,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     {
         std::println("\n--- AC2: Soft skip path ---");
         auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
-        auto end = pos + 8000;
+        auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // need_lock must be the gate that decides skip-or-take.
         must_inline(block, "const bool need_lock =", "AC2 need_lock is the Soft-skip gate");
@@ -252,7 +252,7 @@ int run_test_cascade_decision_residual_atomic_3135() {
     {
         std::println("\n--- AC3: quiet happy path no extra lock ---");
         auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
-        auto end = pos + 8000;
+        auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // The defer_lock pattern ensures no atomic acquire happens when
         // need_lock is false (only .lock() acquires the mutex).
@@ -286,15 +286,18 @@ int run_test_cascade_decision_residual_atomic_3135() {
     {
         std::println("\n--- AC4: existing #3067 + #3097 + re-check force-full ---");
         auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
-        auto end = pos + 8000;
+        auto end = pos + 12000; // #3310 moved the consult deeper into the fn
         auto block = ixx.substr(pos, end - pos);
         // #3067: drain at entry (still present).
         must_inline(block, "drain_deferred_hybrid_cascade_()", "AC4 #3067 drain preserved");
         // #3097: impact_ub consult.
         must_inline(block, "impact_upper_bound_for_entry_",
                     "AC4 #3097 impact_ub consult preserved");
-        must_inline(block, "should_partial_relower_impact_checked",
-                    "AC4 #3097 partial-gate check preserved");
+        // #3310 renamed the call to should_partial_relower_impact_checked_prod
+        // (production fail-closed wrapper); accept either name.
+        if (block.find("should_partial_relower_impact_checked_prod(") == std::string::npos)
+            must_inline(block, "should_partial_relower_impact_checked",
+                        "AC4 #3097 partial-gate check preserved");
         must_inline(block, "partial_forced_full_by_impact_total",
                     "AC4 existing counter reused (no new metric key)");
         // #3135: re-check force-full on re-arm.
