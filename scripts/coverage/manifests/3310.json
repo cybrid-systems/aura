@@ -1,0 +1,41 @@
+{
+  "issue": 3310,
+  "title": "Issue #3310: [P0][Incremental] production: impact_ub==0 (no flat/no root) must fail-closed to full — Soft zero-cost path must not enter partial under production defaults",
+  "ok": "OK: Issue #3310 production fail-closed on unknown ImpactScope — should_partial_relower_impact_checked_prod gates ub==0 + production; reuses partial_forced_full_by_impact_total; Soft/Off zero-cost preserved; -1 sentinel path untouched.",
+  "source_script": "scripts/coverage/checks/check_impact_ub_production_3310.py",
+  "checks": [
+    {
+      "ac": "AC1-helper",
+      "path": "src/compiler/ir_cache_pure.ixx",
+      "contains": [
+        "should_partial_relower_impact_checked_prod",
+        "production && impact_upper_bound == 0",
+        "should_partial_relower_impact_checked"
+      ]
+    },
+    {
+      "ac": "AC2-service-call",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "Issue #3310",
+        "production_defaults_active",
+        "AuditStrategy::Full",
+        "should_partial_relower_impact_checked_prod",
+        "partial_forced_full_by_impact_total"
+      ]
+    },
+    {
+      "ac": "AC3-test",
+      "path": "tests/compiler/test_partial_relower_impact_production.cpp",
+      "contains": [
+        "Issue #3310",
+        "AC1",
+        "AC2",
+        "AC3",
+        "AC4",
+        "AC5",
+        "should_partial_relower_impact_checked_prod"
+      ]
+    }
+  ]
+}

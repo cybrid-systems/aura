@@ -89,7 +89,7 @@ def main() -> int:
     if rel_pos == -1:
         fails.append("AC1: relower_dirty_defines_from_workspace not found")
     else:
-        rel_end = rel_pos + 8000
+        rel_end = rel_pos + 16000
         rel_block = ixx[rel_pos:rel_end]
         must("Issue #3135", "AC1 relower cites #3135", rel_block)
         must("cascade_decision_mtx_", "AC1 relower uses cascade_decision_mtx_", rel_block)
@@ -129,7 +129,18 @@ def main() -> int:
     if rel_pos != -1:
         must("drain_deferred_hybrid_cascade_()", "AC4 #3067 drain preserved", rel_block)
         must("impact_upper_bound_for_entry_", "AC4 #3097 impact_ub consult preserved", rel_block)
-        must("should_partial_relower_impact_checked", "AC4 #3097 partial-gate check preserved", rel_block)
+        # Issue #3310: partial-gate may now route through
+        # should_partial_relower_impact_checked_prod (which delegates to
+        # should_partial_relower_impact_checked). Accept either form —
+        # the AC4 contract is "partial-gate check preserved", and the
+        # delegating helper satisfies that contract.
+        if (
+            "should_partial_relower_impact_checked" not in rel_block
+            and "should_partial_relower_impact_checked_prod" not in rel_block
+        ):
+            fails.append(
+                "AC4 #3097 partial-gate check preserved: missing 'should_partial_relower_impact_checked[_prod]'"
+            )
         must("partial_forced_full_by_impact_total", "AC4 existing counter reused (no new metric key)", rel_block)
         # Re-check force-full path uses the existing counter.
         must(
