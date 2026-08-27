@@ -135,6 +135,14 @@ export extern std::atomic<std::uint64_t> g_clone_macro_body_concurrent_top_level
 // Issue #3028: same-FlatAST concurrent writer reject + steal abort.
 export extern std::atomic<std::uint64_t> g_macro_clone_same_flat_reject_total;
 export extern std::atomic<std::uint64_t> g_macro_clone_steal_abort_total;
+// Issue #3303: nested-depth steal-check observation (metric only, no
+// Soft/Off behavior change). Bumped on each nested clone walk (depth>0)
+// that reaches the steal-check site at new_id != NULL_NODE, regardless
+// of whether a steal was detected. Lets agents observe how often the
+// nested check fires vs how often it actually aborts. Top-level depth
+// does not bump this — g_macro_clone_steal_abort_total covers the
+// top-level detection path.
+export extern std::atomic<std::uint64_t> g_macro_clone_nested_steal_check_total;
 export extern std::atomic<std::uint8_t> g_macro_clone_last_reject_reason;
 // Issue #3029: last ceiling/depth/pass limit reason (Agent-stable).
 // Issue #3215: codes 4/5 = hygiene-macro-introduced / hygiene-rest-unmarked.
@@ -145,6 +153,12 @@ export inline constexpr std::uint8_t kHygieneLimitReasonDepthLimit = 2;
 export inline constexpr std::uint8_t kHygieneLimitReasonPassLimit = 3;
 export inline constexpr std::uint8_t kHygieneLimitReasonMacroIntroduced = 4;
 export inline constexpr std::uint8_t kHygieneLimitReasonRestUnmarked = 5;
+// Issue #3303: nested-steal-abort (mid-walk steal detected at any depth).
+// Previously the steal-abort path stored kHygieneLimitReasonPassLimit (3),
+// which was semantically wrong — pass-limit and steal-abort are distinct
+// reasons. The new code 6 lets agent replay distinguish "hygiene ceiling
+// failed" (3) from "fiber-steal during expand walk" (6).
+export inline constexpr std::uint8_t kHygieneLimitReasonStealAbort = 6;
 export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
 export [[nodiscard]] const char* hygiene_last_limit_reason_string() noexcept;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).

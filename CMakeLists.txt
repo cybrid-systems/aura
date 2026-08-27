@@ -1939,6 +1939,12 @@ aura_issue_test_link_light(test_dotted_rest_builtin_rename)
 # Issue #2806: clone_macro_body recursion depth is explicit (concurrent-safe).
 aura_add_issue_test(test_concurrent_clone_hygiene_depth)
 aura_issue_test_link_light(test_concurrent_clone_hygiene_depth)
+# Issue #3303: ConcurrentCloneGuard nested steal visibility + stable
+# agent-facing reason on steal-abort (depth==0-only arm left a residual
+# race window; old store(3,...) used kHygieneLimitReasonPassLimit which
+# was semantically wrong for steal-abort).
+aura_add_issue_test(test_concurrent_clone_steal_abort_visibility)
+aura_issue_test_link_light(test_concurrent_clone_steal_abort_visibility)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)

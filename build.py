@@ -10008,6 +10008,41 @@ def cmd_captured_anon_sync_remount_prod_default_2714_coverage():
     return 0
 
 
+def cmd_steal_abort_reason_coverage_3303_coverage():
+    """Issue #3303: ConcurrentCloneGuard nested steal visibility + stable reason.
+
+    Closes the production residual where mid-walk fiber steal during a
+    nested expand walk left a brief window where partial MacroIntroduced
+    nodes were visible to concurrent readers before
+    ExpandCheckpointGuard::try_restore() + NameMapCheckpoint rollback.
+    The steal-abort path also used kHygieneLimitReasonPassLimit (3) as
+    the g_macro_clone_last_reject_reason code, which was semantically
+    wrong (pass-limit and steal-abort are distinct reasons).
+
+    Contract rows (AC1-AC8 from the test file):
+
+      AC1: ixx declares kHygieneLimitReasonStealAbort = 6 + nested counter
+      AC2: steal-abort site stamps StealAbort via store + note_hygiene_last_limit_reason
+      AC3: hygiene_last_limit_reason_string() returns "steal-abort" for code 6
+      AC4: steal0 capture runs at all depths (was depth==0 only)
+      AC5: steal detection runs at all depths (outer guard is new_id != NULL_NODE)
+      AC6: nested steal-check counter bumped at depth>0
+      AC7: ConcurrentCloneGuard ownership doc (top-level owns, nested never re-claims)
+      AC8: C bridge reset clears g_macro_clone_nested_steal_check_total
+    """
+    print(f"{B}=== steal abort reason coverage (#3303) ==={N}")
+    script = ROOT / "scripts" / "check_steal_abort_reason_coverage_3303.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--self-test"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal abort reason coverage (#3303) contract rows failed")
+        return 1
+    ok("steal abort reason coverage (#3303) clean")
+    return 0
+
+
 def cmd_deferred_reemit_steal_sticky_2715_coverage():
     """Issue #2715: deferred reemit on steal stays sticky until BoundaryExit.
 

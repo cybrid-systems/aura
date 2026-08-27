@@ -325,6 +325,14 @@ const char* hygiene_last_limit_reason_string() noexcept {
             return "hygiene-macro-introduced";
         case 5:
             return "hygiene-rest-unmarked";
+        // Issue #3303: nested-steal-abort stable agent-facing reason.
+        // Mid-walk fiber steal during a clone walk (any depth). The
+        // steal-abort path rolls back target FlatAST additions via
+        // expand_ckpt.try_restore() and commits no name_map writes
+        // (nm_ckpt was never captured at nested depth — top-level
+        // owns name_map consistency for the whole subtree).
+        case 6:
+            return "steal-abort";
         default:
             return "";
     }
@@ -428,6 +436,12 @@ std::atomic<std::uint64_t> g_macro_clone_concurrent_peak{0};
 // 0=none 1=capability 2=same-flat 3=steal-abort 4=shared-name-map (#3094).
 std::atomic<std::uint64_t> g_macro_clone_same_flat_reject_total{0};
 std::atomic<std::uint64_t> g_macro_clone_steal_abort_total{0};
+// Issue #3303: nested-depth steal-check observation (metric only).
+// Bumped on each nested clone walk (depth>0) that reaches the
+// steal-check site at new_id != NULL_NODE, regardless of whether a
+// steal was detected. Top-level depth does not bump this —
+// g_macro_clone_steal_abort_total covers the top-level detection path.
+std::atomic<std::uint64_t> g_macro_clone_nested_steal_check_total{0};
 // Issue #3094: shared name_map pointer concurrent top-level clone reject.
 // Bumped when two top-level clones try to claim the same name_map under
 // production (Restricted/Strict or force_hygienic). Soft/Off zero-cost
@@ -915,6 +929,9 @@ extern "C" std::uint64_t aura_macro_clone_last_reject_reason_v_read(void) noexce
 extern "C" void aura_test_reset_macro_clone_same_flat_reject_for_test(void) noexcept {
     g_macro_clone_same_flat_reject_total.store(0, std::memory_order_relaxed);
     g_macro_clone_steal_abort_total.store(0, std::memory_order_relaxed);
+    // Issue #3303: nested-steal-check observation counter (test reset
+    // alongside the top-level steal-abort counter).
+    g_macro_clone_nested_steal_check_total.store(0, std::memory_order_relaxed);
     g_macro_clone_last_reject_reason.store(0, std::memory_order_relaxed);
 }
 // Issue #3029: Agent-stable hygiene limit reason (ceiling / depth / pass).
@@ -1338,6 +1355,24 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     g_macro_expansion_total.fetch_add(1, std::memory_order_relaxed);
     // Issue #2021: track concurrent top-level clone occupancy (not recursive
     // re-entries on the same thread). Peak is visible via query/metrics.
+    // Issue #3303 ownership contract:
+    //   TOP-LEVEL OWNS name_map FOR THE WHOLE SUBTREE.
+    //   NESTED NEVER RE-CLAIMS.
+    //   - depth==0 (top-level): arms same-flat + name_map claim via
+    //     claim_same_flat_clone / claim_name_map_clone. Production rejects
+    //     shared name_map (#3094) to prevent silent UB on concurrent
+    //     unordered_map mutation.
+    //   - depth>0 (nested): early-returns from the constructor with
+    //     armed=false; inherits the top-level's same-flat + name_map claim
+    //     for subtree consistency. Nested recursion must NOT re-claim —
+    //     re-claiming would either double-count (inflated in-flight peak)
+    //     or falsely reject (shared name_map reject under production).
+    //   - Nested mid-walk steal detection (Issue #3303) is observation
+    //     only: stamps a stable agent-facing reason (kHygieneLimitReason
+    //     StealAbort=6) and bumps g_macro_clone_nested_steal_check_total.
+    //     The actual C-linkage checkpoint rollback still happens at the
+    //     top-level depth via the top-level steal check + expand_ckpt
+    //     try_restore(), which protects all nested additions too.
     struct ConcurrentCloneGuard {
         bool armed = false;
         bool rejected_same_flat = false;
@@ -1685,8 +1720,15 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     const bool production_surface = aura::core::sandbox::is_sandbox_active();
     if (hygiene_depth == 0 && production_surface)
         expand_ckpt.ensure_installed();
-    const auto steal0 =
-        hygiene_depth == 0 ? aura_fiber_static_cross_fiber_mutation_safe_steal_total() : 0;
+    // Issue #3303: capture steal0 at ALL depths (was depth==0 only).
+    // Nested clones inherit the top-level name_map but can still observe
+    // mid-walk steals; the delta comparison must work at every recursion
+    // level so the steal detection site can fire on nested steals (it
+    // stamps a stable reason + bumps a nested-only observation counter;
+    // the actual top-level rollback still happens via the top-level
+    // depth's expand_ckpt.try_restore() call, which protects all nested
+    // additions too). Zero-cost — atomic load on the steal counter.
+    const auto steal0 = aura_fiber_static_cross_fiber_mutation_safe_steal_total();
 
     auto v = source.get(body_id);
 
@@ -2345,23 +2387,50 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     if (cross_flat_top && new_id != NULL_NODE) {
         ensure_cross_flat_expand_consistency(target, target_pool, source, source_pool, new_id);
     }
-    // Issue #3028: steal mid-clone → fail-closed (name_map rolled back).
-    if (hygiene_depth == 0 && new_id != NULL_NODE) {
+    // Issue #3303: steal mid-clone → fail-closed at ALL depths. Was:
+    // depth==0 only — nested clone walks left a residual race window
+    // where partial nodes were visible to readers not holding the
+    // expand checkpoint before ExpandCheckpointGuard::try_restore() +
+    // NameMapCheckpoint rollback completed. Now: every recursion level
+    // detects steal delta and stamps a stable agent-facing reason;
+    // nm_ckpt is null at nested depth (only constructed at depth==0),
+    // so no name_map rollback at nested level — name_map consistency
+    // is owned by the top-level claim (see ConcurrentCloneGuard
+    // ownership documentation). The top-level depth's expand_ckpt
+    // still rolls back via the C-linkage checkpoint, which protects
+    // all nested additions too.
+    if (new_id != NULL_NODE) {
+        // Issue #3303: observe nested steal-check path even when no
+        // steal detected, so agents can see how often the check fires.
+        // Top-level depth does not bump this counter — only nested.
+        if (hygiene_depth > 0)
+            g_macro_clone_nested_steal_check_total.fetch_add(1, std::memory_order_relaxed);
         const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total();
         if (steal1 > steal0) {
             g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);
-            g_macro_clone_last_reject_reason.store(3, std::memory_order_relaxed);
+            // Issue #3303: stamp stable agent-facing reason. Previously
+            // stored kHygieneLimitReasonPassLimit (3), which was
+            // semantically wrong — pass-limit and steal-abort are
+            // distinct reasons. The new kHygieneLimitReasonStealAbort
+            // (6) lets agent replay distinguish "hygiene ceiling
+            // failed" (3) from "fiber-steal during expand walk" (6).
+            g_macro_clone_last_reject_reason.store(kHygieneLimitReasonStealAbort,
+                                                   std::memory_order_relaxed);
+            // Issue #3303: also stamp global hygiene reason so
+            // hygiene_last_limit_reason_string() returns "steal-abort"
+            // for agent replay (not just the clone-reject reason).
+            note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort);
             // Issue #3157: roll back target FlatAST additions (target.add_*
             // allocations done by the recursive clone walk between steal0
-            // and steal1). Without this, orphan MacroIntroduced nodes
-            // remain reachable via size growth / free-list gaps even though
-            // nm_ckpt rolls back the rename table. Soft/Off path
-            // unaffected (expand_ckpt.owned == false → try_restore is a
-            // no-op + dtor skips commit, preserving historical half-write).
+            // and steal1). expand_ckpt.try_restore() is safe at all depths —
+            // Soft/Off path unaffected (expand_ckpt.owned == false → no-op +
+            // dtor skips commit, preserving historical half-write).
             expand_ckpt.try_restore();
-            return NULL_NODE; // nm_ckpt rolls back
+            return NULL_NODE; // nm_ckpt rolls back (depth==0 only)
         }
-        nm_ckpt.commit();
+        // Commit name_map only at depth==0 (nested inherits top-level).
+        if (hygiene_depth == 0)
+            nm_ckpt.commit();
     }
     return new_id;
 }
