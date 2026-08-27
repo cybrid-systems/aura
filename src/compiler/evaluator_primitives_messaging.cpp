@@ -70,6 +70,19 @@ namespace {
     std::mutex s_fiber_results_mtx;
     std::condition_variable s_fiber_results_cv;
 
+    // Issue #3394: joinable thread-fiber registry. Pre-#3394 the fallback
+    // detached its worker, so an unjoined fiber could still be inside
+    // ev.apply_closure while ~Evaluator tore down the workspace/arena →
+    // use-after-free (PersistentChildVector OOB abort in
+    // test_fiber_spawn_cli AC1, ~1/3 hit rate per abandoned spawn).
+    // Workers are keyed by the globally-unique #2656 fid and tagged with
+    // the owning Evaluator so ~Evaluator drains only its own fibers;
+    // fiber:join joins + erases on successful result fetch.
+    std::mutex s_thread_fiber_threads_mtx;
+    std::unordered_map<std::int64_t, std::pair<const void*, std::thread>> s_thread_fiber_threads;
+    std::atomic<std::uint64_t> g_thread_fiber_dtor_join_total{0};
+    std::atomic<std::uint64_t> g_thread_fiber_dtor_abandon_total{0};
+
     // Issue #2738: CLI thread-fallback fibers share one Evaluator (string_heap_,
     // env, FlatAST readers outside MutationBoundary). Concurrent apply_closure
     // races those structures even when rebind/eval-current take workspace_mtx_.
@@ -728,8 +741,9 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
     //   1. Scheduler — when g_fiber_spawn is set (serve-async /
     //      --serve-async-bench). Positive scheduler Fiber::id().
     //   2. Thread fallback — CLI stdin / denseness without serve-async.
-    //      Detached std::thread + positive high-bit ids (0x4000_0000 |
-    //      seq). Pre-#2656 used negative ids starting at -1; denseness
+    //      Joinable std::thread (registered + drained at ~Evaluator,
+    //      Issue #3394) + positive high-bit ids (0x4000_0000 | seq).
+    //      Pre-#2656 used negative ids starting at -1; denseness
     //      probes treated -1 as failure even though join worked.
     //
     // Concurrent denseness: thread fallback is a valid multi-worker
@@ -819,7 +833,15 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
                 std::lock_guard<std::mutex> lock(s_fiber_results_mtx);
                 s_fiber_results[fid] = FiberResult{result_ptr, false};
             }
-            std::thread(complete_fiber).detach();
+            // Issue #3394: joinable (NOT detached). Registered so
+            // fiber:join and ~Evaluator (Evaluator::drain_thread_fibers)
+            // can join the worker before the Evaluator's workspace/arena
+            // goes away.
+            {
+                std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+                s_thread_fiber_threads.emplace(fid, std::make_pair(static_cast<const void*>(&ev),
+                                                                   std::thread(complete_fiber)));
+            }
             return make_int(fid);
         }
         if (fid > 0) {
@@ -1060,6 +1082,24 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
             }
             result_ptr = std::move(it->second.value);
             s_fiber_results.erase(it);
+        }
+
+        // Issue #3394: join the thread-backend worker now that its body
+        // has published (registry miss = scheduler backend, no-op).
+        // Extract under the registry mutex, join outside it so a slow
+        // body tail cannot hold the registry hostage.
+        {
+            std::thread worker;
+            {
+                std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+                auto it = s_thread_fiber_threads.find(fid);
+                if (it != s_thread_fiber_threads.end()) {
+                    worker = std::move(it->second.second);
+                    s_thread_fiber_threads.erase(it);
+                }
+            }
+            if (worker.joinable())
+                worker.join();
         }
 
         // Issue #164 sub-fix #4: re-validate ev.defuse_version_ after
@@ -1341,3 +1381,68 @@ void register_messaging_primitives(PrimRegistrar add, Evaluator& ev) {
 }
 
 } // namespace aura::compiler::primitives_detail
+
+namespace aura::compiler {
+
+// Issue #3394: join this Evaluator's outstanding thread-fiber workers
+// before ~Evaluator proceeds to arena/workspace teardown (the fiber:spawn
+// fallback captured `this` by reference). Bounded + best-effort, same
+// contract as cleanup_orch_agents (#2078): a stuck body (not ready after
+// the 2s wait) is detached + WARN + counted so a misbehaving fiber body
+// cannot stall Evaluator teardown.
+void Evaluator::drain_thread_fibers() noexcept {
+    // Registry state from the primitives_detail anonymous namespace.
+    using primitives_detail::g_thread_fiber_dtor_abandon_total;
+    using primitives_detail::g_thread_fiber_dtor_join_total;
+    using primitives_detail::s_fiber_results;
+    using primitives_detail::s_fiber_results_cv;
+    using primitives_detail::s_fiber_results_mtx;
+    using primitives_detail::s_thread_fiber_threads;
+    using primitives_detail::s_thread_fiber_threads_mtx;
+    try {
+        std::vector<std::pair<std::int64_t, std::thread>> mine;
+        {
+            std::lock_guard<std::mutex> lock(s_thread_fiber_threads_mtx);
+            for (auto it = s_thread_fiber_threads.begin(); it != s_thread_fiber_threads.end();) {
+                if (it->second.first == static_cast<const void*>(this)) {
+                    mine.emplace_back(it->first, std::move(it->second.second));
+                    it = s_thread_fiber_threads.erase(it);
+                } else {
+                    ++it;
+                }
+            }
+        }
+        for (auto& [fid, worker] : mine) {
+            const bool ready = [fid] {
+                std::unique_lock<std::mutex> lock(s_fiber_results_mtx);
+                return s_fiber_results_cv.wait_for(lock, std::chrono::milliseconds(2000), [fid] {
+                    auto it = s_fiber_results.find(fid);
+                    return it == s_fiber_results.end() || it->second.ready;
+                });
+            }();
+            if (!worker.joinable())
+                continue;
+            if (ready) {
+                worker.join();
+                g_thread_fiber_dtor_join_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+                // Degenerate body (infinite loop / blocked >2s): detach so
+                // teardown stays bounded. Residual risk limited to this
+                // path, surfaced via WARN + abandon counter.
+                g_thread_fiber_dtor_abandon_total.fetch_add(1, std::memory_order_relaxed);
+                std::println(std::cerr,
+                             "[fiber:drain] WARN: thread-fiber {} not ready after "
+                             "2000ms at ~Evaluator; detaching (stuck body?)",
+                             fid);
+                worker.detach();
+            }
+        }
+    } catch (const std::system_error&) {
+        // Best-effort: thread join/detach or cv wait failed — never
+        // propagate out of ~Evaluator (noexcept).
+    } catch (const std::bad_alloc&) {
+        // Best-effort: registry growth failed — never propagate (noexcept).
+    }
+}
+
+} // namespace aura::compiler

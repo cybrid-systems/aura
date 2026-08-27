@@ -246,6 +246,12 @@ Evaluator::~Evaluator() {
     // release is idempotent (no-op when not armed) and noexcept.
     release_gc_defer_for_pending_panic();
 
+    // Issue #3394: join outstanding thread-fiber workers (the fiber:spawn
+    // CLI thread backend captured `this` by reference) before arena/
+    // workspace teardown. Bounded best-effort — same contract as
+    // cleanup_orch_agents below (a stuck body cannot stall teardown).
+    drain_thread_fibers();
+
     // Issue #2078: drain per-Evaluator orch agent name table + best-effort
     // join outstanding agents before arena teardown. AgentHandle
     // destructors (when the local vector inside cleanup_orch_agents goes

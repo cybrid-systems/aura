@@ -2,6 +2,8 @@
 // @reason: Issue #2656 — CLI denseness fiber:spawn returns positive id
 //          (not -1); spawn+join payload works under thread fallback.
 //          Issue #2685 — sequential / multi-define dual spawn → distinct ids.
+//          Issue #3394 — thread-fiber workers are joinable + drained at
+//          ~Evaluator (spawn-abandon dtor race).
 //
 //   AC1: fiber:spawn returns positive int (never -1 / #f on success)
 //   AC2: fiber:join returns payload 1
@@ -10,6 +12,8 @@
 //   AC5: source cites #2656 + docs/stdlib/fiber-spawn.md
 //   AC6: sequential top-level / multi-define begin dual spawn distinct ids (#2685)
 //   AC7: concurrent dual-name rebind from two fibers no crash / both bound (#2686)
+//   AC8: spawn-abandon + dtor drain stress — no detached worker outlives
+//        ~CompilerService (#3394)
 
 #include "test_harness.hpp"
 
@@ -233,6 +237,46 @@ static void ac7_concurrent_dual_rebind() {
     CHECK(WIFEXITED(st) && WEXITSTATUS(st) == 0, "AC7: concurrent dual rebind child");
 }
 
+// ── AC8: #3394 spawn-abandon dtor drain ──
+// Fresh service per iteration; spawn WITHOUT join; destroy. The worker
+// is joinable + registered, and ~Evaluator drains it before arena
+// teardown. Pre-#3394 (detached worker) this aborts ~1/3 per abandoned
+// spawn (thread startup vs teardown race → PersistentChildVector OOB).
+static void ac8_spawn_abandon_dtor_drain() {
+    std::println("\n--- #3394 AC8: spawn-abandon dtor drain stress ---");
+    int spawned = 0;
+    for (int i = 0; i < 30; ++i) {
+        CompilerService cs;
+        auto fid = cs.eval("(fiber:spawn (lambda () (+ 1 2)))");
+        if (fid && is_int(*fid) && as_int(*fid) > 0)
+            ++spawned;
+        // no fiber:join — service destroyed with the fiber in flight
+    }
+    CHECK(spawned == 30, "AC8: 30 abandoned spawns got positive ids");
+
+    int joined_ok = 0;
+    for (int i = 0; i < 10; ++i) {
+        CompilerService cs;
+        auto r = cs.eval("(let ((f (fiber:spawn (lambda () 5)))) (fiber:join f))");
+        if (r && is_int(*r) && as_int(*r) == 5)
+            ++joined_ok;
+    }
+    CHECK(joined_ok == 10, "AC8: joined fibers still correct via registry");
+
+    const auto msg = read_file("src/compiler/evaluator_primitives_messaging.cpp");
+    CHECK(msg.find("#3394") != std::string::npos, "AC8: messaging cites #3394");
+    CHECK(msg.find("s_thread_fiber_threads") != std::string::npos,
+          "AC8: joinable thread registry present");
+    CHECK(msg.find("std::thread(complete_fiber).detach()") == std::string::npos,
+          "AC8: spawn path no longer detaches");
+    const auto ctor = read_file("src/compiler/evaluator_ctor.cpp");
+    CHECK(ctor.find("drain_thread_fibers();") != std::string::npos,
+          "AC8: ~Evaluator drains thread fibers");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(ixx.find("drain_thread_fibers() noexcept") != std::string::npos,
+          "AC8: Evaluator declares drain_thread_fibers member");
+}
+
 } // namespace
 
 int run_test_fiber_spawn_cli() {
@@ -244,7 +288,8 @@ int run_test_fiber_spawn_cli() {
     ac5_source();
     ac6_dual_define_distinct_ids();
     ac7_concurrent_dual_rebind();
-    std::println("\n=== #2656/#2685/#2686: {} passed, {} failed ===", g_passed, g_failed);
+    ac8_spawn_abandon_dtor_drain();
+    std::println("\n=== #2656/#2685/#2686/#3394: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
