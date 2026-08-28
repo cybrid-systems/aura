@@ -539,6 +539,7 @@ extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_pressure_bp() {
 // Issue #2950: pure-anon bg remount queue weak stubs (light-link).
 extern "C" __attribute__((weak)) void aura_pure_anon_bg_enqueue(std::int64_t /*closure_id*/) {}
 extern "C" __attribute__((weak)) void aura_pure_anon_bg_remount_drain(std::uint64_t /*max_n*/) {}
+extern "C" __attribute__((weak)) void aura_pure_anon_maybe_heal_starved(void) noexcept {}
 extern "C" __attribute__((weak)) std::uint64_t aura_pure_anon_bg_pending() {
     return 0;
 }

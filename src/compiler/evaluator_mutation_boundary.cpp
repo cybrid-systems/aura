@@ -131,6 +131,8 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept;
 extern "C" std::uint64_t aura_pure_anon_bg_pending() noexcept;
 extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
+// Issue #3342: production heal amortize on outermost failure.
+extern "C" void aura_pure_anon_maybe_heal_starved(void) noexcept;
 
 // Issue #3194: TLS outermost Guard so same-fiber inbody poll can
 // reuse #3118 force_release_hold_after_cancel_ (unlock + depth 0)
@@ -5216,12 +5218,21 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
         // Issue #3323: drain is not gated on !render_fast.
         // Soft / budget=0: max_n==0, no drain.
+    } else if (outermost && !success) {
+        // Issue #3342: success-BoundaryExit is the primary drain (above).
+        // Failure-dominated / boundary-sparse HF mutate never reaches it,
+        // so MustDeopt + epoch-poisoned pure-anon starve. Bounded
+        // production amortize: pending ≥ pressure thresh or overflow
+        // advanced since last heal → residual tick + drain. Soft /
+        // budget=0 is one production_defaults load inside the helper.
+        // steal-complete still does not drain (#2715).
+        aura_pure_anon_maybe_heal_starved();
     }
     // Issue #3248 / #3026: residual-force stale watchdog on any
     // outermost exit (success or fail). Failure-dominated mutate must
     // still age toward #3096 auto-heal. Remount / drain stay
-    // success-only above. Soft / Off is one production_defaults load.
-    // Playbook stays observe-only.
+    // success-only above except #3342 starved heal. Soft / Off is one
+    // production_defaults load. Playbook stays observe-only.
     if (outermost)
         aura_hot_update_observe_residual_force_stale();
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale

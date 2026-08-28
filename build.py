@@ -4766,6 +4766,22 @@ def cmd_lint():
             "Issue #3323 pure-anon overflow dispatch-race linter failed — run python3 scripts/coverage/checks/check_pure_anon_overflow_dispatch_race_3323.py"
         )
         return r
+    # Issue #3342: pure-anon recovery starvation. Overflow already
+    # MustDeopt (#3024/#3323); residual tick + drain were success-
+    # BoundaryExit only. Production amortizes heal on outermost failure
+    # when pending ≥ pressure or overflow advanced. Soft / budget=0: no
+    # extra work. Extends test_anonymous_residual_stable_id_policy
+    # (#81967); no docs/design/; no new query keys.
+    paheal3342_script = COVERAGE_CHECKS / "check_pure_anon_heal_starvation_3342.py"
+    if not paheal3342_script.exists():
+        fail(f"missing {paheal3342_script}")
+        return 1
+    r = run([sys.executable, str(paheal3342_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3342 pure-anon heal-starvation linter failed — run python3 scripts/coverage/checks/check_pure_anon_heal_starvation_3342.py"
+        )
+        return r
     # Issue #3020: domain query:* hash builders fail-soft on insert miss.
     # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
     # no docs/design/ (#1655).
