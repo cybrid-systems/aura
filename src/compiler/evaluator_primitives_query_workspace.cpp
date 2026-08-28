@@ -573,6 +573,23 @@ void register_workspace_query_primitives(
         // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
         auto sym = ws.canonical_pool()->intern(name);
         EvalValue result = make_void();
+        // Issue #3390 (I3): try the existing find_define_by_name index
+        // before the size() walk — index hit avoids O(n) SoA scan for
+        // Define names (the Agent-hottest locator). On miss, fall back
+        // to the full scan (preserves first-match semantics for
+        // non-Define / multi-sym hits). Index-sync coherence is owned
+        // by the existing #1913 rename-symbol / atomic-batch path; no
+        // new rebuild policy.
+        if (auto found = flat.find_define_by_name(*ws.canonical_pool(), name)) {
+            auto id = *found;
+            if (!flat.is_free_slot(id)) {
+                auto pid = ws.pairs.size();
+                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), make_void()});
+                result = make_pair(pid);
+                return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
+            }
+        }
+        // Fallback: existing size() walk for non-Define names / first-match ties.
         // Issue #2488: SoA shared lock for multi-column get() vs concurrent
         // add_node (workspace_mtx shared alone does not cover flatast_mutex_
         // size domain — structural_mtx_ is also independent).

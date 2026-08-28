@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 875 | Preferred destination suites |
-| **Total scanned** | **875** | |
+| `tests/core/test_*.cpp` | 876 | Preferred destination suites |
+| **Total scanned** | **876** | |
 
 ### Related artifacts
 
@@ -38,7 +38,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 24 | 24 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
 
@@ -813,6 +813,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_query_by_marker_provenance.cpp`
 - `tests/compiler/test_query_dispatch.cpp`
 - `tests/compiler/test_query_epoch_contract.cpp`
+- `tests/compiler/test_query_find_by_define.cpp`
 - `tests/compiler/test_query_hygiene_default.cpp`
 - `tests/compiler/test_query_index_composite.cpp`
 - `tests/compiler/test_query_mutate_consistency.cpp`
@@ -1775,13 +1776,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (54)
+### `shape_soa` — Shape / SoA / column layout (55)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (54)
+#### domain/ (55)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
@@ -1806,6 +1807,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp` (—) [domain_suite, theme_compiler] — test_list_vector_soa_hotpath_ai_loops.cpp — Issue #752:
 - `tests/compiler/test_matcher_stable_captures.cpp` (—) [domain_suite, theme_compiler] — Issue #1695 (#1978 renamed): issue# moved from filename to header.
 - `tests/core/test_param_begin_count_publish.cpp` (—) [domain_suite, theme_core] — (count last after arena fill) under post-parse contract.
+- `tests/compiler/test_query_find_by_define.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_query_find_by_define.cpp --
 - `tests/core/test_raii_guard_flatast_lifetime.cpp` (—) [domain_suite, theme_core] — AC1: scoped StructuralMutationGuard / ReaderLockGuard work
 - `tests/core/test_region_dense_atomic.cpp` (—) [domain_suite, theme_core] — AC1: concurrent writer + reader does not tear dense uint8 cells
 - `tests/core/test_restamp_lazy_align_atomic.cpp` (—) [domain_suite, theme_core] — AC1: flag is atomic (store/load with acquire/release)
