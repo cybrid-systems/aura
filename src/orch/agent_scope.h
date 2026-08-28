@@ -372,6 +372,18 @@ public:
         // Issue #2946: production concurrent hard deny — do not mutate
         // handles_ (return thread-local failed handle).
         if (g.denied_hard()) {
+            // Issue #3366: HardDeny thread_local handle. NOT pushed to
+            // handles_ (so iterators / join_all / cancel_all by index skip
+            // it). id stays 0, ok=false, error="...#2946" — callers MUST
+            // check handle.ok before any operation; orch:scope-spawn now
+            // mirrors the orch:spawn-agent typed reject hash on this path
+            // (ok=#f + quota_exceeded + quota_dimension + deny-class + error).
+            // Returning a reference (not a copy) is intentional — matches
+            // the live-handle arm below so callers can read .ok / .id /
+            // .error / .quota_dimension uniformly. Callers that mistakenly
+            // try to join / index this handle will see id=0 and
+            // join_one(0) / cancel_one(0) would no-op against the empty
+            // handles_ vector.
             thread_local AgentHandle failed;
             failed = AgentHandle{};
             failed.ok = false;
