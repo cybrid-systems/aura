@@ -14253,6 +14253,31 @@ def cmd_fiber_spawn_cli_dtor_drain_coverage():
     return 0
 
 
+def cmd_query_default_stamped_coverage():
+    """Issue #3395: production default Agent-facing query:* stamps schema-2.
+
+    Under production_defaults_active, query:pattern / find / filter /
+    by-marker must auto-upgrade to a schema-2 QueryResult hash (no bare
+    list — occupancy is rejected at the gate). resolve_mutate_node_arg /
+    resolve_query_node_arg reject bare int (must pass packed v2 StableNodeRef
+    or QueryResult match). Soft/Off keeps the historical bare list +
+    int-stamp paths. Non-regress for #3137 stamp helper, #3311 Soft→Prod
+    reserved discriminator, #3230 restamp-lag gate. No docs/design/, no
+    tests/issues/test_issue_3395.cpp.
+    """
+    print(f"{B}=== query-default-stamped coverage (#3395) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_default_stamped_3395.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-default-stamped (#3395) coverage contract rows failed")
+        return 1
+    ok("query-default-stamped (#3395) coverage clean")
+    return 0
+
+
 def cmd_query_result_soft_prod_transition_coverage():
     """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
 
@@ -21509,6 +21534,7 @@ def main():
         "subsecond-clock": cmd_subsecond_clock_coverage,
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
+        "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,

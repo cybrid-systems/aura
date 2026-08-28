@@ -501,6 +501,20 @@ void register_workspace_query_primitives(
             }
             ev.bump_stable_ref_validated_in_primitives_count();
         } else if (is_int(arg)) {
+            // Issue #3395: production rejects bare int (occupancy, not
+            // identity — same gate as resolve_mutate_node_arg; mirror
+            // contract so the Agent query→mutate loop is consistent on
+            // both sides). Agent must pass packed v2 StableNodeRef or
+            // QueryResult match under production. Soft/Off keeps the
+            // historical "stamp current gen + auto-refresh" path.
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                *ok = false;
+                ev.bump_raw_nodeid_usage_in_primitives_count();
+                return mev("stale-ref",
+                           std::string(op) +
+                               ": raw node-id rejected under production; "
+                               "use packed v2 StableNodeRef or QueryResult match (Issue #3395)");
+            }
             const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
             if (node >= flat.size()) {
                 *ok = false;
@@ -1316,12 +1330,21 @@ void register_workspace_query_primitives(
     //   (query:filter (where :defined-by "fib") (where :node-type "Lambda"))
     //   → the body Lambda of (define fib ...)
     add("query:filter",
-        [ws, mev, &ev, begin_query_epoch, pin_query_children](const auto& a) -> EvalValue {
+        [ws, mev, &ev, begin_query_epoch, make_query_result_hash,
+         pin_query_children](const auto& a) -> EvalValue {
             std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
             if (a.empty())
                 return mev("bad-arg", "usage: (query:filter predicate ... "
                                       "[:hygiene #t|#f] [:include-macro-introduced #t] "
-                                      "[:exclude-macro-introduced #t|#f])");
+                                      "[:exclude-macro-introduced #t|#f] "
+                                      "[:as-query-result|#:query-result #t|#f])");
+            // Issue #3395: opt-in :as-query-result / :query-result keyword.
+            // Mirrors the auto-upgrade gate inside end_query_epoch_maybe_result
+            // (used by query:pattern / find / by-marker): under production
+            // defaults, a bare match list is occupancy not identity, so we
+            // stamp full provenance via stamp_query_result_full_provenance.
+            // Soft/Off keeps the bare list (AC3 zero-cost).
+            bool as_query_result = false;
             if (!ws.workspace_flat || !ws.workspace_pool)
                 return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *ws.workspace_flat;
@@ -1375,6 +1398,20 @@ void register_workspace_query_primitives(
                         hygiene_skip_macro = !consume_bool_kw(true);
                     } else if (kw == ":exclude-macro-introduced") {
                         hygiene_skip_macro = consume_bool_kw(true);
+                    } else if (kw == ":as-query-result" || kw == ":query-result") {
+                        // Issue #3395: opt-in QueryResult binding. Default
+                        // off (bare list); #t promotes to schema-2 hash via
+                        // make_query_result_hash below. Production auto-upgrade
+                        // happens after the QueryEpoch retry loop.
+                        as_query_result = true;
+                        if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
+                            if (is_bool(a[ai + 1]))
+                                as_query_result = as_bool(a[ai + 1]);
+                            else
+                                as_query_result = (as_int(a[ai + 1]) != 0);
+                            arg_consumed[ai + 1] = true;
+                            ++ai;
+                        }
                     } else {
                         // Re-emit a bad-arg for unknown top-level
                         // keyword (we already validated that each
@@ -1432,8 +1469,15 @@ void register_workspace_query_primitives(
             constexpr int kQueryEpochAttempts = 3;
             EvalValue result = make_void();
             std::uint64_t filter_hygiene_skips = 0;
+            // Issue #3395: hoist the QueryEpoch out of the retry loop so we
+            // can feed it to make_query_result_hash when the production
+            // auto-upgrade stamps a schema-2 hash below. finish_query_epoch
+            // already ran inside the loop on the successful attempt; here we
+            // only need the epoch metadata (mutation_epoch / generation /
+            // bridge_epoch / workspace_id) for the schema-2 layout.
+            aura::core::QueryEpoch last_qe{};
             for (int attempt = 0; attempt < kQueryEpochAttempts; ++attempt) {
-                const auto qe = begin_query_epoch(&flat);
+                last_qe = begin_query_epoch(&flat);
                 result = make_void();
                 filter_hygiene_skips = 0;
                 for (aura::ast::NodeId id = 0; id < flat.size(); ++id) {
@@ -1617,7 +1661,7 @@ void register_workspace_query_primitives(
                     }
                 }
                 const auto gen = static_cast<std::uint64_t>(flat.generation());
-                if (aura::core::finish_query_epoch(qe, gen)) {
+                if (aura::core::finish_query_epoch(last_qe, gen)) {
                     if (attempt > 0)
                         ev.bump_query_epoch_retry(static_cast<std::uint64_t>(attempt));
                     break;
@@ -1636,6 +1680,17 @@ void register_workspace_query_primitives(
                                                                 std::memory_order_relaxed);
                 }
             }
+            // Issue #3395: production default Agent-facing query must finish
+            // through the schema-2 QueryResult stamp path. Mirrors the
+            // auto-upgrade inside end_query_epoch_maybe_result (Issue #3286);
+            // query:filter has its own retry loop so the wrap runs here.
+            // Soft/Off keeps the bare list (AC3 zero-cost). make_query_result_hash
+            // internally calls stamp_query_result_full_provenance → sets
+            // reserved==kQueryResultMatchSchema2Prod under production.
+            if (!as_query_result && aura::compiler::typed_audit::production_defaults_active())
+                as_query_result = true; // auto-upgrade → stamped hash or error
+            if (as_query_result)
+                return make_query_result_hash(last_qe, result, /*pinned=*/false);
             return result;
         });
 
