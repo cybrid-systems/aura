@@ -94,6 +94,9 @@ struct AuditWalMetrics {
     std::atomic<std::uint64_t> audit_wal_using_default_dir{0};
     // Issue #3242: typed-summary sidecar persist (additive; struct end).
     std::atomic<std::uint64_t> typed_summary_wal_persisted_total{0};
+    // Issue #3338: segments unlinked under AURA_WAL_MAX_SEGMENTS
+    // (audit-N.wal + typed-summary-N.wal lockstep). Struct END (#2906).
+    std::atomic<std::uint64_t> audit_wal_segment_prune_total{0};
 };
 
 // Issue #2150 stamp (schema key on query:audit-wal-stats / capability-effect).
@@ -224,11 +227,40 @@ struct MutationAuditWal {
         return true;
     }
 
+    void prune_old_segments_unlocked() noexcept {
+        const auto cap = ::aura::core::wal_slo::wal_max_segments_retention();
+        if (cap == 0)
+            return;
+        if (segment_index + 1 <= cap)
+            return;
+        const std::uint32_t first_keep = segment_index + 1 - cap;
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (std::uint32_t i = 0; i < first_keep; ++i) {
+            bool any = false;
+            const auto audit_p = (fs::path(dir) / ("audit-" + std::to_string(i) + ".wal")).string();
+            if (fs::remove(audit_p, ec))
+                any = true;
+            ec.clear();
+            const auto typed_p =
+                (fs::path(dir) / ("typed-summary-" + std::to_string(i) + ".wal")).string();
+            if (fs::remove(typed_p, ec))
+                any = true;
+            ec.clear();
+            if (any) {
+                g_audit_wal_metrics().audit_wal_segment_prune_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+        }
+    }
+
     void rotate_unlocked() noexcept {
         ++segment_index;
         g_audit_wal_metrics().audit_wal_rotate_total.fetch_add(1, std::memory_order_relaxed);
         (void)open_segment_unlocked(segment_index);
         (void)open_typed_segment_unlocked(segment_index);
+        // Issue #3338: opt-in retention. Unset AURA_WAL_MAX_SEGMENTS → no-op.
+        prune_old_segments_unlocked();
     }
 
     // Enable persist under `persist_dir`. Replays existing WAL into `out_records`
@@ -402,7 +434,9 @@ struct MutationAuditWal {
         return out;
     }
 
-    // Issue #3242: current + at most one prior rotate. Disabled / mid==0 → nullopt.
+    // Issue #3242: current + prior rotate segments. Disabled / mid==0 → nullopt.
+    // Issue #3338: production durable callers pass wal_mid_lookup_segments().
+    // Explicit max_segments=2 stays #3205/#3242-compatible.
     [[nodiscard]] std::optional<TypedSummaryWalRecord>
     find_recent_typed_summary_by_mid(std::uint64_t mid, std::uint32_t max_segments = 2) noexcept {
         if (mid == 0 || !enabled || max_segments == 0)
@@ -428,7 +462,8 @@ struct MutationAuditWal {
     }
 
     // Issue #3205: fallback mid point-query (SE WAL preferred). Current
-    // segment + at most one prior rotate. Disabled / mid==0 → nullopt.
+    // segment + prior rotate segments. Disabled / mid==0 → nullopt.
+    // Issue #3338: production durable callers pass wal_mid_lookup_segments().
     [[nodiscard]] std::optional<AuditWalRecord>
     find_recent_by_provenance_mutation_id(std::uint64_t mid,
                                           std::uint32_t max_segments = 2) noexcept {
@@ -497,6 +532,7 @@ struct MutationAuditWal {
         m.audit_wal_forced_by_restricted_total.store(0, std::memory_order_relaxed);
         m.audit_wal_using_default_dir.store(0, std::memory_order_relaxed);
         m.typed_summary_wal_persisted_total.store(0, std::memory_order_relaxed);
+        m.audit_wal_segment_prune_total.store(0, std::memory_order_relaxed);
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
@@ -554,6 +590,8 @@ struct AuditWalStatsSnapshot {
     std::uint64_t using_default_dir = 0;
     // Issue #3242: sidecar persist (struct end).
     std::uint64_t typed_summary_persisted = 0;
+    // Issue #3338: prune count (struct end).
+    std::uint64_t segment_prune_total = 0;
 };
 
 [[nodiscard]] inline AuditWalStatsSnapshot snapshot_audit_wal_stats() noexcept {
@@ -575,6 +613,7 @@ struct AuditWalStatsSnapshot {
         m.audit_wal_forced_by_restricted_total.load(std::memory_order_relaxed),
         m.audit_wal_using_default_dir.load(std::memory_order_relaxed),
         m.typed_summary_wal_persisted_total.load(std::memory_order_relaxed),
+        m.audit_wal_segment_prune_total.load(std::memory_order_relaxed),
     };
 }
 

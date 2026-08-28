@@ -38,7 +38,9 @@
 
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <fstream>
 #include <print>
 #include <string>
@@ -83,6 +85,28 @@ std::int64_t href_posture(CompilerService& cs, std::string_view key) {
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+std::int64_t href_wal_stats(CompilerService& cs, std::string_view key) {
+    auto r =
+        cs.eval(std::format("(hash-ref (engine:metrics \"query:audit-wal-stats\") \"{}\")", key));
+    if (!r || !is_int(*r))
+        return -1;
+    return as_int(*r);
+}
+
+int count_wal_prefix(const fs::path& dir, std::string_view prefix) {
+    int n = 0;
+    std::error_code ec;
+    if (!fs::exists(dir, ec))
+        return 0;
+    for (const auto& ent : fs::directory_iterator(dir, ec)) {
+        const auto name = ent.path().filename().string();
+        if (name.size() >= prefix.size() && name.compare(0, prefix.size(), prefix) == 0 &&
+            ent.path().extension() == ".wal")
+            ++n;
+    }
+    return n;
 }
 
 // Clean a temp WAL dir; returns the path.
@@ -531,6 +555,154 @@ int run_test_security_event_wal_replay() {
         ev.disable_security_event_wal();
         fs::remove_all(dir_3178);
         fs::remove_all(dir_soft_3178);
+    }
+
+    // ── Issue #3338: mid lookup window + optional segment retention ──
+    {
+        using aura::core::security_event_wal::SecurityEventWalRecord;
+        using aura::core::wal_slo::kWalMidLookupSegmentsProduction;
+        using aura::core::wal_slo::kWalMidLookupSegmentsSoft;
+        using aura::core::wal_slo::kWalMidLookupWindowIssue;
+        using aura::core::wal_slo::wal_max_segments_retention;
+        using aura::core::wal_slo::wal_mid_lookup_segments;
+
+        std::println("\n--- #3338 AC1: Soft / WAL-off zero cost ---");
+        reset_all();
+        ::unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
+        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        CHECK(kWalMidLookupWindowIssue == 3338, "3338 AC: issue stamp");
+        CHECK(wal_mid_lookup_segments() == kWalMidLookupSegmentsSoft,
+              "3338 AC1: Soft lookup default 2");
+        CHECK(wal_max_segments_retention() == 0, "3338 AC1: unset retention = 0 (no prune)");
+        CHECK(href_posture(cs, "wal-mid-lookup-segments") ==
+                  static_cast<std::int64_t>(kWalMidLookupSegmentsSoft),
+              "3338 AC1: posture Soft window 2");
+        CHECK(href_posture(cs, "wal-max-segments-retention") == 0,
+              "3338 AC1: posture no retention");
+        CHECK(href_posture(cs, "wal-segment-prune-total") == 0, "3338 AC1: prune 0 WAL-off");
+        CHECK(href_posture(cs, "schema-3338") == kWalMidLookupWindowIssue, "3338 AC1: schema-3338");
+        CHECK(href_wal_stats(cs, "wal-mid-lookup-segments") ==
+                  static_cast<std::int64_t>(kWalMidLookupSegmentsSoft),
+              "3338 AC1: audit-wal-stats Soft window");
+        const auto off_ret = aura::core::security_event_wal::persist_security_event(
+            SecurityEventKind::EffectDeny, 1, 3338, 1, 0, "test:3338-off", "off", true, 0, 0);
+        CHECK(!off_ret, "3338 AC1: persist short-circuits when WAL off");
+        CHECK(snapshot_security_event_wal_stats().segment_prune_total == 0,
+              "3338 AC1: no prune counter bump WAL-off");
+
+        std::println("\n--- #3338 AC2: rotate ≥3, lookup window still hits ---");
+        reset_all();
+        apply_production_audit_defaults();
+        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        ::setenv("AURA_WAL_MID_LOOKUP_SEGMENTS", "8", 1);
+        CHECK(wal_mid_lookup_segments() == 8, "3338 AC2: env lookup 8");
+        CHECK(href_posture(cs, "wal-mid-lookup-segments") == 8, "3338 AC2: posture env window");
+        const auto dir_ac2 = fresh_wal_dir("3338-ac2");
+        CHECK(ev.enable_security_event_wal(dir_ac2.string()), "3338 AC2: enable SE WAL");
+        g_security_event_wal().set_rotate_bytes(sizeof(SecurityEventWalRecord) * 4);
+        constexpr std::uint64_t kEarlyMid = 3338001;
+        CHECK(aura::core::security_event_wal::persist_security_event(
+                  SecurityEventKind::EffectDeny, 9, kEarlyMid, 1, kEffectMutate, "op-3338",
+                  "early-mid", true, 3, now_ms()),
+              "3338 AC2: persist early mid");
+        for (std::uint64_t i = 1; i < 20; ++i) {
+            (void)aura::core::security_event_wal::persist_security_event(
+                SecurityEventKind::EffectAllow, 9, 50000 + i, 1, kEffectMutate, "fill-3338", "fill",
+                false, 3, now_ms());
+        }
+        CHECK(snapshot_security_event_wal_stats().rotate_total >= 3,
+              "3338 AC2: rotate ≥ 3 segments");
+        CHECK(g_security_event_wal().find_recent_by_mutation_id(kEarlyMid, /*max_segments=*/2) ==
+                  std::nullopt,
+              "3338 AC4: explicit max_segments=2 may miss after ≥3 rotates");
+        auto hit8 =
+            g_security_event_wal().find_recent_by_mutation_id(kEarlyMid, wal_mid_lookup_segments());
+        CHECK(hit8.has_value(), "3338 AC2: lookup window hits early mid after ≥3 rotates");
+        if (hit8)
+            CHECK(hit8->mutation_id == kEarlyMid, "3338 AC2: rec mid");
+        CHECK(href_posture(cs, "wal-max-segments-retention") == 0,
+              "3338 AC2: unset retention surfaced as 0");
+        ev.disable_security_event_wal();
+        g_security_event_wal().set_rotate_bytes(
+            aura::core::security_event_wal::kDefaultRotateBytes);
+        fs::remove_all(dir_ac2);
+
+        std::println("\n--- #3338 AC3: AURA_WAL_MAX_SEGMENTS=4 prunes ---");
+        reset_all();
+        apply_production_audit_defaults();
+        ::setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
+        ::setenv("AURA_WAL_MID_LOOKUP_SEGMENTS", "8", 1);
+        CHECK(wal_max_segments_retention() == 4, "3338 AC3: retention 4");
+        CHECK(href_posture(cs, "wal-max-segments-retention") == 4, "3338 AC3: posture retention");
+        const auto dir_ac3 = fresh_wal_dir("3338-ac3");
+        CHECK(ev.enable_security_event_wal(dir_ac3.string()), "3338 AC3: enable SE WAL");
+        g_security_event_wal().set_rotate_bytes(sizeof(SecurityEventWalRecord) * 4);
+        for (std::uint64_t i = 0; i < 24; ++i) {
+            (void)aura::core::security_event_wal::persist_security_event(
+                SecurityEventKind::EffectAllow, 9, 60000 + i, 1, kEffectMutate, "prune-3338",
+                "fill", false, 3, now_ms());
+        }
+        const auto se_files = count_wal_prefix(dir_ac3, "security-event-");
+        CHECK(se_files <= 4, "3338 AC3: disk SE segments ≤ 4");
+        CHECK(snapshot_security_event_wal_stats().segment_prune_total >= 1,
+              "3338 AC3: SE prune_total incremented");
+        CHECK(href_posture(cs, "wal-segment-prune-total") >= 1, "3338 AC3: posture prune-total");
+        CHECK(href_wal_stats(cs, "wal-segment-prune-total") >= 1,
+              "3338 AC3: audit-wal-stats prune-total");
+        ev.disable_security_event_wal();
+        g_security_event_wal().set_rotate_bytes(
+            aura::core::security_event_wal::kDefaultRotateBytes);
+        fs::remove_all(dir_ac3);
+
+        std::println("\n--- #3338 AC3 mutation WAL prune lockstep ---");
+        reset_all();
+        apply_production_audit_defaults();
+        ::setenv("AURA_WAL_MAX_SEGMENTS", "4", 1);
+        const auto dir_mut = fresh_wal_dir("3338-mut");
+        CHECK(ev.enable_mutation_audit_wal(dir_mut.string()), "3338 AC3: enable mutation WAL");
+        g_mutation_audit_wal().set_rotate_bytes(sizeof(AuditWalRecord) * 4);
+        constexpr std::uint64_t kMutMid = 3338002;
+        for (int i = 0; i < 24; ++i) {
+            AuditWalRecord rec{};
+            rec.seq = static_cast<std::uint64_t>(i + 1);
+            rec.provenance_mutation_id =
+                (i == 0) ? kMutMid : 70000u + static_cast<std::uint64_t>(i);
+            rec.tenant_id = 7;
+            (void)g_mutation_audit_wal().append(rec);
+        }
+        CHECK(count_wal_prefix(dir_mut, "audit-") <= 4, "3338 AC3: disk audit segments ≤ 4");
+        CHECK(snapshot_audit_wal_stats().segment_prune_total >= 1,
+              "3338 AC3: mutation prune_total");
+        CHECK(g_mutation_audit_wal().find_recent_by_provenance_mutation_id(kMutMid, 2) ==
+                  std::nullopt,
+              "3338 AC4: explicit 2 misses pruned/old mutation mid");
+        ev.disable_mutation_audit_wal();
+        g_mutation_audit_wal().set_rotate_bytes(aura::core::audit_wal::kDefaultRotateBytes);
+        fs::remove_all(dir_mut);
+
+        std::println("\n--- #3338 AC5: production default window 8; no invent ---");
+        reset_all();
+        apply_production_audit_defaults();
+        ::unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
+        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
+        CHECK(wal_mid_lookup_segments() == kWalMidLookupSegmentsProduction,
+              "3338 AC5: production default lookup 8");
+        CHECK(href_posture(cs, "wal-overflow-ring-depth") >= 0, "3338 AC4: #3109 key retained");
+        const auto se_src = read_repo_file("src/core/security_event_wal.hh");
+        CHECK(se_src.find("max_segments = 2") != std::string::npos,
+              "3338 AC4: find_recent default still 2");
+        CHECK(se_src.find("prune_old_segments_unlocked") != std::string::npos,
+              "3338 AC3: SE prune on rotate");
+        const auto mut_src = read_repo_file("src/core/mutation_audit_wal.hh");
+        CHECK(mut_src.find("prune_old_segments_unlocked") != std::string::npos,
+              "3338 AC3: mutation prune on rotate");
+        CHECK(read_repo_file("docs/design/3338-wal-mid-lookup-window.md").empty(),
+              "ac3338_5_no_invent");
+        CHECK(read_repo_file("tests/compiler/test_issue_3338.cpp").empty(),
+              "3338 AC5: no test_issue_3338.cpp");
+        apply_dev_audit_defaults();
+        ::unsetenv("AURA_WAL_MID_LOOKUP_SEGMENTS");
+        ::unsetenv("AURA_WAL_MAX_SEGMENTS");
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

@@ -5624,6 +5624,20 @@ def cmd_lint():
             "Issue #3205 evolution-audit-decision durable linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_durable_3205.py"
         )
         return r
+    # Issue #3338: WAL mid point-query window + optional segment retention.
+    # Production lookup default 8 (env AURA_WAL_MID_LOOKUP_SEGMENTS);
+    # AURA_WAL_MAX_SEGMENTS prune. Soft / WAL-off zero extra. Extends
+    # test_security_event_wal_replay + test_security_audit_unify (#81967).
+    wml3338_script = COVERAGE_CHECKS / "check_wal_mid_lookup_window_3338.py"
+    if not wml3338_script.exists():
+        fail(f"missing {wml3338_script}")
+        return 1
+    r = run([sys.executable, str(wml3338_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3338 WAL mid lookup window linter failed — run python3 scripts/coverage/checks/check_wal_mid_lookup_window_3338.py"
+        )
+        return r
     # Issue #3246: additive suggested-next on evolution-audit-decision.
     # Pure fold of existing commit/posture/densify/playbook/schedule.
     # Observe-only — does not execute playbook. Extends
