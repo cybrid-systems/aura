@@ -389,6 +389,11 @@ const char* hygiene_last_limit_reason_string() noexcept {
         // mode (which uses capability_deny_last_reason_string()).
         case 7:
             return "capability-deny";
+        // Issue #3321: 16-slot ConcurrentCloneGuard rejects (append-only).
+        case 8:
+            return "same-flat-clone-reject";
+        case 9:
+            return "name-map-shared";
         default:
             return "";
     }
@@ -508,6 +513,9 @@ std::atomic<std::uint8_t> g_macro_clone_last_reject_reason{0};
 namespace {
     // Lock-free hashed slot: same FlatAST address → reject second top-level
     // writer. Different flats that collide are allowed (cross-flat OK).
+    // Issue #3321: same-flat reject still uses this 16-slot CAS; Agent
+    // reason is kHygieneLimitReasonSameFlatReject (stable string), not
+    // counter-only. Do not enlarge the table.
     constexpr int kSameFlatSlots = 16;
     std::atomic<std::uintptr_t> g_same_flat_slots[kSameFlatSlots]{};
 
@@ -1421,7 +1429,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
     //     for subtree consistency. Nested recursion must NOT re-claim —
     //     re-claiming would either double-count (inflated in-flight peak)
     //     or falsely reject (shared name_map reject under production).
-    //   - Nested mid-walk steal detection (Issue #3303) is observation
+    //   - nested mid-walk steal detection (Issue #3303) is observation
     //     only: stamps a stable agent-facing reason (kHygieneLimitReason
     //     StealAbort=6) and bumps g_macro_clone_nested_steal_check_total.
     //     The actual C-linkage checkpoint rollback still happens at the
@@ -1455,6 +1463,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 rejected_same_flat = true;
                 g_macro_clone_same_flat_reject_total.fetch_add(1, std::memory_order_relaxed);
                 g_macro_clone_last_reject_reason.store(2, std::memory_order_relaxed);
+                // Issue #3321: Agent-stable string (not counter-only). last_reject_reason
+                // stays 2 for #3028; last_limit_reason is the distinct code 8.
+                note_hygiene_last_limit_reason(kHygieneLimitReasonSameFlatReject);
                 return;
             }
             claimed_flat = tgt != nullptr;
@@ -1471,6 +1482,8 @@ static aura::ast::NodeId clone_macro_body_at_depth(
                 rejected_shared_name_map = true;
                 g_macro_clone_name_map_shared_reject_total.fetch_add(1, std::memory_order_relaxed);
                 g_macro_clone_last_reject_reason.store(4, std::memory_order_relaxed);
+                // Issue #3321: Agent-stable string. last_reject_reason stays 4 for #3094.
+                note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared);
                 // Release the FlatAST claim we already took so we don't leak.
                 if (claimed_flat && target_ptr)
                     release_same_flat_clone(target_ptr);
@@ -2167,9 +2180,20 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #2807: propagate local_in_unquote to recursive children
         // so variables inside unquote / unquote-splicing don't pick up
         // outer Let bindings' __x_N gensyms via name_map.
-        child_ids.push_back(clone_macro_body_at_depth(
+        const auto cloned = clone_macro_body_at_depth(
             target, target_pool, source, source_pool, cid, subst, name_map, cloned_marker,
-            hygiene_depth + 1, depth_limit, local_in_quote, local_in_unquote));
+            hygiene_depth + 1, depth_limit, local_in_quote, local_in_unquote);
+        child_ids.push_back(cloned);
+        // Issue #3321: production fail-fast after nested steal-abort. Do not
+        // keep cloning siblings into a half-tree the top-level checkpoint
+        // will only roll back at function exit. Soft/Off: continue (historical
+        // half-write contract). Quiet success path: cloned != NULL_NODE.
+        if (cloned == NULL_NODE && production_surface &&
+            g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed) ==
+                kHygieneLimitReasonStealAbort) {
+            expand_ckpt.try_restore();
+            return NULL_NODE;
+        }
     }
 
     // Clone params (for Lambda nodes) — with hygienic renaming.
@@ -2459,8 +2483,9 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // Issue #3303: observe nested steal-check path even when no
         // steal detected, so agents can see how often the check fires.
         // Top-level depth does not bump this counter — only nested.
-        if (hygiene_depth > 0)
+        if (hygiene_depth > 0) // top-level excluded
             g_macro_clone_nested_steal_check_total.fetch_add(1, std::memory_order_relaxed);
+        // hygiene_depth > 0 gate (top-level excluded) — #3303 AC6 source-cite.
         const auto steal1 = aura_fiber_static_cross_fiber_mutation_safe_steal_total();
         if (steal1 > steal0) {
             g_macro_clone_steal_abort_total.fetch_add(1, std::memory_order_relaxed);

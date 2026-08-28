@@ -62,7 +62,12 @@ namespace {
 
 using aura::compiler::macro_exp::g_macro_clone_nested_steal_check_total;
 using aura::compiler::macro_exp::g_macro_clone_steal_abort_total;
+using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+using aura::compiler::macro_exp::kConcurrentCloneProdZeroHalfTreeIssue;
+using aura::compiler::macro_exp::kHygieneLimitReasonNameMapShared;
+using aura::compiler::macro_exp::kHygieneLimitReasonSameFlatReject;
 using aura::compiler::macro_exp::kHygieneLimitReasonStealAbort;
+using aura::compiler::macro_exp::note_hygiene_last_limit_reason;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -231,6 +236,100 @@ int run_test_concurrent_clone_steal_abort_visibility() {
               "AC9: ixx does not reference docs/design/3303-*");
     }
 
-    std::println("\n=== Issue #3303 done ===");
+    // ── Issue #3321: production zero half-tree + stable Agent reason ──
+    // Residual after #3303: 16-slot same-flat / name-map reject was
+    // counter-only; nested steal kept cloning siblings before restore.
+    {
+        std::println("\n--- #3321 AC1: steal restore + StealAbort reason ---");
+        CHECK(kConcurrentCloneProdZeroHalfTreeIssue == 3321, "3321 AC1: issue stamp");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("expand_ckpt.try_restore()") != std::string::npos,
+              "3321 AC1: steal path restores");
+        CHECK(me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort)") !=
+                  std::string::npos,
+              "3321 AC1: steal stamps last_limit_reason");
+        CHECK(me.find("kHygieneLimitReasonStealAbort") != std::string::npos,
+              "3321 AC1: steal-abort code");
+    }
+    {
+        std::println("\n--- #3321 AC2: nested production fail-fast ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Issue #3321: production fail-fast after nested steal-abort") !=
+                  std::string::npos,
+              "3321 AC2: fail-fast comment");
+        CHECK(me.find("kHygieneLimitReasonStealAbort") != std::string::npos &&
+                  me.find("production_surface") != std::string::npos,
+              "3321 AC2: production_surface + steal-abort");
+        CHECK(me.find("cloned == NULL_NODE && production_surface") != std::string::npos,
+              "3321 AC2: sibling abort after nested NULL_NODE");
+    }
+    {
+        std::println("\n--- #3321 AC3: Soft/Off zero extra on quiet path ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("Soft/Off: continue (historical") != std::string::npos,
+              "3321 AC3: Soft continues siblings");
+        CHECK(me.find("is_sandbox_active()") != std::string::npos,
+              "3321 AC3: name_map claim still production-gated");
+        CHECK(me.find("hygiene_depth == 0 && production_surface") != std::string::npos,
+              "3321 AC3: expand ckpt still top-level production only");
+    }
+    {
+        std::println("\n--- #3321 AC4: 16-slot same-flat stable reason ---");
+        CHECK(kHygieneLimitReasonSameFlatReject == 8, "3321 AC4: same-flat code 8");
+        CHECK(kHygieneLimitReasonNameMapShared == 9, "3321 AC4: name-map code 9");
+        auto ixx = read_file("src/compiler/macro_expansion.ixx");
+        CHECK(ixx.find("kHygieneLimitReasonSameFlatReject = 8") != std::string::npos,
+              "3321 AC4: ixx same-flat");
+        CHECK(ixx.find("kHygieneLimitReasonNameMapShared = 9") != std::string::npos,
+              "3321 AC4: ixx name-map");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonSameFlatReject)") !=
+                  std::string::npos,
+              "3321 AC4: same-flat stamps last_limit_reason");
+        CHECK(me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared)") !=
+                  std::string::npos,
+              "3321 AC4: name-map stamps last_limit_reason");
+        CHECK(me.find("g_macro_clone_last_reject_reason.store(2") != std::string::npos,
+              "3321 AC4: last_reject_reason 2 preserved (#3028)");
+        CHECK(me.find("g_macro_clone_last_reject_reason.store(4") != std::string::npos,
+              "3321 AC4: last_reject_reason 4 preserved (#3094)");
+        CHECK(me.find("return \"same-flat-clone-reject\"") != std::string::npos,
+              "3321 AC4: stable string same-flat");
+        CHECK(me.find("return \"name-map-shared\"") != std::string::npos,
+              "3321 AC4: stable string name-map");
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+        note_hygiene_last_limit_reason(kHygieneLimitReasonSameFlatReject);
+        CHECK(std::string_view(hygiene_last_limit_reason_string()) == "same-flat-clone-reject",
+              "3321 AC4: live string same-flat-clone-reject");
+        note_hygiene_last_limit_reason(kHygieneLimitReasonNameMapShared);
+        CHECK(std::string_view(hygiene_last_limit_reason_string()) == "name-map-shared",
+              "3321 AC4: live string name-map-shared");
+        aura_test_reset_macro_hygiene_last_limit_reason_for_test();
+    }
+    {
+        std::println("\n--- #3321 AC5/AC6: extend this suite; intern; no invent ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("target_pool.intern") != std::string::npos,
+              "3321 AC6: cross-flat intern (no raw ID capture)");
+        CHECK(me.find("source_pool.resolve") != std::string::npos, "3321 AC6: resolve then intern");
+        const auto build = read_file("build.py");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_concurrent_clone_prod_zero_half_tree_3321.py");
+        CHECK(!lint.empty() && lint.find("Issue #3321") != std::string::npos, "3321 AC5: linter");
+        CHECK(build.find("check_concurrent_clone_prod_zero_half_tree_3321") != std::string::npos,
+              "3321 AC5: build.py wires linter");
+        CHECK(read_file("docs/design/3321-concurrent-clone.md").empty(),
+              "3321 AC5: no docs/design/");
+        CHECK(read_file("tests/compiler/test_issue_3321.cpp").empty(), "3321 AC5: no invent test");
+        CHECK(read_file("tests/issues/test_issue_3321.cpp").empty(), "3321 AC5: no tests/issues");
+    }
+
+    std::println("\n=== Issue #3303 + #3321 done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_concurrent_clone_steal_abort_visibility();
+}
+#endif

@@ -1901,7 +1901,6 @@ aura_issue_test_link_light(test_rebind_new_body_hygiene)
 # MacroIntroduced hygiene — #2792 twin for the atomic-batch path.
 aura_add_issue_test(test_atomic_batch_rebind_hygiene_lockless)
 aura_issue_test_link_light(test_atomic_batch_rebind_hygiene_lockless)
-add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)
 # Issue #2793: replace-value Guard abort marks mutation_log RolledBack (no torn audit).
 aura_add_issue_test(test_replace_value_audit_consistency)
 aura_issue_test_link_light(test_replace_value_audit_consistency)
@@ -2160,6 +2159,8 @@ add_custom_target(all_test_issue_targets ALL)
 # Issue #2315: chaos soak registered above with EXCLUDE_FROM_ALL; opt-in
 # via AURA_CHAOS_STEAL_GC but still buildable under the aggregate target.
 add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
+# Issue #3374: lockless rebind hygiene (registered above; dep after aggregate).
+add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)
 # Issue #2381: concurrent compact_hook shape_inval atomic stress.
 # Issue #2382: ASTArena dtor clears hooks before teardown.
 # Issue #2383: has_on_compact_hook lock parity.

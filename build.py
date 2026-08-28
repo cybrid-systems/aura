@@ -10409,6 +10409,27 @@ def cmd_steal_abort_reason_coverage_3303_coverage():
     return 0
 
 
+def cmd_concurrent_clone_prod_zero_half_tree_3321_coverage():
+    """Issue #3321: production zero half-tree + stable Agent reason.
+
+    Residual after #3303: 16-slot same-flat reject was counter-only;
+    nested steal kept cloning siblings. Production fail-fast + distinct
+    last_limit_reason strings (codes 8/9). Soft/Off quiet path unchanged.
+    Extends test_concurrent_clone_steal_abort_visibility; no schema-3321.
+    """
+    print(f"{B}=== concurrent clone prod zero half-tree (#3321) ==={N}")
+    script = COVERAGE_CHECKS / "check_concurrent_clone_prod_zero_half_tree_3321.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("concurrent clone prod zero half-tree (#3321) linter failed")
+        return 1
+    ok("concurrent clone prod zero half-tree (#3321) clean")
+    return 0
+
+
 def cmd_deferred_reemit_steal_sticky_2715_coverage():
     """Issue #2715: deferred reemit on steal stays sticky until BoundaryExit.
 

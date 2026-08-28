@@ -163,10 +163,18 @@ export inline constexpr std::uint8_t kHygieneLimitReasonStealAbort = 6;
 // not granted / provenance fence / policy missing / zero limits) are
 // stamped via the parallel kCapabilityDenyReason* family in
 // capability_model.hh. The last_limit_reason atomic family stores either
-// a hygiene code (0..6) or the sentinel 7 to signal "see capability
+// a hygiene code (0..9) or the sentinel 7 to signal "see capability
 // reason instead". Agent tooling keys on the 7 sentinel to switch into
 // capability-replay mode (which uses capability_deny_last_reason_string()).
 export inline constexpr std::uint8_t kHygieneLimitReasonCapabilityDeny = 7;
+// Issue #3321: 16-slot ConcurrentCloneGuard reject reasons (append-only).
+// Same-flat / shared-name_map collisions previously only bumped atomics
+// + g_macro_clone_last_reject_reason (codes 2/4, overlapping depth-limit /
+// macro-introduced). Agent hygiene_last_limit_reason_string() now has
+// distinct stable strings. last_reject_reason 2/4 stay for #3028/#3094.
+export inline constexpr std::uint8_t kHygieneLimitReasonSameFlatReject = 8;
+export inline constexpr std::uint8_t kHygieneLimitReasonNameMapShared = 9;
+export inline constexpr int kConcurrentCloneProdZeroHalfTreeIssue = 3321;
 export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
 export [[nodiscard]] const char* hygiene_last_limit_reason_string() noexcept;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).
