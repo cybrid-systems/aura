@@ -208,6 +208,100 @@ static void ac5_source_cite() {
     CHECK(href(cs, "schema-2616") == 2616, "AC5: schema-2616");
 }
 
+// Issue #3391 (I1): note_value_tag_hot_path() must compile out under
+// NDEBUG so the production / eval_flat hot-path is zero-overhead on the
+// tagged-value untag face (as_int / as_string_idx / as_bool). AC1 source-
+// cites value_tags.h for the AURA_CONTRACTS_OBSERVE guard around the
+// fetch_add on value_tag_hot_path_total. Closes the residual atomic that
+// #2616 left on the *allowed* as_* surface.
+void ac3391_note_zero_overhead() {
+    std::println(
+        "\n--- #3391 AC1: note_value_tag_hot_path() body has AURA_CONTRACTS_OBSERVE guard ---");
+    std::ifstream f("src/compiler/value_tags.h");
+    std::string tags((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    CHECK(!tags.empty(), "3391 AC1: value_tags.h readable");
+    const auto note_pos = tags.find("note_value_tag_hot_path");
+    CHECK(note_pos != std::string::npos, "3391 AC1: note_value_tag_hot_path referenced");
+    const auto body_open = tags.find('{', note_pos);
+    CHECK(body_open != std::string::npos, "3391 AC1: note body open brace");
+    if (body_open != std::string::npos) {
+        std::size_t depth = 1;
+        std::size_t i = body_open + 1;
+        for (; i < tags.size(); ++i) {
+            if (tags[i] == '{')
+                ++depth;
+            else if (tags[i] == '}') {
+                --depth;
+                if (depth == 0)
+                    break;
+            }
+        }
+        CHECK(i < tags.size(), "3391 AC1: matched close brace");
+        const auto body = tags.substr(body_open, i - body_open + 1);
+        CHECK(body.find("AURA_CONTRACTS_OBSERVE") != std::string::npos,
+              "3391 AC1: note body has AURA_CONTRACTS_OBSERVE guard");
+        const auto fetch_pos = body.find("fetch_add");
+        if (fetch_pos != std::string::npos) {
+            const auto guard_pos = body.find("AURA_CONTRACTS_OBSERVE");
+            CHECK(guard_pos != std::string::npos && guard_pos < fetch_pos,
+                  "3391 AC1: fetch_add inside AURA_CONTRACTS_OBSERVE guard");
+        }
+    }
+    CHECK(tags.find("Issue #3391") != std::string::npos,
+          "3391 AC1: Issue #3391 cite in value_tags.h");
+}
+
+// Issue #3391 AC3: #2616 ban gate must still fire if classify_eval_value_tag
+// appears on eval/IR/apply hot paths — do not weaken the existing gate.
+void ac3391_ban_gate_still_wired() {
+    std::println("\n--- #3391 AC3: #2616 ban gate still wired (do-not-weaken) ---");
+    std::ifstream f_gate("scripts/coverage/checks/check_value_tag_hotpath_ban_2616.py");
+    std::string gate((std::istreambuf_iterator<char>(f_gate)), std::istreambuf_iterator<char>());
+    CHECK(!gate.empty(), "3391 AC3: #2616 gate readable");
+    CHECK(gate.find("Issue #2616") != std::string::npos, "3391 AC3: gate cites #2616");
+    CHECK(gate.find("classify_eval_value_tag") != std::string::npos,
+          "3391 AC3: gate still bans classify_eval_value_tag");
+    CHECK(gate.find("Issue #3391") != std::string::npos,
+          "3391 AC3: gate extended for #3391 (note guard AC6)");
+    CHECK(gate.find("AURA_CONTRACTS_OBSERVE") != std::string::npos,
+          "3391 AC3: gate checks AURA_CONTRACTS_OBSERVE guard on note");
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_value_tag_hotpath_ban_2616") != std::string::npos,
+          "3391 AC3: build.py still invokes #2616 gate");
+    std::ifstream f_cmake("CMakeLists.txt");
+    std::string cmake((std::istreambuf_iterator<char>(f_cmake)), std::istreambuf_iterator<char>());
+    CHECK(cmake.find("check_value_tag_hotpath_ban_2616") != std::string::npos,
+          "3391 AC3: CMakeLists.txt still wires #2616 gate");
+}
+
+// Issue #3391 AC4/AC5: query:value-dispatch-stats stays Agent-visible;
+// no test_issue_3391.cpp, no docs/design/3391-* (per AC5 no-invent).
+void ac3391_no_invent() {
+    std::println(
+        "\n--- #3391 AC4/AC5: query:value-dispatch-stats wired; no design / test_issue ---");
+    std::ifstream f_obs("src/compiler/evaluator_primitives_obs_eval.cpp");
+    std::string obs((std::istreambuf_iterator<char>(f_obs)), std::istreambuf_iterator<char>());
+    CHECK(!obs.empty(), "3391 AC4: obs_eval.cpp readable");
+    CHECK(obs.find("query:value-dispatch-stats") != std::string::npos,
+          "3391 AC4: query:value-dispatch-stats still exposed");
+    CHECK(obs.find("schema-2259") != std::string::npos ||
+              obs.find("schema-2616") != std::string::npos,
+          "3391 AC4: 2259/2616 schema key still in stats hash");
+    std::ifstream f_tags("src/compiler/value_tags.h");
+    std::string tags((std::istreambuf_iterator<char>(f_tags)), std::istreambuf_iterator<char>());
+    CHECK(tags.find("value_tag_hotpath_zero_overhead_wired") != std::string::npos,
+          "3391 AC4: zero-overhead wired sentinel still present");
+    {
+        std::ifstream f("docs/design/3391-as-note-zero-overhead.md");
+        CHECK(!f.good(), "3391 AC5: no docs/design/3391-*");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3391.cpp");
+        CHECK(!f.good(), "3391 AC5: no tests/issues/test_issue_3391.cpp");
+    }
+}
+
 } // namespace
 
 int run_test_value_tag_hotpath_ban() {
@@ -217,7 +311,10 @@ int run_test_value_tag_hotpath_ban() {
     ac3_cold_agent_stats();
     ac4_no_atomic_in_is_hot();
     ac5_source_cite();
-    std::println("\n=== #2616: {} passed, {} failed ===", g_passed, g_failed);
+    ac3391_note_zero_overhead();
+    ac3391_ban_gate_still_wired();
+    ac3391_no_invent();
+    std::println("\n=== #2616 + #3391: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

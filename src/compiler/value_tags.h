@@ -557,7 +557,15 @@ inline std::atomic<std::uint64_t> value_tag_stability_run_total{0};
 inline std::atomic<std::uint64_t> value_tag_hotpath_zero_overhead_wired{1};
 
 inline void note_value_tag_hot_path() noexcept {
+#ifdef AURA_CONTRACTS_OBSERVE
+    // Issue #3391 (I1): hot-path note must be zero-overhead under NDEBUG.
+    // Soft / AURA_CONTRACTS_OBSERVE builds keep the process atomic for
+    // Agent-visible counters; production / NDEBUG emits only the check
+    // (the fetch_add is compiled out). #2616 already banned classify
+    // atomics on eval/IR/apply hot paths — this closes the residual
+    // atomic on the *allowed* as_* surface.
     value_tag_hot_path_total.fetch_add(1, std::memory_order_relaxed);
+#endif
 }
 
 inline void note_value_tag_hot_contract_fail() noexcept {
