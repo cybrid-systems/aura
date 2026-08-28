@@ -12,6 +12,7 @@
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h" // Issue #3317: production_defaults toggle
 
 #include <cstdint>
 #include <cstdlib>
@@ -35,6 +36,8 @@ using aura::compiler::CompilerService;
 using aura::compiler::ConstraintSystem;
 using aura::compiler::kAdtExhaustCommitRecheckIssue;
 using aura::compiler::kAdtExhaustCompleteSeedIssue;
+using aura::compiler::kAdtExhaustOutermostRecheckIssue;
+using aura::compiler::recheck_all_live_adt_exhaust_before_proof;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::TypeRegistry;
@@ -590,6 +593,99 @@ static void ac3236_4_source_linter() {
     CHECK(read_file("docs/design/3236-adt-exhaust-commit.md").empty(), "3236 AC4: no docs/design");
 }
 
+// ── Issue #3317: outermost success complete ADT exhaust recheck ──
+static void ac3317_1_production_no_green_nonexhaustive() {
+    std::println("\n--- #3317 AC1: Production non-exhaustive never reaches proof ---");
+    CHECK(kAdtExhaustOutermostRecheckIssue == 3317, "3317 AC1: issue stamp");
+    CHECK(recheck_all_live_adt_exhaust_before_proof(nullptr, nullptr, nullptr, nullptr, nullptr),
+          "3317 AC1: quiet empty mutated-ADT set");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    UnitCs u;
+    u.cs.note_adt_match_goal(/*match_node=*/10, /*adt_type_id=*/42, /*hash=*/1);
+    CHECK(!recheck_all_live_adt_exhaust_before_proof(nullptr, nullptr, nullptr, &u.cs, &u.m),
+          "ac3317_1_production_no_green_nonexhaustive: goals + no AST fail-closed");
+    CHECK(u.m.adt_exhaust_production_reject_total.load(std::memory_order_relaxed) >= 1,
+          "3317 AC1: reused production reject counter");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("recheck_all_live_adt_exhaust_before_proof") != std::string::npos,
+          "3317 AC1: persist calls helper");
+    CHECK(mb.find("Issue #3317") != std::string::npos, "3317 AC1: persist cite");
+    CHECK(mb.find("force_reason=*/16") != std::string::npos ||
+              mb.find("/*force_reason=*/16") != std::string::npos,
+          "3317 AC1: reused force_reason 16");
+    CHECK(mb.find("clear_type_export_authority") != std::string::npos,
+          "3317 AC1: drop grant before reject proof");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("force_adt_exhaust_undermark_into_cone") != std::string::npos,
+          "3317 AC1: reuses force_adt_exhaust_*");
+    CHECK(tci.find("check_match_exhaustiveness") != std::string::npos,
+          "3317 AC1: reuses exhaust check");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3317_2_soft_observe() {
+    std::println("\n--- #3317 AC2: Soft observe-only; no hard reject ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    UnitCs u;
+    CHECK(recheck_all_live_adt_exhaust_before_proof(nullptr, nullptr, nullptr, nullptr, nullptr),
+          "3317 AC2: no-obligation true");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("Quiet: empty mutated-ADT set") != std::string::npos,
+          "3317 AC2: quiet skip documented");
+    u.cs.note_adt_match_goal(/*match_node=*/10, /*adt_type_id=*/42, /*hash=*/1);
+    const auto obs0 = u.m.adt_exhaust_soft_observe_total.load(std::memory_order_relaxed);
+    const auto rej0 = u.m.adt_exhaust_production_reject_total.load(std::memory_order_relaxed);
+    CHECK(recheck_all_live_adt_exhaust_before_proof(nullptr, nullptr, nullptr, &u.cs, &u.m),
+          "ac3317_2_soft_observe: Soft does not hard-reject");
+    CHECK(u.m.adt_exhaust_soft_observe_total.load(std::memory_order_relaxed) >= obs0 + 1,
+          "3317 AC2: Soft observe counter");
+    CHECK(u.m.adt_exhaust_production_reject_total.load(std::memory_order_relaxed) == rej0,
+          "3317 AC2: no production reject under Soft");
+}
+
+static void ac3317_3_reuse_apis() {
+    std::println("\n--- #3317 AC3: reuse cone APIs + metrics; no new schema ---");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(tci.find("force_adt_exhaust_undermark_into_cone") != std::string::npos,
+          "3317 AC3: #3045 force retained");
+    CHECK(tci.find("seed_adt_matches_for_dirty_types") != std::string::npos,
+          "3317 AC3: #3083 complete seed retained");
+    CHECK(tci.find("adt_exhaust_production_reject_total") != std::string::npos,
+          "3317 AC3: reuse production reject");
+    CHECK(tci.find("adt_exhaust_soft_observe_total") != std::string::npos,
+          "3317 AC3: reuse Soft observe");
+    CHECK(mb.find("recheck_all_live_adt_exhaust_before_proof") != std::string::npos,
+          "ac3317_3_reuse_apis: persist helper");
+    CHECK(q.find("schema-3317") == std::string::npos, "3317 AC3: no schema-3317");
+    CHECK(tci.find("g_3317_") == std::string::npos && mb.find("g_3317_") == std::string::npos,
+          "3317 AC3: no g_3317_* counter");
+}
+
+static void ac3317_4_source_linter() {
+    std::println("\n--- #3317 AC4: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_adt_exhaust_outermost_recheck_3317.py");
+    CHECK(ixx.find("kAdtExhaustOutermostRecheckIssue = 3317") != std::string::npos,
+          "ac3317_4_source_linter: stamp");
+    CHECK(ixx.find("recheck_all_live_adt_exhaust_before_proof") != std::string::npos,
+          "3317 AC4: helper exported");
+    CHECK(!lint.empty() && lint.find("Issue #3317") != std::string::npos, "3317 AC4: linter");
+    CHECK(build.find("check_adt_exhaust_outermost_recheck_3317") != std::string::npos,
+          "3317 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3317.cpp").empty(), "3317 AC4: no invent");
+    CHECK(read_file("docs/design/3317-adt-exhaust-outermost-recheck.md").empty(),
+          "3317 AC4: no docs/design");
+}
+
 static void ac3005_6_linter_no_design() {
     std::println("\n--- #3005 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
@@ -640,7 +736,11 @@ int run_test_adt_match_goal_table() {
     ac3236_2_soft_quiet();
     ac3236_3_lineage();
     ac3236_4_source_linter();
-    std::println("\n=== #2564/#3005/#3045/#3083/#3236: {} passed, {} failed ===", g_passed,
+    ac3317_1_production_no_green_nonexhaustive();
+    ac3317_2_soft_observe();
+    ac3317_3_reuse_apis();
+    ac3317_4_source_linter();
+    std::println("\n=== #2564/#3005/#3045/#3083/#3236/#3317: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

@@ -10951,6 +10951,89 @@ std::size_t force_adt_exhaust_undermark_into_cone(FlatAST& flat, const StringPoo
     return n;
 }
 
+// Issue #3317: outermost-success TypeLinearCommitProof gate. Concurrent
+// variant add / arm delete can under-seed match sites so #3236's
+// composite_txn_commit walk never saw them. Quiet: empty goals + empty
+// cone + no mutation seeds → two size reads, no production_defaults.
+// Soft: observe via existing adt_exhaust_soft_observe_total. Production
+// / Full: force_adt_exhaust_undermark_into_cone then recheck live
+// matches; non-exhaustive / Dynamic-slide → false (reuse #3005 reject
+// counters). No new solve algorithm / query key / issue-local counter.
+bool recheck_all_live_adt_exhaust_before_proof(FlatAST* flat, const StringPool* pool,
+                                               void* type_registry, ConstraintSystem* cs,
+                                               void* metrics) {
+    auto* reg = static_cast<TypeRegistry*>(type_registry);
+    const bool goals =
+        cs && (cs->adt_match_goals_size() != 0 || cs->adt_reverify_roots_size() != 0);
+    const bool cone = dirty::type_ir_union_cone_nonempty();
+    std::vector<NodeId> seeds;
+    if (flat) {
+        for (const auto& rec : std::as_const(*flat).all_mutations()) {
+            if (rec.target_node != 0)
+                seeds.push_back(rec.target_node);
+            if (rec.parent_id != 0)
+                seeds.push_back(rec.parent_id);
+        }
+    }
+    if (!goals && !cone && seeds.empty())
+        return true; // Quiet: empty mutated-ADT set
+    const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                      aura::compiler::typed_audit::get_strategy() ==
+                          aura::compiler::typed_audit::AuditStrategy::Full;
+    auto* m = static_cast<CompilerMetrics*>(metrics);
+    if (!hard) {
+        if (m)
+            m->adt_exhaust_soft_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return true;
+    }
+    if (!flat || !pool || !reg) {
+        if (m)
+            m->adt_exhaust_production_reject_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    (void)force_adt_exhaust_undermark_into_cone(*flat, *pool, *reg, seeds, cs, metrics);
+    std::unordered_set<std::uint32_t> mutated;
+    if (cs) {
+        for (const auto& g : cs->adt_match_goals_for_test()) {
+            if (g.adt_type_id != 0)
+                mutated.insert(g.adt_type_id);
+        }
+    }
+    for (auto id : seeds) {
+        if (id == aura::ast::NULL_NODE || id >= flat->size())
+            continue;
+        if (const auto* mi = flat->get_match_info(id)) {
+            if (mi->subject_type_id > 0)
+                mutated.insert(mi->subject_type_id);
+        }
+    }
+    const bool need_walk = !mutated.empty() || (cs && cs->adt_reverify_roots_size() != 0);
+    if (!need_walk)
+        return true;
+    for (NodeId id = 0; id < flat->size(); ++id) {
+        if (!flat->has_match_info(id))
+            continue;
+        if (const auto* mi = flat->get_match_info(id)) {
+            if (!mutated.empty() && mi->subject_type_id > 0 &&
+                !mutated.contains(mi->subject_type_id))
+                continue;
+        }
+        auto exh = check_match_exhaustiveness(*flat, *pool, *reg, id);
+        const bool unproven = exh.via_dynamic || !exh.missing_constructors.empty() ||
+                              (exh.checked && !exh.exhaustive);
+        if (!unproven)
+            continue;
+        if (m) {
+            m->adt_exhaust_production_reject_total.fetch_add(1, std::memory_order_relaxed);
+            if (exh.via_dynamic)
+                m->adt_exhaust_dynamic_slide_prevented_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        }
+        return false;
+    }
+    return true;
+}
+
 void revalidate_adt_typed_mutation_scope(FlatAST& flat, const StringPool& pool, TypeRegistry& reg,
                                          const std::vector<NodeId>& subtree_roots,
                                          const MutationRecord& rec, std::uint64_t cache_epoch,

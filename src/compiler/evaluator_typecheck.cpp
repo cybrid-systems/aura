@@ -1100,6 +1100,10 @@ bool Evaluator::composite_txn_commit(std::uint64_t mutation_id, std::string_view
                 // TypeLinearCommitProof. Quiet: empty cone + empty ADT goals
                 // → two size reads. Soft: observe. Non-exhaustive → reject
                 // with reused force_reason solve (1).
+                // Issue #3317: outermost success persist
+                // (aura_outermost_success_persist_occurrence) runs a sibling
+                // complete recheck so concurrent under-seed cannot skip this
+                // composite_txn_commit walk.
                 {
                     ConstraintSystem* cs_ex = nullptr;
                     if (commit_type_checker_opaque_)

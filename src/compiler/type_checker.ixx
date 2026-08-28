@@ -476,6 +476,12 @@ export inline constexpr int kAdtExhaustCompleteSeedIssue = 3083;
 // TypeLinearCommitProof / commit_readiness. Soft observe; quiet no ADT.
 export inline constexpr int kAdtExhaustCommitRecheckIssue = 3236;
 
+// Issue #3317: residual of #3236 under concurrent variant add / arm
+// delete — outermost success can stamp TypeLinearCommitProof before a
+// complete Production exhaust recheck of live matches whose subject
+// ADT is in the mutated set. Soft observe; quiet empty mutated-ADT set.
+export inline constexpr int kAdtExhaustOutermostRecheckIssue = 3317;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
@@ -3612,6 +3618,17 @@ force_adt_exhaust_undermark_into_cone(aura::ast::FlatAST& flat, const aura::ast:
                                       aura::core::TypeRegistry& reg,
                                       const std::vector<aura::ast::NodeId>& dirty_nodes,
                                       ConstraintSystem* cs = nullptr, void* metrics = nullptr);
+
+// Issue #3317: complete recheck of every live match whose subject ADT
+// appears in the mutated type set, after drain + residual face clear
+// on outermost success. Reuses force_adt_exhaust_* + #3005 reject /
+// Soft observe counters. Production/Full: false → caller rejects
+// TypeLinearCommitProof (no green stamp / no grant). Soft: true
+// (observe only). Quiet empty mutated-ADT set: true, zero extra.
+export [[nodiscard]] bool
+recheck_all_live_adt_exhaust_before_proof(aura::ast::FlatAST* flat,
+                                          const aura::ast::StringPool* pool, void* type_registry,
+                                          ConstraintSystem* cs = nullptr, void* metrics = nullptr);
 
 // Issue #692: incremental ADT exhaustiveness + pattern provenance refresh
 // for infer_flat_partial structural typed mutation.

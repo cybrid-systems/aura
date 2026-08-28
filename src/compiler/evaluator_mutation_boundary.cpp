@@ -363,6 +363,33 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             return; // skip green stamp + health + grant
         }
     }
+    // Issue #3317: concurrent variant add / arm delete can under-seed
+    // match sites so #3236's composite_txn_commit recheck never saw
+    // them. After drain SOLVED + residual face clear, Production/Full
+    // force-complete-recheck every live match whose subject ADT is in
+    // the mutated set (reuse force_adt_exhaust_*). Soft: observe only.
+    // Quiet empty mutated-ADT set: zero extra. Reject reuses force_reason
+    // 16 and must drop stale query:type grant before the proof (#3316).
+    {
+        auto* flat = ev->workspace_flat();
+        auto* pool = ev->workspace_pool();
+        if (!aura::compiler::recheck_all_live_adt_exhaust_before_proof(
+                flat, pool, ev->type_registry_ptr(), &tc->constraint_system(),
+                ev->compiler_metrics())) {
+            ev->clear_type_export_authority();
+            (void)
+                aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    /*goal_fingerprint=*/0, /*from_cs=*/false,
+                    /*force_reason=*/16);
+            aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+            ev->bump_occurrence_persist_fingerprint_mismatch();
+            return; // no green stamp / no grant
+        }
+    }
     // (3) Stamp TypeLinearCommitProof from post-persist CS truth so Agents
     // holding the proof across densify/steal match the durable snapshot.
     // Soft + empty goals: freeze returns 0/0; stamp still records defuse
