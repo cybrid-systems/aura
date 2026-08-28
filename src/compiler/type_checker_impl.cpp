@@ -2865,7 +2865,8 @@ ConstraintSystem::try_instance_repair_before_full(std::vector<Constraint>* unres
 //   production: always escalate (budget cannot disable / allow half-solved);
 //     non-default budget bumps solver_budget_full_escalate_total
 //   Soft + allow_timeout_commit: keep TIMEOUT (never SOLVED); bump
-//     solver_budget_timeout_export_total
+//     solver_budget_timeout_export_total; #3331 quarantines live
+//     priority/pending/touched/let-poly roots (not persist log)
 //   Soft + default: pass-through (unchanged)
 // Issue #2963: prefer_instance_repair_before_full (default true) runs
 //   try_instance_repair_before_full over local dirty + pending roots
@@ -2896,6 +2897,11 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
                         1, std::memory_order_relaxed);
             }
         }
+        // Issue #3331: snapshot is the unresolved export above; quarantine
+        // live priority/pending/touched so the next empty solve_delta is
+        // not a residual seed. Persist log stays for Soft observe.
+        // #3169 clear_partial stays Production-only (AC3).
+        soft_quarantine_partial_goals_after_timeout();
         return SolveResult::TIMEOUT; // AC1: not SOLVED; unresolved already exported
     }
 
@@ -3046,6 +3052,33 @@ void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept {
     if (metrics_) {
         static_cast<struct CompilerMetrics*>(metrics_)->solve_delta_partial_cleared_total.fetch_add(
             1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #3331: Soft + allow_timeout_commit TIMEOUT must not leave
+// priority/pending/touched/let-poly roots Agent-observable as live
+// work. Same four sets as #3169 Production clear, plus dirty_count_.
+// Does not clear occurrence_persist_log_ (Soft observe continuity).
+// Production early-returns — hard clear stays #3169. Zero extra when
+// the sets are already empty (AC: no atomic bump on empty).
+void ConstraintSystem::soft_quarantine_partial_goals_after_timeout() noexcept {
+    if (aura::compiler::typed_audit::production_defaults_active())
+        return;
+    const bool have = dirty_count_ != 0 || !touched_roots_.empty() ||
+                      !pending_full_solve_roots_.empty() || !occurrence_priority_roots_.empty() ||
+                      !let_poly_dirty_roots_.empty();
+    if (!have)
+        return;
+    touched_roots_.clear();
+    pending_full_solve_roots_.clear();
+    occurrence_priority_roots_.clear();
+    let_poly_dirty_roots_.clear();
+    dirty_count_ = 0;
+    auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    c.solve_delta_soft_timeout_quarantine_total.fetch_add(1, std::memory_order_relaxed);
+    if (metrics_) {
+        static_cast<struct CompilerMetrics*>(metrics_)
+            ->solve_delta_soft_timeout_quarantine_total.fetch_add(1, std::memory_order_relaxed);
     }
 }
 

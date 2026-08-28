@@ -15916,6 +15916,26 @@ def cmd_solve_delta_partial_cleared_3169():
     return 0
 
 
+def cmd_soft_timeout_quarantine_3331():
+    """Issue #3331: Soft TIMEOUT + allow_timeout_commit quarantines residual
+    priority/pending/touched/let-poly roots (not persist log).
+
+    Production clear_partial_goals_and_unresolved unchanged (#3169).
+    Extends test_solve_delta_unresolved_export; no test_issue_3331.cpp.
+    """
+    print(f"{B}=== soft TIMEOUT quarantine (#3331) ==={N}")
+    script = COVERAGE_CHECKS / "check_soft_timeout_quarantine_3331.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("soft TIMEOUT quarantine (#3331) coverage contract rows failed")
+        return 1
+    ok("soft TIMEOUT quarantine (#3331) coverage clean")
+    return 0
+
+
 def cmd_adt_exhaust_dirty_cone_3005_coverage():
     """Issue #3005: ADT variant / pattern mutate → exhaustiveness dirty cone.
 
@@ -21077,6 +21097,8 @@ def main():
         "occurrence-persist-fingerprint-3170-coverage": cmd_occurrence_persist_fingerprint_3170,
         "solve-delta-partial-cleared-3169": cmd_solve_delta_partial_cleared_3169,
         "solve-delta-partial-cleared-3169-coverage": cmd_solve_delta_partial_cleared_3169,
+        "soft-timeout-quarantine-3331": cmd_soft_timeout_quarantine_3331,
+        "soft-timeout-quarantine-3331-coverage": cmd_soft_timeout_quarantine_3331,
         "shape-storm-per-eval-default-2683": cmd_shape_storm_isolation_2683_coverage,
         "evaluator-capture-tenant-2687": cmd_evaluator_capture_tenant_2687_coverage,
         "hard-capture-tenant-2705": cmd_hard_capture_tenant_2705_coverage,

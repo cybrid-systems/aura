@@ -593,6 +593,11 @@ struct TypedMutationAuditCounters {
     std::atomic<std::uint32_t> linear_cross_closure_prod_depth_default{2};
     // Issue #3242: typed-summary WAL persist (struct end).
     std::atomic<std::uint64_t> typed_summary_wal_persisted_total{0};
+    // Issue #3331: Soft + allow_timeout_commit TIMEOUT quarantine of
+    // live priority/pending/touched/let-poly roots. Dual-write with
+    // CompilerMetrics::solve_delta_soft_timeout_quarantine_total.
+    // Production never bumps (uses #3169 partial_cleared instead).
+    std::atomic<std::uint64_t> solve_delta_soft_timeout_quarantine_total{0};
 };
 
 inline TypedMutationAuditCounters g_typed_mutation_audit_counters{};
