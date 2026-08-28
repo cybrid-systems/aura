@@ -1023,6 +1023,189 @@ static void ac3296_5_linter_and_no_invent() {
     }
 }
 
+// Issue #3365: Restricted + multi-tenant must deny layout-only refs
+// (ref.tenant_id == 0). The I6 isolation residual — check_boundary_ex
+// only denied unstamped refs under Strict, but commercial MT default
+// (#2835 AURA_SANDBOX=Restricted + AURA_MULTI_TENANT=1) treats tenant_id=0
+// as unset and lets layout-only refs (make_ref_layout default) cross
+// tenant boundaries. Fix: deny (strict || (sandbox_restricted && multi)) &&
+// ref_tenant==0 && cur!=0, where multi = hard_capture_tenant_active() ||
+// multi_tenant_env_active(). Stable reason: `isolation-deny: unstamped-ref`
+// (additive to existing `unset-principal` / `ref-tenant=N`).
+//
+// AC1 Restricted + MT + layout-only ref → deny (regression for #2835 default).
+// AC2 Restricted + MT + correct-stamp ref (ref.tenant_id != 0) → allow.
+// AC3 Single-tenant Restricted (no MT) + layout-only ref → allow (#2056 legacy).
+// AC4 Soft / Off + MT + layout-only ref → allow (zero-cost; multi active
+//     but sandbox_restricted=false so the new OR-arm does not fire).
+// AC5 Strict + MT + layout-only ref → deny (regression; pre-existing behavior).
+
+static void ac3365_1_restricted_mt_unstamped_denies() {
+    std::println("\n--- #3365 AC1: Restricted + MT + layout-only ref denies ---");
+    aura::compiler::CompilerService cs;
+    (void)cs;
+    Evaluator ev{};
+    // Restricted + multi-tenant — set sandbox mode 1 (Restricted) + env flag.
+    ev.set_effect_sandbox_mode(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    // Tenant principal non-zero so cur != 0 path fires (not unset-principal).
+    ev.set_tenant_principal(42, {}, /*allow_cross=*/false);
+    // Grant explicit TenantAdmin + Mutate so the only deny reason is
+    // unstamped-ref (not missing-capability).
+    auto& reg = aura::core::capability::g_capability_registry();
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.grant(42, "tenant-admin",
+                  static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
+    }
+    // Probe: check_workspace_isolation(target=42, ref_tenant=0) — should
+    // deny under (Restricted && multi) where multi=true.
+    // Issue #3365: also verify the deny reason propagates as
+    // `isolation-deny: unstamped-ref` (set via resolve_stamped caller-side).
+    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+        /*target=*/42, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac1");
+    CHECK(denied, "3365 AC1: Restricted + MT + layout-only ref (ref_tenant=0) is denied");
+    // Tear down for next AC.
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_effect_sandbox_mode(0);
+    ev.set_tenant_principal(0, {}, false);
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.clear_for_test();
+    }
+    // Reset isolation policy + env flag.
+    aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
+}
+
+static void ac3365_2_correct_stamp_allows() {
+    std::println("\n--- #3365 AC2: Restricted + MT + correct-stamp ref allows ---");
+    Evaluator ev{};
+    ev.set_effect_sandbox_mode(1);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ev.set_tenant_principal(42, {}, false);
+    auto& reg = aura::core::capability::g_capability_registry();
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.grant(42, "tenant-admin",
+                  static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
+    }
+    // Correct-stamp ref (ref_tenant == target == 42) → same tenant → allow.
+    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+        /*target=*/42, /*ref_tenant=*/42, /*required_effects=*/0, "test:3365-ac2");
+    CHECK(
+        !denied,
+        "3365 AC2: Restricted + MT + correct-stamp ref (ref_tenant=42) allows same-tenant access");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_effect_sandbox_mode(0);
+    ev.set_tenant_principal(0, {}, false);
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.clear_for_test();
+    }
+    aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
+}
+
+static void ac3365_3_single_tenant_restricted_allows() {
+    std::println(
+        "\n--- #3365 AC3: Single-tenant Restricted + layout-only ref allows (#2056 legacy) ---");
+    Evaluator ev{};
+    ev.set_effect_sandbox_mode(1);
+    // No multi-tenant — single-tenant Restricted legacy contract preserved.
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_tenant_principal(7, {}, false);
+    auto& reg = aura::core::capability::g_capability_registry();
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.grant(7, "tenant-admin",
+                  static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
+    }
+    // Single-tenant + layout-only ref → still allow (multi=false → new arm
+    // does not fire).
+    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+        /*target=*/7, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac3");
+    CHECK(!denied, "3365 AC3: single-tenant Restricted + layout-only ref allows (no MT, #2056 "
+                   "legacy contract)");
+    ev.set_effect_sandbox_mode(0);
+    ev.set_tenant_principal(0, {}, false);
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.clear_for_test();
+    }
+    aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
+}
+
+static void ac3365_4_soft_off_zero_cost() {
+    std::println("\n--- #3365 AC4: Soft/Off + layout-only ref allows (zero-cost) ---");
+    Evaluator ev{};
+    // Off (mode=0) — even with multi-tenant active, sandbox_restricted=false
+    // so the new OR-arm does not fire.
+    ev.set_effect_sandbox_mode(0);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    ev.set_tenant_principal(42, {}, false);
+    auto& reg = aura::core::capability::g_capability_registry();
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.grant(42, "tenant-admin",
+                  static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
+    }
+    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+        /*target=*/42, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac4");
+    CHECK(!denied, "3365 AC4: Off + MT + layout-only ref allows (sandbox_restricted=false → OR-arm "
+                   "not fired)");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_tenant_principal(0, {}, false);
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.clear_for_test();
+    }
+    aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
+}
+
+static void ac3365_5_strict_unstamped_denies() {
+    std::println("\n--- #3365 AC5: Strict + layout-only ref denies (regression) ---");
+    Evaluator ev{};
+    // Set sandbox strict (mode=2). Note: check_boundary_ex derives
+    // `strict = sandbox_strict || strict_sandbox_linked` — sandbox_strict=1
+    // triggers the pre-existing Strict branch.
+    ev.set_effect_sandbox_mode(2);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    ev.set_tenant_principal(7, {}, false);
+    auto& reg = aura::core::capability::g_capability_registry();
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.grant(7, "tenant-admin",
+                  static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
+    }
+    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+        /*target=*/7, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac5");
+    CHECK(denied, "3365 AC5: Strict + layout-only ref denies (pre-existing behavior preserved)");
+    ev.set_effect_sandbox_mode(0);
+    ev.set_tenant_principal(0, {}, false);
+    {
+        std::lock_guard<std::mutex> lock(reg.mtx);
+        reg.clear_for_test();
+    }
+    aura::core::workspace_isolation::g_workspace_isolation().clear_for_test();
+}
+
+static void ac3365_6_source_cite_and_no_invent() {
+    std::println("\n--- #3365 AC6: source-cite + no docs/design/ ---");
+    // Source-cite linter covers the new code paths.
+    // check_test_binding.py will reject if provenance_tracker.hh /
+    // workspace_isolation.hh / security_defaults.hh / evaluator_security.cpp
+    // change without a tests/ pairing. We pair via the new ACs above.
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3365-") == std::string::npos,
+                  std::string("3365 AC6: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_require_effect_auto_isolation() {
@@ -1072,6 +1255,13 @@ int run_test_require_effect_auto_isolation() {
     ac3296_3_soft_off_zero_cost();
     ac3296_4_audit_join_source_cite();
     ac3296_5_linter_and_no_invent();
+    std::println("\n=== Issue #3365: Restricted + MT unstamped-ref deny ===");
+    ac3365_1_restricted_mt_unstamped_denies();
+    ac3365_2_correct_stamp_allows();
+    ac3365_3_single_tenant_restricted_allows();
+    ac3365_4_soft_off_zero_cost();
+    ac3365_5_strict_unstamped_denies();
+    ac3365_6_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

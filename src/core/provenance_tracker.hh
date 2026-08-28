@@ -368,6 +368,26 @@ inline void set_hard_capture_tenant(bool on) noexcept {
     }
     return g_hard_capture_tenant_pref().load(std::memory_order_acquire);
 }
+// Issue #3365: env-based multi-tenant flag (AURA_MULTI_TENANT=1|true|yes
+// captured at startup in apply_production_security_defaults, security_defaults.hh).
+// Combined with hard_capture_tenant_active() in check_boundary_ex to extend
+// the unstamped-ref (ref.tenant_id == 0) deny from Strict-only to
+// Restricted + multi-tenant — closes the I6 isolation residual where
+// layout-only refs (make_ref_layout default tenant=0) cross tenant
+// boundaries under production multi-tenant default (#2835).
+inline constexpr int kMultiTenantEnvIssue = 3365;
+[[nodiscard]] inline bool multi_tenant_env_active() noexcept {
+    static std::atomic<std::uint32_t> f{0};
+    return f.load(std::memory_order_acquire) != 0;
+}
+inline void set_multi_tenant_env_active(bool on) noexcept {
+    static std::atomic<std::uint32_t> f{0};
+    f.store(on ? 1u : 0u, std::memory_order_release);
+}
+inline void reset_multi_tenant_env_for_test() noexcept {
+    static std::atomic<std::uint32_t> f{0};
+    f.store(0u, std::memory_order_relaxed);
+}
 // Issue #2759: under hard-close, refuse non-zero process-global capture
 // writes (multi-eval race). Clear-to-zero always allowed (test reset /
 // isolation off). Soft keeps full write for unit ergonomics.

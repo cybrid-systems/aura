@@ -194,6 +194,12 @@ inline void apply_production_security_defaults() noexcept {
             }
         }
     }
+    // Issue #3365: lift the env-based multi-tenant signal into a process-global
+    // flag so check_boundary_ex (Restricted + multi-tenant + ref_tenant=0
+    // unstamped deny) can read it without scanning env per call. Set in
+    // apply_production_security_defaults; cleared on test reset paths via
+    // reset_multi_tenant_env_for_test (per #2943 production-default wiring).
+    ::aura::core::provenance::set_multi_tenant_env_active(multi_tenant);
 
     // 3) TypedMutationAudit: Full under production; Sampled/4 when Off.
     //    Override: AURA_TYPED_AUDIT=full|sampled|off

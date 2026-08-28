@@ -1670,11 +1670,17 @@ std::optional<ast::NodeView> Evaluator::resolve_stamped(const ast::FlatAST::Stab
     // Strict / Restricted with isolation on, tenant 0 is denied.
     if (!check_workspace_isolation(/*target=*/ref.tenant_id, /*ref_tenant=*/ref.tenant_id,
                                    required_effects, op)) {
-        // last_mutate_error_ already set by check_workspace_isolation.
-        // Augment with ref context for Agent-readable trail.
+        // last_mutate_error_ already set by check_workspace_isolation for the
+        // unset-principal path. Augment with ref context for Agent-readable
+        // trail. Issue #3365: distinguish unstamped-ref (ref.tenant_id == 0
+        // under Strict/Restricted+MT) from the existing ref-tenant=N path.
+        // New reason string is additive — no old reason string change
+        // (existing `unset-principal` / `ref-tenant=N` stay intact).
         if (last_mutate_error_.empty()) {
-            last_mutate_error_ =
-                std::string(op) + ": isolation-deny: ref-tenant=" + std::to_string(ref.tenant_id);
+            last_mutate_error_ = (ref.tenant_id == 0)
+                                     ? std::string(op) + ": isolation-deny: unstamped-ref"
+                                     : std::string(op) + ": isolation-deny: ref-tenant=" +
+                                           std::to_string(ref.tenant_id);
         }
         return std::nullopt;
     }
