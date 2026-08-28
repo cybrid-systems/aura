@@ -55,8 +55,19 @@ static inline void call_steal_outermost_enforced() noexcept {
         aura_evaluator_bump_steal_outermost_enforced();
 }
 static inline void call_probe_linear_on_steal() noexcept {
-    if (aura_evaluator_probe_linear_on_steal)
+    if (aura_evaluator_probe_linear_on_steal) {
         aura_evaluator_probe_linear_on_steal();
+        return;
+    }
+    // Issue #3343: null ABI under production must not skip linear
+    // re-pin / escape clear / invalidate_gen (same fail-closed shape
+    // as call_steal_complete null under #2377).
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr, "FATAL: aura_evaluator_probe_linear_on_steal unresolved under "
+                             "production (#3343); production steal must run linear probe + "
+                             "escape clear + invalidate_gen\n");
+        std::abort();
+    }
 }
 // Issue #2203 / Issue #2377: single steal-complete entry is mandatory for
 // multi-worker production. Strong def (evaluator_fiber_mutation.cpp)

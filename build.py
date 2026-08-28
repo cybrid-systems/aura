@@ -4564,6 +4564,21 @@ def cmd_lint():
             "Issue #3224 IR typed-entry commit_readiness linter failed — run python3 scripts/coverage/checks/check_ir_typed_entry_commit_readiness_3224.py"
         )
         return r
+    # Issue #3343: production weak-ABI stubs fail-closed on IR/linear
+    # commit_readiness and fiber-steal linear probe. Soft / light-link
+    # keep weak allow. Extends test_occurrence_goal_persist_rehydrate +
+    # test_steal_complete_strong_entry (#81967); no docs/design/; no
+    # new query keys.
+    wabi3343_script = COVERAGE_CHECKS / "check_production_weak_abi_commit_readiness_3343.py"
+    if not wabi3343_script.exists():
+        fail(f"missing {wabi3343_script}")
+        return 1
+    r = run([sys.executable, str(wabi3343_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3343 production weak-ABI commit_readiness linter failed — run python3 scripts/coverage/checks/check_production_weak_abi_commit_readiness_3343.py"
+        )
+        return r
     # Issue #3225: occurrence persist seqlock so concurrent outermost
     # write × densify/steal rehydrate cannot freeze a mixed fingerprint.
     # Soft/quiet skip seq. Reuses miss + empty-after-fence. Extends

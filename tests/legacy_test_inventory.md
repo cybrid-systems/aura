@@ -1,7 +1,7 @@
 # Legacy test inventory
 
 **Issue:** [#1957](https://github.com/cybrid-systems/aura/issues/1957)
-**Generated:** 2026-08-28 by `scripts/tools/inventory_legacy_tests.py`
+**Generated:** 2026-08-29 by `scripts/tools/inventory_legacy_tests.py`
 **Status:** living document — re-run the script after consolidations.
 
 ## Purpose
@@ -1563,7 +1563,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/orch/test_security_schedule_gate.cpp` (—) [large, domain_suite, theme_orch] — tests/orch/test_security_schedule_gate.cpp
 - `tests/serve/test_steal_complete_gc_defer.cpp` (—) [domain_suite, theme_serve] — AC1: try_steal_from success always invokes aura_evaluator_on_steal_complete
 - `tests/serve/test_steal_complete_restamp_txn.cpp` (—) [large, domain_suite, theme_serve] — AC1: on_steal_complete is the sole restamp entry (source-cite + gate)
-- `tests/serve/test_steal_complete_strong_entry.cpp` (—) [domain_suite, theme_serve] — legacy residual-less path under production).
+- `tests/serve/test_steal_complete_strong_entry.cpp` (—) [large, domain_suite, theme_serve] — legacy residual-less path under production).
 - `tests/serve/test_steal_densify_linear_type_hard_and.cpp` (—) [large, domain_suite, theme_serve] — AC1: Inject residual OR linear force under Hard → Cancel+Done; fail +1
 - `tests/serve/test_steal_layout_stamp.cpp` (—) [domain_suite, theme_serve] — AC1: Steal with matching stamp → no mismatch bump
 - `tests/serve/test_steal_safety_production_residual_zero.cpp` (—) [large, domain_suite, theme_serve] — AC1: source cites #3131 in steal_safety.h + evaluator_primitives_query

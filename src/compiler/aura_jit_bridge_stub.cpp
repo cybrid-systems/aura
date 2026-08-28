@@ -346,14 +346,30 @@ aura_jit_linear_epoch_safety_check(const char* /*fn_name*/, std::uint8_t /*linea
                                    std::uint32_t /*opcode*/) {
     return 0;
 }
-// Issue #3186: stub for the JIT commit_readiness bridge (non-JIT builds).
-// Returns 1 (elision OK) so non-JIT builds behave like Soft/Off (no
-// production-only consultation, no counter noise).
+// Issue #3186 / #3224 / #3343: light-link stubs for the JIT commit_readiness
+// / Move-Drop elision / post-mutate enforce bridges. Soft / Off / missing
+// production-defaults probe: allow / pass-through (zero extra cost).
+// Production defaults: fail-closed (elision blocked, IR entry refuse,
+// post-mutate unsafe) so a JIT-less production binary cannot half-green
+// when the strong aura_jit_bridge.cpp symbols are not resolved.
+extern "C" int aura_production_defaults_active_probe() noexcept __attribute__((weak));
+
+[[nodiscard]] static bool stub_production_defaults_active() noexcept {
+    if (!aura_production_defaults_active_probe)
+        return false;
+    return aura_production_defaults_active_probe() != 0;
+}
+
 extern "C" __attribute__((weak)) int aura_jit_linear_move_drop_elision_ok(void) {
+    // Issue #3343: production weak stub must not return allow.
+    if (stub_production_defaults_active())
+        return 0;
     return 1;
 }
-// Issue #3224: stub returns 1 (allow) so non-JIT builds behave like Soft.
 extern "C" __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
+    // Issue #3343: production weak stub must refuse / deopt.
+    if (stub_production_defaults_active())
+        return 0;
     return 1;
 }
 extern "C" __attribute__((weak)) void
@@ -363,6 +379,9 @@ extern "C" __attribute__((weak)) void
 aura_set_linear_post_mutate_enforce_fn(aura_linear_post_mutate_enforce_fn_t /*fn*/,
                                        void* /*user_data*/) {}
 extern "C" __attribute__((weak)) int aura_jit_linear_post_mutate_enforce(std::uint32_t /*env_id*/) {
+    // Issue #3343: 1 = unsafe / deopt under production; 0 = pass-through Soft.
+    if (stub_production_defaults_active())
+        return 1;
     return 0;
 }
 extern "C" __attribute__((weak)) void

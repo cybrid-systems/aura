@@ -51,15 +51,19 @@ bool aura_runtime_require_production_abi() noexcept {
     // (weak no-op would skip fiber-resume principal rebind silently).
     if (aura_abi_strong_tenant_scope_resume_v() == 0)
         fail_bits |= kProductionAbiSelfcheckFailBitTenantScope;
+    // Issue #3343: steal linear-probe ABI must be strong in production
+    // (weak empty body would skip ownership probe + escape clear).
+    if (aura_abi_strong_probe_linear_on_steal_v() == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitProbeLinear;
 
     if (fail_bits != 0) {
         g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
         g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
         std::fprintf(stderr,
-                     "FATAL: production ABI self-check failed (#2955/#3275) fail_bits=0x%llx — "
-                     "multi-worker must link strong steal-complete / fiber evaluator_id / "
-                     "mutation boundary held / depth-from-ptr / tenant-scope resume (not "
-                     "fiber_bridge weak no-ops)\n",
+                     "FATAL: production ABI self-check failed (#2955/#3275/#3343) fail_bits=0x%llx "
+                     "— multi-worker must link strong steal-complete / fiber evaluator_id / "
+                     "mutation boundary held / depth-from-ptr / tenant-scope resume / "
+                     "probe-linear-on-steal (not fiber_bridge weak no-ops)\n",
                      static_cast<unsigned long long>(fail_bits));
         std::fflush(stderr);
         std::abort();
@@ -109,6 +113,11 @@ bool aura_runtime_require_production_multi_worker() noexcept {
     // resumes under the worker's ambient principal).
     if (aura_abi_strong_tenant_scope_resume_v() == 0)
         fail_bits |= kProductionAbiSelfcheckFailBitTenantScope;
+    // Issue #3343: steal linear-probe ABI must be strong under
+    // multi-worker production (weak empty body would skip ownership
+    // probe + escape clear + invalidate_gen on steal).
+    if (aura_abi_strong_probe_linear_on_steal_v() == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitProbeLinear;
 
     // Issue #3195: residual-zero sticky wiring must be present. Header
     // sentinels are 1 unless a mis-link / test store(0) wiped them.

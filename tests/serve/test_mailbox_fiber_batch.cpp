@@ -25,6 +25,8 @@ static int isolate(const char* name, int (*fn)()) {
     const pid_t pid = ::fork();
     if (pid == 0) {
         const int rc = fn();
+        std::fflush(stdout);
+        std::fflush(stderr);
         ::_exit((rc != 0 || aura::test::g_failed != 0) ? 1 : 0);
     }
     if (pid < 0)
@@ -402,6 +404,13 @@ int main() {
         ++members_passed;
         std::println("OK member test_resume_session_revoke ({} checks)", g_passed);
     }
+
+    // Issue #3343: live-isolate steal-complete strong-entry (was inside
+    // #if 0 leftover). Production weak-ABI ACs must actually run.
+    if (isolate("test_steal_complete_strong_entry", run_test_steal_complete_strong_entry) != 0)
+        ++members_failed;
+    else
+        ++members_passed;
 
     std::println("\n=== {} members: {} ok, {} failed ===", members_passed + members_failed,
                  members_passed, members_failed);
