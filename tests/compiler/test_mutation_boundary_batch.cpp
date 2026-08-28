@@ -798,6 +798,42 @@ namespace _3196_detail {
         CHECK(!std::filesystem::exists("tests/issues/test_issue_3196.cpp"), "3196: no invent");
     }
 
+    static void run_3322_nested_observation_window() {
+        std::println("\n=== Issue #3322: nested observation window close ===");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_production_audit_defaults();
+        {
+            CompilerService cs;
+            CHECK(cs.eval("(set-code \"(define a 1) (define b 2)\")").has_value(),
+                  "3322: set-code");
+            CHECK(cs.eval("(eval-current)").has_value(), "3322: eval-current");
+            auto& ev = cs.evaluator();
+            auto* flat = ev.workspace_flat();
+            auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+            const auto closed0 =
+                m->nested_observation_window_closed_total.load(std::memory_order_relaxed);
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard outer(ev, &ok);
+                {
+                    Evaluator::MutationBoundaryGuard inner(ev, &ok);
+                    const auto extra = flat->add_literal(322);
+                    flat->insert_child(0, 0, extra);
+                }
+                CHECK(m->nested_observation_window_closed_total.load(std::memory_order_relaxed) >
+                          closed0,
+                      "3322: nested close bumped");
+                auto r = cs.eval("(eval-current)");
+                CHECK(r.has_value(), "3322: query in nested window ok");
+            }
+        }
+        apply_dev_audit_defaults();
+        CHECK(!std::filesystem::exists("docs/design/3322-nested-observation-window.md"),
+              "3322: no docs/design");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_3322.cpp"), "3322: no invent");
+    }
+
 } // namespace _3196_detail
 
 } // namespace aura_mutation_boundary_batch
@@ -811,5 +847,6 @@ int main() {
     aura_mutation_boundary_batch::_548_detail::run_548_panic_rollback_fiber();
     aura_mutation_boundary_batch::_2313_detail::run_2313_hold_budget();
     aura_mutation_boundary_batch::_3196_detail::run_3196_nested_authority_gap();
+    aura_mutation_boundary_batch::_3196_detail::run_3322_nested_observation_window();
     return RUN_ALL_TESTS();
 }

@@ -34,6 +34,7 @@ extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t 
                                                     int was_violation);
 // Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
 extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
+extern "C" std::uint64_t aura_evaluator_capability_tenant_id(void* ev) noexcept;
 // Issue #3378: forward-declared Evaluator (full type lives in
 // aura::compiler::Evaluator) so the tenant_for_macro_self_evo_check
 // helper can read capability_tenant_id() on the live Evaluator. The
@@ -65,7 +66,10 @@ namespace aura::compiler::macro_exp {
 // `MacroSelfEvo provenance fence` / `MacroSelfEvo policy missing`.
 [[nodiscard]] static std::uint16_t tenant_for_macro_self_evo_check() noexcept {
     if (void* ev = aura_evaluator_resolve_current_for_macro()) {
-        const auto tid = static_cast<aura::compiler::Evaluator*>(ev)->capability_tenant_id();
+        // Evaluator is incomplete in this TU (evaluator.ixx imports this
+        // module). Tenant via C ABI equivalent of
+        // static_cast<aura::compiler::Evaluator*>(ev)->capability_tenant_id().
+        const auto tid = aura_evaluator_capability_tenant_id(ev);
         if (tid != 0)
             return tid;
     }

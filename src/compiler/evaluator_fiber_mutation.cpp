@@ -2092,6 +2092,12 @@ extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept {
     return evaluator_for_scheduler_hooks();
 }
 
+extern "C" std::uint64_t aura_evaluator_capability_tenant_id(void* ev) noexcept {
+    if (!ev)
+        return 0;
+    return static_cast<Evaluator*>(ev)->capability_tenant_id();
+}
+
 // Issue #2810: dual-write per-CompilerMetrics macro_provenance_repin_on_steal
 // when an Evaluator is available. `ev_ptr` may be null — then resolve TLS /
 // scheduler. Returns 1 if per-eval counter was bumped, 0 otherwise.

@@ -3022,6 +3022,102 @@ static void ac3312_5_source_and_linter() {
     CHECK(read_file("tests/compiler/test_issue_3312.cpp").empty(), "3312 AC5: no invent compiler");
 }
 
+static void ac3322_1_nested_closes_window() {
+    std::println("\n--- #3322 AC1: production nested exit closes observation window ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3322 AC1: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "3322 AC1: metrics");
+    const auto closed0 = m->nested_observation_window_closed_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3322 AC1: outer");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            CHECK(ok, "3322 AC1: inner");
+            const auto extra = flat->add_literal(3322);
+            flat->insert_child(0, 0, extra);
+        }
+        CHECK(m->nested_observation_window_closed_total.load(std::memory_order_relaxed) > closed0,
+              "3322 AC1: nested close bumped");
+        CHECK(flat->nested_authority_gap(), "3322 AC1: gap face still published (#3196)");
+        auto r = cs.eval("(eval-current)");
+        CHECK(r.has_value(), "3322 AC1: mid-window query does not crash");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3322_2_soft_zero_extra() {
+    std::println("\n--- #3322 AC2: Soft nested → no observation-window close ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3322 AC2: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto closed0 = m->nested_observation_window_closed_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        Evaluator::MutationBoundaryGuard inner(ev, &ok);
+        const auto extra = flat->add_literal(3323);
+        flat->insert_child(0, 0, extra);
+    }
+    CHECK(m->nested_observation_window_closed_total.load(std::memory_order_relaxed) == closed0,
+          "3322 AC2: Soft no close bump");
+}
+
+static void ac3322_3_outermost_happy_unchanged() {
+    std::println("\n--- #3322 AC3: outermost happy path does not bump nested close ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3322 AC3: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto closed0 = m->nested_observation_window_closed_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3322 AC3: outermost");
+    }
+    CHECK(m->nested_observation_window_closed_total.load(std::memory_order_relaxed) == closed0,
+          "3322 AC3: outermost-only no nested close");
+    apply_dev_audit_defaults();
+}
+
+static void ac3322_4_source_and_linter() {
+    std::println("\n--- #3322 AC4: source-cite + no invent / docs ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto batch = read_file("tests/compiler/test_mutation_boundary_batch.cpp");
+    auto build = read_file("build.py");
+    CHECK(mb.find("Issue #3322") != std::string::npos, "3322 AC4: boundary cites #3322");
+    CHECK(mb.find("invalidate_defuse_index_for_nested") != std::string::npos, "3322 AC4: helper");
+    CHECK(mb.find("render_fast_exit_this_boundary_") != std::string::npos,
+          "3322 AC4: render-fast site");
+    CHECK(met.find("kNestedObservationWindowIssue = 3322") != std::string::npos,
+          "3322 AC4: issue stamp");
+    CHECK(met.find("nested_observation_window_closed_total") != std::string::npos,
+          "3322 AC4: close counter");
+    CHECK(batch.find("run_3322_nested_observation_window") != std::string::npos,
+          "3322 AC4: batch runner");
+    CHECK(build.find("check_nested_observation_window_3322") != std::string::npos,
+          "3322 AC4: build.py wires linter");
+    CHECK(read_file("docs/design/3322-nested-observation-window.md").empty(),
+          "3322 AC4: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3322.cpp").empty(), "3322 AC4: no invent");
+    CHECK(read_file("tests/compiler/test_issue_3322.cpp").empty(), "3322 AC4: no invent compiler");
+}
+
 static void ac3198_1_production_export_uniform() {
     std::println("\n--- #3198 AC1: production children-stable / :as-query-result / export_ref "
                  "fail-closed ---");
@@ -3754,6 +3850,11 @@ int main() {
     ac3312_3_outermost_and_abort_unchanged();
     ac3312_4_never_green_pre_mutate();
     ac3312_5_source_and_linter();
+    std::println("\n=== Issue #3322: nested / render-fast observation window close ===");
+    ac3322_1_nested_closes_window();
+    ac3322_2_soft_zero_extra();
+    ac3322_3_outermost_happy_unchanged();
+    ac3322_4_source_and_linter();
     std::println("\n=== Issue #3198: query:*-stable / :as-query-result restamp export uniform ===");
     ac3198_1_production_export_uniform();
     ac3198_2_soft_shape_unchanged();

@@ -768,6 +768,17 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     const bool nested_boundary = stack.size() > 1;
     auto cp = stack.back();
     stack.pop_back();
+    // Issue #3322: production/Full force-close the pre-proof observation
+    // window (nested exit + outermost render-fast skip). Soft/Off: no-op.
+    // Does not stamp TypeLinearCommitProof or persist occurrence.
+    auto invalidate_defuse_index_for_nested = [&]() noexcept {
+        if (!(typed_audit::production_defaults_active() ||
+              typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+            return;
+        defuse_index_ = nullptr;
+        if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            m->nested_observation_window_closed_total.fetch_add(1, std::memory_order_relaxed);
+    };
     // Issue #3233: pair pcv_checkpoint_live_enter from snapshot.
     struct PcvCkptExit {
         bool on;
@@ -1012,6 +1023,11 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     // soft / Off observe counter only (existing Soft behavior
     // unchanged). Outermost path unaffected (zero AC3 regression).
     if (workspace_flat_ && !stack.empty()) {
+        // Issue #3322: every nested exit under production/Full closes the
+        // observation window (success or fail, structural or not). #3166
+        // only forced on nested_structural_mutate; fail-without-log-delta
+        // left defuse_index_ live until outermost. Soft/Off: helper no-ops.
+        invalidate_defuse_index_for_nested();
         const bool wrap_pending = workspace_flat_->auto_restamp_pending();
         workspace_flat_->restamp_all_node_generations();
         if (wrap_pending) {
@@ -1362,6 +1378,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     mid, audit_op, cp.version, epoch_after, /*success=*/true,
                     static_cast<std::uint32_t>(audit_target),
                     static_cast<std::uint32_t>(nodes_changed), fid);
+                // Issue #3322: production/Full still drop stale defuse/IR so
+                // a mid-boundary query cannot observe pre-proof state before
+                // outermost TypeLinearCommitProof. Soft/Off: helper no-ops.
+                invalidate_defuse_index_for_nested();
                 // Skip Full/composite invariant walk + partial recovery.
             } else {
                 const bool linear_hint = (audit_op.find("linear") != std::string_view::npos) ||
