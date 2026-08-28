@@ -10402,6 +10402,52 @@ def cmd_mutation_boundary_ssot_3384_coverage():
     return 0
 
 
+def cmd_steal_safety_lifetime_proof_latch_3385_coverage():
+    """Issue #3385: LifetimeProofOk residual arm must fire under latched
+    multi-worker Ready even when snapshot mode is Soft (I3 residual).
+
+    Closes the production residual where StealInvariant::LifetimeProofOk
+    in evaluate_residual_hard_and_bits was gated only on
+    is_steal_snapshot_hard_mode(), missing latched multi-worker Ready
+    processes where Soft snapshot mode is on (test seam left armed, or
+    Soft flip after latch). The fix is additive: the gate predicate
+    becomes (hard_mode OR latch), and mailbox_delivery_safety_transaction
+    drops the LifetimeProofOk skip only when (latch AND held-ref). Pure
+    payload without held-ref keeps the skip (zero extra loads).
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: LifetimeProofOk arm in evaluate_residual_hard_and_bits uses
+           (is_steal_snapshot_hard_mode() ||
+            aura_runtime_multi_worker_production_latched() != 0). The
+            existing predicate (proof present + densify_seq>0 +
+            !would_allow) is preserved.
+      AC2: Unlatched Soft: arm short-circuits to false — zero extra
+           loads on the quiet path (same as before #3385).
+      AC3: mailbox_delivery_safety_transaction only skips LifetimeProofOk
+           when NOT (observe_latch && check_envframe). Held-ref delivery
+           under latch observes the arm; pure payload keeps the skip.
+      AC4: Existing #2957/#3001/#3134/#3288 suites green — regression
+           guard lives in test_steal_safety_production_residual_zero.cpp
+           AC16 (source-cite rows for the new gate + mailbox predicate).
+      AC5: No docs/design/3385-* (per MEMORY 2026-07-19). Existing APIs
+           (StealInvariant::LifetimeProofOk, the fail-bump counter
+           g_steal_safety_residual_lifetime_proof_reject_total) preserved
+           — only the outer guard predicate + mailbox skip mask changed.
+    """
+    print(f"{B}=== steal safety LifetimeProofOk latch (#3385) ==={N}")
+    script = ROOT / "scripts" / "check_steal_safety_lifetime_proof_latch_3385.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("steal safety LifetimeProofOk latch (#3385) contract rows failed")
+        return 1
+    ok("steal safety LifetimeProofOk latch (#3385) clean")
+    return 0
+
+
 def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
     """Issue #3307: budget-allow must hard-latch pending residual face
     (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
@@ -19933,6 +19979,7 @@ def cmd_gate():
         or cmd_chaos_soak_hard_gate_2722_coverage()
         or cmd_chaos_soak_residual_zero_2755_coverage()
         or cmd_mutation_boundary_ssot_3384_coverage()
+        or cmd_steal_safety_lifetime_proof_latch_3385_coverage()
     )
     if rc:
         return rc
