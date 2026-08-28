@@ -563,17 +563,30 @@ static void ac2716_6_source_and_linter() {
 }
 
 // ── Issue #2750: full ConstraintSystem::solve recover on occurrence face ──
+// #3380: process-global g_occurrence_full_solve_recover_fn /
+// install_occurrence_full_solve_recover removed (last-TC-wins was a
+// half-green close of #2962 under steal × dual-Evaluator). Recover is now
+// bound to the commit TypeChecker via the Evaluator TLS handle — same
+// shape as #3379's live_policy fill bridge. Source-cite CHECKs reflect
+// the new wiring.
 static void ac2750_1_recover_hook_in_commit_readiness() {
     std::println("\n--- #2750 AC1: recover hook in commit_readiness ---");
     const auto h = read_file("src/compiler/typed_mutation_audit.h");
-    CHECK(h.find("g_occurrence_full_solve_recover_fn") != std::string::npos,
-          "AC1: recover function pointer");
+    // #3380: recover ABI is invoked from commit_readiness via the C ABI
+    // declared in the header (header stays TypeChecker-free).
+    CHECK(h.find("aura_typed_audit_try_occurrence_hard_face_full_solve_recover") !=
+              std::string::npos,
+          "AC1: #3380 recover C ABI declared in header");
+    CHECK(h.find("aura_typed_audit_current_commit_type_checker") != std::string::npos,
+          "AC1: #3380 commit TC lookup C ABI declared in header");
     CHECK(h.find("g_occurrence_hard_face_recover_success_total") != std::string::npos,
           "AC1: recover success counter");
     CHECK(h.find("g_occurrence_hard_face_recover_fail_total") != std::string::npos,
           "AC1: recover fail counter");
     CHECK(h.find("Issue #2750") != std::string::npos || h.find("#2750") != std::string::npos,
           "AC1: cites #2750");
+    CHECK(h.find("Issue #3380") != std::string::npos || h.find("#3380") != std::string::npos,
+          "AC1: cites #3380 (live TC binding)");
 }
 
 static void ac2750_2_typechecker_wires_recover() {
@@ -581,8 +594,9 @@ static void ac2750_2_typechecker_wires_recover() {
     const auto tc = read_file("src/compiler/type_checker.ixx");
     CHECK(tc.find("try_occurrence_hard_face_full_solve_recover") != std::string::npos,
           "AC2: TypeChecker recover method");
-    CHECK(tc.find("install_occurrence_full_solve_recover") != std::string::npos,
-          "AC2: install hook in TypeChecker ctor");
+    // #3380: ctor must NOT install a process-global recover hook (last-TC-wins).
+    CHECK(tc.find("install_occurrence_full_solve_recover") == std::string::npos,
+          "AC2: #3380 ctor does not install process-global recover hook");
     CHECK(tc.find("SolveResult::SOLVED") != std::string::npos, "AC2: full solve SOLVED check");
 }
 
@@ -618,7 +632,7 @@ static void ac2909_1_production_force_recover_or_reject() {
     apply_production_audit_defaults();
 
     // Hermetic: truncate + outside face + no recover hook → hard reject.
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     publish_partial_cone_truncate(/*truncated=*/true, /*dropped=*/4);
     typed_audit::publish_cone_outside_goal_drop(2);
     CommitReadinessInput in;
@@ -644,8 +658,8 @@ static void ac2909_1_production_force_recover_or_reject() {
     clear_cone_truncate_force_closure_for_test();
     publish_partial_cone_truncate(true, 3);
     typed_audit::publish_cone_outside_goal_drop(1);
-    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
-                                                       nullptr);
+    aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                   nullptr);
     in.partial_cone_truncated = true;
     in.cone_outside_goal_drop_face = true;
     r = commit_readiness(in);
@@ -656,7 +670,7 @@ static void ac2909_1_production_force_recover_or_reject() {
     CHECK(!last_partial_cone_truncated(), "AC1: truncate stamp cleared after recover");
     CHECK(typed_audit::cone_outside_goal_drop_total_v_read() == 0,
           "AC1: outside drop face consumed after recover");
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     reset_2621();
 }
 
@@ -781,8 +795,8 @@ static void ac2962_1_recover_non_solved_hard_reject() {
     clear_cone_truncate_force_closure_for_test();
     apply_production_audit_defaults();
     // Recover hook returns true but solve_status is CONFLICT (2) → #2962 rejects.
-    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
-                                                       nullptr);
+    aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                   nullptr);
     publish_partial_cone_truncate(true, 2);
     typed_audit::publish_cone_outside_goal_drop(1);
     CommitReadinessInput in;
@@ -798,7 +812,7 @@ static void ac2962_1_recover_non_solved_hard_reject() {
     CHECK(r.force_reason == "cone_outside_goal_drop", "AC1: force_reason cone_outside_goal_drop");
     CHECK(typed_audit::cone_outside_goal_drop_reject_total_v_read() >= 1,
           "AC1: reject counter advanced");
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     // Null recover → reject.
     clear_cone_outside_goal_drop_for_test();
     clear_partial_cone_truncate_for_test();
@@ -809,7 +823,7 @@ static void ac2962_1_recover_non_solved_hard_reject() {
     r = commit_readiness(in);
     CHECK(!r.would_allow_commit, "AC1: null recover hard-rejects");
     CHECK(r.force_reason == "cone_outside_goal_drop", "AC1: force_reason stable");
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     reset_2621();
 }
 
@@ -819,8 +833,8 @@ static void ac2962_2_recover_ok_counters() {
     clear_cone_outside_goal_drop_for_test();
     clear_cone_truncate_force_closure_for_test();
     apply_production_audit_defaults();
-    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
-                                                       nullptr);
+    aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                   nullptr);
     publish_partial_cone_truncate(true, 1);
     typed_audit::publish_cone_outside_goal_drop(1);
     CommitReadinessInput in;
@@ -837,7 +851,7 @@ static void ac2962_2_recover_ok_counters() {
     CHECK(r.force_reason == "ok", "AC2: recovered → ok");
     CHECK(typed_audit::cone_outside_goal_drop_recover_ok_total_v_read() > ok0,
           "AC2: recover-ok total advanced");
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     reset_2621();
 }
 

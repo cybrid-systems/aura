@@ -876,7 +876,7 @@ static void ac2911_1_production_reject_on_drift() {
     in.refined_consistency_hard = true;
     in.refined_consistency_drift = true;
     // No recover hook → hard reject.
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     auto r = commit_readiness(in);
     CHECK(!r.would_allow_commit, "2911 AC1: no silent green on refined drift");
     CHECK(r.force_reason == "refined_drift", "2911 AC1: force_reason refined_drift");
@@ -907,8 +907,8 @@ static void ac2911_2_soft_observe_and_recover() {
     clear_refined_consistency_drift_for_test();
     apply_production_audit_defaults();
     note_refined_consistency_drift(true);
-    typed_audit::install_occurrence_full_solve_recover([](void*) noexcept -> bool { return true; },
-                                                       nullptr);
+    aura_typed_audit_test_install_recover_override([](void*) noexcept -> bool { return true; },
+                                                   nullptr);
     CommitReadinessInput hard;
     hard.solve_status = 0;
     hard.linear_ok = true;
@@ -919,7 +919,7 @@ static void ac2911_2_soft_observe_and_recover() {
     CHECK(r.would_allow_commit, "2911 AC2: recover success allows");
     CHECK(r.force_reason == "ok", "2911 AC2: recovered → ok");
     CHECK(refined_consistency_recover_total_v_read() >= 1, "2911 AC2: recover total");
-    typed_audit::install_occurrence_full_solve_recover(nullptr, nullptr);
+    aura_typed_audit_test_install_recover_override(nullptr, nullptr);
     clear_refined_consistency_drift_for_test();
     apply_dev_audit_defaults();
     reset_for_test();

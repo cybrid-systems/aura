@@ -3025,10 +3025,16 @@ export struct TypeChecker {
         // Issue #3202: env-default Strict must reach the long-lived CS.
         solve_delta_cs_.set_unify_gradual_mode(strict_ ? GradualPermissiveness::Strict
                                                        : gradual_permissiveness_);
-        // Issue #2750: wire occurrence hard-face full-solve recover into
-        // commit_readiness (production face hit → one full solve attempt).
-        aura::compiler::typed_audit::install_occurrence_full_solve_recover(
-            &TypeChecker::occurrence_full_solve_recover_trampoline, this);
+        // Issue #3380: ctor no longer installs a process-global recover
+        // hook. Recover is bound to the commit TypeChecker used by
+        // persist via the Evaluator TLS handle (set at outermost
+        // enter_mutation_boundary, cleared at outermost exit — same
+        // shape as #3379's live_policy fill). Last-TC-wins on a
+        // process-global slot was a half-green close of #2962 under
+        // steal × dual-Evaluator (a stack TypeChecker built in
+        // run_post_mutate_typecheck_no_lock could overwrite the slot
+        // and a vacuous SOLVED on the wrong CS would clear the
+        // victim's faces).
     }
 
     // Issue #2750 / #2909 / #2962: full ConstraintSystem::solve recover for
@@ -3062,11 +3068,12 @@ export struct TypeChecker {
         }
         return false;
     }
-    static bool occurrence_full_solve_recover_trampoline(void* ctx) noexcept {
-        if (!ctx)
-            return false;
-        return static_cast<TypeChecker*>(ctx)->try_occurrence_hard_face_full_solve_recover();
-    }
+    // Issue #3380: removed occurrence_full_solve_recover_trampoline —
+    // recover is invoked directly on the commit TC bound to the live
+    // Evaluator (C ABI aura_typed_audit_try_occurrence_hard_face_full_solve_recover
+    // in evaluator_mutation_boundary.cpp). The trampoline + the
+    // process-global install_occurrence_full_solve_recover fn/ctx slot
+    // were last-TC-wins and are superseded by the live-TC lookup.
 
     // Issue #2995: pure health snapshot. Soft + empty goals / no faces
     // is loads only (no persist write, no recover, counters stable).

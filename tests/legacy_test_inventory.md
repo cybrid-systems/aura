@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 872 | Preferred destination suites |
-| **Total scanned** | **872** | |
+| `tests/core/test_*.cpp` | 873 | Preferred destination suites |
+| **Total scanned** | **873** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 261 | 261 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 262 | 262 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
@@ -1022,6 +1022,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_type_txn_misc_batch.cpp`
 - `tests/compiler/test_typechecker_incremental_batch.cpp`
 - `tests/compiler/test_typed_audit_commit_readiness_live_policy.cpp`
+- `tests/compiler/test_typed_audit_commit_readiness_recover_acl.cpp`
 - `tests/compiler/test_typed_mutation_audit_decision.cpp`
 - `tests/compiler/test_typed_summary_full_gate.cpp`
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp`
@@ -1187,13 +1188,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (261)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (262)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (261)
+#### domain/ (262)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1441,6 +1442,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_system_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Score definition (header + pure compute)
 - `tests/compiler/test_type_timeout_repair.cpp` (—) [domain_suite, theme_compiler] — test_type_timeout_repair.cpp
 - `tests/compiler/test_typed_audit_commit_readiness_live_policy.cpp` (—) [domain_suite, theme_compiler] — blame_ok / cs_has_work / truncated_reverify from the current commit
+- `tests/compiler/test_typed_audit_commit_readiness_recover_acl.cpp` (—) [domain_suite, theme_compiler] — Fix contract (AC1–AC4 from the issue body):
 - `tests/compiler/test_typed_mutation_audit_decision.cpp` (—) [domain_suite, theme_compiler] — (≥12 cells per AC4) + the query schema sentinels (AC2/AC3).
 - `tests/compiler/test_typed_summary_full_gate.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_typed_summary_full_gate.cpp
 - `tests/compiler/test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp` (—) [domain_suite, theme_compiler] — test_typesystem_solve_delta_occurrence_priority_heavy_mutate.cpp — Issue #745:
