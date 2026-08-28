@@ -138,6 +138,18 @@ extern "C" std::uint64_t aura_sync_remount_pure_anon_budget_base() noexcept;
 // unlock is UB). Nested / inert never publish.
 static thread_local aura::compiler::Evaluator::MutationBoundaryGuard* g_tls_outermost_guard =
     nullptr;
+// Issue #3312: nested log-from captured at nested success so Guard dtor
+// can re-seed the thin cone after exit_mutation_boundary (cascade /
+// wrap restamp_all refill the full-tree eager face).
+static thread_local std::size_t g_tls_nested_hot_cone_from = ~std::size_t{0};
+
+static void restamp_nested_thin_hot_cone(aura::ast::FlatAST& ws, std::size_t log_from) {
+    const auto delta = ws.mutation_log_size() > log_from ? ws.mutation_log_size() - log_from : 0;
+    const auto budget = aura::ast::restamp_budget_nodes_effective();
+    const auto cap = aura::ast::restamp_hot_cone_budget(budget == 0 ? 64u : budget);
+    (void)ws.restamp_hot_cone_after_budget(
+        (delta > 0 && delta <= static_cast<std::uint64_t>(cap)) ? cap : 0u, log_from);
+}
 
 // Issue #2640: production Restricted default periodic epoch-invariant soft walk
 // (gated by mode=Soft + production_defaults_active + steady_ms rate limit;
@@ -930,15 +942,44 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // that query:*-stable / stamp export / QueryResult freshness
         // consult. Does NOT run unified_restamp_after_boundary (outermost
         // still owns the triad). Soft / Off: zero extra (AC2).
-        // Issue #3259: nested success does NOT eager-restamp the hot
-        // cone (restamp_hot_cone_after_budget). Full hot-cone restamp
-        // is outermost-only via unified_restamp_after_boundary.
+        // Issue #3259: outermost over-budget hot-cone stays on
+        // unified_restamp_after_boundary. Nested never runs the full triad.
+        // Issue #3312: production nested success may thin-hot-cone the
+        // nested-touched nodes when the log delta fits the hot-cone cap
+        // (reuse restamp_hot_cone_after_budget). Gap remains for nodes
+        // outside that cone. Agents must not treat nested OK as triad
+        // complete — nested_return_not_triad_complete stays 1 until
+        // outermost clears the gap.
         if (success && (typed_audit::production_defaults_active() ||
                         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
             defuse_index_ = nullptr;
             workspace_flat_->note_nested_authority_gap();
-            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
+            if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                 m->nested_authority_gap_total.fetch_add(1, std::memory_order_relaxed);
+                m->nested_return_not_triad_complete.store(1, std::memory_order_relaxed);
+            }
+            // Drop restamp_all eager bits so a full-tree eager restamp
+            // cannot leak export outside the nested cone. Always take the
+            // log-from restamp_hot_cone_after_budget path (cap 0 still
+            // fills eager=0 in ast_impl) — do not rely on a cross-module
+            // clear_restamp_eager_bits fill.
+            workspace_flat_->clear_restamp_eager_bits();
+            const auto delta = workspace_flat_->mutation_log_size() > cp.mutation_log_size
+                                   ? workspace_flat_->mutation_log_size() - cp.mutation_log_size
+                                   : 0;
+            const auto budget = aura::ast::restamp_budget_nodes_effective();
+            const auto cap = aura::ast::restamp_hot_cone_budget(budget == 0 ? 64u : budget);
+            g_tls_nested_hot_cone_from = cp.mutation_log_size;
+            const auto n = workspace_flat_->restamp_hot_cone_after_budget(
+                (delta > 0 && delta <= static_cast<std::uint64_t>(cap)) ? cap : 0u,
+                cp.mutation_log_size);
+            if (n > 0) {
+                if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
+                    m->nested_hot_cone_restamp_total.fetch_add(1, std::memory_order_relaxed);
+                    m->nested_hot_cone_restamp_nodes_total.fetch_add(static_cast<std::uint64_t>(n),
+                                                                     std::memory_order_relaxed);
+                }
+            }
         }
     }
     // Issue #1283: unified provenance capture at Guard boundary exit.
@@ -1868,6 +1909,12 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             }
         }
     }
+    // Issue #3312: re-seed thin cone before return so cascade / wrap
+    // restamp_all later in this function cannot leave a full-tree eager face.
+    if (nested_boundary && success && workspace_flat_ &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full))
+        restamp_nested_thin_hot_cone(*workspace_flat_, cp.mutation_log_size);
     return cp;
 }
 
@@ -3449,8 +3496,27 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                                                          std::memory_order_relaxed);
         }
         // Issue #3196: outermost triad published — drop nested authority-gap.
-        if (auto* ws = ev_->workspace_flat())
+        // Issue #3312: record the nested-return → outermost window length.
+        if (auto* ws = ev_->workspace_flat()) {
+            if (ws->nested_authority_gap()) {
+                const auto open = ws->nested_authority_gap_open_ns();
+                if (open != 0) {
+                    const auto now_ns = static_cast<std::uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+                    const auto window = now_ns >= open ? now_ns - open : 0;
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
+                        m->nested_authority_gap_last_window_ns.store(window,
+                                                                     std::memory_order_relaxed);
+                        m->nested_authority_gap_windows_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        m->nested_return_not_triad_complete.store(0, std::memory_order_relaxed);
+                    }
+                }
+            }
             ws->clear_nested_authority_gap();
+        }
         // Issue #2003: EnvFrame lifetime scan at boundary exit.
         {
             aura::core::envframe_lifetime::EnvFrameLifetimeGuard envframe_guard{
@@ -4859,6 +4925,16 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // throughout the Guard lifetime. Atomic store nullptr (release).
     if (is_outermost_ && aura::serve::g_current_fiber) {
         aura::serve::g_current_fiber->clear_evaluator_id();
+    }
+    // Issue #3312: last writer of restamp_eager_ on nested production
+    // success. exit_mutation_boundary cascade / wrap restamp_all can
+    // refill the full-tree eager face after the early thin cone.
+    if (!outermost && success && ev_ && ev_->workspace_flat_ &&
+        g_tls_nested_hot_cone_from != ~std::size_t{0} &&
+        (typed_audit::production_defaults_active() ||
+         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
+        restamp_nested_thin_hot_cone(*ev_->workspace_flat_, g_tls_nested_hot_cone_from);
+        g_tls_nested_hot_cone_from = ~std::size_t{0};
     }
     // unique_lock destructor runs automatically here.
 }

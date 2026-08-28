@@ -6,14 +6,15 @@ production must eager-restamp dirty roots + parent chain up to
 restamp_hot_cone_budget (default budget/2) so Agent-held StableNodeRef /
 QueryResult on those nodes stay exportable. Remainder stays torn /
 restamp-lag. Soft / budget==0 / no production_defaults: zero extra.
-Nested Guard success still only publishes authority-gap.
+Nested Guard success may thin-hot-cone (#3312) but never runs
+unified_restamp_after_boundary (outermost still owns the triad).
 
 Contract:
   AC1  production + over-budget + hot cone → export / query:*-stable succeed
   AC2  node outside hot cone → structured restamp-lag (never green pre-mutate)
   AC3  Soft / budget==0 / !production → zero extra
   AC4  restamp_over_budget_torn / torn-visible / query-epoch stale remain
-  AC5  nested success does not hot-cone; linter after #3258; no invent
+  AC5  nested success does not run unified_restamp; linter after #3258; no invent
 
 Exit 0 = all rows satisfied.
 """
@@ -82,9 +83,10 @@ def main() -> int:
     nest = emb.find("if (workspace_flat_ && !stack.empty())")
     nwin = emb[nest : nest + 3200] if nest >= 0 else ""
     must("restamp_all_node_generations", "AC5 nested restamp_all", nwin)
-    if "restamp_hot_cone_after_budget(" in nwin:
-        fails.append("AC5: nested restamp must not call restamp_hot_cone_after_budget")
+    if "unified_restamp_after_boundary(" in nwin:
+        fails.append("AC5: nested must not call unified_restamp_after_boundary")
     must("Issue #3259", "AC5 nested cite", nwin)
+    must("Issue #3312", "AC5 nested thin hot-cone", nwin)
     must("ac3259_5_source_and_linter", "AC5 tenant-capture", cap)
     must("check_restamp_hot_cone_budget_3259", "AC5 build.py", build)
     prev = build.find("check_abort_force_lookup_reject_3258")

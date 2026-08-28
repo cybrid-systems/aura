@@ -2707,10 +2707,19 @@ static void ac3196_1_production_nested_export_fail_closed() {
         CHECK(flat->nested_authority_gap(), "3196 AC1: gap set after nested success");
         CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) > gap0,
               "3196 AC1: nested_authority_gap_total bumped");
-        CHECK(!ev.allow_query_stable_ref_export(live),
-              "3196 AC1: query export fail-closed in nested window");
         CHECK(ev.query_stable_hard_reject_torn(), "3196 AC1: torn probe sees gap");
-        aura::ast::FlatAST::StableNodeRef ref = flat->make_ref_layout(live);
+        aura::ast::NodeId outside = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (flat->is_live_node(id) && !flat->is_free_slot(id) &&
+                !flat->node_eagerly_restamped(id)) {
+                outside = id;
+                break;
+            }
+        }
+        CHECK(outside != aura::ast::NULL_NODE, "3196 AC1: node outside nested cone");
+        CHECK(!ev.allow_query_stable_ref_export(outside),
+              "3196 AC1: query export fail-closed outside nested cone");
+        aura::ast::FlatAST::StableNodeRef ref = flat->make_ref_layout(outside);
         ev.stamp_query_stable_ref_export(ref);
         CHECK(ref.id == aura::ast::NULL_NODE, "3196 AC1: stamp export nulls half-authority ref");
     }
@@ -2800,6 +2809,217 @@ static void ac3196_4_source_and_linter() {
           "3196 AC5: no docs/design/");
     CHECK(read_file("tests/issues/test_issue_3196.cpp").empty(), "3196 AC5: no invent");
     CHECK(read_file("tests/compiler/test_issue_3196.cpp").empty(), "3196 AC5: no invent compiler");
+}
+
+static void ac3312_1_nested_hot_cone_or_gap() {
+    std::println("\n--- #3312 AC1: production nested-touched exportable; outside stays gap ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3312 AC1: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "3312 AC1: workspace_flat");
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "3312 AC1: metrics");
+    const auto hot0 = m->nested_hot_cone_restamp_total.load(std::memory_order_relaxed);
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3312 AC1: live node");
+    bool ok = true;
+    aura::ast::NodeId extra = aura::ast::NULL_NODE;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3312 AC1: outer");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            CHECK(ok, "3312 AC1: inner");
+            extra = flat->add_literal(3312);
+            flat->insert_child(live, 0, extra);
+        }
+        CHECK(flat->nested_authority_gap(), "3312 AC1: gap face published");
+        CHECK(m->nested_return_not_triad_complete.load(std::memory_order_relaxed) == 1,
+              "3312 AC1: nested return not triad-complete");
+        CHECK(m->nested_hot_cone_restamp_total.load(std::memory_order_relaxed) > hot0,
+              "3312 AC1: thin hot-cone ran");
+        CHECK(flat->node_eagerly_restamped(live), "3312 AC1: nested-touched parent eager");
+        CHECK(ev.allow_query_stable_ref_export(live),
+              "3312 AC1: nested-touched query:*-stable exportable");
+        if (!flat->is_free_slot(extra) && flat->is_live_node(extra)) {
+            CHECK(flat->node_eagerly_restamped(extra), "3312 AC1: nested new child eager");
+            CHECK(ev.allow_query_stable_ref_export(extra),
+                  "3312 AC1: nested new child query:*-stable exportable");
+        }
+        aura::ast::NodeId outside = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (flat->is_live_node(id) && !flat->is_free_slot(id) &&
+                !flat->node_eagerly_restamped(id)) {
+                outside = id;
+                break;
+            }
+        }
+        CHECK(outside != aura::ast::NULL_NODE, "3312 AC1: outside-cone node");
+        CHECK(!ev.allow_query_stable_ref_export(outside),
+              "3312 AC1: outside cone stays structured gap");
+        CHECK(ev.query_stable_hard_reject_torn(), "3312 AC1: workspace gap probe remains");
+    }
+    CHECK(!flat->nested_authority_gap(), "3312 AC3: outermost clears gap");
+    CHECK(m->nested_return_not_triad_complete.load(std::memory_order_relaxed) == 0,
+          "3312 AC3: triad complete after outermost");
+    CHECK(m->nested_authority_gap_windows_total.load(std::memory_order_relaxed) >= 1,
+          "3312 AC1: window length recorded");
+    apply_dev_audit_defaults();
+}
+
+static void ac3312_2_soft_zero_extra() {
+    std::println("\n--- #3312 AC2: Soft nested success → zero extra ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3312 AC2: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto hot0 = m->nested_hot_cone_restamp_total.load(std::memory_order_relaxed);
+    const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        Evaluator::MutationBoundaryGuard inner(ev, &ok);
+        const auto extra = flat->add_literal(3313);
+        flat->insert_child(0, 0, extra);
+    }
+    CHECK(!flat->nested_authority_gap(), "3312 AC2: Soft no gap");
+    CHECK(m->nested_hot_cone_restamp_total.load(std::memory_order_relaxed) == hot0,
+          "3312 AC2: Soft no hot-cone");
+    CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) == gap0,
+          "3312 AC2: Soft no gap bump");
+    CHECK(m->nested_return_not_triad_complete.load(std::memory_order_relaxed) == 0,
+          "3312 AC2: Soft no triad flag");
+}
+
+static void ac3312_3_outermost_and_abort_unchanged() {
+    std::println("\n--- #3312 AC3: outermost triad + nested abort unchanged ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3312 AC3: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* m = static_cast<aura::compiler::CompilerMetrics*>(ev.compiler_metrics());
+    const auto hot0 = m->nested_hot_cone_restamp_total.load(std::memory_order_relaxed);
+    const auto gap0 = m->nested_authority_gap_total.load(std::memory_order_relaxed);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3312 AC3: outermost");
+        const auto extra = flat->add_literal(3314);
+        flat->insert_child(0, 0, extra);
+        CHECK(!flat->nested_authority_gap(), "3312 AC3: no gap on outermost-only");
+    }
+    CHECK(m->nested_hot_cone_restamp_total.load(std::memory_order_relaxed) == hot0,
+          "3312 AC3: outermost-only does not nested-hot-cone");
+    CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) == gap0,
+          "3312 AC3: outermost-only does not bump gap");
+    bool inner_ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3312 AC3: abort outer");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &inner_ok);
+            CHECK(inner_ok, "3312 AC3: abort inner");
+            inner_ok = false;
+        }
+        CHECK(!flat->nested_authority_gap(), "3312 AC3: nested abort does not publish gap");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3312_4_never_green_pre_mutate() {
+    std::println("\n--- #3312 AC4: never green pre-mutate gen ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3312 AC4: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    aura::ast::NodeId live = 0;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            const auto extra = flat->add_literal(3315);
+            flat->insert_child(live, 0, extra);
+            (void)extra;
+        }
+        // After nested success: gap is up; only the nested cone is eager.
+        // A non-cone stamp must stay null (never green a pre-mutate gen).
+        bool stamped = false;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (!flat->is_live_node(id) || flat->is_free_slot(id))
+                continue;
+            if (!flat->node_eagerly_restamped(id)) {
+                aura::ast::FlatAST::StableNodeRef ref = flat->make_ref_layout(id);
+                ev.stamp_query_stable_ref_export(ref);
+                CHECK(ref.id == aura::ast::NULL_NODE,
+                      "3312 AC4: non-cone stamp export does not green pre-mutate");
+                stamped = true;
+                break;
+            }
+        }
+        CHECK(stamped, "3312 AC4: found a non-cone node to stamp");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3312_5_source_and_linter() {
+    std::println("\n--- #3312 AC5: source-cite + no invent / docs ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto sec = read_file("src/compiler/evaluator_security.cpp");
+    auto ast = read_file("src/core/ast.ixx");
+    auto met = read_file("src/compiler/observability_metrics.h");
+    auto batch = read_file("tests/compiler/test_mutation_boundary_batch.cpp");
+    auto build = read_file("build.py");
+    CHECK(mb.find("Issue #3312") != std::string::npos, "3312 AC5: boundary cites #3312");
+    CHECK(mb.find("restamp_hot_cone_after_budget") != std::string::npos,
+          "3312 AC5: reuses #3259 collector");
+    CHECK(mb.find("unified_restamp_after_boundary") != std::string::npos,
+          "3312 AC5: outermost triad preserved");
+    CHECK(mb.find("clear_restamp_eager_bits") != std::string::npos,
+          "3312 AC5: drop full-tree eager");
+    CHECK(sec.find("Issue #3259 / #3312") != std::string::npos ||
+              sec.find("Issue #3312") != std::string::npos,
+          "3312 AC5: export gate cites");
+    CHECK(ast.find("clear_restamp_eager_bits") != std::string::npos, "3312 AC5: FlatAST helper");
+    CHECK(ast.find("nested_authority_gap_open_ns") != std::string::npos, "3312 AC5: window stamp");
+    CHECK(met.find("kNestedReturnNotTriadIssue = 3312") != std::string::npos,
+          "3312 AC5: issue stamp");
+    CHECK(met.find("nested_hot_cone_restamp_total") != std::string::npos,
+          "3312 AC5: hot-cone total");
+    CHECK(met.find("nested_return_not_triad_complete") != std::string::npos,
+          "3312 AC5: last-authority flag");
+    CHECK(batch.find("3196") != std::string::npos, "3312 AC5: batch suite still covers nested gap");
+    CHECK(build.find("check_nested_return_not_triad_3312") != std::string::npos,
+          "3312 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3312-nested-return-not-triad.md").empty(),
+          "3312 AC5: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3312.cpp").empty(), "3312 AC5: no invent");
+    CHECK(read_file("tests/compiler/test_issue_3312.cpp").empty(), "3312 AC5: no invent compiler");
 }
 
 static void ac3198_1_production_export_uniform() {
@@ -3240,7 +3460,7 @@ static void ac3259_3_soft_zero_extra() {
 }
 
 static void ac3259_5_source_and_linter() {
-    std::println("\n--- #3259 AC5: source-cite + linter + nested outermost-only ---");
+    std::println("\n--- #3259 AC5: source-cite + linter + nested no full triad ---");
     const auto restamp = read_file("src/core/flatast_restamp.hh");
     const auto astx = read_file("src/core/ast.ixx");
     const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
@@ -3255,8 +3475,9 @@ static void ac3259_5_source_and_linter() {
     auto npos = emb.find("if (workspace_flat_ && !stack.empty())");
     CHECK(npos != std::string::npos, "3259 AC5: nested");
     auto nwin = emb.substr(npos, 3200);
-    CHECK(nwin.find("restamp_hot_cone_after_budget(") == std::string::npos,
-          "3259 AC5: nested no hot-cone");
+    CHECK(nwin.find("unified_restamp_after_boundary(") == std::string::npos,
+          "3259 AC5: nested does not run full triad");
+    CHECK(nwin.find("Issue #3312") != std::string::npos, "3259 AC5: nested thin hot-cone #3312");
     CHECK(cap.find("ac3259_1_hot_cone_export") != std::string::npos, "3259 AC5: tenant-capture");
     CHECK(!lint.empty() && lint.find("Issue #3259") != std::string::npos, "3259 AC5: linter");
     CHECK(build.find("check_restamp_hot_cone_budget_3259") != std::string::npos,
@@ -3527,6 +3748,12 @@ int main() {
     ac3196_2_soft_zero_extra();
     ac3196_3_outermost_clears_gap();
     ac3196_4_source_and_linter();
+    std::println("\n=== Issue #3312: nested return is never triad-complete (thin hot-cone) ===");
+    ac3312_1_nested_hot_cone_or_gap();
+    ac3312_2_soft_zero_extra();
+    ac3312_3_outermost_and_abort_unchanged();
+    ac3312_4_never_green_pre_mutate();
+    ac3312_5_source_and_linter();
     std::println("\n=== Issue #3198: query:*-stable / :as-query-result restamp export uniform ===");
     ac3198_1_production_export_uniform();
     ac3198_2_soft_shape_unchanged();

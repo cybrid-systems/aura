@@ -1434,12 +1434,12 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
-    // #3230: !ws->restamp_last_budget_exceeded() && !torn.
-    if (!ws->nested_authority_gap() && !ws->restamp_over_budget_torn())
+    // #3230/#3259/#3312: eager cone exports; gap/torn remainder fail-closed.
+    if (ws->node_eagerly_restamped(id))
         return true;
-    if (!ws->nested_authority_gap() && ws->node_eagerly_restamped(id))
+    if (!ws->nested_authority_gap() && !ws->restamp_last_budget_exceeded() &&
+        !ws->restamp_over_budget_torn())
         return true;
-    // Issue #3076: production Hard sibling — Soft observe must not rise.
     if (typed_audit::should_hard_reject_soft_sibling()) {
         ::aura::core::provenance::record_query_stable_ref_restamp_lag_prevented();
         ::aura::core::provenance::record_query_stable_ref_restamp_torn_reject();
@@ -1479,7 +1479,8 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
     if (workspace_flat_ && ref.id != ast::NULL_NODE) {
         // Issue #3230: consult torn/budget *before* make_ref_layout so
         // lazy-align cannot hide a pre-mutate gen. Soft allow proceeds.
-        // Issue #3259: hot-cone eager bit is accepted by allow; lagging
+        // Issue #3259 / #3312: hot-cone eager bit is accepted by allow
+        // (outermost over-budget cone and nested-touched cone). Lagging
         // remainder still nulls (never green a pre-mutate gen).
         if (!allow_query_stable_ref_export(ref.id)) {
             ref = {};

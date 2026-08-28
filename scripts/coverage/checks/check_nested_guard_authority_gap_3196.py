@@ -85,6 +85,7 @@ def main() -> int:
     # AC5 / AC6
     must("check_nested_guard_authority_gap_3196", "AC6 build.py", build)
     must("ac3196_4_source_and_linter", "AC5 hygiene source", hyg)
+    # Residual #3312: nested thin hot-cone does not replace the gap face.
 
     if (ROOT / "tests" / "issues" / "test_issue_3196.cpp").is_file():
         fails.append("AC5: forbidden tests/issues/test_issue_3196.cpp per #81967")

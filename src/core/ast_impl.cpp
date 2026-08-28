@@ -942,20 +942,40 @@ void FlatAST::restamp_all_node_generations() {
     }
 }
 
+// --- FlatAST::clear_restamp_eager_bits ---
+void FlatAST::clear_restamp_eager_bits() noexcept {
+    if (!restamp_eager_.empty())
+        std::fill(restamp_eager_.begin(), restamp_eager_.end(), 0);
+}
+
 // --- FlatAST::restamp_hot_cone_after_budget ---
 // Issue #3259: eager-restamp dirty/touched + parent chain, capped.
 // Does not clear restamp_last_budget_exceeded_ / restamp_generation_torn_
 // (remainder stays fail-closed). Soft/budget==0 never call this.
-std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes) {
-    if (max_nodes == 0)
+std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes,
+                                                   std::size_t mutation_log_from) {
+    // Issue #3312: nested log-from path must drop restamp_all eager bits in
+    // THIS TU. A cross-module fill on restamp_eager_ can no-op (GCC
+    // modules), which left the full-tree restamp_all face exportable.
+    if (mutation_log_from != ~std::size_t{0}) {
+        if (restamp_eager_.size() < size())
+            restamp_eager_.resize(size(), 0);
+        if (!restamp_eager_.empty())
+            std::fill(restamp_eager_.begin(), restamp_eager_.end(), 0);
+        if (max_nodes == 0)
+            return 0;
+    } else if (max_nodes == 0) {
         return 0;
+    }
     if (restamp_eager_.size() < size())
         restamp_eager_.resize(size(), 0);
     std::size_t restamped = 0;
-    auto restamp_one = [&](NodeId id) {
+    auto restamp_one = [&](NodeId id, bool allow_free) {
         if (restamped >= max_nodes)
             return;
-        if (id == NULL_NODE || id >= size() || is_free_slot(id))
+        if (id == NULL_NODE || id >= size())
+            return;
+        if (!allow_free && is_free_slot(id))
             return;
         if (id >= node_gen_.size())
             return;
@@ -971,7 +991,7 @@ std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes) {
         std::size_t hops = 0;
         const auto hop_cap = size() + 1;
         while (cur != NULL_NODE && restamped < max_nodes && hops < hop_cap) {
-            restamp_one(cur);
+            restamp_one(cur, /*allow_free=*/mutation_log_from != ~std::size_t{0});
             const NodeId p = cur < parent_.size() ? parent_[cur] : NULL_NODE;
             if (p == cur)
                 break;
@@ -979,13 +999,28 @@ std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes) {
             ++hops;
         }
     };
-    for (NodeId id = 0; id < size() && restamped < max_nodes; ++id) {
-        if (id == NULL_NODE || is_free_slot(id) || !is_live_node(id))
-            continue;
-        const bool touched = id < restamp_touched_.size() && restamp_touched_[id] != 0;
-        if (!touched && !is_dirty(id))
-            continue;
-        walk_seed(id);
+    // Issue #3312: nested Guard success seeds from the nested mutation-log
+    // delta only (new child is rec.new_value; parent is rec.target_node).
+    // Dirty/touched scan would restamp historical set-code nodes first and
+    // starve the nested-touched cone under the hot-cone cap.
+    if (mutation_log_from != ~std::size_t{0}) {
+        for (std::size_t i = mutation_log_from; i < mutation_log_.size() && restamped < max_nodes;
+             ++i) {
+            const auto& rec = mutation_log_[i];
+            walk_seed(rec.target_node);
+            walk_seed(rec.parent_id);
+            walk_seed(static_cast<NodeId>(rec.new_value));
+            walk_seed(static_cast<NodeId>(rec.old_value));
+        }
+    } else {
+        for (NodeId id = 0; id < size() && restamped < max_nodes; ++id) {
+            if (id == NULL_NODE || is_free_slot(id) || !is_live_node(id))
+                continue;
+            const bool touched = id < restamp_touched_.size() && restamp_touched_[id] != 0;
+            if (!touched && !is_dirty(id))
+                continue;
+            walk_seed(id);
+        }
     }
     if (restamped > 0) {
         restamp_incremental_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);
