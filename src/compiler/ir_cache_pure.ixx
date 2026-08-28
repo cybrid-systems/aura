@@ -730,11 +730,29 @@ struct SourceToIrDesyncRecovery {
 
 // preferred_func_indices: dirty function slots to patch first.
 // Empty → patch all live functions before optional full rebuild.
-[[nodiscard]] inline SourceToIrDesyncRecovery recover_source_to_ir_map_desync(
-    const std::vector<aura::ir::IRFunction>& irs, SourceToIrMap& map,
-    const std::vector<std::size_t>& preferred_func_indices = {}) noexcept {
+// Issue #3324: force_full_rebuild (production abort-stale) skips
+// partial patch — a mix of pre-abort NodeIds can pass a shallow
+// consistency check after patching only preferred funcs. Soft /
+// tests keep default false (zero extra). Abort-stale callers that
+// must not rebuild from pre-abort IR should pass force_full_rebuild
+// AND treat recovered=false as "full relower required" without
+// using the rebuilt map.
+[[nodiscard]] inline SourceToIrDesyncRecovery
+recover_source_to_ir_map_desync(const std::vector<aura::ir::IRFunction>& irs, SourceToIrMap& map,
+                                const std::vector<std::size_t>& preferred_func_indices = {},
+                                bool force_full_rebuild = false) noexcept {
     SourceToIrDesyncRecovery r;
     r.bad_before = count_source_to_ir_map_inconsistencies(irs, map);
+    if (force_full_rebuild) {
+        // Issue #3324: do not partial-patch a pre-abort map. Clear so
+        // a shallow consistent-empty cannot hide leftover NodeIds;
+        // recovered=false → caller full-relowers (store rebuilds map).
+        map.clear();
+        r.used_full_rebuild = true;
+        r.bad_after = 0;
+        r.recovered = false;
+        return r;
+    }
     if (r.bad_before == 0) {
         r.recovered = true;
         r.bad_after = 0;

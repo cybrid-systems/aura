@@ -4931,6 +4931,13 @@ public:
         const auto abort_gen0 = abort_force_generation_.load(std::memory_order_acquire);
         if (abort_force_rejects_clean_hit_(it->second, abort_gen0))
             return 1;
+        // Issue #3324: abort dual-topology restore cleared the map and
+        // marked abort_map_invalid. lookup must not treat a later
+        // dirty-cleared / live-restamped entry as a clean hit while the
+        // map/IR still belong to pre-abort identity. Soft abort already
+        // set the flag (force-dirty is abort-path, not production-gated).
+        if (it->second.abort_map_invalid)
+            return 1;
         std::uint32_t reasons = 0;
         const bool need = should_relower(source_hash, it->second.source_hash, it->second.dirty,
                                          it->second.version_stamp_, cur_mut, cur_bridge, cur_defuse,
@@ -5234,8 +5241,19 @@ public:
                 if (entry.func_dirty_block_count(fi) > 0)
                     preferred.push_back(fi);
             }
-            auto rec =
-                recover_source_to_ir_map_desync(entry.irs, entry.source_to_ir_map, preferred);
+            // Issue #3324: production/Strict abort-stale map must not
+            // partial-patch pre-abort NodeIds (shallow consistency can
+            // hide leftover locs). Soft / never-aborted: force_full false.
+            const bool abort_stale_map =
+                abort_force_generation_.load(std::memory_order_acquire) != 0 &&
+                (aura::compiler::typed_audit::production_defaults_active() ||
+                 aura::compiler::typed_audit::get_strategy() ==
+                     aura::compiler::typed_audit::AuditStrategy::Full) &&
+                (entry.abort_map_invalid ||
+                 entry.version_stamp_.abort_force_generation <
+                     abort_force_generation_.load(std::memory_order_relaxed));
+            auto rec = recover_source_to_ir_map_desync(entry.irs, entry.source_to_ir_map, preferred,
+                                                       abort_stale_map);
             if (rec.funcs_patched > 0) {
                 metrics_.source_to_ir_desync_funcs_patched.fetch_add(
                     static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);
@@ -5328,7 +5346,7 @@ public:
         abort_force_in_progress_.store(1, std::memory_order_release);
     }
 
-    // Issue #3033 / #3069 / #3117: dual-topology abort force-dirty.
+    // Issue #3033 / #3069 / #3117 / #3324: dual-topology abort force-dirty.
     // abort_restore_dual_topology restores AST topology but IR cache
     // stamps / source_to_ir_map can still point at pre-abort IR.
     // Force-dirty + zero-restamp every cached entry, then *clear*
@@ -5360,6 +5378,8 @@ public:
             // (force_soa_instruction_dirty_sync is a no-op on empty module).
             finish_cascade_soa_dirty_sync_(entry);
             // Issue #3117: clear — do not rebuild from pre-abort IR.
+            // Issue #3324: lookup_define_v2 / relower refuse clean-hit
+            // or partial peel while abort_map_invalid (pre-abort identity).
             // ensure_source_to_ir_map_ refuses to refill until store.
             entry.source_to_ir_map.clear();
             entry.abort_map_invalid = true;
@@ -6091,10 +6111,21 @@ public:
             // No entry → caller needs to do a full first-time lower.
             return false;
         }
+        // Issue #3324: abort-restore must not instr-peel / skip-as-clean
+        // on pre-abort IR. Partial peel restamps live and can clear dirty
+        // without store_define_v2, which would let lookup serve stale IR
+        // once abort_force_generation is acked. Force full re-lower.
+        const bool abort_stale_map =
+            it->second.abort_map_invalid || abort_force_rejects_clean_hit_(it->second);
+        if (abort_stale_map) {
+            it->second.dirty = true;
+            it->second.mark_all_blocks_dirty();
+        }
         // Issue #2181: hard-require SoA dirty sync before any partial peel.
         // On desync (pre or residual post-sync) skip instr/per-fn partial and
         // fall through to full re-lower below — no under-invalidate.
-        const bool allow_partial_peel = gate_partial_soa_dirty_sync_(it->second);
+        const bool allow_partial_peel =
+            !abort_stale_map && gate_partial_soa_dirty_sync_(it->second);
         // Issue #2133: when precise instruction dirty is present and under
         // partial threshold, consume ImpactScope-style instr path (pass peel
         // only; no full AST re-lower). Falls through to block/fn paths if
@@ -7512,7 +7543,8 @@ public:
             if (entry.func_dirty_block_count(fi) > 0)
                 preferred.push_back(fi);
         }
-        auto rec = recover_source_to_ir_map_desync(entry.irs, entry.source_to_ir_map, preferred);
+        auto rec = recover_source_to_ir_map_desync(entry.irs, entry.source_to_ir_map, preferred,
+                                                   /*force_full_rebuild=*/entry.abort_map_invalid);
         if (rec.funcs_patched > 0) {
             metrics_.source_to_ir_desync_funcs_patched.fetch_add(
                 static_cast<std::uint64_t>(rec.funcs_patched), std::memory_order_relaxed);

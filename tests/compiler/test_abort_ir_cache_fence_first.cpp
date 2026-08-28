@@ -397,6 +397,100 @@ static void ac3258_5_source_and_linter() {
           "3258 AC5: gen bump before in_progress (lag check visible first)");
 }
 
+// ── Issue #3324: abort dual-topology restore must not leave a clean
+//    lookup / partial peel on pre-abort IR or source_to_ir_map.
+
+static void ac3324_1_lookup_refuses_after_abort() {
+    std::println("\n--- #3324 AC1: post-abort lookup never clean-hits pre-abort IR ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3324 (lambda (x) (+ x 1))) (f3324 1)\")").has_value(),
+          "3324 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3324 AC1: eval");
+    if (!cs.get_define_v2("f3324"))
+        (void)cs.eval("(compile:cache-define \"f3324\")");
+    CHECK(cs.get_define_v2("f3324") != nullptr, "3324 AC1: cache entry");
+    const auto hash = cs.get_define_v2("f3324")->source_hash;
+    const auto force0 =
+        cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed);
+    cs.public_force_ir_cache_dirty_after_abort();
+    CHECK(cs.metrics().abort_ir_cache_force_dirty_total.load(std::memory_order_relaxed) > force0,
+          "3324 AC1: abort-force counter moved");
+    const auto* after = cs.get_define_v2("f3324");
+    CHECK(after && after->abort_map_invalid, "3324 AC1: abort_map_invalid");
+    CHECK(after && after->source_to_ir_map.empty(), "3324 AC1: map cleared");
+    CHECK(cs.lookup_define_v2("f3324", hash) == 1, "3324 AC1: lookup needs-relower");
+    // Simulate the residual peel: clear dirty + restamp live, leave
+    // abort_map_invalid. lookup must still refuse.
+    CHECK(cs.inject_stale_cache_stamp_for_test("f3324"), "3324 AC1: inject dirty-clear");
+    CHECK(cs.restamp_cache_entry_for_test("f3324"), "3324 AC1: restamp live");
+    const auto* peeled = cs.get_define_v2("f3324");
+    CHECK(peeled && peeled->abort_map_invalid, "3324 AC1: abort_map_invalid survives restamp");
+    CHECK(!peeled->dirty, "3324 AC1: dirty cleared (peel simulation)");
+    CHECK(cs.lookup_define_v2("f3324", peeled->source_hash) == 1,
+          "3324 AC1: still no clean hit after peel simulation");
+}
+
+static void ac3324_2_map_not_green_with_preabort_ids() {
+    std::println("\n--- #3324 AC2: empty post-abort map is consistent; recover abort-stale "
+                 "does not partial-patch ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define g3324 (lambda (x) x)) (g3324 1)\")").has_value(),
+          "3324 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3324 AC2: eval");
+    if (!cs.get_define_v2("g3324"))
+        (void)cs.eval("(compile:cache-define \"g3324\")");
+    cs.public_force_ir_cache_dirty_after_abort();
+    const auto* e = cs.get_define_v2("g3324");
+    CHECK(e && e->source_to_ir_map.empty(), "3324 AC2: map empty");
+    CHECK(cs.public_source_to_ir_map_consistent("g3324"),
+          "3324 AC2: empty map consistent (no pre-abort NodeIds)");
+    CHECK(e && e->abort_map_invalid, "3324 AC2: abort_map_invalid");
+    CHECK(!cs.recover_source_to_ir_desync_for_test("g3324") || e->source_to_ir_map.empty(),
+          "3324 AC2: abort-stale recover does not refill pre-abort map");
+}
+
+static void ac3324_3_relower_skips_partial() {
+    std::println("\n--- #3324 AC3: relower_define_blocks skips partial on abort_map_invalid ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("Issue #3324") != std::string::npos, "3324 AC3: service cites #3324");
+    CHECK(svc.find("if (it->second.abort_map_invalid)") != std::string::npos,
+          "3324 AC3: lookup consults abort_map_invalid");
+    CHECK(svc.find("abort_stale_map") != std::string::npos, "3324 AC3: relower abort-stale gate");
+    CHECK(svc.find("!abort_stale_map && gate_partial_soa_dirty_sync_") != std::string::npos,
+          "3324 AC3: partial peel gated off abort-stale");
+}
+
+static void ac3324_4_recover_force_full() {
+    std::println("\n--- #3324 AC4: recover skips partial patch when force_full_rebuild ---");
+    const auto pure = read_file("src/compiler/ir_cache_pure.ixx");
+    CHECK(pure.find("force_full_rebuild") != std::string::npos, "3324 AC4: recover param");
+    CHECK(pure.find("Issue #3324") != std::string::npos, "3324 AC4: pure cites #3324");
+    CHECK(pure.find("do not partial-patch a pre-abort map") != std::string::npos,
+          "3324 AC4: skip patch");
+}
+
+static void ac3324_5_source_and_linter() {
+    std::println("\n--- #3324 AC5: linter + no invent / no new query key ---");
+    const auto t = read_file("tests/compiler/test_abort_ir_cache_fence_first.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_abort_restore_stale_map_stamp_3324.py");
+    CHECK(t.find("ac3324_1_lookup_refuses_after_abort") != std::string::npos, "3324 AC5: AC1");
+    CHECK(t.find("ac3324_2_map_not_green_with_preabort_ids") != std::string::npos, "3324 AC5: AC2");
+    CHECK(!lint.empty() && lint.find("Issue #3324") != std::string::npos, "3324 AC5: linter");
+    CHECK(build.find("check_abort_restore_stale_map_stamp_3324") != std::string::npos,
+          "3324 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3324.cpp").empty(),
+          "3324 AC5: no test_issue_3324.cpp");
+    CHECK(read_file("tests/issues/test_issue_3324.cpp").empty(),
+          "3324 AC5: no tests/issues/test_issue_3324.cpp");
+    CHECK(read_file("docs/design/3324-abort-restore-stale-map.md").empty(),
+          "3324 AC5: no docs/design/");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(svc.find("schema-3324") == std::string::npos, "3324 AC5: no schema-3324");
+    CHECK(svc.find("g_3324_") == std::string::npos, "3324 AC5: no g_3324_*");
+}
+
 } // namespace
 
 int run_test_abort_ir_cache_fence_first() {
@@ -415,8 +509,14 @@ int run_test_abort_ir_cache_fence_first() {
     ac3258_3_soft_gen0_zero_extra();
     ac3258_4_prepare_refuses_during_abort();
     ac3258_5_source_and_linter();
+    std::println("\n=== Issue #3324: abort restore must not clean-hit pre-abort IR/map ===");
+    ac3324_1_lookup_refuses_after_abort();
+    ac3324_2_map_not_green_with_preabort_ids();
+    ac3324_3_relower_skips_partial();
+    ac3324_4_recover_force_full();
+    ac3324_5_source_and_linter();
 
-    std::println("\n=== #3159+#3258 result: passed={} failed={} ===", aura::test::g_passed,
+    std::println("\n=== #3159+#3258+#3324 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);
     return aura::test::g_failed == 0 ? 0 : 1;
 }
