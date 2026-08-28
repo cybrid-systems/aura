@@ -12032,7 +12032,11 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
             const auto wal_snap = snapshot_security_event_wal_stats();
             const auto& ring = g_security_event_ring();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(40)); // #3338 +6 window keys
+            // Issue #3339: live 30 + 8 headroom. Additive insert_kv must
+            // raise planned_keys; Agent facade forbids hash-overflow.
+            constexpr std::size_t kSecurityPostureWalPlannedKeys = 40;
+            auto* ht =
+                FlatHashTable::create(query_hash_capacity_for(kSecurityPostureWalPlannedKeys));
             if (!ht)
                 return make_void();
             bool overflowed = false;

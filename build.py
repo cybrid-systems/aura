@@ -4751,6 +4751,20 @@ def cmd_lint():
             "Issue #3020 query hash overflow linter failed — run python3 scripts/coverage/checks/check_query_hash_overflow_3020.py"
         )
         return r
+    # Issue #3339: Agent decision facade planned_keys headroom (+8) and
+    # no hash-overflow on evolution-audit-decision / security-posture /
+    # type-linear-* / reload-recovery-playbook. Extends
+    # test_engine_metrics_facade (#81967); no docs/design/ (#1655).
+    adh3339_script = COVERAGE_CHECKS / "check_agent_decision_facade_headroom_3339.py"
+    if not adh3339_script.exists():
+        fail(f"missing {adh3339_script}")
+        return 1
+    r = run([sys.executable, str(adh3339_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3339 Agent decision facade headroom linter failed — run python3 scripts/coverage/checks/check_agent_decision_facade_headroom_3339.py"
+        )
+        return r
     # Issue #3021: EnvFrame/Closure apply/use-site lifetime protocol.
     # Extends test_scan_skip_freed_closures + test_envframe_truncate_epoch
     # (#81967); no docs/design/ (#1655).

@@ -321,6 +321,8 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             const auto scored = compute_type_linear_commit_health(snap);
 
             // Issue #3020: ~73 live keys; next_pow2(planned*2) (256).
+            // Issue #3339: live 106; planned 160 (>= 106+8). Additive
+            // insert_kv must raise planned_keys; Agent facade forbids overflow.
             constexpr std::size_t kTypeLinearCommitHealthPlannedKeys = 160;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kTypeLinearCommitHealthPlannedKeys));
@@ -605,33 +607,17 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
         [&string_heap](std::span<const EvalValue> a) -> EvalValue {
             (void)a;
             const auto snap = capture_type_linear_evolution_snapshot();
-            // ~24 keys + lineage schemas — 64 slots keep load factor healthy.
-            auto* ht = FlatHashTable::create(64);
+            // Issue #3339: live 57 keys; planned 72 (>= 57+8). Additive
+            // insert_kv must raise planned_keys; Agent facade forbids overflow.
+            constexpr std::size_t kTypeLinearEvolutionSnapshotPlannedKeys = 72;
+            auto* ht = FlatHashTable::create(
+                query_hash_capacity_for(kTypeLinearEvolutionSnapshotPlannedKeys));
             if (!ht)
                 return make_void();
-            auto meta = ht->metadata();
-            auto keys = ht->keys();
-            auto vals = ht->values();
-            auto hcap = ht->capacity;
+            bool overflowed = false;
             auto insert_kv = [&](const char* k_str, std::int64_t v) {
-                std::uint64_t h = ::aura::compiler::stats::kFnvOffsetBasis;
-                for (const char* p = k_str; *p; ++p)
-                    h = (h ^ static_cast<std::uint8_t>(*p)) * ::aura::compiler::stats::kFnvPrime;
-                auto fp = static_cast<std::uint8_t>((h >> 57) & 0x7F) | 0x80;
-                if (fp == 0xFF)
-                    fp = 0xFE;
-                for (std::size_t at = 0; at < hcap; ++at) {
-                    auto idx = ((h >> 1) + at) & (hcap - 1);
-                    if (meta[idx] == 0xFF) {
-                        meta[idx] = fp;
-                        auto kidx = string_heap.size();
-                        string_heap.push_back(k_str);
-                        keys[idx] = make_string(static_cast<std::uint64_t>(kidx)).val;
-                        vals[idx] = make_int(v).val;
-                        ht->size++;
-                        return;
-                    }
-                }
+                if (!insert_kv_checked(ht, string_heap, k_str, v))
+                    overflowed = true;
             };
             insert_kv("schema", kTypeLinearEvolutionSnapshotIssue);
             insert_kv("issue", kTypeLinearEvolutionSnapshotIssue);
@@ -735,9 +721,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
             insert_kv("issue-2962",
                       aura::compiler::typed_audit::kConeOutsideGoalDropRecoverRejectIssue);
 
-            auto hidx = g_hash_tables.size();
-            g_hash_tables.push_back(ht);
-            return make_hash(hidx);
+            return query_hash_finish(ht, string_heap, overflowed);
         });
 
     // Issue #2350: query:type-system-health — single Agent score (basis points)

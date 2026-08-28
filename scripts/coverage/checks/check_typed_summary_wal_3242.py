@@ -57,7 +57,7 @@ def main() -> int:
     must('insert_kv("typed-summary-from-wal", typed_summary_from_wal)', "AC2 evolution key", sec)
     must('insert_kv("typed-kind", typed_kind)', "AC2 typed-kind", sec)
     must("typed_kind =", "AC2 do not rewrite old typed_kind/typed_outcome names", sec)
-    must("kEvolutionAuditDecisionPlannedKeys = 56", "AC2 planned 48", sec)
+    must("kEvolutionAuditDecisionPlannedKeys = 72", "AC2 planned 72 (#3339 headroom)", sec)
 
     must("kAuditWalMagic[8]", "AC3 mutation magic unchanged", wal)
     must("kAuditWalVersion = 1", "AC3 version 1", wal)

@@ -1884,7 +1884,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_densify_root_closure_closed_loop.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft / no Moving densify → root_remap_ok + closure_remount_ok true
 - `tests/compiler/test_dispatch_required_effects.cpp` (—) [domain_suite, theme_compiler] — Issue #2583 — Hard path: every non-zero required_effects call goes
 - `tests/compiler/test_dual_path_desync_hard_fail.cpp` (—) [domain_suite, theme_compiler] — AC1: inject desync → hard path; metric++; materialize bindings empty
-- `tests/compiler/test_engine_metrics_facade.cpp` (—) [domain_suite, theme_compiler] — AC1: (engine:metrics) returns hash with nested groups + ≥200 metric fields
+- `tests/compiler/test_engine_metrics_facade.cpp` (—) [large, domain_suite, theme_compiler] — AC1: (engine:metrics) returns hash with nested groups + ≥200 metric fields
 - `tests/compiler/test_envframe_resolve_distinction.cpp` (—) [domain_suite, theme_compiler] — Issue #1708/#1709/#1754/#1756/#1890 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_eval_relower_hotpath.cpp` (—) [domain_suite, theme_compiler] — Issue #1506/#1601/#1605/#1623 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_fiber_macro_hygiene_refresh.cpp` (—) [domain_suite, theme_compiler] — Issue #1490/#1592/#1608/#1612 (#1978 renamed): issue# moved from filename to header.

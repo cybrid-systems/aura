@@ -53,6 +53,17 @@ std::int64_t hash_len(CompilerService& cs, std::string_view expr) {
     return as_int(*r);
 }
 
+std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
+}
+
 } // namespace
 
 extern "C" void aura_engine_metrics_set_force_hash_cap(std::uint64_t);
@@ -146,6 +157,75 @@ int main() {
         CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "observe-only") ==
                   1,
               "3246 AC2: observe-only preserved");
+    }
+
+    // ── Issue #3339: Agent decision facade headroom; no hash-overflow ──
+    // Runs before :prefix catalog dump so a prefix leftover cannot hide ACs.
+    {
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::compiler::typed_audit::reset_for_test;
+        std::println("\n--- #3339: Agent decision facade planned_keys headroom ---");
+        aura_query_hash_set_force_cap(0);
+        aura_query_hash_reset_overflow_for_test();
+        reset_for_test();
+        apply_production_audit_defaults();
+
+        const char* kFacades[] = {
+            "query:evolution-audit-decision",  "query:security-posture",
+            "query:type-linear-commit-health", "query:type-linear-evolution-snapshot",
+            "query:reload-recovery-playbook",
+        };
+        for (const char* q : kFacades) {
+            const auto expr = std::format("(engine:metrics \"{}\")", q);
+            CHECK(is_hash_expr(cs, expr), std::format("3339 AC2: {} is hash", q));
+            const auto ho = hash_int(cs, expr, "hash-overflow");
+            CHECK(ho != 1, std::format("ac3339_2_no_overflow: {} hash-overflow absent", q));
+            CHECK(hash_int(cs, expr, "overflow") != 1, std::format("3339 AC2: {} overflow!=1", q));
+        }
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "schema-3114") ==
+                  3114,
+              "3339 AC2: evolution schema-3114 present");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                       "suggested-next-code") >= 0,
+              "3339 AC2: suggested-next-code present");
+        CHECK(hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")",
+                       "last-audit-mid") >= 0,
+              "3339 AC2: last-audit-mid present");
+        CHECK(hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2534") == 2534 ||
+                  hash_int(cs, "(engine:metrics \"query:security-posture\")", "schema-2225") ==
+                      2225,
+              "3339 AC2: security-posture schema sentinel");
+        CHECK(hash_int(cs, "(engine:metrics \"query:type-linear-commit-health\")", "schema-2613") ==
+                  2613,
+              "3339 AC2: type-linear-commit-health schema-2613");
+        CHECK(hash_int(cs, "(engine:metrics \"query:type-linear-evolution-snapshot\")",
+                       "schema-2897") == 2897,
+              "3339 AC2: type-linear-evolution-snapshot schema-2897");
+        CHECK(hash_int(cs, "(engine:metrics \"query:reload-recovery-playbook\")", "schema-2953") ==
+                  2953,
+              "3339 AC2: reload-recovery-playbook schema-2953");
+
+        const auto evix = read_file("src/compiler/evaluator.ixx");
+        CHECK(evix.find("kAgentDecisionFacadeHeadroom = 8") != std::string::npos,
+              "3339 AC1: headroom constant 8");
+        const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(sec.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+              "ac3339_3_plus20: planned 72 so +20 dummy keys without raise fails CI");
+        CHECK(sec.find("kSecurityPosturePlannedKeys = 96") != std::string::npos,
+              "3339 AC1: posture planned 96");
+
+        reset_for_test();
+        apply_dev_audit_defaults();
+        aura_query_hash_reset_overflow_for_test();
+        const auto soft_ho =
+            hash_int(cs, "(engine:metrics \"query:evolution-audit-decision\")", "hash-overflow");
+        CHECK(soft_ho != 1, "ac3339_4_soft: Soft path still no overflow");
+        CHECK(hash_int(cs, "(engine:metrics)", "schema") == 2,
+              "3339 AC4: engine:metrics unchanged");
+        CHECK(read_file("tests/compiler/test_issue_3339.cpp").empty(), "ac3339_5_no_invent");
+        CHECK(read_file("docs/design/3339-agent-decision-facade-headroom.md").empty(),
+              "3339 AC5: no docs/design/3339-*");
     }
 
     // ── AC2: :prefix ──
