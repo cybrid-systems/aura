@@ -5522,6 +5522,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-2778", aura::orch::kMailboxBpScopeMapLifecycleIssue);
             insert_kv("issue-2778", aura::orch::kMailboxBpScopeMapLifecycleIssue);
             insert_kv("scope-bp-map-lifecycle-wired", 1);
+            // Issue #3337: production Scope dtor erase + no live-tenant
+            // LRU-evict at cap. Additive; schema-2778/3127 keys unchanged.
+            insert_kv("schema-3337", aura::orch::kMailboxBpScopeOverflowTeardownIssue);
+            insert_kv("issue-3337", aura::orch::kMailboxBpScopeOverflowTeardownIssue);
+            insert_kv("scope-bp-overflow-teardown-wired", 1);
+            insert_kv("scope-bp-gauge-teardown-erase-total",
+                      static_cast<std::int64_t>(
+                          os.scope_bp_gauge_teardown_erase_total.load(std::memory_order_relaxed)));
             // Issue #2779: resume fence fail aggregate (#2677 triple fence)
             // facade on orch-module-stats so agents query one surface for
             // fail-closed resume signals. Source of truth is Fiber statics

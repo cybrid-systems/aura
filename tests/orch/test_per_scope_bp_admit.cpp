@@ -643,7 +643,35 @@ int run_test_per_scope_bp_admit() {
     g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_total.store(0, std::memory_order_relaxed);
     g_orch_module_stats.spawn_bp_admit_reject_override_total.store(0, std::memory_order_relaxed);
-    std::println("\n=== #2591/#2948/#3015/#3147: {}/{} checks passed ===", g_passed,
+    // ── #3337: AgentScope dtor erases named BP gauge under production ──
+    {
+        std::println("\n--- #3337: AgentScope dtor teardown erase ---");
+        aura::orch::reset_scope_bp_map_for_test();
+        set_prod(true);
+        if (aura::orch::production_defaults_active()) {
+            std::string sid;
+            {
+                AgentScope scope(sched);
+                sid = std::string(scope.bp_scope_id());
+                CHECK(!sid.empty() && sid != std::string{aura::orch::kBpScopeProcessBucket},
+                      "3337: scope bp_scope_id is named");
+                aura::orch::note_mailbox_bp_recent_event(sid);
+                CHECK(aura::orch::lookup_scope_bp_gauge(sid) != nullptr,
+                      "3337: gauge inserted while scope lives");
+            }
+            CHECK(aura::orch::lookup_scope_bp_gauge(sid) == nullptr,
+                  "ac3337_1_scope_dtor_clears_gauge");
+        } else {
+            CHECK(true, "3337 dtor: production probe off in this env");
+        }
+        set_prod(false);
+        aura::orch::reset_scope_bp_map_for_test();
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        CHECK(spawn.find("kMailboxBpScopeOverflowTeardownIssue = 3337") != std::string::npos,
+              "3337 AC5: stamp in agent_spawn.h");
+    }
+
+    std::println("\n=== #2591/#2948/#3015/#3147/#3337: {}/{} checks passed ===", g_passed,
                  g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }

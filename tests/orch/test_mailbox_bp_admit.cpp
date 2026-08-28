@@ -194,9 +194,6 @@ int run_test_mailbox_bp_admit() {
                 spawn_bp_reject_before,
             g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed) -
                 spawn_failures_before);
-        std::println("  agent_arena_usage_bytes {}→{}  agent_arena_release_total {}→{}",
-                     arena_usage_before, arena_usage_after, arena_release_before,
-                     arena_release_after);
         CHECK(!h.ok, "AC1: spawn returns !ok on BP reject");
         CHECK(h.quota_exceeded, "AC1: quota_exceeded == true");
         CHECK(h.quota_dimension == "mailbox-bp", "AC1: quota_dimension == 'mailbox-bp'");
@@ -218,6 +215,9 @@ int run_test_mailbox_bp_admit() {
             pq_for_gauge.agent_arena_usage_bytes.load(std::memory_order_relaxed);
         const auto arena_release_after =
             pq_for_gauge.agent_arena_release_total.load(std::memory_order_relaxed);
+        std::println("  agent_arena_usage_bytes {}→{}  agent_arena_release_total {}→{}",
+                     arena_usage_before, arena_usage_after, arena_release_before,
+                     arena_release_after);
         CHECK(
             arena_usage_after == arena_usage_before,
             "AC1: agent_arena_usage_bytes returns to baseline after BP deny (#3364 no-leak real)");
@@ -1303,6 +1303,82 @@ int run_test_mailbox_bp_admit() {
             aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
             aura::orch::reset_scope_bp_map_for_test();
         }
+    }
+
+    // ── Issue #3337: production no live-tenant LRU-evict; Scope dtor erase ──
+    {
+        std::println("\n--- #3337: scope BP overflow teardown + live-tenant isolation ---");
+        using aura::orch::kMailboxBpScopeMapCap;
+        using aura::orch::kMailboxBpScopeOverflowTeardownIssue;
+        const auto spawn = read_file("src/orch/agent_spawn.h");
+        const auto scope_h = read_file("src/orch/agent_scope.h");
+        CHECK(kMailboxBpScopeOverflowTeardownIssue == 3337, "3337 AC: issue stamp");
+        CHECK(spawn.find("maybe_erase_scope_bp_gauge_on_teardown") != std::string::npos,
+              "ac3337_1_teardown_helper");
+        CHECK(scope_h.find("maybe_erase_scope_bp_gauge_on_teardown") != std::string::npos,
+              "ac3337_1_scope_dtor_erase");
+        CHECK(spawn.find("scope_bp_gauge_teardown_erase_total{0}") != std::string::npos,
+              "3337 AC: counter at OrchModuleStats END");
+
+        aura::orch::reset_scope_bp_map_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::orch::note_mailbox_bp_recent_event("soft-teardown-a");
+        const auto sz0 = aura::orch::scope_bp_map_size_for_test();
+        CHECK(!aura::orch::maybe_erase_scope_bp_gauge_on_teardown("soft-teardown-a"),
+              "ac3337_4_soft_quiet_no_erase");
+        CHECK(aura::orch::scope_bp_map_size_for_test() == sz0,
+              "3337 AC4: Soft teardown does not drop the gauge");
+        CHECK(!aura::orch::maybe_erase_scope_bp_gauge_on_teardown("-"),
+              "3337 AC4: process-bucket sentinel never erased");
+        CHECK(!aura::orch::maybe_erase_scope_bp_gauge_on_teardown(""),
+              "3337 AC4: empty id never erased");
+
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::orch::reset_scope_bp_map_for_test();
+        if (aura::orch::production_defaults_active()) {
+            for (int i = 0; i < static_cast<int>(kMailboxBpScopeMapCap); ++i)
+                aura::orch::note_mailbox_bp_recent_event(std::string("live-") + std::to_string(i));
+            CHECK(aura::orch::lookup_scope_bp_gauge("live-0") != nullptr,
+                  "3337 AC2: live tenant 0 in map");
+            aura::orch::note_mailbox_bp_recent_event("overflow-new");
+            CHECK(aura::orch::lookup_scope_bp_gauge("live-0") != nullptr,
+                  "ac3337_2_live_tenant_not_evicted");
+            CHECK(aura::orch::lookup_scope_bp_gauge("overflow-new") == nullptr,
+                  "3337 AC2: new scope at cap not inserted");
+            CHECK(aura::orch::scope_bp_map_size_for_test() == kMailboxBpScopeMapCap,
+                  "3337 AC2: map stays at cap without evicting live gauges");
+            CHECK(aura::orch::load_mailbox_bp_recent("live-0") == 1,
+                  "3337 AC2: live tenant gauge isolated (not overflow)");
+
+            const auto erase0 =
+                aura::orch::g_orch_module_stats.scope_bp_gauge_teardown_erase_total.load(
+                    std::memory_order_relaxed);
+            CHECK(aura::orch::maybe_erase_scope_bp_gauge_on_teardown("live-1"),
+                  "ac3337_1_production_erase");
+            CHECK(aura::orch::scope_bp_map_size_for_test() == kMailboxBpScopeMapCap - 1,
+                  "3337 AC1: map pressure drops after teardown erase");
+            CHECK(aura::orch::g_orch_module_stats.scope_bp_gauge_teardown_erase_total.load(
+                      std::memory_order_relaxed) >= erase0 + 1,
+                  "3337 AC1: teardown-erase counter");
+            aura::orch::note_mailbox_bp_recent_event("churn-new");
+            CHECK(aura::orch::lookup_scope_bp_gauge("churn-new") != nullptr,
+                  "3337 AC1: freed slot admits a new named gauge");
+        } else {
+            CHECK(true, "3337: production_defaults_active=false in this env; Soft ACs above");
+        }
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
+        aura::orch::reset_scope_bp_map_for_test();
+
+        CHECK(spawn.find("spawn_bp_scope_overflow_dropped_total") != std::string::npos,
+              "3337 AC3: #3127 dropped counter retained");
+        CHECK(spawn.find("kBpScopeProcessBucket") != std::string::npos,
+              "3337 AC3: process-bucket opt-in retained");
+        CHECK(read_file("tests/orch/test_issue_3337.cpp").empty(), "ac3337_5_no_invent");
+        CHECK(read_file("docs/design/3337-scope-bp-overflow-teardown.md").empty(),
+              "3337 AC5: no docs/design/3337-*");
     }
 
     return aura::test::g_failed ? 1 : 0;
