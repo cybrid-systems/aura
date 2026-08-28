@@ -840,9 +840,10 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
         // Issue #3238: steal/densify restamp under a live Guard must
         // dirty-root revalidate immediately (not wait for exit). Soft
         // observe. Quiet (!live): helper false.
-        if (typed_audit::note_densify_entry_under_live_mutation()) {
-            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
-                                                      /*mark_all_linear=*/false);
+        // Issue #3361: helper now runs the revalidate itself when given a
+        // non-null Evaluator* — drop the caller-side duplicate.
+        if (typed_audit::note_densify_entry_under_live_mutation(this)) {
+            // revalidate already done inside the helper (Issue #3361).
         }
         if (void* m = compiler_metrics_)
             (void)aura::compiler::clear_escape_move_elision_gate_for_eval(m);

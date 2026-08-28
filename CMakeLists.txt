@@ -4091,6 +4091,12 @@ aura_add_issue_test(test_linear_cross_closure)
 aura_issue_test_link_light(test_linear_cross_closure)
 add_dependencies(all_test_issue_targets test_linear_cross_closure)
 
+# Issue #3361: note_densify_entry_under_live_mutation immediate revalidate —
+# closes the I6 residual where the dirty-root walk was deferred to Guard exit.
+# src-aligned with src/compiler/typed_mutation_audit.h (per #81934 constraint).
+aura_add_issue_test(test_linear_densify_immediate_revalidate)
+add_dependencies(all_test_issue_targets test_linear_densify_immediate_revalidate)
+
 
 
 

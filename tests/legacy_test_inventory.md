@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 862 | Preferred destination suites |
-| **Total scanned** | **862** | |
+| `tests/core/test_*.cpp` | 863 | Preferred destination suites |
+| **Total scanned** | **863** | |
 
 ### Related artifacts
 
@@ -39,7 +39,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 137 | 137 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 55 | 55 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -580,6 +580,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_linear_batch.cpp`
 - `tests/compiler/test_linear_boundary_consistency.cpp`
 - `tests/compiler/test_linear_cross_closure.cpp`
+- `tests/compiler/test_linear_densify_immediate_revalidate.cpp`
 - `tests/compiler/test_linear_enforce_boundary_align.cpp`
 - `tests/compiler/test_linear_enforce_production_defaults.cpp`
 - `tests/compiler/test_linear_enforce_strict.cpp`
@@ -1813,13 +1814,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (136)
+### `observability` — Observability / metrics / query:*-stats (137)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (136)
+#### domain/ (137)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1877,6 +1878,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_issue_3097.cpp` (#3097) [domain_suite, theme_compiler] — AC1: deferred_hybrid_pending_upper_bound_ counts pending edges
 - `tests/compiler/test_let_poly_solve_delta.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#745/#798 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_boundary_consistency.cpp` (—) [domain_suite, theme_compiler] — Issue #1568 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_linear_densify_immediate_revalidate.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #3361; helper signature accepts optional Evaluator*
 - `tests/compiler/test_linear_live_closure_walk.cpp` (—) [domain_suite, theme_compiler] — Issue #1557/#1568/#1596/#1659/#1895 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_linear_walk_active_closures.cpp` (—) [domain_suite, theme_compiler] — Issue #1895/#1928 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_live_closure_full_restamp.cpp` (—) [domain_suite, theme_compiler] — AC1: N named closures + reemit → epoch_restamp_total ≥ N

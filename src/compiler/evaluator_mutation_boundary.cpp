@@ -3883,9 +3883,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             // fiber depth or process-held count) must drop linear_fast_path
             // and dirty-root revalidate before compact relocates. Soft
             // observe. Quiet (depth==0, held==0): helper is two loads.
-            if (typed_audit::note_densify_entry_under_live_mutation()) {
-                (void)ev_->enforce_linear_boundary_consistency(
-                    Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+            // Issue #3361: helper runs the revalidate itself given ev_.
+            if (typed_audit::note_densify_entry_under_live_mutation(ev_)) {
+                // revalidate already done inside the helper (Issue #3361).
             }
             // Issue #2497: snapshot densify-ownership-scan fail baseline before
             // compact runs (covers compact callbacks + pairing + injected fails
@@ -5722,9 +5722,9 @@ Evaluator::recover_moving_sticky_densify_off(bool retry_densify) noexcept {
     if (retry_densify && arena_group_ && aura::ast::moving_compact_enabled()) {
         // Issue #3238: recovery densify under a live Guard must drop
         // linear_fast_path and dirty-root revalidate before relocate.
-        if (typed_audit::note_densify_entry_under_live_mutation()) {
-            (void)enforce_linear_boundary_consistency(kLinearGcRootAuditTypedMutate,
-                                                      /*mark_all_linear=*/false);
+        // Issue #3361: helper runs the revalidate itself given `this`.
+        if (typed_audit::note_densify_entry_under_live_mutation(this)) {
+            // revalidate already done inside the helper (Issue #3361).
         }
         // Issue #3185 AC1: same surface as Phase-5 densify entry. Consult
         // last LifetimeConsistencyProof before declaring the recovery

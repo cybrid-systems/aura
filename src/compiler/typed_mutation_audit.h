@@ -22,7 +22,13 @@
 // header does not include ownership_rebind.h (avoid include-order cascade).
 namespace aura::compiler {
 [[nodiscard]] std::size_t linear_or_dirty_roots_count_for_rebind() noexcept;
-}
+// Issue #3361: forward-declare Evaluator so the densify helper can call
+// ev->enforce_linear_boundary_consistency(...) without importing the C++20
+// Evaluator module here (avoids module-fragment churn for serve/tests).
+// The full Evaluator definition lives in evaluator.ixx; method linkage
+// resolves at link time, so the inline helper just needs the pointer type.
+class Evaluator;
+} // namespace aura::compiler
 
 #include <atomic>
 #include <array>
@@ -1818,9 +1824,17 @@ inline constexpr int kLinearFastPathLiveMutationDensifyIssue = 3238;
 }
 
 // Production densify-entry / steal-densify under live mutation: drop the
-// fast-path face then ask the caller to dirty-root revalidate. Soft:
-// observe if live. Quiet (!live): false, no invalidate.
-[[nodiscard]] inline bool note_densify_entry_under_live_mutation() noexcept {
+// fast-path face AND immediately dirty-root revalidate (reuse existing
+// enforce path). Soft: observe if live. Quiet (!live): false, no invalidate.
+// Issue #3361: when the caller passes a non-null `ev`, the helper runs
+// Evaluator::enforce_linear_boundary_consistency right here instead of
+// relying on the caller — closes the I6 residual where a mid-boundary IR
+// Move could elide on a previously green proof before the Guard-exit
+// revalidate (#3006 deferral). Callers that already revalidate after the
+// helper can be simplified to just `…(this)`; tests / observe paths can
+// pass nullptr to keep the counter-only behavior.
+[[nodiscard]] inline bool
+note_densify_entry_under_live_mutation(::aura::compiler::Evaluator* ev = nullptr) noexcept {
     if (!linear_fast_path_live_mutation_active())
         return false;
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
@@ -1830,6 +1844,11 @@ inline constexpr int kLinearFastPathLiveMutationDensifyIssue = 3238;
     }
     (void)invalidate_fast_path_before_steal_densify_restamp();
     g_linear_fast_path_dirty_revalidate_total.fetch_add(1, std::memory_order_relaxed);
+    if (ev != nullptr) {
+        (void)ev->enforce_linear_boundary_consistency(
+            ::aura::compiler::Evaluator::kLinearGcRootAuditTypedMutate,
+            /*mark_all_linear=*/false);
+    }
     return true;
 }
 
