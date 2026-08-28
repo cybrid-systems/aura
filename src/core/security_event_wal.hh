@@ -153,6 +153,9 @@ struct SecurityEventWalMetrics {
     std::atomic<std::uint64_t> security_event_wal_bytes_written{0};
     std::atomic<std::uint64_t> security_event_wal_enabled{0};
     std::atomic<std::uint64_t> security_event_wal_segments{0};
+    // Issue #3338: segments unlinked under AURA_WAL_MAX_SEGMENTS.
+    // Appended at struct END (#2906). Soft / unset retention never bump.
+    std::atomic<std::uint64_t> security_event_wal_segment_prune_total{0};
 };
 
 inline SecurityEventWalMetrics& g_security_event_wal_metrics() noexcept {
@@ -224,11 +227,33 @@ struct SecurityEventWal {
         return true;
     }
 
+    void prune_old_segments_unlocked() noexcept {
+        const auto cap = ::aura::core::wal_slo::wal_max_segments_retention();
+        if (cap == 0)
+            return;
+        if (segment_index + 1 <= cap)
+            return;
+        const std::uint32_t first_keep = segment_index + 1 - cap;
+        namespace fs = std::filesystem;
+        std::error_code ec;
+        for (std::uint32_t i = 0; i < first_keep; ++i) {
+            const auto p =
+                (fs::path(dir) / ("security-event-" + std::to_string(i) + ".wal")).string();
+            if (fs::remove(p, ec)) {
+                g_security_event_wal_metrics().security_event_wal_segment_prune_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
+            ec.clear();
+        }
+    }
+
     void rotate_unlocked() noexcept {
         ++segment_index;
         g_security_event_wal_metrics().security_event_wal_rotate_total.fetch_add(
             1, std::memory_order_relaxed);
         (void)open_segment_unlocked(segment_index);
+        // Issue #3338: opt-in retention. Unset AURA_WAL_MAX_SEGMENTS → no-op.
+        prune_old_segments_unlocked();
     }
 
     // Enable persist under `persist_dir`. Replays existing WAL into
@@ -316,6 +341,8 @@ struct SecurityEventWal {
 
     // Issue #3205: Agent mid point-query. Linear scan of current segment
     // plus at most (max_segments-1) prior rotate segments (default 2).
+    // Issue #3338: production durable callers pass wal_mid_lookup_segments()
+    // (default 8 / env). Explicit max_segments=2 stays #3205-compatible.
     // Newest-first. Disabled / mid==0 → nullopt, no I/O. Caller must
     // gate on production + :durable (Soft default never calls this).
     [[nodiscard]] std::optional<SecurityEventWalRecord>
@@ -460,6 +487,7 @@ struct SecurityEventWal {
         m.security_event_wal_bytes_written.store(0, std::memory_order_relaxed);
         m.security_event_wal_enabled.store(0, std::memory_order_relaxed);
         m.security_event_wal_segments.store(0, std::memory_order_relaxed);
+        m.security_event_wal_segment_prune_total.store(0, std::memory_order_relaxed);
         ::aura::core::wal_slo::reset_wal_append_fail_slo_for_test();
         last_seq_persisted = 0;
         segment_index = 0;
@@ -583,6 +611,8 @@ struct SecurityEventWalStatsSnapshot {
     std::uint64_t last_seq = 0;
     int phase = kSecurityEventWalPhase;
     int issue = kSecurityEventWalIssue;
+    // Issue #3338: prune count (struct end).
+    std::uint64_t segment_prune_total = 0;
 };
 
 
@@ -601,6 +631,7 @@ struct SecurityEventWalStatsSnapshot {
         w.last_seq_persisted,
         kSecurityEventWalPhase,
         kSecurityEventWalIssue,
+        m.security_event_wal_segment_prune_total.load(std::memory_order_relaxed),
     };
 }
 

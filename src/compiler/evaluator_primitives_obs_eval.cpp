@@ -12032,7 +12032,7 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
             using ::aura::core::security_event_wal::snapshot_security_event_wal_stats;
             const auto wal_snap = snapshot_security_event_wal_stats();
             const auto& ring = g_security_event_ring();
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(30));
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(40)); // #3338 +6 window keys
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -12130,6 +12130,22 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                                   : 0));
                 insert_kv("schema-3375", 3375);
                 insert_kv("issue-3375", 3375);
+                // Issue #3338: mid lookup window + retention. Additive.
+                insert_kv(
+                    "wal-mid-lookup-segments",
+                    static_cast<std::int64_t>(::aura::core::wal_slo::wal_mid_lookup_segments()));
+                insert_kv(
+                    "wal-max-segments-retention",
+                    static_cast<std::int64_t>(::aura::core::wal_slo::wal_max_segments_retention()));
+                insert_kv("wal-segment-prune-total",
+                          static_cast<std::int64_t>(
+                              ::aura::core::audit_wal::g_audit_wal_metrics()
+                                  .audit_wal_segment_prune_total.load(std::memory_order_relaxed) +
+                              ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                                  .security_event_wal_segment_prune_total.load(
+                                      std::memory_order_relaxed)));
+                insert_kv("schema-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
+                insert_kv("issue-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });

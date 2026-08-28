@@ -1241,6 +1241,33 @@ int run_test_security_audit_unify() {
         fs::remove_all(dir, ec);
     }
 
+    // ── Issue #3338: mid lookup window + retention Agent surface ──
+    {
+        std::println("\n--- #3338: lookup window keys + explicit max_segments=2 ---");
+        reset_process();
+        CompilerService cs;
+        auto r = cs.eval("(hash-ref (engine:metrics \"query:security-posture\") \"schema-3338\")");
+        CHECK(r && is_int(*r) && as_int(*r) == 3338, "3338 AC: schema-3338 on security-posture");
+        auto w = cs.eval(
+            "(hash-ref (engine:metrics \"query:audit-wal-stats\") \"wal-mid-lookup-segments\")");
+        CHECK(w && is_int(*w) && as_int(*w) >= 2,
+              "3338 AC: wal-mid-lookup-segments on audit-wal-stats");
+        auto ret = cs.eval(
+            "(hash-ref (engine:metrics \"query:audit-wal-stats\") \"wal-max-segments-retention\")");
+        CHECK(ret && is_int(*ret) && as_int(*ret) == 0, "3338 AC3: unset retention = 0 (no prune)");
+        const auto se_wal = read_file("src/core/security_event_wal.hh");
+        CHECK(se_wal.find("max_segments = 2") != std::string::npos,
+              "3338 AC4: #3205 default max_segments=2 retained");
+        const auto sec = read_file("src/compiler/evaluator_primitives_security.cpp");
+        CHECK(sec.find("wal_mid_lookup_segments()") != std::string::npos,
+              "3338 AC2: durable path uses wal_mid_lookup_segments");
+        CHECK(sec.find("wal-overflow-ring-depth") != std::string::npos,
+              "3338 AC4: #3109 overflow key retained");
+        CHECK(read_file("tests/compiler/test_issue_3338.cpp").empty(), "ac3338_5_no_invent");
+        CHECK(read_file("docs/design/3338-wal-mid-lookup-window.md").empty(),
+              "3338 AC5: no docs/design/3338-*");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -261,5 +261,45 @@ inline constexpr int kWalAppendFailClosedForceWalIssue = 3302;
     return wal_fail_closed_defaulted_by_force_wal() != 0;
 }
 
+// Issue #3338: mid point-query window + optional segment retention.
+// find_recent_* default arg stays 2 (#3205 explicit max_segments=2).
+// Production Agent durable path passes wal_mid_lookup_segments()
+// (env AURA_WAL_MID_LOOKUP_SEGMENTS, else 8 under production probe,
+// else 2). Retention (AURA_WAL_MAX_SEGMENTS) is opt-in: 0 = unbounded
+// (today's no-prune). WAL-off never rotates / never getenv on hot path.
+inline constexpr int kWalMidLookupWindowIssue = 3338;
+inline constexpr std::uint32_t kWalMidLookupSegmentsSoft = 2;
+inline constexpr std::uint32_t kWalMidLookupSegmentsProduction = 8;
+
+[[nodiscard]] inline std::uint32_t wal_env_u32(const char* name, std::uint32_t fallback) noexcept {
+    const char* e = std::getenv(name);
+    if (e == nullptr || e[0] == '\0')
+        return fallback;
+    std::uint64_t v = 0;
+    bool any = false;
+    for (const char* p = e; *p >= '0' && *p <= '9'; ++p) {
+        any = true;
+        v = v * 10 + static_cast<std::uint64_t>(*p - '0');
+        if (v > 0xffffffffull) {
+            v = 0xffffffffull;
+            break;
+        }
+    }
+    return any ? static_cast<std::uint32_t>(v) : fallback;
+}
+
+[[nodiscard]] inline std::uint32_t wal_mid_lookup_segments() noexcept {
+    const auto env = wal_env_u32("AURA_WAL_MID_LOOKUP_SEGMENTS", 0);
+    if (env > 0)
+        return env;
+    return aura_production_defaults_active_probe() != 0 ? kWalMidLookupSegmentsProduction
+                                                        : kWalMidLookupSegmentsSoft;
+}
+
+// 0 = no prune (unset env keeps today's unbounded files).
+[[nodiscard]] inline std::uint32_t wal_max_segments_retention() noexcept {
+    return wal_env_u32("AURA_WAL_MAX_SEGMENTS", 0);
+}
+
 } // namespace aura::core::wal_slo
 #endif // AURA_CORE_WAL_APPEND_FAIL_SLO_H

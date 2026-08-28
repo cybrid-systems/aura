@@ -4514,7 +4514,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 m->audit_wal_bytes_written.store(snap.bytes_written, std::memory_order_relaxed);
             }
             // Capacity 32: pre-#2150 keys + force/schema-2150/flush-every.
-            auto* ht = FlatHashTable::create(query_hash_capacity_for(40));
+            // Issue #3338: +6 mid-lookup / retention keys → planned 48.
+            auto* ht = FlatHashTable::create(query_hash_capacity_for(48));
             if (!ht)
                 return make_void();
             bool overflowed = false;
@@ -4606,6 +4607,23 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal()));
                 insert_kv("schema-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
                 insert_kv("issue-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
+                // Issue #3338: mid lookup window + retention. Additive.
+                // 0 retention = unbounded (today). prune-total is SE+mutation.
+                insert_kv(
+                    "wal-mid-lookup-segments",
+                    static_cast<std::int64_t>(::aura::core::wal_slo::wal_mid_lookup_segments()));
+                insert_kv(
+                    "wal-max-segments-retention",
+                    static_cast<std::int64_t>(::aura::core::wal_slo::wal_max_segments_retention()));
+                insert_kv("wal-segment-prune-total",
+                          static_cast<std::int64_t>(
+                              g_audit_wal_metrics().audit_wal_segment_prune_total.load(
+                                  std::memory_order_relaxed) +
+                              ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                                  .security_event_wal_segment_prune_total.load(
+                                      std::memory_order_relaxed)));
+                insert_kv("schema-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
+                insert_kv("issue-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });
@@ -4878,7 +4896,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     production_defaults_active() || get_strategy() == AuditStrategy::Full;
                 if (typed_miss && summary_scan_ok && g_mutation_audit_wal().is_enabled()) {
                     if (auto ts = g_mutation_audit_wal().find_recent_typed_summary_by_mid(
-                            e.mutation_id, 2)) {
+                            e.mutation_id, ::aura::core::wal_slo::wal_mid_lookup_segments())) {
                         typed_summary_from_wal = 1;
                         typed_outcome_wal =
                             typed_outcome_name(static_cast<AuditOutcome>(ts->outcome));
@@ -5133,7 +5151,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3056: +4 keys (breach/wired/schema/issue).
             // Issue #3113: +5 keys (wrap-risk/wrap-total/window/schema/issue).
             // Issue #3302: +3 keys (defaulted-by-force-wal / schema / issue).
-            constexpr std::size_t kSecurityPosturePlannedKeys = 88;
+            constexpr std::size_t kSecurityPosturePlannedKeys = 96;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
                 return make_void();
@@ -5279,6 +5297,23 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                               ::aura::core::wal_slo::wal_fail_closed_defaulted_by_force_wal()));
                 insert_kv("schema-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
                 insert_kv("issue-3302", ::aura::core::wal_slo::kWalAppendFailClosedForceWalIssue);
+                // Issue #3338: mid lookup window + retention (same keys as
+                // query:audit-wal-stats). Additive; 0 retention = unbounded.
+                insert_kv(
+                    "wal-mid-lookup-segments",
+                    static_cast<std::int64_t>(::aura::core::wal_slo::wal_mid_lookup_segments()));
+                insert_kv(
+                    "wal-max-segments-retention",
+                    static_cast<std::int64_t>(::aura::core::wal_slo::wal_max_segments_retention()));
+                insert_kv("wal-segment-prune-total",
+                          static_cast<std::int64_t>(
+                              ::aura::core::audit_wal::g_audit_wal_metrics()
+                                  .audit_wal_segment_prune_total.load(std::memory_order_relaxed) +
+                              ::aura::core::security_event_wal::g_security_event_wal_metrics()
+                                  .security_event_wal_segment_prune_total.load(
+                                      std::memory_order_relaxed)));
+                insert_kv("schema-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
+                insert_kv("issue-3338", ::aura::core::wal_slo::kWalMidLookupWindowIssue);
             }
             // Issue #3113: typed trail 256 wrap vs SE 1024 — Agent wrap-risk
             // so a mid-join miss is not read as "no audit". Additive.
@@ -5754,7 +5789,8 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 auto& se_wal = g_security_event_wal();
                 auto& mut_wal = g_mutation_audit_wal();
                 if (se_wal.is_enabled() || mut_wal.is_enabled()) {
-                    if (auto rec = se_wal.find_recent_by_mutation_id(join_mid, 2)) {
+                    const auto win = ::aura::core::wal_slo::wal_mid_lookup_segments();
+                    if (auto rec = se_wal.find_recent_by_mutation_id(join_mid, win)) {
                         if (rec->reason[0] != '\0') {
                             const auto n = strnlen(rec->reason, sizeof(rec->reason) - 1);
                             last_se_reason_str.assign(rec->reason, n);
@@ -5765,7 +5801,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                             forensic_source = 3;
                         durable_hit = 1;
                     } else if (auto mrec =
-                                   mut_wal.find_recent_by_provenance_mutation_id(join_mid, 2)) {
+                                   mut_wal.find_recent_by_provenance_mutation_id(join_mid, win)) {
                         last_se_denied = mrec->effect_denied ? 1 : 0;
                         if (last_se_reason_str.empty() && mrec->op[0] != '\0') {
                             const auto n = strnlen(mrec->op, sizeof(mrec->op) - 1);
@@ -5777,7 +5813,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     }
                     // Issue #3242: typed-trail-miss + :durable → typed summary sidecar.
                     if (typed_miss && mut_wal.is_enabled()) {
-                        if (auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, 2)) {
+                        if (auto ts = mut_wal.find_recent_typed_summary_by_mid(join_mid, win)) {
                             typed_summary_from_wal = 1;
                             typed_kind = static_cast<std::int64_t>(ts->kind);
                             if (typed_outcome == 0) {
