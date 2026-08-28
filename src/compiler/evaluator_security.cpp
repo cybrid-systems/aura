@@ -704,8 +704,47 @@ void Evaluator::grant_effect_capability(std::uint64_t tenant_id, std::string_vie
         // Issue #3126: act via grant_locked (caller holds mtx); no nested lock.
         reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use);
     } else {
-        // Same-tenant self-grant — no admin fence, plain grant() takes its own lock.
-        reg.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use);
+        // Issue #3362: same-tenant self-grant still requires an admin fence
+        // for high-risk bits (TenantAdmin | MacroSelfEvo | Syscall | Mutate)
+        // under production. Without this fence, a wildcard-only holder can
+        // use security:grant-effect! to write explicit TA into the registry,
+        // then bypass the #3141 string fence (which denies but does not roll
+        // back the registry write) and the #3144 effects_for strip — the
+        // residual privilege-escalation path this issue closes.
+        if (force_bind && is_high_risk) {
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            const auto held = reg.effects_for_locked(self_tenant);
+            if (!has_effect(held, Effect::TenantAdmin)) {
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = provenance_mutation_id != 0
+                                     ? provenance_mutation_id
+                                     : (epoch != 0 ? epoch : static_cast<std::uint64_t>(1));
+                const auto fid = static_cast<std::int64_t>(fiber);
+                // Reuse the #3141 wildcard-write-fence counter (additive, no
+                // new metric per non-goals).
+                g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                emit_security_event_durable(SecurityEventKind::EffectDeny, tenant_id, mid, epoch,
+                                            effect_bits, name,
+                                            "grant-effect-needs-explicit-tenant-admin",
+                                            /*denied=*/true, fid);
+                return; // deny — no registry write, no allow-counter bump
+            }
+            // String fence MUST run BEFORE the registry write for high-risk
+            // bits so a deny at the #3141 string-path layer does not leave
+            // TA/MSE rows behind in by_tenant (the issue's "fence → string →
+            // registry" ordering).
+            if (!try_grant_capability_string_path_privileged_locked(
+                    self_tenant, name, static_cast<std::uint16_t>(effect_bits))) {
+                return; // string fence denied — no registry write
+            }
+            reg.grant_locked(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use);
+        } else {
+            // Same-tenant low-risk (or Soft/Off): no fence, plain grant().
+            reg.grant(tenant_id, name, static_cast<Effect>(effect_bits), prov, single_use);
+        }
     }
     // Issue #2136: count Render grants (effect-only path when name empty;
     // named "render" also bumps via grant_capability below).

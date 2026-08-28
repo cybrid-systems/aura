@@ -140,10 +140,30 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         // Issue #3088: authority triple (bool OR effect mode != 0) so a
         // drifted bool cannot reopen elevation under Restricted.
-        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            ev.bump_capability_denial();
-            return make_bool(false);
+        // Issue #3362: require explicit TenantAdmin via effects_for_locked
+        // (under mtx) — closes the wildcard-only privilege-escalation path
+        // where `*` alone could bypass the admin gate. Wildcard-only
+        // holders (no explicit TA) now deny + SE.
+        if (ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) {
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            using aura::compiler::security::kEffectTenantAdmin;
+            if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
+                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                 static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
+                ev.bump_capability_denial();
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0, /*cap_name=*/"<prim>",
+                                            "grant-effect-needs-explicit-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_bool(false);
+            }
         }
         const auto sidx = as_string_idx(a[0]);
         if (sidx >= ev.string_heap_.size())
@@ -200,15 +220,33 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
         }
         // Issue #3088: authority triple (bool OR effect mode != 0) so a
         // drifted bool cannot reopen elevation under Restricted.
-        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            ev.bump_capability_denial();
-            if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
-                m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "security:grant-capability!: wildcard capability required in sandbox mode",
-                ev.primitive_error_counter_ptr());
+        // Issue #3362: require explicit TenantAdmin via effects_for_locked
+        // (under mtx) — closes the wildcard-only privilege-escalation path.
+        if (ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) {
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            using aura::compiler::security::kEffectTenantAdmin;
+            if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
+                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                 static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
+                ev.bump_capability_denial();
+                if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
+                    m->sandbox_admin_denials_total.fetch_add(1, std::memory_order_relaxed);
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0, /*cap_name=*/"<prim>",
+                                            "grant-effect-needs-explicit-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_primitive_error(ev.string_heap_, ev.error_values_,
+                                            "security:grant-capability!: explicit TenantAdmin "
+                                            "required (wildcard alone insufficient)",
+                                            ev.primitive_error_counter_ptr());
+            }
         }
         const auto idx = as_string_idx(a[0]);
         if (idx >= ev.string_heap_.size())
@@ -1070,10 +1108,28 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             return make_bool(false);
         // Issue #3088: authority triple (bool OR effect mode != 0) so a
         // drifted bool cannot reopen cross-tenant grant under Restricted.
-        if ((ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) &&
-            !ev.has_capability(aura::compiler::security::kCapWildcard)) {
-            ev.bump_capability_denial();
-            return make_bool(false);
+        // Issue #3362: require explicit TenantAdmin via effects_for_locked
+        // (under mtx) — closes the wildcard-only privilege-escalation path.
+        if (ev.sandbox_mode() || ev.effect_sandbox_mode() != 0) {
+            auto& reg = aura::core::capability::g_capability_registry();
+            std::lock_guard<std::mutex> lock(reg.mtx);
+            using aura::compiler::security::kEffectTenantAdmin;
+            if (reg.holds_wildcard_only_locked(ev.capability_tenant_id()) ||
+                (static_cast<std::uint16_t>(reg.effects_for_locked(ev.capability_tenant_id())) &
+                 static_cast<std::uint16_t>(kEffectTenantAdmin)) == 0) {
+                ev.bump_capability_denial();
+                using ::aura::core::security_event::SecurityEventKind;
+                using ::aura::core::security_event_wal::emit_security_event_durable;
+                const auto epoch = ::aura::core::current_mutation_epoch();
+                const auto mid = epoch != 0 ? epoch : static_cast<std::uint64_t>(1);
+                const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
+                emit_security_event_durable(SecurityEventKind::EffectDeny,
+                                            ev.capability_tenant_id(), mid, epoch,
+                                            /*effect_bits=*/0, /*cap_name=*/"<prim>",
+                                            "grant-effect-needs-explicit-tenant-admin",
+                                            /*denied=*/true, fid);
+                return make_bool(false);
+            }
         }
         ev.grant_cross_tenant_access(static_cast<std::uint64_t>(as_int(a[0])),
                                      static_cast<std::uint64_t>(as_int(a[1])),

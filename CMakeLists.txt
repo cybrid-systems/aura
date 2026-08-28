@@ -3022,6 +3022,7 @@ add_executable(test_security_capability_batch
     tests/core/test_capability_effect_stats_snapshot.cpp
     tests/core/test_capability_registry_snapshot.cpp
     tests/core/test_capability_single_use_consume.cpp
+    tests/core/test_grant_effect_wildcard_write_fence.cpp
     tests/core/test_restricted_unset_principal.cpp
 )
 set_property(TARGET test_security_capability_batch PROPERTY CXX_MODULE_STD ON)
