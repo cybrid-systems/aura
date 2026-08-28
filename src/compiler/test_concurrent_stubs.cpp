@@ -52,6 +52,39 @@ __attribute__((weak)) std::size_t linear_or_dirty_roots_count_for_rebind() noexc
 }
 } // namespace aura::compiler
 
+// Issue #3346: stamp last-look CS consult. Strong def lives in
+// evaluator_mutation_boundary.cpp (TypeChecker-using). Light-link
+// test_concurrent does not compile that TU — last-look reports match
+// so builders still instantiate (Soft/Off never calls this anyway).
+extern "C" __attribute__((weak)) int
+aura_stamp_last_look_cs_matches(void* /*tc_handle*/, std::uint64_t /*expected_goals*/,
+                                std::uint64_t /*expected_fp*/) noexcept {
+    return 1; // stub: match (no TypeChecker in this binary)
+}
+
+// Last-look reject inlines clear_occurrence_persist_buffer → this C ABI.
+// Strong def: evaluator_mutation_boundary.cpp. Light-link: nothing to drop.
+extern "C" __attribute__((weak)) std::uint64_t
+aura_clear_occurrence_persist_snapshot_tc(void* /*tc_handle*/) noexcept {
+    return 0;
+}
+
+// Stamp builders also instantiate commit_readiness_live_policy /
+// commit_readiness (header-inline). Strong defs live in
+// evaluator_mutation_boundary.cpp. Fail-closed: no live TC, no recover.
+namespace aura::compiler::typed_audit {
+struct CommitReadinessInput;
+}
+extern "C" __attribute__((weak)) void aura_typed_audit_fill_from_live_tc(
+    void* /*ev*/, aura::compiler::typed_audit::CommitReadinessInput* /*out*/) noexcept {}
+extern "C" __attribute__((weak)) bool
+aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept {
+    return false;
+}
+extern "C" __attribute__((weak)) void* aura_typed_audit_current_commit_type_checker() noexcept {
+    return nullptr;
+}
+
 namespace aura::compiler::typed_audit {
 struct TypedMutationAuditEvent;
 __attribute__((weak)) void maybe_persist_typed_summary(const TypedMutationAuditEvent&) noexcept {

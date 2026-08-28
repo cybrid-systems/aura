@@ -4622,6 +4622,22 @@ def cmd_lint():
             "Issue #3225 occurrence persist seqlock linter failed — run python3 scripts/coverage/checks/check_occurrence_persist_seq_3225.py"
         )
         return r
+    # Issue #3346: last-look fingerprint + live_goal_count + linear_root
+    # immediately before TypeLinearCommitProof atomic stamp. densify/steal
+    # refuse if mid_abort_authority outstanding. last_proof_* release +
+    # IR acquire. Soft early-return. Extends
+    # test_occurrence_goal_persist_rehydrate; no docs/design / invent /
+    # new query keys.
+    ll3346_script = COVERAGE_CHECKS / "check_stamp_last_look_densify_steal_abort_3346.py"
+    if not ll3346_script.exists():
+        fail(f"missing {ll3346_script}")
+        return 1
+    r = run([sys.executable, str(ll3346_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3346 stamp last-look densify×steal×mid-abort linter failed — run python3 scripts/coverage/checks/check_stamp_last_look_densify_steal_abort_3346.py"
+        )
+        return r
     # Issue #3226: production soundness sample must run a real
     # same-lambda full lower + #2113 IR compare (closes #2245
     # deferred trivial prod_ok). Soft / sample_bp==0 skip lower.

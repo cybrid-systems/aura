@@ -38,6 +38,10 @@
 //   #3232 AC2: Soft nested observe-only; quiet no-abort zero extra
 //   #3232 AC3: dual_restore + rehydrate sites source-cite AbortAuthorityHold
 //   #3232 AC4: #3193 ACs preserved; no invent / docs/design
+//   #3346 AC1: last-look fingerprint + live_goal_count + linear_root before stamp
+//   #3346 AC2: densify/steal refuse green if mid_abort_authority outstanding
+//   #3346 AC3: last_proof_* acquire-consistent with live table after stamp
+//   #3346 AC4: Soft/Off zero extra; no new query key / invent / docs/design
 
 #include "test_harness.hpp"
 
@@ -787,6 +791,207 @@ static void ac3232_3_source_cite_dual_restore_rehydrate() {
     CHECK(read_file("tests/issues/test_issue_3232.cpp").empty(), "3232 AC4: no tests/issues");
 }
 
+// ── Issue #3346: last-look fingerprint / live_goal_count / linear_root
+// immediately before TypeLinearCommitProof stamp vs densify×steal×mid-abort.
+//   AC1 last-look mismatch → reject (clear persist + invalidate_gen + no green)
+//   AC2 densify/steal refuse if mid_abort_authority outstanding
+//   AC3 last_proof_* acquire-consistent with live table after stamp
+//   AC4 Soft/Off zero extra; no new query key / g_3346_* / invent / docs
+
+static void ac3346_reset_faces() {
+    unsetenv("AURA_OCCURRENCE_PERSIST");
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::reset_mid_abort_authority_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::clear_proof_goal_truth_for_test();
+    typed_audit::reset_type_linear_proof_reject_empty_after_fence_for_test();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    clear_occurrence_empty_after_fence_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    typed_audit::clear_boundary_audit_mid();
+}
+
+static void ac3346_1_last_look_fingerprint_mismatch_rejects() {
+    std::println("\n--- #3346 AC1: last-look fingerprint/goals mismatch rejects green ---");
+    ac3346_reset_faces();
+    apply_production_audit_defaults();
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 33461, /*epoch=*/1);
+    CHECK(cs.append_occurrence_snapshot(33461) == 1, "3346 AC1: persist wrote");
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto fp0 = typed_audit::occurrence_goal_fingerprint(&tc);
+    const auto n0 = static_cast<std::uint64_t>(cs.occurrence_goals_size());
+    CHECK(n0 == 1 && fp0 != 0, "3346 AC1: one live goal + non-zero fp");
+    auto v2 = cs.fresh_var();
+    cs.note_occurrence_goal(v2, reg.int_type(), 2, 33462, /*epoch=*/1);
+    CHECK(cs.occurrence_goals_size() == 2, "3346 AC1: live drifted to 2 goals");
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        33461, /*would_allow_commit=*/true, /*linear_ok=*/true, n0, fp0, /*from_cs=*/true);
+    CHECK(!p.would_allow_commit, "3346 AC1: last-look mismatch rejects");
+    CHECK(typed_audit::stamp_last_look_rejected(), "3346 AC1: last-look rejected flag");
+    CHECK(p.linear_ok == false, "3346 AC1: linear_ok false");
+    CHECK(p.force_reason_code == 16, "3346 AC1: force_reason 16");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 0, "3346 AC1: no green face");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() > gen0,
+          "3346 AC1: invalidate_gen advanced");
+    CHECK(cs.occurrence_persist_log_size() == 0, "3346 AC1: persist cleared");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3346 AC1: IR fast-path not green");
+
+    apply_dev_audit_defaults();
+    ac3346_reset_faces();
+}
+
+static void ac3346_2_outstanding_authority_refuses_stamp() {
+    std::println("\n--- #3346 AC2: mid_abort_authority outstanding refuses green stamp ---");
+    ac3346_reset_faces();
+    apply_production_audit_defaults();
+    typed_audit::note_boundary_audit_mid(33462);
+    const auto ver = typed_audit::begin_mid_abort_authority(33462);
+    CHECK(ver != 0, "3346 AC2: production armed mid-abort slot");
+    CHECK(typed_audit::mid_abort_authority_outstanding(33462), "3346 AC2: outstanding");
+    const auto mismatch0 =
+        typed_audit::g_mid_abort_authority_mismatch_total.load(std::memory_order_relaxed);
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        33462, /*would_allow_commit=*/true, /*linear_ok=*/true, 0, 0, /*from_cs=*/true);
+    CHECK(!p.would_allow_commit, "3346 AC2: outstanding refuses green");
+    CHECK(typed_audit::stamp_last_look_rejected(), "3346 AC2: last-look rejected flag");
+    CHECK(p.force_reason_code == 16, "3346 AC2: force_reason 16");
+    CHECK(typed_audit::g_mid_abort_authority_mismatch_total.load(std::memory_order_relaxed) >
+              mismatch0,
+          "3346 AC2: reuse mismatch total");
+    typed_audit::end_mid_abort_authority(33462);
+    CHECK(!typed_audit::mid_abort_authority_outstanding(33462), "3346 AC2: released");
+    const auto p2 = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        33462, true, true, 0, 0, true);
+    CHECK(p2.would_allow_commit, "3346 AC2: after release stamp may green");
+    CHECK(!typed_audit::stamp_last_look_rejected(), "3346 AC2: flag clear after release");
+    CHECK(typed_audit::last_proof_would_allow_commit_v_read() == 1,
+          "3346 AC2: green after release");
+
+    const auto densify = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(densify.find("densify_abort_outstanding_3346") != std::string::npos,
+          "3346 AC2: densify Phase-5 outstanding refuse");
+    CHECK(steal.find("steal_abort_outstanding_3346") != std::string::npos,
+          "3346 AC2: steal outstanding refuse");
+    CHECK(steal.find("note_stamp_last_look_tc") != std::string::npos,
+          "3346 AC2: steal notes last-look tc");
+
+    apply_dev_audit_defaults();
+    ac3346_reset_faces();
+}
+
+static void ac3346_3_stamp_matches_live_under_acquire() {
+    std::println("\n--- #3346 AC3: after stamp last_proof_* matches live under acquire ---");
+    ac3346_reset_faces();
+    apply_production_audit_defaults();
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(3);
+    cs.set_current_epoch(3);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 3, 33463, /*epoch=*/3);
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto fp = typed_audit::occurrence_goal_fingerprint(&tc);
+    const auto n = static_cast<std::uint64_t>(cs.occurrence_goals_size());
+    const auto roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        33463, true, true, n, fp, true);
+    CHECK(p.would_allow_commit, "3346 AC3: matching last-look stays green");
+    CHECK(!typed_audit::stamp_last_look_rejected(), "3346 AC3: last-look flag clear");
+    CHECK(p.goal_fingerprint == fp, "3346 AC3: proof fingerprint == live");
+    CHECK(p.live_goal_count == n, "3346 AC3: proof live_goal_count == CS size");
+    CHECK(p.linear_root_count == roots, "3346 AC3: proof linear_root_count == live roots");
+    CHECK(typed_audit::last_proof_goal_fingerprint_v_read() == fp,
+          "3346 AC3: last_proof fingerprint gauge");
+    CHECK(typed_audit::last_proof_live_goal_count_v_read() == n,
+          "3346 AC3: last_proof goals gauge");
+    CHECK(typed_audit::last_proof_linear_root_count_v_read() == roots,
+          "3346 AC3: last_proof roots gauge");
+    CHECK(typed_audit::occurrence_goal_fingerprint(&tc) ==
+              typed_audit::last_proof_goal_fingerprint_v_read(),
+          "3346 AC3: live fingerprint == stamped");
+    CHECK(typed_audit::linear_fast_path_ok(), "3346 AC3: IR consult sees consistent green");
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("g_last_proof_would_allow_commit.store(would_allow ? 1 : 0, "
+                   "std::memory_order_release)") != std::string::npos,
+          "3346 AC3: publish uses release");
+    CHECK(tma.find("g_last_proof_would_allow_commit.load(std::memory_order_acquire)") !=
+              std::string::npos,
+          "3346 AC3: linear_fast_path_ok acquire on last_proof");
+
+    apply_dev_audit_defaults();
+    ac3346_reset_faces();
+}
+
+static void ac3346_4_soft_zero_extra_and_linter() {
+    std::println("\n--- #3346 AC4: Soft/Off zero extra; linter; no invent ---");
+    ac3346_reset_faces();
+    apply_dev_audit_defaults();
+    typed_audit::note_boundary_audit_mid(33464);
+    const auto ver = typed_audit::begin_mid_abort_authority(33464);
+    CHECK(ver == 0, "3346 AC4: Soft begin_mid_abort_authority no-ops");
+    CHECK(!typed_audit::mid_abort_authority_outstanding(33464), "3346 AC4: Soft outstanding 0");
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    auto& cs = tc.constraint_system();
+    cs.set_current_epoch(1);
+    auto v = cs.fresh_var();
+    cs.note_occurrence_goal(v, reg.int_type(), 1, 1, 1);
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto fp = typed_audit::occurrence_goal_fingerprint(&tc);
+    auto v2 = cs.fresh_var();
+    cs.note_occurrence_goal(v2, reg.int_type(), 2, 2, 1);
+    // Soft last-look returns true without re-read — stamp keeps caller outcome
+    // even when live CS drifted (AC4; production would reject).
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        33464, true, true, 1, fp, true);
+    CHECK(p.would_allow_commit, "3346 AC4: Soft does not last-look reject");
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kStampLastLookIssue = 3346") != std::string::npos, "3346 AC4: stamp");
+    CHECK(tma.find("if (!stamp_last_look_hard())") != std::string::npos,
+          "3346 AC4: Soft early-return");
+    CHECK(tma.find("g_3346_") == std::string::npos, "3346 AC4: no g_3346_*");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_stamp_last_look_densify_steal_abort_3346.py");
+    CHECK(!lint.empty() && lint.find("Issue #3346") != std::string::npos, "3346 AC4: linter");
+    CHECK(build.find("check_stamp_last_look_densify_steal_abort_3346") != std::string::npos,
+          "3346 AC4: build.py");
+    const auto pos3225 = build.find("check_occurrence_persist_seq_3225");
+    const auto pos3346 = build.find("check_stamp_last_look_densify_steal_abort_3346");
+    CHECK(pos3225 != std::string::npos && pos3346 != std::string::npos && pos3346 > pos3225,
+          "3346 AC4: linter after #3225");
+    CHECK(read_file("docs/design/3346-stamp-last-look.md").empty(), "3346 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3346.cpp").empty(), "3346 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3346.cpp").empty(), "3346 AC4: no tests/issues");
+    CHECK(tma.find("schema-3346") == std::string::npos, "3346 AC4: no new query key");
+
+    apply_dev_audit_defaults();
+    ac3346_reset_faces();
+}
 
 // ── #2896 AC1: production + non-empty goals → append without env ──
 static void ac2896_1_production_persist_without_env() {
@@ -1315,6 +1520,11 @@ static void ac3082_1_nested_success_never_persists() {
     CHECK(mb.find("note_type_export_inflight") != std::string::npos,
           "AC1: nested path stamps inflight");
     unsetenv("AURA_OCCURRENCE_PERSIST");
+    aura::compiler::lock_order::reset_tls_for_test();
+    typed_audit::clear_stamp_last_look_tc();
+    typed_audit::clear_type_linear_proof_outcome_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::clear_type_linear_commit_proof_for_test();
     apply_production_audit_defaults();
     reset_occurrence_commit_snapshot_for_test();
     const auto w0 = occurrence_commit_snapshot_written_total_v_read();
@@ -2255,7 +2465,7 @@ static void ac3224_ir_typed_entry_commit_readiness() {
         apply_production_audit_defaults();
         clear_occurrence_empty_after_fence_for_test();
         typed_audit::reset_linear_ir_fastpath_counters_for_test();
-        typed_audit::aura_typed_audit_test_clear_recover_override();
+        aura_typed_audit_test_clear_recover_override();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(), "3224 AC3: quiet depth==0 allows");
         typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
@@ -2328,7 +2538,7 @@ static void ac3343_production_weak_abi_commit_readiness() {
         apply_production_audit_defaults();
         clear_occurrence_empty_after_fence_for_test();
         typed_audit::reset_linear_ir_fastpath_counters_for_test();
-        typed_audit::aura_typed_audit_test_clear_recover_override();
+        aura_typed_audit_test_clear_recover_override();
         typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
         CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
@@ -2908,6 +3118,12 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3232_1_nested_hold_keeps_block();
     ac3232_2_soft_nested_observe_quiet();
     ac3232_3_source_cite_dual_restore_rehydrate();
+    std::println(
+        "\n=== #3346 last-look fingerprint/goals/linear_root vs densify×steal×mid-abort ===");
+    ac3346_1_last_look_fingerprint_mismatch_rejects();
+    ac3346_2_outstanding_authority_refuses_stamp();
+    ac3346_3_stamp_matches_live_under_acquire();
+    ac3346_4_soft_zero_extra_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -58,7 +58,8 @@ def _rows() -> list[tuple[str, str, bool]]:
             "to the #3395 bare-int reject with stale-ref tag).",
             "aura::compiler::typed_audit::production_defaults_active()" in mut
             and "walk_v2" in mut
-            and "if (!walk_v2(cdr)) return std::nullopt" in mut,
+            and "if (!walk_v2(cdr))" in mut
+            and "return std::nullopt" in mut,
         )
     )
     rows.append(
@@ -68,7 +69,8 @@ def _rows() -> list[tuple[str, str, bool]]:
             "(production gate on walk_v2, nullopt on v1, Soft v1 fallback).",
             "aura::compiler::typed_audit::production_defaults_active()" in qws
             and "walk_v2" in qws
-            and "if (!walk_v2(cdr)) return std::nullopt" in qws,
+            and "if (!walk_v2(cdr))" in qws
+            and "return std::nullopt" in qws,
         )
     )
 

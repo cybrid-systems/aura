@@ -64,6 +64,13 @@ extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 // contract_handler / value_tags / shape_profiler compile.
 extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) noexcept;
 extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept;
+// Issue #3346: last-look CS fingerprint + live_goal_count vs the values
+// about to be stamped. Strong def in evaluator_mutation_boundary.cpp
+// (TypeChecker-using). Weak stub in test_concurrent_stubs.cpp returns 1
+// (match) so light-link binaries that instantiate the stamp builders
+// still link. Soft/Off never calls this (header early-return).
+extern "C" int aura_stamp_last_look_cs_matches(void* tc_handle, std::uint64_t expected_goals,
+                                               std::uint64_t expected_fp) noexcept;
 // Issue #3379: TLS slot for the current commit-readiness Evaluator.
 // Caller (boundary enter / outermost Guard) sets it; the fill bridge
 // reads it. Forward declarations for the bridges live further down
@@ -76,6 +83,17 @@ extern "C" void aura_typed_audit_clear_readiness_evaluator() noexcept;
 // Issue #3233: production arms PCV stale-span exclusive (defined in
 // typed_mutation_audit_hooks.cpp). Soft/dev clears it.
 extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept;
+// Issue #3380: recover C ABI at file scope so unqualified test calls
+// (`aura_typed_audit_test_*`) resolve. Nested `extern "C"` inside
+// namespace typed_audit hid those names from file-scope lookup
+// (gcc 16; same rule as #3343). Strong defs in
+// evaluator_mutation_boundary.cpp. Tests that used
+// typed_audit::aura_typed_audit_test_* now call the unmangled names.
+extern "C" void* aura_typed_audit_current_commit_type_checker() noexcept;
+extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept;
+extern "C" void aura_typed_audit_test_install_recover_override(bool (*fn)(void* ctx) noexcept,
+                                                               void* ctx) noexcept;
+extern "C" void aura_typed_audit_test_clear_recover_override() noexcept;
 
 namespace aura::compiler {
 // Issue #3170 AC3 source-cite: clear_occurrence_persist_buffer bumps this
@@ -1519,14 +1537,18 @@ inline void note_rehydrate_success_bind(std::uint64_t goals, std::uint64_t fp) n
 }
 
 inline void publish_last_proof_face(bool would_allow, bool linear_ok) noexcept {
-    g_last_proof_would_allow_commit.store(would_allow ? 1 : 0, std::memory_order_relaxed);
-    g_last_proof_linear_ok.store(linear_ok ? 1 : 0, std::memory_order_relaxed);
+    // Issue #3346 AC3: release publishes last_proof_* + Occurrence gauges
+    // written earlier in this thread (apply_proof_goal_truth / linear_root).
+    // IR/JIT fast-path consults with a matching acquire so it cannot see a
+    // torn half-green face after densify/steal success or abort restore.
+    g_last_proof_would_allow_commit.store(would_allow ? 1 : 0, std::memory_order_release);
+    g_last_proof_linear_ok.store(linear_ok ? 1 : 0, std::memory_order_release);
     // Issue #3032: a fresh green face re-binds invalidate gen so Move/Drop
     // may elide again only after the miss generation is acknowledged.
     if (would_allow && linear_ok)
         g_rehydrate_miss_green_bind_gen.store(
-            g_rehydrate_miss_invalidate_gen.load(std::memory_order_relaxed),
-            std::memory_order_relaxed);
+            g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire),
+            std::memory_order_release);
 }
 
 // Issue #2717: active stamp inside boundary + composite commit. The
@@ -2007,8 +2029,11 @@ inline void reset_linear_force_full_validate_for_test() noexcept {
         /*Reject*/ 2)
         return false;
     // proof.linear_ok && would_allow_commit
-    if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
-        g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0)
+    // Issue #3346 AC3: acquire pairs with publish_last_proof_face release so
+    // last_proof_* gauges + Occurrence live table are consistent before any
+    // IR/JIT Move/Drop elision consult. Quiet (face 0): one acquire load.
+    if (g_last_proof_would_allow_commit.load(std::memory_order_acquire) == 0 ||
+        g_last_proof_linear_ok.load(std::memory_order_acquire) == 0)
         return false;
     // mid MutationBoundary arm (#2964 AC3) — boundary_depth > 0 disables
     {
@@ -2032,8 +2057,10 @@ inline void reset_linear_force_full_validate_for_test() noexcept {
     // success restamp) must match last green bind. Acquire pairs with
     // release fetch_add so an in-flight IR Move cannot elide after gen
     // advances. #3171 closes remaining densify-success / restamp sites.
+    // Issue #3346 AC3: acquire on green_bind_gen as well so a post-stamp
+    // IR consult cannot observe last_proof_* behind the bind.
     if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
-        g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed))
+        g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire))
         return false;
     return true;
 }
@@ -2627,6 +2654,83 @@ inline void apply_proof_goal_truth(TypeLinearCommitProof& p, const ProofGoalTrut
     return t;
 }
 
+// Issue #3346: last-look immediately before TypeLinearCommitProof atomic
+// last_proof stores. Production success stamp re-reads live fingerprint +
+// live_goal_count (CS, when TLS tc was noted) + linear_root_count and
+// refuses green if they drifted vs the freeze/collect, or if
+// mid_abort_authority is outstanding for the stamp mid. Soft/Off: one
+// production_defaults_active / strategy load, then return (AC4). Reuses
+// mid_abort_authority_mismatch_total + invalidate_gen; no new query key.
+inline constexpr int kStampLastLookIssue = 3346;
+inline thread_local void* g_tls_stamp_last_look_tc = nullptr;
+inline thread_local bool g_tls_stamp_last_look_rejected = false;
+
+inline void note_stamp_last_look_tc(void* tc_handle) noexcept {
+    g_tls_stamp_last_look_tc = tc_handle;
+}
+inline void clear_stamp_last_look_tc() noexcept {
+    g_tls_stamp_last_look_tc = nullptr;
+    g_tls_stamp_last_look_rejected = false;
+}
+[[nodiscard]] inline bool stamp_last_look_rejected() noexcept {
+    return g_tls_stamp_last_look_rejected;
+}
+
+[[nodiscard]] inline bool stamp_last_look_hard() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
+[[nodiscard]] inline std::uint64_t stamp_last_look_join_mid(std::uint64_t stamp_mid) noexcept {
+    if (stamp_mid != 0)
+        return stamp_mid;
+    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        return g_tls_boundary_audit_mid;
+    return g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+}
+
+// Purpose: last-look live fingerprint / live_goal_count / linear_root_count
+//          + mid_abort_authority immediately before atomic last_proof stores
+// Pre: expected_* already resolved from freeze/collect (not hint sentinels)
+// Post: true → stamp may proceed; false → caller must reject (no green)
+// Soft/Off: true immediately (zero extra walks / CS consult)
+[[nodiscard]] inline bool stamp_last_look_live_matches(std::uint64_t expected_live_goal_count,
+                                                       std::uint64_t expected_fingerprint,
+                                                       std::uint64_t expected_linear_root_count,
+                                                       std::uint64_t stamp_mid) noexcept {
+    if (!stamp_last_look_hard())
+        return true; // AC4 Soft/Off zero extra
+    if (mid_abort_authority_outstanding(stamp_last_look_join_mid(stamp_mid))) {
+        g_mid_abort_authority_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    const auto live_roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    if (live_roots != expected_linear_root_count)
+        return false;
+    if (void* tc = g_tls_stamp_last_look_tc) {
+        if (aura_stamp_last_look_cs_matches(tc, expected_live_goal_count, expected_fingerprint) ==
+            0)
+            return false;
+    }
+    return true;
+}
+
+inline void reject_stamp_last_look_mismatch(TypeLinearCommitProof& p,
+                                            ProofGoalTruth& truth) noexcept {
+    g_tls_stamp_last_look_rejected = true;
+    p.would_allow_commit = false;
+    p.linear_ok = false;
+    p.occurrence_consistent = false;
+    p.force_reason_code = 16;
+    // Fail-closed gauges: do not publish the torn freeze as last_proof.
+    truth.live_goal_count = 0;
+    truth.goal_fingerprint = 0;
+    p.linear_root_count = 0;
+    if (void* tc = g_tls_stamp_last_look_tc)
+        (void)clear_occurrence_persist_buffer(tc);
+    (void)invalidate_fast_path_on_rehydrate_miss();
+}
+
 // Build a TypeLinearCommitProof from live state. Pure read of existing
 // surfaces + collect_linear_or_dirty_roots_for_rebind (#2723/#2742) for
 // linear_root_count. live_goal_count from optional hint (stamp site with
@@ -2648,6 +2752,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     std::uint64_t current_epoch_or_defuse,
     std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
     std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false) noexcept {
+    g_tls_stamp_last_look_rejected = false;
     TypeLinearCommitProof p{};
     const auto ready = commit_readiness_live_policy();
     const auto live_r = commit_readiness(ready);
@@ -2663,15 +2768,23 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     p.linear_root_count =
         static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
     // Issue #2842 / #2758: freeze goal truth (CS size + fingerprint preferred).
-    const auto truth =
+    auto truth =
         resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
-    apply_proof_goal_truth(p, truth);
     // Issue #3091: stamp audit_mid from TLS boundary-noted mid (preferred)
     // or fall back to g_last_stamped_audit_mid (last successful resolve).
     // Soft / no boundary note → audit_mid = 0 (AC4 zero-cost contract).
     p.audit_mid = g_tls_boundary_audit_noted
                       ? g_tls_boundary_audit_mid
                       : g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+    // Issue #3346 AC1/AC2: last-look live fingerprint + live_goal_count +
+    // linear_root_count + mid_abort_authority immediately before atomic
+    // last_proof stores. Mismatch → reject (clear persist + invalidate_gen
+    // + no green). Soft/Off: helper returns true with zero extra walks.
+    if (p.would_allow_commit &&
+        !stamp_last_look_live_matches(truth.live_goal_count, truth.goal_fingerprint,
+                                      p.linear_root_count, p.audit_mid))
+        reject_stamp_last_look_mismatch(p, truth);
+    apply_proof_goal_truth(p, truth);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (AC3).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
@@ -2688,6 +2801,9 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
     publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    // Issue #3346: stamp-site TLS is not valid after this builder returns
+    // (stack TypeCheckers in tests). Rejected flag stays for outermost.
+    g_tls_stamp_last_look_tc = nullptr;
     return p;
 }
 
@@ -2706,6 +2822,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     bool explicit_linear_ok, std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
     std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false,
     std::uint32_t explicit_force_reason_code = static_cast<std::uint32_t>(-1)) noexcept {
+    g_tls_stamp_last_look_rejected = false;
     TypeLinearCommitProof p{};
     p.readiness_bp = 0;
     p.force_reason_code = explicit_force_reason_code;
@@ -2718,9 +2835,8 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     p.defuse_or_epoch_stamp = current_epoch_or_defuse;
     p.linear_root_count =
         static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
-    const auto truth =
+    auto truth =
         resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
-    apply_proof_goal_truth(p, truth);
     // Issue #3091: stamp audit_mid same as the live-stamp path (TLS
     // boundary-noted mid preferred; fallback to g_last_stamped_audit_mid;
     // Soft / no boundary → 0). Same mid as the Typed trail / SE so Agent
@@ -2731,7 +2847,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     // Issue #2981: same-txn safety net — never leave a green proof when
     // #2704 hard face is latched and CS goals are empty (prefer CS
     // truth over gauge). Soft never enters the helper.
-    if (p.would_allow_commit && occurrence_empty_after_fence_blocks_proof(p.live_goal_count)) {
+    if (p.would_allow_commit && occurrence_empty_after_fence_blocks_proof(truth.live_goal_count)) {
         p.would_allow_commit = false;
         p.linear_ok = false;
         p.occurrence_consistent = false;
@@ -2745,6 +2861,13 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
         p.occurrence_consistent = false;
         p.force_reason_code = 3; // linear
     }
+    // Issue #3346 AC1/AC2: last-look immediately before atomic last_proof
+    // stores (outermost + densify Phase-5 + steal success). Soft/Off skip.
+    if (p.would_allow_commit &&
+        !stamp_last_look_live_matches(truth.live_goal_count, truth.goal_fingerprint,
+                                      p.linear_root_count, p.audit_mid))
+        reject_stamp_last_look_mismatch(p, truth);
+    apply_proof_goal_truth(p, truth);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (same as live path).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
@@ -2755,6 +2878,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
     stamp_type_linear_commit_proof(current_epoch_or_defuse);
     // Issue #2899: publish face bits for IR Move/Drop fast-path.
     publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    g_tls_stamp_last_look_tc = nullptr;
     return p;
 }
 
@@ -2996,16 +3120,7 @@ inline void reset_type_export_soft_refuse_for_test() noexcept {
 //
 // Header stays TypeChecker-free (C ABI in evaluator_mutation_boundary.cpp
 // owns the cast + recover fn call — same separation as #3170/#3379).
-extern "C" void* aura_typed_audit_current_commit_type_checker() noexcept;
-extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept;
-// Test-only override: lets hermetic unit tests (which previously called
-// install_occurrence_full_solve_recover(fn, ctx)) drive "recover true"
-// / "recover null" without constructing a real Evaluator + TC. When
-// set, the override fn is consulted BEFORE the live TC lookup; when
-// null, production path is used. Production code never sets this.
-extern "C" void aura_typed_audit_test_install_recover_override(bool (*fn)(void* ctx) noexcept,
-                                                               void* ctx) noexcept;
-extern "C" void aura_typed_audit_test_clear_recover_override() noexcept;
+// File-scope decls (above the namespace) — tests call the unmangled names.
 // Forward decls — defined later with face counter clear helpers (#2703/#2704/#2847).
 inline void clear_cone_outside_goal_drop_for_test() noexcept;
 inline void clear_partial_cone_truncate_for_test() noexcept;
