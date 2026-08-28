@@ -1901,6 +1901,10 @@ aura_issue_test_link_light(test_rebind_new_body_hygiene)
 # MacroIntroduced hygiene — #2792 twin for the atomic-batch path.
 aura_add_issue_test(test_atomic_batch_rebind_hygiene_lockless)
 aura_issue_test_link_light(test_atomic_batch_rebind_hygiene_lockless)
+# Issue #3374 wire-up moved below to live alongside all_test_issue_targets
+# (the add_custom_target for all_test_issue_targets comes after the early
+# add_dependencies block; calling add_dependencies before the target
+# exists errors out at cmake configure time).
 # Issue #2793: replace-value Guard abort marks mutation_log RolledBack (no torn audit).
 aura_add_issue_test(test_replace_value_audit_consistency)
 aura_issue_test_link_light(test_replace_value_audit_consistency)
@@ -2156,11 +2160,12 @@ aura_add_issue_bundle(light_late)
 
 # Default issue-suite build: the 12 profile bundles (not 200+ standalones).
 add_custom_target(all_test_issue_targets ALL)
+# Issue #3374 (was previously above — moved here so the add_dependencies
+# target exists when called).
+add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)
 # Issue #2315: chaos soak registered above with EXCLUDE_FROM_ALL; opt-in
 # via AURA_CHAOS_STEAL_GC but still buildable under the aggregate target.
 add_dependencies(all_test_issue_targets test_chaos_steal_mutation_gc)
-# Issue #3374: lockless rebind hygiene (registered above; dep after aggregate).
-add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)
 # Issue #2381: concurrent compact_hook shape_inval atomic stress.
 # Issue #2382: ASTArena dtor clears hooks before teardown.
 # Issue #2383: has_on_compact_hook lock parity.
@@ -2355,6 +2360,12 @@ add_dependencies(all_test_issue_targets test_jit_macro_introduced_preserve)
 aura_add_issue_test(test_macro_self_evo_capability)
 aura_issue_test_link_light(test_macro_self_evo_capability)
 add_dependencies(all_test_issue_targets test_macro_self_evo_capability)
+# Issue #3378: check_macro_self_evo at clone/expand-all uses Evaluator
+# principal (caller_principal) instead of process default_tenant. Grants
+# path already does this (#3145 AC4); this closes the check-path residual.
+aura_add_issue_test(test_macro_self_evo_check_evaluator_principal)
+aura_issue_test_link_light(test_macro_self_evo_check_evaluator_principal)
+add_dependencies(all_test_issue_targets test_macro_self_evo_check_evaluator_principal)
 
 # Issue #2024: occurrence narrowing provenance chain completeness.
 aura_add_issue_test(test_occurrence_provenance_chain_completeness)

@@ -1867,6 +1867,22 @@ extern "C" std::size_t aura_evaluator_mutation_boundary_depth() {
     return Evaluator::mutation_boundary_depth();
 }
 
+// Build-infra fix: macro_expansion.cpp (module TU) holds only a
+// forward declaration of Evaluator — its `import aura.compiler.evaluator_pure`
+// intentionally keeps the full Evaluator type out of scope. The
+// `capability_tenant_id()` call site at #3378 was previously a direct
+// static_cast<Evaluator*>(ev)->method() which gcc 26 rejects as
+// `invalid use of incomplete type`. Route through this C bridge so
+// the macro TU stays Evaluator-free in its import set. Definition
+// lives here (alongside the other Evaluator->method bridges) where
+// the full Evaluator class is in scope.
+extern "C" std::uint16_t aura_evaluator_capability_tenant_id_for_macro(void* ev) noexcept {
+    if (ev == nullptr)
+        return 0;
+    return static_cast<std::uint16_t>(
+        static_cast<aura::compiler::Evaluator*>(ev)->capability_tenant_id());
+}
+
 // Issue #2849: process-wide count of Evaluators with outermost
 // MutationBoundaryGuard live. yield_hook_evaluator() is thread-local
 // (#1403 stack) so cross-thread observers (mailbox push/fanout on other
