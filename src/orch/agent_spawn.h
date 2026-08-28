@@ -110,6 +110,9 @@ inline constexpr int kHandoffObservationOnlyIssue = 3273;
 // name-table until ~AgentHandle. directory / scope-resolve mark
 // lifecycle=reclaimed-pending so Agents do not reuse the name.
 inline constexpr int kReclaimedPendingLifecycleIssue = 3220;
+// Issue #3334: production long-lived C++ host typed abandon after
+// Reclaimed auto-wait Timeout. Soft / Off stay zero-cost.
+inline constexpr int kReclaimedAbandonIssue = 3334;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Issue #2159: fiber-native keepalive helper (replace detached std::thread).
@@ -464,6 +467,28 @@ struct JoinPolicy {
 // this deadline once when must_wait_reclaimed && the caller did not
 // pass :wait-reclaimed-ms.
 inline constexpr std::uint64_t kProductionWaitReclaimedMsDefault = 50;
+
+// Issue #3334: host-opt-in abandon after production Reclaimed Timeout.
+// max_second_wait_ms nullopt → kProductionWaitReclaimedMsDefault (50).
+// Soft / !must_wait_reclaimed: abandon_reclaimed is a no-op (Invalid).
+struct AbandonReclaimedOpts {
+    std::optional<std::uint64_t> max_second_wait_ms{};
+};
+enum class AbandonReclaimedOutcome : std::uint8_t {
+    Invalid = 0,   // Soft / Off / !must_wait — zero wait, zero atomic
+    Cleaned = 1,   // body exited during second wait — Done-path cleanup
+    Abandoned = 2, // Timeout — typed abandon (reservation+name+mailbox)
+};
+struct AbandonReclaimedResult {
+    AbandonReclaimedOutcome outcome = AbandonReclaimedOutcome::Invalid;
+    serve::JoinStatus wait_status = serve::JoinStatus::Invalid;
+    std::uint64_t wait_us = 0;
+    bool still_running = false;
+    bool reservation_released = false;
+    bool mailbox_detached = false;
+    bool name_cleared = false;
+    bool body_stack_untouched = true;
+};
 // Issue #3206: short drain after residual cancel / join-drain (existing
 // join path recycles reservation/mailbox; #2661 no early free).
 inline constexpr std::uint64_t kResidualJoinDrainMs = 50;
@@ -886,6 +911,13 @@ struct OrchModuleStats {
     // / body-already-exit / explicit `wait_reclaimed_ms` paths stay
     // zero. Appended at struct end (#2906 discipline).
     std::atomic<std::uint64_t> reclaimed_dtor_under_account_total{0};
+    // Issue #3334: production host typed abandon after Reclaimed auto-wait
+    // Timeout (bounded second wait, then detach mailbox attach + release
+    // reservation + clear name; never free body-stack while !is_done).
+    // Distinct from reclaimed_dtor_under_account_total (dtor last-resort).
+    // Soft / Off / !must_wait_reclaimed: never bumped. Appended at struct
+    // end (#2906).
+    std::atomic<std::uint64_t> reclaimed_abandon_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -1557,6 +1589,9 @@ struct AgentHandle {
     // Issue #3012: dtor / move-assign finish after Reclaimed. Defined
     // after complete_agent_join_cleanup (needs that helper).
     void finish_reclaimed_cleanup_on_dtor() noexcept;
+    // Issue #3334: typed abandon after production Reclaimed Timeout.
+    // Defined after wait_reclaimed_body / ensure_reclaimed_cleanup.
+    [[nodiscard]] AbandonReclaimedResult abandon_reclaimed(AbandonReclaimedOpts opts = {}) noexcept;
 };
 
 // Issue #3089: portable cross-Evaluator handoff state. Captures only the
@@ -2714,6 +2749,56 @@ maybe_auto_wait_reclaimed_production(AgentHandle& h,
     // (50 ms deadline + flag writes) lives in one place.
     auto wr = ensure_reclaimed_cleanup(h);
     return wr.wait_us;
+}
+
+// Issue #3334: production long-lived C++ hosts that keep AgentHandle in
+// vectors / hand it across components and must free the name / quota
+// slot without an indefinite body wait. One bounded second wait (default
+// 50 ms); on body exit → Done-path cleanup; on Timeout → detach mailbox
+// attach only + release reservation + clear name + bump
+// reclaimed_abandon_total. Never frees body-stack while !fiber->is_done()
+// (#2661). Soft / !must_wait_reclaimed: Invalid, zero extra wait / atomic.
+// Distinct from ~AgentHandle under-account (reclaimed_dtor_under_account_total).
+[[nodiscard]] inline AbandonReclaimedResult
+abandon_reclaimed(AgentHandle& h, AbandonReclaimedOpts opts = {}) noexcept {
+    AbandonReclaimedResult out;
+    if (!h.must_wait_reclaimed) {
+        out.outcome = AbandonReclaimedOutcome::Invalid;
+        return out; // AC: Soft / Off / already cleaned — zero extra
+    }
+    const auto wait_ms = opts.max_second_wait_ms.value_or(kProductionWaitReclaimedMsDefault);
+    auto wr = wait_reclaimed_body(h, wait_ms);
+    out.wait_status = wr.status;
+    out.wait_us = wr.wait_us;
+    out.still_running = wr.still_running;
+    h.wait_reclaimed_used = true;
+    h.wait_reclaimed_timeout = (wr.status == serve::JoinStatus::Timeout);
+    if (wr.status != serve::JoinStatus::Timeout) {
+        h.must_wait_reclaimed = false;
+        out.outcome = AbandonReclaimedOutcome::Cleaned;
+        out.reservation_released = (h.reserved_memory_bytes == 0);
+        return out;
+    }
+    // Timeout: typed abandon. Mailbox attach only — never body-stack.
+    if (h.mailbox && h.fiber) {
+        h.mailbox->detach(h.fiber);
+        out.mailbox_detached = true;
+    }
+    h.mailbox.reset();
+    h.release_reservation_if_any();
+    out.reservation_released = true;
+    h.name.clear();
+    out.name_cleared = true;
+    out.body_stack_untouched = !h.fiber || !h.fiber->is_done();
+    h.must_wait_reclaimed = false;
+    h.reclaimed_deferred_cleanup = false; // dtor must not re-count under-account
+    g_orch_module_stats.reclaimed_abandon_total.fetch_add(1, std::memory_order_relaxed);
+    out.outcome = AbandonReclaimedOutcome::Abandoned;
+    return out;
+}
+
+inline AbandonReclaimedResult AgentHandle::abandon_reclaimed(AbandonReclaimedOpts opts) noexcept {
+    return aura::orch::abandon_reclaimed(*this, opts);
 }
 
 // Stop keepalive helper (if any). Sets helper_stop so the fiber-native helper

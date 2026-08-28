@@ -240,6 +240,142 @@ static void ac3297_3_soft_zero_observability() {
           "3297 AC3: Soft path: counter unchanged (gate production-gated; Soft zero-cost)");
 }
 
+// Issue #3334: production typed abandon after Reclaimed Timeout.
+static void ac3334_1_abandon_releases_without_body_stack() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    std::println(
+        "\n--- #3334 AC1: production abandon → reservation/name gone, body-stack live ---");
+    apply_production_audit_defaults();
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    const auto ua0 =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.name = "agent-3334";
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    CHECK(!h.fiber->is_done(), "3334 AC1: body still live");
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Abandoned, "3334 AC1: Timeout → Abandoned");
+    CHECK(h.reserved_memory_bytes == 0, "3334 AC1: reservation released");
+    CHECK(h.name.empty(), "3334 AC1: name cleared");
+    CHECK(!h.fiber->is_done(), "3334 AC1: body-stack untouched (#2661)");
+    CHECK(ar.body_stack_untouched, "3334 AC1: body_stack_untouched");
+    CHECK(!h.must_wait_reclaimed, "3334 AC1: must_wait cleared after abandon");
+    CHECK(!h.reclaimed_deferred_cleanup, "3334 AC1: deferred cleared so dtor is not under-account");
+    CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0 + 1,
+          "3334 AC1: reclaimed_abandon_total bumps");
+    h.finish_reclaimed_cleanup_on_dtor();
+    CHECK(g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed) ==
+              ua0,
+          "3334 AC1: dtor after abandon does not bump under-account");
+    apply_dev_audit_defaults();
+}
+
+static void ac3334_2_forget_path_unchanged() {
+    std::println("\n--- #3334 AC2: host never abandons → dtor under-account path unchanged ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    CHECK(spawn.find("reclaimed_dtor_under_account_total") != std::string::npos,
+          "3334 AC2: dtor under-account counter retained");
+    CHECK(spawn.find("host_forget_reclaimed_risk_total") != std::string::npos,
+          "3334 AC2: host_forget path retained");
+    CHECK(spawn.find("finish_reclaimed_cleanup_on_dtor") != std::string::npos,
+          "3334 AC2: dtor cleanup SSOT retained");
+}
+
+static void ac3334_3_soft_zero_cost() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    std::println("\n--- #3334 AC3: Soft/Off abandon is Invalid, no atomic, no wait ---");
+    apply_dev_audit_defaults();
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.name = "soft-3334";
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 1;
+    auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Invalid, "3334 AC3: Soft → Invalid");
+    CHECK(ar.wait_us == 0, "3334 AC3: zero wait");
+    CHECK(h.reserved_memory_bytes == 4096, "3334 AC3: reservation held");
+    CHECK(h.name == "soft-3334", "3334 AC3: name unchanged");
+    CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0,
+          "3334 AC3: no abandon atomic");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+          "3334 AC3: no wait_reclaimed_total bump");
+}
+
+static void ac3334_4_cleaned_when_body_done() {
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    using aura::orch::AgentHandle;
+    using aura::serve::Fiber;
+    using aura::serve::FiberState;
+    std::println("\n--- #3334 AC4: body already done → Cleaned, not Abandoned ---");
+    apply_production_audit_defaults();
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->mark_reclaimed();
+    fiber_owned->set_state(FiberState::Done);
+    AgentHandle h;
+    h.ok = true;
+    h.fiber = fiber_owned.get();
+    h.reserved_memory_bytes = 4096;
+    h.must_wait_reclaimed = true;
+    h.reclaimed_deferred_cleanup = true;
+    AbandonReclaimedOpts opts;
+    opts.max_second_wait_ms = 50;
+    auto ar = h.abandon_reclaimed(opts);
+    CHECK(ar.outcome == AbandonReclaimedOutcome::Cleaned, "3334 AC4: Done-path Cleaned");
+    CHECK(ar.outcome != AbandonReclaimedOutcome::Abandoned, "3334 AC4: not Abandoned");
+    CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) == ab0,
+          "3334 AC4: abandon counter not bumped on Cleaned");
+    apply_dev_audit_defaults();
+}
+
+static void ac3334_5_source_and_linter() {
+    std::println("\n--- #3334 AC5: source-cite + linter + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto test_self = read_file("tests/orch/test_join_drain_reclaim.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_reclaimed_abandon_3334.py");
+    const auto build = read_file("build.py");
+    CHECK(spawn.find("kReclaimedAbandonIssue = 3334") != std::string::npos, "3334 AC5: stamp");
+    CHECK(spawn.find("reclaimed_abandon_total") != std::string::npos, "3334 AC5: counter");
+    CHECK(spawn.find("abandon_reclaimed") != std::string::npos, "3334 AC5: helper");
+    CHECK(spawn.find("Never frees body-stack") != std::string::npos, "3334 AC5: #2661 body-stack");
+    CHECK(prim.find("reclaimed-abandon-total") != std::string::npos, "3334 AC5: stats key");
+    CHECK(prim.find("schema-3334") != std::string::npos, "3334 AC5: schema on existing query");
+    CHECK(test_self.find("ac3334_1_abandon_releases_without_body_stack") != std::string::npos,
+          "3334 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3334") != std::string::npos, "3334 AC5: linter");
+    CHECK(build.find("check_reclaimed_abandon_3334") != std::string::npos, "3334 AC5: build.py");
+    std::ifstream invent("tests/orch/test_issue_3334.cpp");
+    if (!invent.good())
+        invent.open("../tests/orch/test_issue_3334.cpp");
+    CHECK(!invent.good(), "3334 AC5: no invent");
+    std::ifstream docs("docs/design/3334-reclaimed-abandon.md");
+    if (!docs.good())
+        docs.open("../docs/design/3334-reclaimed-abandon.md");
+    CHECK(!docs.good(), "3334 AC5: no docs/design");
+}
+
 } // namespace
 
 int run_test_join_drain_reclaim() {
@@ -3801,6 +3937,11 @@ int run_test_join_drain_reclaim() {
     ac3297_1_dtor_under_account_live_body();
     ac3297_2_dtor_no_under_account_post_exit();
     ac3297_3_soft_zero_observability();
+    ac3334_1_abandon_releases_without_body_stack();
+    ac3334_2_forget_path_unchanged();
+    ac3334_3_soft_zero_cost();
+    ac3334_4_cleaned_when_body_done();
+    ac3334_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

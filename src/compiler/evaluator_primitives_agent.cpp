@@ -3607,11 +3607,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             ev.primitive_error_counter_ptr());
             }
             std::optional<std::uint64_t> timeout_ms;
+            bool do_abandon = false;
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(a[i + 1]))
                     timeout_ms = static_cast<std::uint64_t>(
                         std::max<std::int64_t>(0, types::as_int(a[i + 1])));
+                if ((k == "abandon") && types::is_bool(a[i + 1]) && types::as_bool(a[i + 1]))
+                    do_abandon = true;
             }
             aura::orch::AgentHandle* hp = nullptr;
             if (types::is_string(a[0])) {
@@ -3633,34 +3636,63 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 };
                 return build_orch_hash(kv);
             }
-            auto wr = aura::orch::wait_reclaimed_body(*hp, timeout_ms);
+            aura::serve::JoinStatus st_enum = aura::serve::JoinStatus::Invalid;
+            std::uint64_t wait_us = 0;
+            bool still_running = false;
+            bool cleanup_completed = false;
+            bool abandoned = false;
+            if (do_abandon) {
+                aura::orch::AbandonReclaimedOpts aopts;
+                aopts.max_second_wait_ms = timeout_ms;
+                auto ar = aura::orch::abandon_reclaimed(*hp, aopts);
+                st_enum = ar.wait_status;
+                wait_us = ar.wait_us;
+                still_running = ar.still_running;
+                cleanup_completed = (ar.outcome == aura::orch::AbandonReclaimedOutcome::Cleaned);
+                abandoned = (ar.outcome == aura::orch::AbandonReclaimedOutcome::Abandoned);
+                if (ar.outcome == aura::orch::AbandonReclaimedOutcome::Invalid)
+                    st_enum = aura::serve::JoinStatus::Invalid;
+            } else {
+                auto wr = aura::orch::wait_reclaimed_body(*hp, timeout_ms);
+                st_enum = wr.status;
+                wait_us = wr.wait_us;
+                still_running = wr.still_running;
+                cleanup_completed = wr.cleanup_completed;
+            }
             // Map status without embedding "JoinStatus::Ok)" substrings that
             // #2885 AC2 greps for in orch:agent-join Ok/Timeout hash growth.
             const char* st = "invalid";
             bool wait_ok = false;
-            if (wr.status == aura::serve::JoinStatus::Ok) {
+            if (st_enum == aura::serve::JoinStatus::Ok) {
                 st = "ok";
                 wait_ok = true;
-            } else if (wr.status == aura::serve::JoinStatus::Timeout) {
+            } else if (st_enum == aura::serve::JoinStatus::Timeout) {
                 st = "timeout";
-            } else if (wr.status == aura::serve::JoinStatus::Cancelled) {
+            } else if (st_enum == aura::serve::JoinStatus::Cancelled) {
                 st = "cancelled";
-            } else if (wr.status == aura::serve::JoinStatus::Reclaimed) {
+            } else if (st_enum == aura::serve::JoinStatus::Reclaimed) {
                 st = "reclaimed";
             }
+            if (abandoned)
+                st = "abandoned";
             auto sidx = ev.string_heap_.size();
             ev.string_heap_.push_back(st);
             std::vector<std::pair<std::string, EvalValue>> kv = {
                 {"ok", make_bool(wait_ok)},
                 {"status", make_string(sidx)},
-                {"wait-us", make_int(static_cast<std::int64_t>(wr.wait_us))},
-                {"still-running", make_bool(wr.still_running)},
-                {"cleanup-completed", make_bool(wr.cleanup_completed)},
+                {"wait-us", make_int(static_cast<std::int64_t>(wait_us))},
+                {"still-running", make_bool(still_running)},
+                {"cleanup-completed", make_bool(cleanup_completed)},
                 {"schema", make_int(2924)},
                 {"schema-2924", make_int(2924)},
                 {"issue-2924", make_int(2924)},
                 {"agent-wait-reclaimed-wired", make_int(1)},
             };
+            if (do_abandon) {
+                kv.emplace_back("abandoned", make_bool(abandoned));
+                kv.emplace_back("schema-3334", make_int(aura::orch::kReclaimedAbandonIssue));
+                kv.emplace_back("issue-3334", make_int(aura::orch::kReclaimedAbandonIssue));
+            }
             return build_orch_hash(kv);
         });
 
@@ -6141,6 +6173,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             insert_kv("schema-3251", aura::orch::kAgentDenyClassIssue);
             insert_kv("issue-3251", aura::orch::kAgentDenyClassIssue);
             insert_kv("agent-deny-class-wired", 1);
+            // Issue #3334: typed abandon after production Reclaimed Timeout
+            // (reuse query:orch-module-stats; no new query:*).
+            insert_kv("reclaimed-abandon-total",
+                      static_cast<std::int64_t>(
+                          os.reclaimed_abandon_total.load(std::memory_order_relaxed)));
+            insert_kv("schema-3334", aura::orch::kReclaimedAbandonIssue);
+            insert_kv("issue-3334", aura::orch::kReclaimedAbandonIssue);
+            insert_kv("reclaimed-abandon-wired", 1);
             auto hidx = g_hash_tables.size();
             g_hash_tables.push_back(ht);
             return make_hash(hidx);

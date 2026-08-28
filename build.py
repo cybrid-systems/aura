@@ -2436,6 +2436,20 @@ def cmd_lint():
             "Issue #3297 reclaimed dtor under-account linter failed — run python3 scripts/coverage/checks/check_reclaimed_dtor_under_account_3297.py"
         )
         return r
+    # Issue #3334: production typed abandon after Reclaimed Timeout.
+    # Bounded second wait then detach mailbox attach + release
+    # reservation + clear name; never free body-stack. Extends
+    # test_join_drain_reclaim.cpp (#81967); no docs/design/.
+    ra3334_script = COVERAGE_CHECKS / "check_reclaimed_abandon_3334.py"
+    if not ra3334_script.exists():
+        fail(f"missing {ra3334_script}")
+        return 1
+    r = run([sys.executable, str(ra3334_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3334 reclaimed abandon linter failed — run python3 scripts/coverage/checks/check_reclaimed_abandon_3334.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
