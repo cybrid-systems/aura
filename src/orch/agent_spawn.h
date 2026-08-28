@@ -113,6 +113,10 @@ inline constexpr int kReclaimedPendingLifecycleIssue = 3220;
 // Issue #3334: production long-lived C++ host typed abandon after
 // Reclaimed auto-wait Timeout. Soft / Off stay zero-cost.
 inline constexpr int kReclaimedAbandonIssue = 3334;
+// Issue #3336: production C++ send preference — agent_send_safe (or
+// explicit `// orch-raw-send-ok`) for non-test TUs. Raw agent_send
+// remains for zero-cost non-held_ref / already-stamped.
+inline constexpr int kAgentSendSafePreferenceIssue = 3336;
 // Issue #2155: quota-reject spawn path — no name-table put, no arena leak.
 inline constexpr int kSpawnQuotaNoLeakIssue = 2155;
 // Issue #2159: fiber-native keepalive helper (replace detached std::thread).
@@ -918,6 +922,10 @@ struct OrchModuleStats {
     // Soft / Off / !must_wait_reclaimed: never bumped. Appended at struct
     // end (#2906).
     std::atomic<std::uint64_t> reclaimed_abandon_total{0};
+    // Issue #3336: raw agent_send saw unstamped held_ref (unsafe
+    // preference vs agent_send_safe). Quiet path (no held_ref /
+    // already-stamped) does not store. Appended at struct END (#2906).
+    std::atomic<std::uint64_t> agent_send_raw_held_ref_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -3296,10 +3304,11 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
 // Issue #1881: bump all outcomes (ok / backpressure / closed) — no dead path.
 // Issue #2848: auto handoff_ref for StableNodeRef payloads lives on the
 // language path (orch:agent-send) and on agent_send_safe.
-// Issue #3013 / #3212: prefer agent_send_safe for new C++ call sites.
-// Raw agent_send and mailbox->push with unstamped held_ref_token
-// return HandoffRequired (not Closed) so callers cannot misread
-// "mailbox closed". Zero-cost when no held_ref_token / already stamped.
+// Issue #3013 / #3212 / #3336: prefer agent_send_safe for new C++
+// call sites. Production (non-test) TUs must use agent_send_safe or
+// annotate `// orch-raw-send-ok` (linter). Raw agent_send is kept
+// for Zero-cost when no held_ref_token / already stamped; unstamped
+// held_ref still returns HandoffRequired (not Closed).
 // Issue #2925: optional producer_bp_budget self-throttle after N consecutive
 // BP (default 0 = off / zero extra work). Does not cancel body or detach
 // mailbox (Throttle; Cancel remains watch_all / explicit).
@@ -3316,6 +3325,8 @@ inline bool maybe_clear_producer_throttle(AgentHandle& h) noexcept {
         g_orch_module_stats.agent_send_handoff_fail_total.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.agent_send_safe_handoff_required_total.fetch_add(
             1, std::memory_order_relaxed);
+        // Issue #3336: chart raw-path unstamped held_ref (not quiet path).
+        g_orch_module_stats.agent_send_raw_held_ref_total.fetch_add(1, std::memory_order_relaxed);
         return serve::mf_mailbox::PushStatus::HandoffRequired;
     }
     // #2925: when throttled, short-circuit BP without growing the queue

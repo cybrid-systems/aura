@@ -1361,6 +1361,69 @@ static void ac3125_cross_scope_directory() {
     }
 }
 
+// Issue #3366: AgentScope::spawn must return a failed handle with the
+// typed reject fields populated when spawn_agent_with_mailbox denies.
+static void ac3366_1_bp_deny_failed_handle_has_typed_reject_fields() {
+    std::println("\n--- #3366 AC1: AgentScope::spawn BP-deny returns typed reject handle ---");
+    setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
+    auto trigger_mb =
+        std::make_shared<aura::serve::mf_mailbox::MultiFiberMailbox>(/*high_water=*/16);
+    for (std::uint64_t i = 0; i < 64; ++i) {
+        aura::serve::mf_mailbox::MailMessage m;
+        m.to_fiber = 0;
+        m.from_fiber = 0;
+        m.payload = "x";
+        m.priority = aura::serve::mf_mailbox::MailPriority::Normal;
+        (void)trigger_mb->push(std::move(m));
+    }
+    const auto bp_recent =
+        g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
+    CHECK(bp_recent > 0, "AC1: BP events triggered by mailbox fill (counter > 0)");
+
+    Scheduler sched(1);
+    SchedRunner runner(sched);
+    AgentScope scope(sched);
+
+    AgentSpec spec{.name = "ac3366-bp-deny"};
+    spec.attach_mailbox = true;
+    spec.mailbox_high_water = 16;
+    spec.body = [] { /* never runs */ };
+
+    AgentHandle& handle = scope.spawn(std::move(spec));
+    CHECK(!handle.ok, "AC1: handle.ok == false on BP-deny");
+    CHECK(handle.deny_class == aura::orch::AgentDenyClass::BpAdmit,
+          "AC1: handle.deny_class == BpAdmit");
+    CHECK(handle.quota_dimension == "mailbox-bp", "AC1: handle.quota_dimension == 'mailbox-bp'");
+    CHECK(handle.quota_exceeded, "AC1: handle.quota_exceeded == true");
+    CHECK(handle.error.find("AdmissionRejected") != std::string::npos,
+          "AC1: handle.error contains 'AdmissionRejected'");
+    CHECK(handle.retry_after_ms > 0, "AC1: handle.retry_after_ms > 0");
+    CHECK(scope.size() == 1, "AC1: failed handle is in scope (1 slot, not joinable)");
+
+    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    reset_process_resource_quota_for_test();
+}
+
+static void ac3366_6_source_cite_and_no_invent() {
+    std::println("\n--- #3366 AC6: source-cite + no docs/design/ ---");
+    auto readme = read_file("src/orch/README.md");
+    CHECK(!readme.empty(), "AC6: src/orch/README.md readable");
+    auto sec = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(sec.find("Issue #3366") != std::string::npos,
+          "AC6: evaluator_primitives_agent.cpp cites #3366 (orch:scope-spawn typed-reject "
+          "branch)");
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3366-") == std::string::npos,
+                  std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_agent_scope() {
@@ -1377,8 +1440,6 @@ int run_test_agent_scope() {
     ac2946_production_hard_deny();
     ac2777_read_apis_guarded();
     ac3216_handoff_directory_hard_deny();
-    ac3366_1_bp_deny_failed_handle_has_typed_reject_fields();
-    ac3366_6_source_cite_and_no_invent();
     std::println("\n=== Issue #2782: AgentScope Scheduler lifetime ===");
     ac2782_scheduler_destroyed_before_scope();
     ac2782_source_and_query();
@@ -1390,88 +1451,8 @@ int run_test_agent_scope() {
     ac2976_5_source_linter();
     ac2976_6_mvp();
     ac3125_cross_scope_directory();
-    // Issue #3366: AgentScope::spawn must return a failed handle with the
-    // typed reject fields populated when spawn_agent_with_mailbox denies
-    // (BP-admit / quota / dangling scheduler / HardDeny). Tests the C++
-    // helper; the Aura prim orch:scope-spawn now mirrors these fields into
-    // the typed reject hash (same shape as orch:spawn-agent #2079/#3251).
-    //
-    // AC1 BP-admit reject → handle.ok=false, deny_class=BpAdmit,
-    //    quota_dimension="mailbox-bp", quota_exceeded=true, error contains
-    //    "AdmissionRejected".
-    static void ac3366_1_bp_deny_failed_handle_has_typed_reject_fields() {
-        std::println("\n--- #3366 AC1: AgentScope::spawn BP-deny returns typed reject handle ---");
-        // Issue #3366: low threshold + pre-fill a separate mailbox to trigger
-        // BP events on the process-global counter. spawn_agent_with_mailbox
-        // checks this counter on entry and denies when it exceeds the threshold.
-        setenv("AURA_ORCH_BP_ADMIT_THRESHOLD", "1", 1);
-        auto trigger_mb = std::make_shared<MultiFiberMailbox>(/*high_water=*/16);
-        for (std::uint64_t i = 0; i < 64; ++i) {
-            MailMessage m;
-            m.to_fiber = 0;
-            m.from_fiber = 0;
-            m.payload = "x";
-            m.priority = aura::serve::mf_mailbox::MailPriority::Normal;
-            (void)trigger_mb->push(std::move(m));
-        }
-        const auto bp_recent =
-            g_orch_module_stats.mailbox_bp_recent_total.load(std::memory_order_relaxed);
-        CHECK(bp_recent > 0, "AC1: BP events triggered by mailbox fill (counter > 0)");
-
-        Scheduler sched(1);
-        SchedRunner runner(sched);
-        AgentScope scope(sched);
-
-        AgentSpec spec{.name = "ac3366-bp-deny"};
-        spec.attach_mailbox = true;
-        spec.mailbox_high_water = 16;
-        spec.body = [] { /* never runs */ };
-
-        AgentHandle& handle = scope.spawn(std::move(spec));
-        // #3366: AgentScope::spawn now returns the failed handle as-is (it was
-        // already pushed to handles_ + returned via handles_.back()).
-        // The Aura prim orch:scope-spawn now mirrors these fields into the
-        // typed reject hash. Verify the C++ helper surfaces the right fields.
-        CHECK(!handle.ok, "AC1: handle.ok == false on BP-deny");
-        CHECK(handle.deny_class == AgentDenyClass::BpAdmit, "AC1: handle.deny_class == BpAdmit");
-        CHECK(handle.quota_dimension == "mailbox-bp",
-              "AC1: handle.quota_dimension == 'mailbox-bp'");
-        CHECK(handle.quota_exceeded, "AC1: handle.quota_exceeded == true");
-        CHECK(handle.error.find("AdmissionRejected") != std::string::npos,
-              "AC1: handle.error contains 'AdmissionRejected'");
-        CHECK(handle.retry_after_ms > 0, "AC1: handle.retry_after_ms > 0");
-
-        // The failed handle is still pushed to handles_ (so iterators see it
-        // as a slot) but the slot is not joinable. scope.size() should be 1.
-        CHECK(scope.size() == 1, "AC1: failed handle is in scope (1 slot, not joinable)");
-
-        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
-        reset_process_resource_quota_for_test();
-    }
-
-    // Issue #3366 AC6: source-cite + linter pass (no docs/design/, no
-    // process-global AgentRegistry, schema keys consistent with
-    // orch:spawn-agent #2079/#3251). This wraps the existing test-file
-    // source-cite pattern (per #1655) — no new query key, no docs.
-    static void ac3366_6_source_cite_and_no_invent() {
-        std::println("\n--- #3366 AC6: source-cite + no docs/design/ ---");
-        auto readme = read_file("src/orch/README.md");
-        CHECK(!readme.empty(), "AC6: src/orch/README.md readable");
-        auto sec = read_file("src/compiler/evaluator_primitives_agent.cpp");
-        CHECK(sec.find("Issue #3366") != std::string::npos,
-              "AC6: evaluator_primitives_agent.cpp cites #3366 (orch:scope-spawn typed-reject "
-              "branch)");
-        const std::filesystem::path docs_design =
-            std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
-        std::error_code ec;
-        if (std::filesystem::exists(docs_design, ec)) {
-            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
-                const auto name = entry.path().filename().string();
-                CHECK(name.find("3366-") == std::string::npos,
-                      std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
-            }
-        }
-    }
+    ac3366_1_bp_deny_failed_handle_has_typed_reject_fields();
+    ac3366_6_source_cite_and_no_invent();
 
     std::println(
         "\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216: passed={} failed={} ===",
