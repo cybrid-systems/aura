@@ -5452,6 +5452,20 @@ def cmd_lint():
             "Issue #3280 invariant/boundary deny SE dual-write linter failed — run python3 scripts/coverage/checks/check_invariant_deny_se_dual_write_3280.py"
         )
         return r
+    # Issue #3319: Sampled + production_defaults_active deny still emits
+    # SecurityEvent (hygiene / hard-gate / AOT). Soft/Off zero-cost; Full
+    # trail+SE unchanged. Reuses emit_invariant_deny_se (no schema-3319).
+    # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).
+    sde3319_script = COVERAGE_CHECKS / "check_sampled_deny_se_emit_3319.py"
+    if not sde3319_script.exists():
+        fail(f"missing {sde3319_script}")
+        return 1
+    r = run([sys.executable, str(sde3319_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3319 sampled-deny SE emit linter failed — run python3 scripts/coverage/checks/check_sampled_deny_se_emit_3319.py"
+        )
+        return r
     # Issue #3242: durable typed summary sidecar after typed-trail wrap.
     # Additive kind/sidecar (AURATYS1); old mutation WAL replay ignores it.
     # Extends test_security_audit_unify (#81967); no docs/design/ (#1655).

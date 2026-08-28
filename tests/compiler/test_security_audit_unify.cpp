@@ -1058,6 +1058,189 @@ int run_test_security_audit_unify() {
               "3280 AC5: no invent test per #81967");
     }
 
+    // ── Issue #3319: Sampled + production_defaults_active deny still emits SE ──
+    // Residual of #3280: hygiene / hard-gate / AOT deny used capture_* trail
+    // only. Under Sampled, should_audit() can skip the trail and those sites
+    // never called emit_invariant_deny_se, so Agent query:security-audit by
+    // mid could not recover who/tenant/fiber/reason. Production (any
+    // strategy) always emits SE; Soft/Off stay zero-cost; Full trail+SE.
+    {
+        std::println("\n--- #3319 AC1: production + Sampled + non-contextual deny → SE ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::set_strategy(
+            aura::compiler::typed_audit::AuditStrategy::Sampled);
+        aura::compiler::typed_audit::set_sample_ratio(4);
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        CHECK(aura::compiler::typed_audit::kSampledDenySeEmitIssue == 3319,
+              "3319 AC1: issue stamp");
+        CHECK(aura::compiler::typed_audit::production_defaults_active(),
+              "3319 AC1: production_defaults_active");
+        CHECK(!aura::compiler::typed_audit::should_audit(1),
+              "3319 AC1: mid 1 is Sampled-skip (ratio 4)");
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::capture_macro_hygiene_audit(
+            "hygiene-protected", AuditOutcome::Error, /*node=*/3, /*fiber=*/5, /*tenant=*/7,
+            /*mutation_id=*/1);
+        const auto seq1 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq1 > seq0, "3319 AC1: hygiene deny advanced SE ring");
+        const auto& e = g_security_event_ring().ring[(seq1 - 1) % kSecurityEventRingSize];
+        CHECK(e.kind == SecurityEventKind::InvariantFail, "3319 AC1: kind InvariantFail");
+        CHECK(e.denied == true, "3319 AC1: denied=true");
+        CHECK(e.mutation_id == 1, "3319 AC1: SE mid non-zero (joined)");
+        CHECK(std::string_view(e.reason).find("invariant-denied: hygiene") !=
+                  std::string_view::npos,
+              "3319 AC1: stable reason (invariant-denied: hygiene …)");
+        // Trail may hit (hygiene forces Full for the trail write) or miss;
+        // SE is the required join surface.
+        TypedMutationAuditEvent te_h{};
+        (void)trail_find_by_mutation_id(1, te_h);
+
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        aura::compiler::typed_audit::InvariantAuditResult r3319;
+        r3319.type_ok = false;
+        const auto seq1b = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_invariant_audit_result(
+            5, "structural", r3319, /*before=*/1, /*after=*/2, /*node=*/0, /*fiber=*/5,
+            /*tenant=*/7);
+        const auto seq1c = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq1c > seq1b, "3319 AC1: invariant fail still emits SE under Sampled+prod");
+        TypedMutationAuditEvent te_miss{};
+        const bool trail_hit = trail_find_by_mutation_id(5, te_miss);
+        CHECK(!trail_hit, "3319 AC1: Sampled skip may miss Typed trail (mid 5)");
+        const auto& e_inv = g_security_event_ring().ring[(seq1c - 1) % kSecurityEventRingSize];
+        CHECK(e_inv.mutation_id == 5, "3319 AC1: SE mid=5 despite trail miss");
+        CHECK(e_inv.denied == true, "3319 AC1: invariant SE denied");
+    }
+    {
+        std::println("\n--- #3319 AC2: Soft/Off → no SE write ---");
+        reset_process();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(),
+              "3319 AC2: production off");
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::capture_macro_hygiene_audit("hygiene-protected",
+                                                                 AuditOutcome::Error, 3, 5, 7, 1);
+        aura::compiler::typed_audit::InvariantAuditResult rsoft;
+        rsoft.linear_ok = false;
+        aura::compiler::typed_audit::record_invariant_audit_result(9, "structural", rsoft, 1, 2, 0,
+                                                                   5, 7);
+        aura::compiler::typed_audit::record_boundary_deny_after_restore(13, "rollback", 1, 2);
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) == seq0,
+              "3319 AC2: Soft/Off hygiene+invariant+boundary add no extra SE");
+    }
+    {
+        std::println("\n--- #3319 AC3: Full trail + SE unchanged ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::set_strategy(aura::compiler::typed_audit::AuditStrategy::Full);
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        aura::compiler::typed_audit::InvariantAuditResult rfull;
+        rfull.adt_ok = false;
+        const auto seq0 = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        aura::compiler::typed_audit::record_invariant_audit_result(42, "structural", rfull, 1, 2, 0,
+                                                                   5, 7);
+        CHECK(g_security_event_ring().seq.load(std::memory_order_relaxed) > seq0,
+              "3319 AC3: Full still emits SE");
+        TypedMutationAuditEvent te{};
+        CHECK(trail_find_by_mutation_id(42, te), "3319 AC3: Full still writes trail");
+        CHECK(te.outcome == AuditOutcome::Error, "3319 AC3: trail Error");
+        const auto& e =
+            g_security_event_ring()
+                .ring[(g_security_event_ring().seq.load(std::memory_order_relaxed) - 1) %
+                      kSecurityEventRingSize];
+        CHECK(e.mutation_id == 42 && te.mutation_id == 42, "3319 AC3: trail mid == SE mid");
+    }
+    {
+        std::println("\n--- #3319 AC4: mid join SE == trail when trail written ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        aura::compiler::typed_audit::capture_macro_hygiene_audit("hygiene-protected",
+                                                                 AuditOutcome::Error, 3, 5, 7, 77);
+        TypedMutationAuditEvent te{};
+        CHECK(trail_find_by_mutation_id(77, te), "3319 AC4: trail has hygiene mid");
+        const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+        CHECK(seq > 0, "3319 AC4: SE ring non-empty");
+        const auto& e = g_security_event_ring().ring[(seq - 1) % kSecurityEventRingSize];
+        CHECK(e.mutation_id == te.mutation_id, "3319 AC4: SE.mutation_id == trail.mutation_id");
+        CHECK(e.mutation_id == 77, "3319 AC4: joined mid=77");
+        CompilerService cs;
+        auto r_q = cs.eval(R"((engine:metrics "query:security-audit" 8 7 5 0 77))");
+        CHECK(r_q.has_value(), "3319 AC4: query:security-audit by mid ok");
+    }
+    {
+        std::println("\n--- #3319 AC5: restore-first order retained ---");
+        const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(bound.find("record_boundary_deny_after_restore") != std::string::npos,
+              "3319 AC5: boundary deny after restore");
+        CHECK(bound.find("THEN record_boundary_deny_after_restore") != std::string::npos,
+              "3319 AC5: restore-then-stamp order (#3217)");
+        const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+        CHECK(tc.find("emit_invariant_deny_se") != std::string::npos,
+              "3319 AC5: hard-gate deny emits SE");
+        CHECK(tc.find("linear-synth-hard-fail") != std::string::npos ||
+                  tc.find("deny_kind") != std::string::npos,
+              "3319 AC5: linear force uses stable deny_kind");
+    }
+    {
+        std::println("\n--- #3319 AC6/AC7: no new query key; counters append-only ---");
+        const auto q = read_file("src/compiler/evaluator_primitives_security.cpp") +
+                       read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+        CHECK(q.find("schema-3319") == std::string::npos, "3319 AC6: no schema-3319 query key");
+        const auto typed = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(typed.find("g_3319_") == std::string::npos, "3319 AC7: no g_3319_* counter");
+        CHECK(typed.find("kSampledDenySeEmitIssue") != std::string::npos, "3319 AC7: issue stamp");
+        CHECK(typed.find("Issue #3319") != std::string::npos, "3319 AC7: typed audit cites #3319");
+        CHECK(typed.find("emit_invariant_deny_se") != std::string::npos,
+              "3319 AC7: reuses emit_invariant_deny_se");
+        const auto hyg = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(hyg.find("emit_invariant_deny_se(join_mid, tenant_id, fiber_id") != std::string::npos,
+              "3319 AC7: hygiene deny emits SE");
+        const auto lint = read_file("scripts/coverage/checks/check_sampled_deny_se_emit_3319.py");
+        CHECK(!lint.empty() && lint.find("Issue #3319") != std::string::npos,
+              "3319 AC7: linter present");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_sampled_deny_se_emit_3319") != std::string::npos,
+              "3319 AC7: build.py wires linter");
+        CHECK(!std::filesystem::exists("docs/design/3319-"), "3319 AC7: no docs/design per #1655");
+        CHECK(!std::filesystem::exists("tests/issues/test_issue_3319.cpp"),
+              "3319 AC7: no invent test per #81967");
+        CHECK(!std::filesystem::exists("tests/compiler/test_issue_3319.cpp"),
+              "3319 AC7: no invent test per #81967");
+    }
+    {
+        std::println("\n--- #3319 WAL: wrap + find_recent_by_mutation_id ---");
+        reset_process();
+        apply_production_audit_defaults();
+        aura::compiler::typed_audit::set_strategy(
+            aura::compiler::typed_audit::AuditStrategy::Sampled);
+        aura::compiler::typed_audit::set_sample_ratio(4);
+        aura::compiler::typed_audit::clear_invariant_deny_se_tls();
+        CompilerService cs;
+        namespace fs = std::filesystem;
+        const auto dir = fs::temp_directory_path() / "aura-3319-se-wal";
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        CHECK(cs.evaluator().enable_security_event_wal(dir.string()), "3319 WAL: enable SE WAL");
+        aura::compiler::typed_audit::capture_macro_hygiene_audit(
+            "hygiene-protected", AuditOutcome::Error, 3, 5, 7, 3319);
+        for (std::size_t i = 0; i < kSecurityEventRingSize; ++i) {
+            append_security_event(g_security_event_ring(), SecurityEventKind::EffectAllow, 0,
+                                  40000 + i, 1, 0, "wrap-fill-3319", "fill", false, 0);
+        }
+        auto rec = g_security_event_wal().find_recent_by_mutation_id(3319, /*max_segments=*/2);
+        CHECK(rec.has_value(), "3319 WAL: find_recent_by_mutation_id hits after ring wrap");
+        if (rec) {
+            CHECK(rec->mutation_id == 3319, "3319 WAL: rec mid");
+            CHECK(rec->denied == true, "3319 WAL: rec denied");
+        }
+        cs.evaluator().disable_security_event_wal();
+        fs::remove_all(dir, ec);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -2324,6 +2324,15 @@ bool Evaluator::force_linear_rollback(std::string_view op,
     note_invariant_enforcement_ran(mid);
     capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0, 0,
                                static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+    // Issue #3319: production (any strategy) / Full always emit joinable SE
+    // on linear hard-gate deny. Soft/Off: emit_invariant_deny_se no-ops.
+    {
+        const auto join_mid = join_audit_and_se_mid(mid);
+        if (join_mid != 0)
+            emit_invariant_deny_se(join_mid, capability_tenant_id(),
+                                   static_cast<std::int64_t>(aura_fiber_current_id()), epoch, op,
+                                   deny_kind);
+    }
     // Issue #3116: production force-rollback must drop residual CoercionMap
     // + TLS active context even before Guard dtor runs exit(false).
     dual_clear_coercion_state_on_abort();
@@ -2346,6 +2355,14 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         last_mutate_error_ =
             format_invariant_deny_reason("strict-hold", capability_tenant_id(), op);
         ac.hard_gate_strict_hold_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3319: production/Full emit joinable SE even under Sampled.
+        const auto mid_hold = stamp_boundary_audit_mid();
+        const auto join_hold = join_audit_and_se_mid(mid_hold);
+        if (join_hold != 0)
+            emit_invariant_deny_se(join_hold, capability_tenant_id(),
+                                   static_cast<std::int64_t>(aura_fiber_current_id()),
+                                   defuse_version_.load(std::memory_order_relaxed), op,
+                                   "strict-hold");
         return false;
     }
     // Issue #2514 / #2545: unified linear force entry — before Sampled
@@ -2409,6 +2426,14 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
         capture_audit_event_forced(mid0, op, classify_kind(op), epoch0, epoch0, AuditOutcome::Error,
                                    0, static_cast<std::uint32_t>(nodes_changed),
                                    static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+        // Issue #3319: production/Full emit joinable SE on type-proof deny.
+        {
+            const auto join_mid = join_audit_and_se_mid(mid0);
+            if (join_mid != 0)
+                emit_invariant_deny_se(join_mid, capability_tenant_id(),
+                                       static_cast<std::int64_t>(aura_fiber_current_id()), epoch0,
+                                       op, "type-proof");
+        }
         return false;
     }
     const std::uint64_t mid = stamp_boundary_audit_mid();
@@ -2507,6 +2532,14 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     capture_audit_event_forced(mid, op, classify_kind(op), epoch, epoch, AuditOutcome::Error, 0,
                                static_cast<std::uint32_t>(nodes_changed),
                                static_cast<std::int64_t>(aura_fiber_current_id()), 0);
+    // Issue #3319: production/Full emit joinable SE on hard-gate deny.
+    {
+        const auto join_mid = join_audit_and_se_mid(mid);
+        if (join_mid != 0)
+            emit_invariant_deny_se(join_mid, capability_tenant_id(),
+                                   static_cast<std::int64_t>(aura_fiber_current_id()), epoch, op,
+                                   kind);
+    }
     return false;
 }
 
