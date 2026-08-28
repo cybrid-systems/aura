@@ -1463,13 +1463,25 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
 // single positive load + early-return. Exposed for query:*-stable
 // sites that previously bypassed allow_query_stable_ref_export
 // (e.g., internal restamp consumers reading the gate directly).
+// Issue #3386 — the `hard` gate also consults
+// aura_runtime_multi_worker_production_latched() (the process latch
+// is independent of production_defaults_active() — the latter is
+// flip-able mid-process; the latch is sticky post-Ready). Also OR in
+// restamp_over_budget_torn() — after #3259/#3287, outermost over-budget
+// runs hot-cone eager restamp; restamp_last_budget_exceeded() may be
+// cleared but the residual over-budget bit may still be set on nodes
+// outside the cone, so the shared probe must observe the same face
+// as allow_query_stable_ref_export (which already ORs the bit).
 bool Evaluator::query_stable_hard_reject_torn() const noexcept {
-    if (!typed_audit::should_hard_reject_soft_sibling())
+    const bool hard = typed_audit::should_hard_reject_soft_sibling() ||
+                      aura::serve::aura_runtime_multi_worker_production_latched() != 0;
+    if (!hard)
         return false;
     auto* ws = workspace_flat_;
     if (!ws)
         return false;
-    return ws->restamp_last_budget_exceeded() || ws->nested_authority_gap();
+    return ws->restamp_last_budget_exceeded() || ws->nested_authority_gap() ||
+           ws->restamp_over_budget_torn();
 }
 
 // Issue #2960: query Agent export — remake brace-init residuals, stamp tenant+fiber,
