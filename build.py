@@ -14393,6 +14393,34 @@ def cmd_query_children_stable_no_tls_coverage():
     return 0
 
 
+def cmd_unpack_stable_ref_arg_v2_coverage():
+    """Issue #3396: production packed-ref contract must match the v2 export
+    face already shipped (#2198 wire v2 56 bytes, #2960 query export stamp).
+
+    The inbound EDSL pair unpack used by mutate + query hot paths still
+    reconstructs a brace-like StableNodeRef{id, gen} and leaves wrap/tenant/
+    cow at 0. Under production, a packed (id . gen) from an Agent that
+    dropped the v2 tail can pass or auto-refresh onto the current
+    occupant — a multi-round memory hole (I2). Fix: walk a v2 spine
+    (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))) under
+    production, require wrap+tenant+cow at minimum. Soft keeps the
+    historical v1 (id . gen) shape. Non-regress: #2198 wire v2,
+    #2960 stamp_query_stable_ref_export. No docs/design/, no
+    tests/issues/test_issue_3396.cpp.
+    """
+    print(f"{B}=== unpack_stable_ref_arg v2 contract coverage (#3396) ==={N}")
+    script = COVERAGE_CHECKS / "check_unpack_stable_ref_arg_v2_3396.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("unpack_stable_ref_arg v2 (#3396) coverage contract rows failed")
+        return 1
+    ok("unpack_stable_ref_arg v2 (#3396) coverage clean")
+    return 0
+
+
 def cmd_query_result_soft_prod_transition_coverage():
     """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
 
@@ -21651,6 +21679,7 @@ def main():
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
         "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
+        "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
