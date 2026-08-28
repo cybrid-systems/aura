@@ -1140,6 +1140,14 @@ public:
         }
         attachers_.push_back(f);
         g_mf_mailbox_stats.attaches.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3369: back-pointer set when this fiber is bound to a
+        // mailbox for the first time. Only set if the fiber doesn't
+        // already have a primary mailbox (one fiber ↔ one primary
+        // mailbox — broadcast attaches leave the existing primary
+        // pointer intact). Detach() clears it when this mailbox is
+        // unbound.
+        if (f->mailbox() == nullptr)
+            f->set_mailbox(this);
     }
 
     void detach(Fiber* f) {
@@ -1149,6 +1157,11 @@ public:
                                                        __builtin_FILE(), __builtin_LINE());
         std::lock_guard lock(mu_);
         attachers_.erase(std::remove(attachers_.begin(), attachers_.end(), f), attachers_.end());
+        // Issue #3369: clear the back-pointer iff this mailbox was the
+        // primary (avoid clobbering a different mailbox's pointer when a
+        // fiber is bound to multiple mailboxes via broadcast).
+        if (f->mailbox() == this)
+            f->set_mailbox(nullptr);
     }
 
     [[nodiscard]] std::size_t attacher_count() const {
@@ -1156,6 +1169,33 @@ public:
                                                        __builtin_FILE(), __builtin_LINE());
         std::lock_guard lock(mu_);
         return attachers_.size();
+    }
+
+    // Issue #3369: walk pending held_ref messages for a fiber under lock.
+    // Iterates queue_ and applies fn to each pending message addressed to
+    // this fiber (to_fiber == fiber->id() OR to_fiber == 0 broadcast) that
+    // carries held_ref_token. Caller is expected to bump
+    // held_ref_stale_after_steal_total and / or clear handoff_completed
+    // per stale message inside fn. The walk runs under mu_ — callers must
+    // keep fn short and lock-free. Used by the steal-complete strong def
+    // in evaluator_fiber_mutation.cpp to honor #3111 AC1: production
+    // re-validate clears handoff_completed on potentially stale held_ref
+    // messages so the consumer's recv() path is forced through the
+    // handoff gate instead of silently delivering a stale StableNodeRef.
+    template <typename Fn> void for_each_pending_held_ref_for_fiber(Fiber* fiber, Fn&& fn) {
+        if (!fiber)
+            return;
+        (void)::aura::compiler::lock_order::on_acquire(::aura::compiler::lock_order::Level::Mailbox,
+                                                       __builtin_FILE(), __builtin_LINE());
+        std::lock_guard lock(mu_);
+        const auto fid = fiber->id();
+        for (auto& msg : queue_) {
+            if (!msg.held_ref_token.has_value())
+                continue;
+            if (msg.to_fiber != 0 && msg.to_fiber != fid)
+                continue;
+            fn(msg);
+        }
     }
 
     [[nodiscard]] std::size_t size() const {
