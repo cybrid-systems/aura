@@ -3641,12 +3641,15 @@ public:
     // Issue #2223: Full-strategy ADT renarrow + revalidate (partial recovery).
     void partial_recover_adt_exhaustiveness(std::uint64_t mutation_id = 0) noexcept;
     [[nodiscard]] bool commit_cs_live() const noexcept { return commit_cs_live_; }
-    // Issue #3003 / #3081 / #3203 / #3237: query:type / get-inferred-type
-    // authority. False after Production / Full solve_delta that is not
-    // SOLVED, after Soft TIMEOUT / CONFLICT, and after a latched
-    // pending_full_solve residual face (Full-audit not closed).
-    // Issue #3203: persist grant cannot override a non-SOLVED last face.
-    // Issue #3237: query-time residual check (no production_defaults load).
+    // Issue #3003 / #3081 / #3203 / #3237 / #3316: query:type /
+    // get-inferred-type authority. False after Production / Full
+    // solve_delta that is not SOLVED, after Soft TIMEOUT / CONFLICT,
+    // and after a latched pending_full_solve residual face (Full-audit
+    // not closed). Issue #3203: persist grant cannot override a
+    // non-SOLVED last face. Issue #3237: query-time residual check (no
+    // production_defaults load). Issue #3316: acquire fence + seqlock
+    // resample so a concurrent densify latch after drain SOLVED cannot
+    // leave a stale green stamp.
     [[nodiscard]] bool type_export_is_authoritative() const noexcept {
         if (!last_type_solve_solved_)
             return false;
@@ -3657,7 +3660,9 @@ public:
             return false;
         if (!type_export_authoritative_)
             return false;
-        return aura::compiler::typed_audit::type_export_residual_faces_clear();
+        if (!aura::compiler::typed_audit::type_export_residual_faces_clear())
+            return false;
+        return aura::compiler::typed_audit::type_export_residual_faces_stable();
     }
     [[nodiscard]] bool type_export_authoritative() const noexcept {
         return type_export_is_authoritative();
@@ -3672,8 +3677,13 @@ public:
         // is true (default) — no production_defaults load.
         // Issue #3237: pending_full_solve residual face (Production latch)
         // also refuses — no green query:type over an unclosed Full audit.
+        // Issue #3316: acquire fence + re-sample face under the persist
+        // seqlock (#3225) used by drain / densify residual latch. Face
+        // flip or odd seq under the fence → refuse (same as residual).
         if (!last_type_solve_solved_ ||
-            !aura::compiler::typed_audit::type_export_residual_faces_clear()) {
+            !aura::compiler::typed_audit::type_export_residual_faces_clear() ||
+            aura::compiler::typed_audit::pending_full_solve_residual_face_hit() ||
+            !aura::compiler::typed_audit::type_export_residual_faces_stable()) {
             type_export_authoritative_ = false;
             type_export_inflight_ = false;
             type_export_outermost_success_face_ = false;

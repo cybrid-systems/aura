@@ -2308,6 +2308,8 @@ def cmd_lint():
     # Issue #3237: query:type / type_export_is_authoritative gates on
     # Full-audit residual faces (pending_full_solve + TIMEOUT). Soft
     # unchanged; quiet two loads. Extends test_solve_delta_unresolved_export.
+    # Issue #3316 extends this linter: persist-seqlock resample of the
+    # residual face + clear stale grant before TypeLinearCommitProof.
     tefg3237_script = COVERAGE_CHECKS / "check_type_export_full_audit_gate_3237.py"
     if not tefg3237_script.exists():
         fail(f"missing {tefg3237_script}")

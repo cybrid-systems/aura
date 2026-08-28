@@ -2790,7 +2790,9 @@ inline std::atomic<std::uint64_t> g_pending_full_solve_residual_reject_total{0};
 inline std::atomic<std::uint32_t> g_pending_full_solve_residual_wired{1};
 
 [[nodiscard]] inline bool pending_full_solve_residual_face_hit() noexcept {
-    return g_pending_full_solve_residual_face.load(std::memory_order_relaxed) != 0;
+    // Issue #3316: acquire so a concurrent densify release-latch is visible
+    // to grant / query:type (writer is note_pending_full_solve_residual).
+    return g_pending_full_solve_residual_face.load(std::memory_order_acquire) != 0;
 }
 [[nodiscard]] inline std::uint64_t pending_full_solve_residual_last_v_read() noexcept {
     return g_pending_full_solve_residual_last.load(std::memory_order_relaxed);
@@ -2814,20 +2816,42 @@ inline void reset_pending_full_solve_residual_for_test() noexcept {
 inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcept {
     g_pending_full_solve_residual_last.store(n, std::memory_order_relaxed);
     if (n == 0) {
-        g_pending_full_solve_residual_face.store(0, std::memory_order_relaxed);
+        g_pending_full_solve_residual_face.store(0, std::memory_order_release);
         return;
     }
     if (hard)
-        g_pending_full_solve_residual_face.store(1, std::memory_order_relaxed);
+        g_pending_full_solve_residual_face.store(1, std::memory_order_release);
 }
 
 // Issue #3237: query:type / type_export_is_authoritative residual gate.
 // Production/Full latches pending_full_solve_residual_face; Soft never
-// does (#3031). Quiet: one relaxed load of 0. No production_defaults
+// does (#3031). Quiet: one face load of 0. No production_defaults
 // load (#3203 AC4). Callers already refused TIMEOUT via last-solve.
 // Stamp lives on TypeChecker (kTypeExportFullAuditGateIssue).
 [[nodiscard]] inline bool type_export_residual_faces_clear() noexcept {
     return !pending_full_solve_residual_face_hit();
+}
+
+// Issue #3316: residual of #3237 under steal / densify interleave.
+// grant_type_export_authority / type_export_is_authoritative resample
+// the residual face under the same persist seqlock used by
+// drain_pending_full_solve_before_commit / densify (#3225). Odd seq
+// (write in flight), seq change mid-sample, or either face sample set
+// → treat as residual (refuse grant / not-authoritative). Soft: seq
+// stays 0 even and face never latches → both samples 0. No new counter
+// / query key. Reuses force_reason 16 on the persist residual path.
+inline constexpr int kTypeExportAuthorityRaceIssue = 3316;
+[[nodiscard]] inline bool type_export_residual_faces_stable() noexcept {
+    const auto s0 = g_occurrence_persist_seq.load(std::memory_order_acquire);
+    if ((s0 & 1ull) != 0)
+        return false;
+    const auto f0 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const auto f1 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
+    const auto s1 = g_occurrence_persist_seq.load(std::memory_order_acquire);
+    if (s0 != s1 || (s1 & 1ull) != 0)
+        return false;
+    return f0 == 0 && f1 == 0;
 }
 inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
 inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
