@@ -701,12 +701,13 @@ inline std::size_t mirror_type_affected_to_cascade(std::span<const NodeId> affec
     return mirrored;
 }
 
-// Issue #3045 / #3236: force exhaustiveness match sites (and, from
-// #3236, their arm children) into the type∪IR dirty cone. Called when
-// Agent under-marked a Variant / constructor / match-arm so the
+// Issue #3045 / #3236 / #3317: force exhaustiveness match sites (and,
+// from #3236, their arm children) into the type∪IR dirty cone. Called
+// when Agent under-marked a Variant / constructor / match-arm so the
 // containing match never entered affected. Empty span → zero extra
-// (Quiet / AC3). evaluator_typecheck + mutate_type_gate Hard still
-// reject if the recheck stays non-exhaustive (Production / Full).
+// (Quiet / AC3). evaluator_typecheck + mutate_type_gate Hard +
+// outermost persist (#3317 recheck_all_live_adt_exhaust_before_proof)
+// still reject if the recheck stays non-exhaustive (Production / Full).
 inline std::size_t force_adt_exhaust_sites_into_cone(std::span<const NodeId> match_sites) {
     if (match_sites.empty())
         return 0; // Quiet: no ADT touch → zero extra beyond existing dirty

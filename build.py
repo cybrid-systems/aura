@@ -2305,6 +2305,19 @@ def cmd_lint():
             "Issue #3236 ADT exhaust commit recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_commit_recheck_3236.py"
         )
         return r
+    # Issue #3317: outermost success complete ADT exhaust recheck before
+    # TypeLinearCommitProof (concurrent under-seed after #3236). Soft
+    # observe; quiet empty mutated-ADT set. Extends test_adt_match_goal_table.
+    aeo3317_script = COVERAGE_CHECKS / "check_adt_exhaust_outermost_recheck_3317.py"
+    if not aeo3317_script.exists():
+        fail(f"missing {aeo3317_script}")
+        return 1
+    r = run([sys.executable, str(aeo3317_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3317 ADT exhaust outermost recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_outermost_recheck_3317.py"
+        )
+        return r
     # Issue #3237: query:type / type_export_is_authoritative gates on
     # Full-audit residual faces (pending_full_solve + TIMEOUT). Soft
     # unchanged; quiet two loads. Extends test_solve_delta_unresolved_export.
