@@ -77,7 +77,9 @@ def main() -> int:
     must("3106 AC1", "AC1 test", test)
 
     # ── AC2: OFF path remains zero-cost (no atomic, no branch) ──────────
-    must("#define AURA_HOT_CHECK(expr) ((void)0)", "AC2 OFF check", hh)
+    # Issue #3313 residual: NDEBUG OFF CHECK runtime-gates Harden under
+    # production_defaults; Soft still skips (armed()==0).
+    must("hot_contract_harden_armed()", "AC2 OFF runtime gate", hh)
     must("Production OFF: zero cost", "AC2 OFF comment", hh)
     must("AURA_HOT_MODE_OFF", "AC2 OFF mode constant", hh)
     # Hardened mode's happy path is a branch + sampled atomic — NOT a per-call
@@ -124,12 +126,8 @@ def main() -> int:
     # HARDEN compile flag. Source-cite via normalized substring match
     # (handles multi-line string-literal concatenation gracefully).
     must("Issue #3139", "3139 AC4 issue marker in header", hh)
-    must("typed_mutation_audit.h", "3139 AC4 typed_audit include in header", hh)
-    must(
-        "aura::compiler::typed_audit::production_defaults_active()",
-        "3139 AC4 production_defaults_active() call in probe",
-        hh,
-    )
+    # Issue #3313: C ABI probe — do not pull typed_mutation_audit.h into hot TUs.
+    must("aura_production_defaults_active_probe", "3139 AC4 production_defaults C ABI", hh)
     # AC2 still holds: Soft / unit / sandbox=off keep production_defaults_active()
     # at 0 (per typed_mutation_audit.h:147 default-init), so the implicit
     # arm does NOT trip OFF packs. The probe only adds the implicit arm

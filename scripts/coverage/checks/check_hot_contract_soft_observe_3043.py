@@ -43,7 +43,8 @@ def main() -> int:
     must("Issue #3043", "AC1 header", hh)
     must("AURA_HOT_MODE_OFF", "AC1", hh)
     must("production (NDEBUG) default", "AC1", hh)
-    must("#define AURA_HOT_CHECK(expr) ((void)0)", "AC1 off check", hh)
+    # Issue #3313: NDEBUG OFF CHECK is runtime-gated (Soft still skips).
+    must("hot_contract_harden_armed()", "AC1 off check runtime gate", hh)
     must("3043 AC1", "AC1 test", test)
     # Must not flip NDEBUG default to Soft-observe.
     if "NDEBUG default — hot contracts OFF" not in hh and "production (NDEBUG) default — hot contracts OFF" not in hh:

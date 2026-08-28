@@ -13,6 +13,7 @@
 #include "test_harness.hpp"
 
 #include "core/cpp26_contract_stats.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <chrono>
 #include <cstdint>
@@ -221,8 +222,9 @@ int run_test_hot_contract_placement() {
     !defined(AURA_CONTRACTS_HOT_MODE_ENFORCE) && !defined(AURA_CONTRACTS_HOT_MODE_OBSERVE) &&      \
     !defined(AURA_CONTRACTS_HOT_MODE_SOFT_OBSERVE) && !defined(AURA_HOT_SOFT_OBSERVE)
         CHECK(kHotContractsMode == kHotModeOff, "3043 AC1: NDEBUG default still off");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         const auto h0 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
-        AURA_HOT_CHECK(false); // must not abort under production OFF
+        AURA_HOT_CHECK(false); // must not abort under Soft / !production_defaults
         AURA_HOT_RECORD();
         const auto h1 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
         CHECK(h1 == h0, "3043 AC1: OFF RECORD still zero-cost");
@@ -292,13 +294,8 @@ int run_test_hot_contract_placement() {
             const std::string hh = ss.str();
             CHECK(hh.find("Issue #3139") != std::string::npos,
                   "3139 AC4a: Issue #3139 marker present in probe");
-            CHECK(hh.find("typed_mutation_audit.h") != std::string::npos,
-                  "3139 AC4a: typed_mutation_audit.h include present (for "
-                  "production_defaults_active() namespace)");
-            CHECK(
-                hh.find("aura::compiler::typed_audit::production_defaults_active()") !=
-                    std::string::npos,
-                "3139 AC4a: production_defaults_active() called from hot_contract_harden_armed()");
+            CHECK(hh.find("aura_production_defaults_active_probe") != std::string::npos,
+                  "3139 AC4a: production_defaults C ABI (#3313, no full audit header)");
         };
 
         // #3139 AC4b: implicit-arm check is gated by parsed==0 (env OFF respected).
@@ -323,9 +320,8 @@ int run_test_hot_contract_placement() {
             std::stringstream ss;
             ss << in.rdbuf();
             const std::string head = ss.str().substr(0, 2000);
-            CHECK(head.find("#include \"compiler/typed_mutation_audit.h\"") != std::string::npos,
-                  "3139 AC4c: typed_mutation_audit.h include in first 2000 chars (plain-header "
-                  "section)");
+            CHECK(head.find("aura_production_defaults_active_probe") != std::string::npos,
+                  "3139 AC4c: C ABI production_defaults probe in first 2000 chars (#3313)");
         };
 
         std::println("\n--- #3106 AC1: harden-armed CHECK path ---");
@@ -371,9 +367,10 @@ int run_test_hot_contract_placement() {
         CHECK(href(cs3106, "hot-contract-harden-armed") >= 0, "3106 AC1: armed probe readable");
 
         std::println("\n--- #3106 AC2: harden-disarmed OFF path remains zero-cost ---");
-        // Source-cite: the OFF path is exactly ((void)0) — same as today.
-        CHECK(hh.find("#define AURA_HOT_CHECK(expr) ((void)0)") != std::string::npos,
-              "3106 AC2: OFF check is ((void)0)");
+        // Issue #3313 residual: NDEBUG OFF CHECK is runtime-gated. Soft /
+        // !production_defaults → armed()==0, expr not evaluated.
+        CHECK(hh.find("hot_contract_harden_armed()") != std::string::npos,
+              "3106 AC2: OFF check runtime-gated (#3313)");
         CHECK(hh.find("Production OFF: zero cost") != std::string::npos,
               "3106 AC2: OFF comment unchanged");
         // HARDEN branch's happy path is a branch + sampled atomic (no per-call RMW).
@@ -427,7 +424,77 @@ int run_test_hot_contract_placement() {
               "3106 AC5: no new process-wide lock");
     }
 
-    std::println("\n=== #2435/#3043/#3106/#3139 results: {} passed, {} failed ===", g_passed,
+    // ── #3313: production_defaults arms Soft-observe+Harden for NDEBUG OFF ──
+    {
+        std::println("\n--- #3313 AC1: production_defaults false CHECK is fail-closed ---");
+        CHECK(aura::core::cpp26::kHotContractProductionHardenIssue == 3313,
+              "3313 AC1: issue constant");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        CHECK(hh.find("Issue #3313") != std::string::npos, "3313 AC1: policy #3313");
+        CHECK(hh.find("kHotContractProductionHardenIssue = 3313") != std::string::npos,
+              "3313 AC1: stamp");
+        CHECK(hh.find("hot_contract_harden_armed()") != std::string::npos,
+              "3313 AC1: OFF macros consult armed probe");
+        CHECK(hh.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3313 AC1: trap helper");
+        CHECK(hh.find("std::abort();") != std::string::npos, "3313 AC1: fail-closed abort");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+              "3313 AC1: production_defaults arms probe");
+        AURA_HOT_CHECK(true); // happy path: branch + no trap
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(AURA_HOT_MODE_HARDEN)
+        CHECK(aura::core::cpp26::hot_contract_harden_armed(),
+              "3313 AC1: compile HARDEN stays armed");
+#else
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3313 AC1: Soft restores disarmed");
+#endif
+        CompilerService cs3313;
+        CHECK(cs3313.eval("(+ 1 2)").has_value(), "3313 eval ok");
+        CHECK(href(cs3313, "schema-3313") == 3313, "3313 AC1: schema-3313");
+        CHECK(href(cs3313, "issue-3313") == 3313, "3313 AC1: issue-3313");
+        CHECK(href(cs3313, "hot-contract-harden-armed") >= 0, "3313 AC1: armed key reused");
+        CHECK(href(cs3313, "hot-contract-harden-trap-total") >= 0, "3313 AC1: trap-total reused");
+        CHECK(href(cs3313, "hotpath-contracts-3313-active") == 1, "3313 AC1: 3313 active");
+
+        std::println("\n--- #3313 AC2: Soft / unit macros remain no-op ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3313 AC2: Soft disarmed");
+        const auto h0 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+        const auto t0 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        AURA_HOT_CHECK(false); // must not abort
+        AURA_HOT_RECORD();
+        CHECK(hotpath_invariant_hits_total.load(std::memory_order_relaxed) == h0,
+              "3313 AC2: Soft RECORD no extra atomic RMW");
+        CHECK(aura::core::cpp26::hotpath_contract_harden_trap_total.load(
+                  std::memory_order_relaxed) == t0,
+              "3313 AC2: Soft no trap bump");
+#endif
+        CHECK(hh.find("expr not evaluated") != std::string::npos, "3313 AC2: Soft skips expr");
+
+        std::println("\n--- #3313 AC3: sample period still applies under Harden ---");
+        CHECK(aura::core::cpp26::kHotSoftObserveRecordSample == 256, "3313 AC3: sample 256");
+        CHECK(hh.find("record_hotpath_invariant_hit_sampled") != std::string::npos,
+              "3313 AC3: sampled RECORD");
+        CHECK(hh.find("hot_contract_harden_armed()") != std::string::npos &&
+                  hh.find("record_hotpath_invariant_hit_sampled") != std::string::npos,
+              "3313 AC3: OFF RECORD uses sampled helper when armed");
+
+        std::println("\n--- #3313 AC4: linter + no invent / docs ---");
+        auto build = read_file("build.py");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(build.find("check_hot_contract_production_harden_3313") != std::string::npos,
+              "3313 AC4: build.py wires linter");
+        CHECK(q.find("schema-3313") != std::string::npos, "3313 AC4: additive schema stamp");
+        CHECK(read_file("tests/compiler/test_issue_3313.cpp").empty(), "3313 AC4: no invent");
+        CHECK(read_file("docs/design/3313-hot-contract-production-harden.md").empty(),
+              "3313 AC4: no docs/design");
+        CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3313 AC4: cold unchanged");
+    }
+
+    std::println("\n=== #2435/#3043/#3106/#3139/#3313 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

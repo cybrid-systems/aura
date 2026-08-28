@@ -216,6 +216,17 @@ extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_hand
     return static_cast<std::uint64_t>(tc->clear_occurrence_persist_snapshot());
 }
 
+// Issue #3361 / #3313: densify-entry revalidate without a complete Evaluator
+// type in typed_mutation_audit.h (hot TUs / light-link). Weak no-op lives
+// in fiber.cpp. Path matches the in-header call this C ABI replaced.
+extern "C" void aura_evaluator_enforce_linear_on_densify(void* ev) noexcept {
+    if (!ev)
+        return;
+    auto* evaluator = static_cast<aura::compiler::Evaluator*>(ev);
+    (void)evaluator->enforce_linear_boundary_consistency(
+        aura::compiler::Evaluator::kLinearGcRootAuditTypedMutate, /*mark_all_linear=*/false);
+}
+
 // Issue #2641 / #2938: C ABI for outermost-success OccurrenceGoal persist
 // (tests + dtor). Soft / env=0 / no type-checker / empty goals → zero cost
 // inside maybe_persist_occurrence_snapshot. Issue #2938: successful commit

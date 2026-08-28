@@ -9726,6 +9726,17 @@ void ObservabilityPrims::register_eval_p52(PrimRegistrar add, Evaluator& ev) {
                 static_cast<std::int64_t>(aura::core::cpp26::hot_contract_harden_armed() ? 1 : 0));
             insert_kv("hot-contract-soft-observe-sample-period",
                       static_cast<std::int64_t>(aura::core::cpp26::kHotSoftObserveRecordSample));
+            // Issue #3313: production_defaults arms Soft-observe+Harden for
+            // NDEBUG OFF macros (additive stamp; reuse armed + trap-total).
+            insert_kv("schema-3313", 3313);
+            insert_kv("issue-3313", 3313);
+            insert_kv(
+                "hot-contract-production-harden-issue",
+                static_cast<std::int64_t>(aura::core::cpp26::kHotContractProductionHardenIssue));
+            insert_kv(
+                "hotpath-contracts-3313-active",
+                static_cast<std::int64_t>(aura::core::cpp26::hotpath_contracts_3313_active.load(
+                    std::memory_order_relaxed)));
             insert_kv("hot-contracts-mode-env",
                       static_cast<std::int64_t>(aura::core::cpp26::peek_hot_contracts_mode_env()));
             insert_kv("arena-tier-contracts-active",

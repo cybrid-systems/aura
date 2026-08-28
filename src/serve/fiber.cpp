@@ -623,6 +623,8 @@ extern "C" __attribute__((weak)) int aura_production_defaults_active_probe() noe
     return 0;
 }
 
+extern "C" __attribute__((weak)) void aura_evaluator_enforce_linear_on_densify(void*) noexcept {}
+
 // Issue #3195: weak no-op (single-worker / light-link). Strong def in
 // runtime_production_abi.cpp returns 1 after multi-worker Ready.
 extern "C" __attribute__((weak)) int aura_runtime_multi_worker_production_latched() noexcept {
