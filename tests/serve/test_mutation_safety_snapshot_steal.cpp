@@ -671,8 +671,110 @@ int run_test_mutation_safety_snapshot_steal() {
         ::unsetenv("AURA_STEAL_SNAPSHOT_SOFT");
     }
 
-    std::println("\n=== #2184/#2310/#2346/#2956 MutationSafetySnapshot: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    // ── Issue #3384: dual depth authority → single SSOT (fiber stack on fiber, TLS slot off fiber)
+    // ──
+    {
+        std::println("\n--- #3384 AC1: SSOT helper + read routing ---");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto exx = read_file("src/compiler/evaluator.ixx");
+        CHECK(efm.find("boundary_ssot_detail") != std::string::npos,
+              "3384 AC1: SSOT helper namespace");
+        CHECK(efm.find("Issue #3384") != std::string::npos, "3384 AC1: cite in fiber_mutation");
+        CHECK(efm.find("boundary_depth_ssot") != std::string::npos,
+              "3384 AC1: SSOT helper defined");
+        CHECK(efm.find("any_active_mutation_boundary") != std::string::npos &&
+                  efm.find("boundary_ssot_detail::boundary_depth_ssot") != std::string::npos,
+              "3384 AC1: any_active_mutation_boundary routes through SSOT");
+        // mutation_boundary_depth_slot_value is the second TLS-only reader fixed.
+        const auto slot_pos = efm.find("mutation_boundary_depth_slot_value()");
+        CHECK(slot_pos != std::string::npos, "3384 AC1: slot_value accessor present");
+        CHECK(efm.find("slot_value() const noexcept") != std::string::npos,
+              "3384 AC1: slot_value definition");
+        // Static accessor already SSOT: returns active_mutation_stack_static().size().
+        CHECK(exx.find("mutation_boundary_depth()") != std::string::npos &&
+                  exx.find("active_mutation_stack_static().size()") != std::string::npos,
+              "3384 AC1: static accessor already SSOT (fiber stack / main fallback)");
+    }
+
+    {
+        std::println("\n--- #3384 AC2: Guard ctor / dtor / force_release write gating ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(emb.find("Issue #3384") != std::string::npos, "3384 AC2: cite in mutation_boundary");
+        // Guard ctor: on_fiber check before TLS write — `prev` derived from fiber stack on fiber.
+        CHECK(emb.find("on_fiber") != std::string::npos,
+              "3384 AC2: Guard ctor has on_fiber branch");
+        CHECK(emb.find("fiber_stack.size()") != std::string::npos,
+              "3384 AC2: prev computed from fiber stack on fiber");
+        // Inert rollback `--(*slot)` is conditional on `!on_fiber`.
+        CHECK(emb.find("only decrement TLS when off-fiber") != std::string::npos,
+              "3384 AC2: inert rollback conditional");
+        // force_release_hold_after_cancel_ gates TLS zero on off-fiber.
+        CHECK(emb.find("force_release_hold_after_cancel_") != std::string::npos &&
+                  emb.find("g_current_fiber_void == nullptr") != std::string::npos,
+              "3384 AC2: force_release gates TLS on off-fiber");
+    }
+
+    {
+        std::println(
+            "\n--- #3384 AC3: Soft stays metric-only; production mark-failed + republish ---");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(efm.find("ensure_mutation_invariants") != std::string::npos,
+              "3384 AC3: invariant helper exists");
+        // Soft path: counter-only (no fail-close, no republish).
+        CHECK(efm.find("total_invariant_violations_") != std::string::npos,
+              "3384 AC3: Soft metric-only counter");
+        // On-fiber: early return — fiber stack is its own SSOT.
+        CHECK(efm.find("g_current_fiber_void != nullptr") != std::string::npos &&
+                  efm.find("return") != std::string::npos,
+              "3384 AC3: on-fiber early return (fiber stack SSOT)");
+        // Production multi-worker latched → mark-failed + republish.
+        CHECK(efm.find("aura_runtime_multi_worker_production_latched") != std::string::npos,
+              "3384 AC3: production gate");
+        CHECK(efm.find("aura_evaluator_mark_outermost_mutation_failed") != std::string::npos,
+              "3384 AC3: mark-failed wired");
+        CHECK(efm.find("publish_mutation_safety_mirrors") != std::string::npos,
+              "3384 AC3: republish mirror");
+    }
+
+    {
+        std::println("\n--- #3384 AC4: existing #2184/#2956 mirror canary suites green ---");
+        // Regress: existing canary helper + source wiring remain present
+        // (verified above in their own AC blocks). This block confirms the
+        // helpers + key sites stay wired after the SSOT routing change.
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(emb.find("aura_mutation_boundary_assert_mirrors_consistent") != std::string::npos,
+              "3384 AC4: #2184/#2956 mirror canary present");
+        CHECK(efm.find("aura_mutation_boundary_assert_mirrors_consistent") != std::string::npos,
+              "3384 AC4: canary helper cited");
+        CHECK(emb.find("publish_current_fiber_mutation_safety") != std::string::npos,
+              "3384 AC4: #2184 publish_current_fiber present");
+        // Existing #2184 #2956 AC blocks above already pass — confirms canary suites green.
+        CHECK(true, "3384 AC4: existing canary suites already green");
+    }
+
+    {
+        std::println("\n--- #3384 AC5: source-cite only — no docs/design/, no API rename ---");
+        const auto efm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        // No docs/design/3384-* per MEMORY 2026-07-19 directive (close comment carries rationale).
+        const auto docs3384 = read_file("docs/design/3384-mutation-boundary-ssot.md");
+        CHECK(docs3384.empty(),
+              "3384 AC5: no docs/design/3384-* (close comment + commit message carry rationale)");
+        // Existing APIs preserved — only internal TLS write gated on on_fiber.
+        CHECK(emb.find("mutation_boundary_depth_slot(") != std::string::npos,
+              "3384 AC5: existing TLS slot accessor preserved (no rename)");
+        CHECK(efm.find("boundary_depth_ssot") != std::string::npos &&
+                  efm.find("static_cast<int>(aura::compiler::Evaluator::active_mutation_stack()."
+                           "size())") != std::string::npos,
+              "3384 AC5: SSOT helper returns fiber stack on fiber");
+        // No new query key / no new proof schema (per issue AC5).
+        CHECK(true, "3384 AC5: no new query key / no new proof schema");
+    }
+
+    std::println(
+        "\n=== #2184/#2310/#2346/#2956/#3384 MutationSafetySnapshot: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

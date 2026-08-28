@@ -10356,6 +10356,52 @@ def cmd_post_moving_canary_steal_lcp_3308_coverage():
     return 0
 
 
+def cmd_mutation_boundary_ssot_3384_coverage():
+    """Issue #3384: dual depth authority → single SSOT (fiber stack on fiber,
+    TLS slot off fiber).
+
+    Closes the I1 residual where Guard ctor/dtor/force_release wrote the
+    thread_local `mutation_boundary_depth_slot` map (keyed by
+    Evaluator::instance_id_) while steal / flush / yield-CP / publish
+    observed `Fiber::mutation_stack_storage_` size — after steal the
+    thief's TLS slot != victim's, so is_at_mutation_boundary_safe could
+    disagree with active_mutation_stack().size() and the published
+    MutationSafetySnapshot.depth.
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: any_active_mutation_boundary + mutation_boundary_depth_slot_value
+           route through boundary_ssot_detail::boundary_depth_ssot (fiber
+           stack on fiber, TLS slot off fiber).
+           Evaluator::mutation_boundary_depth() static accessor already
+           returns active_mutation_stack_static().size() — SSOT.
+      AC2: Guard ctor / dtor / force_release_hold_after_cancel_ TLS writes
+           gated on g_current_fiber_void == nullptr (TLS write skipped on
+           fiber; TLS would be victim worker's after steal).
+      AC3: ensure_mutation_invariants Soft path bumps
+           total_invariant_violations_ (metric-only); on-fiber early
+           return (fiber stack is its own SSOT); production multi-worker
+           latched → mark-failed + republish mirror.
+      AC4: Existing #2184/#2956 mirror canary
+           (aura_mutation_boundary_assert_mirrors_consistent) and
+           publish_current_fiber_mutation_safety still wired (regress).
+      AC5: No docs/design/3384-* markdown (per MEMORY 2026-07-19).
+           Existing TLS slot accessor preserved — only internal write
+           is gated on on_fiber (no API rename).
+    """
+    print(f"{B}=== mutation boundary SSOT (#3384) ==={N}")
+    script = ROOT / "scripts" / "check_mutation_boundary_ssot_3384.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutation boundary SSOT (#3384) contract rows failed")
+        return 1
+    ok("mutation boundary SSOT (#3384) clean")
+    return 0
+
+
 def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
     """Issue #3307: budget-allow must hard-latch pending residual face
     (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
@@ -19886,6 +19932,7 @@ def cmd_gate():
         # table per #2722 AC4).
         or cmd_chaos_soak_hard_gate_2722_coverage()
         or cmd_chaos_soak_residual_zero_2755_coverage()
+        or cmd_mutation_boundary_ssot_3384_coverage()
     )
     if rc:
         return rc
