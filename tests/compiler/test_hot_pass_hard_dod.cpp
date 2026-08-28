@@ -45,15 +45,18 @@ using aura::compiler::DefineDirtyMaskView;
 using aura::compiler::HotPassDodCompliant;
 using aura::compiler::InlinePass;
 using aura::compiler::InstructionDirtyPred;
+using aura::compiler::kPassPurityGateIssue;
 using aura::compiler::kPassSccNoStdFunctionIssue;
 using aura::compiler::kProductionDirtySoaNoPredIssue;
 using aura::compiler::kPureWrapNoStdFunctionDirtyIssue;
 using aura::compiler::LinearOwnershipPass;
 using aura::compiler::MonomorphizePass;
 using aura::compiler::note_pass_soa_enforcement;
+using aura::compiler::ProductionPipelinePass;
 using aura::compiler::PureWrapPass;
 using aura::compiler::run_incremental_dirty_pipeline;
 using aura::compiler::run_pipeline;
+using aura::compiler::run_production_pipeline;
 using aura::compiler::ShapeWrap;
 using aura::compiler::SoAViewAwarePass;
 using aura::compiler::TCOPass;
@@ -431,7 +434,63 @@ int run_test_hot_pass_hard_dod() {
         CHECK(core.find("g_3315_") == std::string::npos, "3315 AC4: no g_3315_*");
     }
 
-    std::println("\n=== #2434/#3042/#3234/#3315 results: {} passed, {} failed ===", g_passed,
+    // ── #3329: production pipeline concept-rejects impure Pass ──
+    {
+        std::println("\n--- #3329 AC1: impure Pass fails ProductionPipelinePass ---");
+        CHECK(kPassPurityGateIssue == 3329, "3329 AC1: issue constant");
+        struct ImpureWorkspaceWrite {
+            void run(aura::ir::IRModule&) {}
+            bool has_error() const { return false; }
+        };
+        static_assert(!ProductionPipelinePass<ImpureWorkspaceWrite>);
+        CHECK(!static_cast<bool>(ProductionPipelinePass<ImpureWorkspaceWrite>),
+              "3329 AC1: impure stub rejected");
+        static_assert(ProductionPipelinePass<ConstantFoldingWrap>);
+        static_assert(ProductionPipelinePass<TypePropagationPass>);
+        static_assert(ProductionPipelinePass<ComputeKindWrap>);
+        static_assert(ProductionPipelinePass<ArityWrap>);
+        CHECK(true, "3329 AC1: production stages accepted");
+
+        std::println("\n--- #3329 AC2: Soft/unit run_pipeline still admits Pass ---");
+        auto mod = make_mod(2);
+        ConstantFoldingWrap cf;
+        ComputeKindWrap ck;
+        CHECK(run_pipeline(mod, cf, ck), "3329 AC2: run_pipeline unconstrained for unit");
+
+        std::println("\n--- #3329 AC3: production fold + dirty metrics ---");
+        auto mod2 = make_mod(2);
+        ConstantFoldingWrap cf2;
+        ComputeKindWrap ck2;
+        DCEPass dce2;
+        const auto rej0 =
+            aura::compiler::pass_pipeline_concept_rejection_total.load(std::memory_order_relaxed);
+        CHECK(run_production_pipeline(mod2, cf2, ck2, dce2), "3329 AC3: production pipeline ok");
+        CHECK(aura::compiler::pass_pipeline_concept_rejection_total.load(
+                  std::memory_order_relaxed) == rej0,
+              "3329 AC3: concept_rejection unchanged");
+
+        std::println("\n--- #3329 AC4/AC5: source-cite + zero extra atomics ---");
+        auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+        auto cc = read_file("src/core/concept_constraints.ixx");
+        auto svc = read_file("src/compiler/service.ixx");
+        auto opt = read_file("src/compiler/optimization_passes.ixx");
+        auto build = read_file("build.py");
+        CHECK(cc.find("ProductionPipelinePass") != std::string::npos, "3329 AC4: concept");
+        CHECK(cc.find("DirtyPropagatorAwarePass") != std::string::npos, "3329 AC4: dirty-aware");
+        CHECK(core.find("run_production_pipeline") != std::string::npos, "3329 AC4: entry");
+        CHECK(core.find("check_production_pipeline_purity") != std::string::npos,
+              "3329 AC4: consteval");
+        CHECK(svc.find("run_production_pipeline") != std::string::npos, "3329 AC4: service");
+        CHECK(opt.find("run_production_pipeline") != std::string::npos, "3329 AC4: default pack");
+        CHECK(core.find("no extra atomics") != std::string::npos, "3329 AC5: zero extra");
+        CHECK(build.find("check_production_pipeline_purity_3329") != std::string::npos,
+              "3329 AC4: build.py");
+        CHECK(read_file("tests/compiler/test_issue_3329.cpp").empty(), "3329 AC4: no invent");
+        CHECK(read_file("docs/design/3329-pass-purity.md").empty(), "3329 AC4: no docs/design");
+        CHECK(cc.find("g_3329_") == std::string::npos, "3329 AC5: no g_3329_*");
+    }
+
+    std::println("\n=== #2434/#3042/#3234/#3315/#3329 results: {} passed, {} failed ===", g_passed,
                  g_failed);
     return g_failed ? 1 : 0;
 }

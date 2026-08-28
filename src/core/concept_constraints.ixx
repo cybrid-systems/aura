@@ -26,7 +26,10 @@ inline constexpr int kConceptConstraintsPhase = 1;
 // Number of named Pass-related concepts exported below (keep in sync).
 // #2060 adds DirtySoAEntryPass + RequiresDirtySoAEntryPass (was 10).
 // #2258 adds PureWrapPass (was 12).
-inline constexpr int kPassConceptCount = 13;
+// #3329 adds DirtyPropagatorAwarePass + ProductionPipelinePass.
+inline constexpr int kPassConceptCount = 17;
+// Issue #3329: compile-time purity gate for production pipeline entry.
+inline constexpr int kPassPurityGateIssue = 3329;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -297,5 +300,52 @@ concept DirtySoAEntryPass = (SoAViewAwarePass<P> && DirtyAwarePass<P> && Increme
 template <typename P>
 concept RequiresDirtySoAEntryPass =
     Pass<P> && requires { requires std::remove_cvref_t<P>::kRequireDirtySoAEntry == true; };
+
+// ── DirtyPropagatorAwarePass (#3329) ───────────────────────────
+//
+// Pass participates in the DirtyPropagator cascade (concepts.ixx
+// mark_dirty_upward) rather than a residual single-mark loop, OR
+// is a PureWrap (no workspace write / unbounded alloc on the fold).
+// DirtyAwarePass exposes is_block_dirty for the pipeline peel;
+// PureWrapPass is the documented pure-function Wrap.
+template <typename P>
+concept DirtyPropagatorAwarePass = DirtyAwarePass<P> || PureWrapPass<P>;
+
+// ── ProductionPipelinePass (#3329) ─────────────────────────────
+//
+// Compile-time purity / SoA / dirty gate for the production default
+// fold. Impure Passes (workspace write, residual single-mark, no SoA,
+// Legacy sunset) fail to instantiate run_production_pipeline.
+// Soft / unit keep run_pipeline constrained only by Pass + DOD.
+// Concepts erase — zero runtime cost on the happy path (AC5).
+template <typename P>
+concept ProductionPipelinePass =
+    AnalysisPass<P> && SoAViewAwarePass<P> && DirtyPropagatorAwarePass<P> && !LegacyPass<P>;
+
+// Issue #3329 AC1: a deliberately impure stub (workspace-write / no SoA /
+// no dirty-upward / no PureWrap) must not satisfy ProductionPipelinePass.
+// Compile-time only — never instantiated into a production pack.
+namespace pass_purity_detail {
+    struct ImpureWorkspaceWriteStub {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+    };
+    struct ImpureNamedSoaNoDirtyStub {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+        std::string_view name() const { return "impure-soa"; }
+        bool uses_soa_view() const { return true; }
+    };
+} // namespace pass_purity_detail
+static_assert(Pass<pass_purity_detail::ImpureWorkspaceWriteStub>,
+              "Issue #3329: impure stub is still a Pass (Soft/unit admit)");
+static_assert(!ProductionPipelinePass<pass_purity_detail::ImpureWorkspaceWriteStub>,
+              "Issue #3329: impure workspace-write stub fails ProductionPipelinePass");
+static_assert(AnalysisPass<pass_purity_detail::ImpureNamedSoaNoDirtyStub> &&
+                  SoAViewAwarePass<pass_purity_detail::ImpureNamedSoaNoDirtyStub>,
+              "Issue #3329: named SoA stub is Analysis+SoA");
+static_assert(!ProductionPipelinePass<pass_purity_detail::ImpureNamedSoaNoDirtyStub>,
+              "Issue #3329: SoA without DirtyPropagator/PureWrap fails production gate");
+static_assert(pass_concepts::kPassPurityGateIssue == 3329, "Issue #3329 stamp");
 
 } // namespace aura::compiler

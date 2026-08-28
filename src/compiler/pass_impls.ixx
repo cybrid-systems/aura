@@ -4792,6 +4792,19 @@ consteval void check_production_pipeline_packs_2434() {
 static_assert((check_production_pipeline_packs_2434(), true),
               "production pipeline packs HotPassDodCompliant (#2434)");
 
+// Issue #3329: production packs also satisfy ProductionPipelinePass
+// (AnalysisPass + SoAView + DirtyPropagatorAware, no Legacy).
+consteval void check_production_pipeline_purity_3329() {
+    check_production_pipeline_purity<TypeSpecializationWrap, TypePropagationPass, ComputeKindWrap,
+                                     ArityWrap, ConstantFoldingWrap, DeadCoercionEliminationPass>();
+    check_production_pipeline_purity<ComputeKindWrap, ConstantFoldingWrap, TypePropagationPass,
+                                     ShapeWrap>();
+    check_production_pipeline_purity<DCEPass, LinearOwnershipPass, InlinePass, TCOPass,
+                                     MonomorphizePass>();
+}
+static_assert((check_production_pipeline_purity_3329(), true),
+              "production pipeline packs ProductionPipelinePass (#3329)");
+
 // Issue #2907: production SoA dirty hot pack — CF + TP + DCE must provide
 // run_dirty(IRModuleV2&); remaining hot DirtyAware stages provide DirtySoAEntry.
 // SoAtoAoSBridgePass is deliberately absent (test-only kTestOnlyAosBridge).

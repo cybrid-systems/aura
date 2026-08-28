@@ -63,6 +63,7 @@ namespace aura::compiler {
 export template <typename P> void note_pass_soa_enforcement(P& pass) noexcept;
 export template <typename P> consteval void check_pass_dod_compliance();
 export template <typename... Passes> consteval void check_pipeline_dod_compliance();
+export template <typename... Passes> consteval void check_production_pipeline_purity();
 
 // ── run_analysis_pipeline — fold over analysis passes ────────────
 //
@@ -245,6 +246,9 @@ export inline std::atomic<std::uint64_t> pure_wrap_no_std_function_dirty_wired{1
 // set_block_dirty_pred on the PureWrap hot path (I5 of #2258/#3042/#2907).
 export inline constexpr int kProductionDirtySoaNoPredIssue = 3315;
 export inline std::atomic<std::uint64_t> production_dirty_soa_entry_no_pred_wired{1};
+// Issue #3329: compile-time ProductionPipelinePass gate (no extra atomics
+// on the happy path — concepts erase; this constant is inventory only).
+export inline constexpr int kPassPurityGateIssue = 3329;
 
 static_assert(std::is_trivially_copyable_v<BlockDirtyPred>,
               "BlockDirtyPred must be inlineable (no std::function) (#3042)");
@@ -410,6 +414,18 @@ export template <typename... Passes> consteval void check_pipeline_dod_complianc
     (check_pass_dod_compliance<Passes>(), ...);
 }
 
+// Issue #3329: production-only purity / SoA / DirtyPropagator gate.
+// Soft / unit keep check_pipeline_dod_compliance (HotPassDodCompliant).
+// An impure stub fails ProductionPipelinePass at this consteval
+// (and at run_production_pipeline requires). Concepts erase (AC5).
+export template <typename... Passes> consteval void check_production_pipeline_purity() {
+    static_assert((ProductionPipelinePass<std::remove_cvref_t<Passes>> && ...),
+                  "Issue #3329: production pipeline requires AnalysisPass && "
+                  "SoAViewAwarePass && DirtyPropagatorAwarePass (impure / non-SoA / "
+                  "Legacy Pass rejected at compile time)");
+    check_pipeline_dod_compliance<Passes...>();
+}
+
 // Metric: pipeline stages that report SoAView awareness (#1241).
 export inline std::atomic<std::uint64_t> passes_soa_view_aware_total{0};
 // Issue #1517: concept enforcement + legacy skip + migration progress mirrors.
@@ -487,6 +503,17 @@ bool run_pipeline(aura::ir::IRModule& mod, Passes&... passes) pre(sizeof...(Pass
     check_pipeline_dod_compliance<Passes...>();
     (note_pass_soa_enforcement(passes), ...);
     return (run_one(mod, passes) && ...);
+}
+
+// Issue #3329: production default fold. Extra AnalysisPass + SoAView +
+// DirtyPropagatorAware gate so an impure Pass fails to instantiate.
+// Delegates to run_pipeline (same fold / metrics). Soft / unit keep
+// run_pipeline. Concepts erase — no extra atomics or branches (AC5).
+export template <ProductionPipelinePass... Passes>
+bool run_production_pipeline(aura::ir::IRModule& mod, Passes&... passes)
+    pre(sizeof...(Passes) > 0) {
+    check_production_pipeline_purity<Passes...>();
+    return run_pipeline(mod, passes...);
 }
 
 // ── run_one — execute a single pass, return true if no error ────
@@ -799,6 +826,17 @@ bool run_one_dirty(aura::ir::IRModule& mod, P& pass,
         pipeline_dirty_short_circuit_total.fetch_add(1, std::memory_order_relaxed);
         return true;
     }
+    return run_incremental_dirty_pipeline(mod, pass, define_cache);
+}
+
+// Issue #3329: production dirty-aware fold. Same peel as
+// run_incremental_dirty_pipeline; extra ProductionPipelinePass gate
+// so an impure Incremental Pass fails to instantiate under production.
+export template <ProductionPipelinePass P>
+    requires IncrementalPass<P> && DirtyAwarePass<P>
+bool run_production_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
+                                               const DefineDirtyMaskView* define_cache = nullptr) {
+    check_production_pipeline_purity<P>();
     return run_incremental_dirty_pipeline(mod, pass, define_cache);
 }
 
