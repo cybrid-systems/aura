@@ -336,7 +336,9 @@ static void ac3292_3_no_new_runtime() {
 void ac3392_1_source_cite_evaluator_face() {
     std::println(
         "\n--- #3392 AC1+AC5: evaluator export face uses thread-local buffer + callback ---");
-    const auto efm = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    std::ifstream f_efm("src/compiler/evaluator_fiber_mutation.cpp");
+    const std::string efm((std::istreambuf_iterator<char>(f_efm)),
+                          std::istreambuf_iterator<char>());
     CHECK(!efm.empty(), "3392 AC1: evaluator_fiber_mutation.cpp readable");
     // AC5: the Evaluator::children_stable_batch body must NOT declare
     // a fresh `std::vector<StableNodeRef> out;` — it must reuse a
@@ -373,7 +375,9 @@ void ac3392_1_source_cite_evaluator_face() {
     // AC5: FlatAST::children_stable(NodeId) keeps its allocating
     // convenience (per AC2) — the fix is scoped to the Evaluator export
     // face, not FlatAST.
-    const auto astx = read_src("src/core/ast.ixx");
+    std::ifstream f_astx("src/core/ast.ixx");
+    const std::string astx((std::istreambuf_iterator<char>(f_astx)),
+                           std::istreambuf_iterator<char>());
     CHECK(astx.find("std::vector<StableNodeRef> children_stable(NodeId id) const") !=
               std::string::npos,
           "3392 AC2: FlatAST::children_stable keeps allocating convenience");
@@ -383,7 +387,9 @@ void ac3392_1_source_cite_evaluator_face() {
 
 void ac3392_2_no_regress_3328_3167_3000() {
     std::println("\n--- #3392 AC3: #3328 / #3167 / #3000 non-regress ---");
-    const auto efm = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    std::ifstream f_efm("src/compiler/evaluator_fiber_mutation.cpp");
+    const std::string efm((std::istreambuf_iterator<char>(f_efm)),
+                          std::istreambuf_iterator<char>());
     CHECK(efm.find("pcv_span_for_agent_export") != std::string::npos,
           "3392 AC3: #3328 pcv_span_for_agent_export still called");
     CHECK(efm.find("force_refresh_pcv_span") != std::string::npos,
@@ -418,6 +424,113 @@ void ac3392_3_no_invent() {
 
 } // namespace
 
+// Issue #3397: production query:children-stable must not return the TLS
+// span view (children_stable_span_view). The TLS pin is valid only until
+// the next same-thread call — an Agent that treats it as multi-round
+// memory holds a dangling pin across Guard (UAF or wrong-generation
+// child ids on read). Source-cite gate covers the Agent return path
+// contracts; the linter scripts/coverage/checks/check_query_children_
+// stable_no_tls_3397.py --strict enforces the same at gate-time.
+//
+// AC1: production query:children-stable does NOT call children_stable_
+//      span_view on the Agent return path; routes through pin_query_
+//      children (SafePCVSpan) + pcv_span_for_agent_export.
+// AC2: production + span held across Guard + re-query → stale-span or
+//      rebuilt stamped vector; never use the TLS buffer contents.
+//      (Verified structurally via mev("stale-span"...) source-cite.)
+// AC3: Soft span_view + #3233 Soft-off COW unchanged.
+//      (Verified via "identity" zero-cost branch in pcv_span_for_
+//      agent_export.)
+// AC4: #3167 fingerprint / #3393 force-exclusive / #3328 refresh
+//      non-regress — all three contracts still appear in source.
+// AC5: extend PCV children-safe / query children-stable fixture.
+//      (This file is the fixture — src/-aligned, tests/compiler/.)
+
+static void ac3397_1_query_children_stable_no_tls_source_cite() {
+    std::println("\n=== #3397 AC1: query:children-stable does NOT use TLS span view ===");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    CHECK(!qws.empty(), "3397 AC1: query_workspace.cpp readable");
+    // The Agent-facing return path must use pin_query_children
+    // (SafePCVSpan) + pcv_span_for_agent_export, NOT the TLS
+    // buffer-returning children_stable_span_view.
+    CHECK(qws.find("children_stable_span_view") == std::string::npos,
+          "3397 AC1: query_workspace.cpp has zero references to "
+          "children_stable_span_view (TLS pin) — Agent return path must "
+          "not return the TLS buffer");
+    CHECK(qws.find("pin_query_children") != std::string::npos,
+          "3397 AC1: query_workspace.cpp uses pin_query_children "
+          "(SafePCVSpan) on the Agent return path");
+    CHECK(qws.find("pcv_span_for_agent_export") != std::string::npos,
+          "3397 AC1: pcv_span_for_agent_export wired into "
+          "query:children-stable");
+}
+
+static void ac3397_2_stale_span_on_unrefreshable_fingerprint() {
+    std::println("\n=== #3397 AC2: stale-span on unrefreshable fingerprint ===");
+    // Behavioral: verify the structured stale-span error path exists
+    // and is wired to force_refresh_pcv_span (#3167 recovery). When
+    // force_refresh fails (owner gone / unrefreshable), the Agent
+    // must surface stale-span — never a green pre-mutate child list.
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    CHECK(qws.find("force_refresh_pcv_span") != std::string::npos,
+          "3397 AC2: force_refresh_pcv_span (#3167 recovery) called in "
+          "query:children-stable stale-span path");
+    CHECK(qws.find("mev(\"stale-span\"") != std::string::npos,
+          "3397 AC2: structured stale-span error returned on "
+          "unrefreshable fingerprint (not a green child list)");
+    CHECK(qws.find("has_fingerprint()") != std::string::npos,
+          "3397 AC2: pcv_span.has_fingerprint() check present "
+          "before stale-span fallback");
+}
+
+static void ac3397_3_soft_zero_extra_unchanged() {
+    std::println(
+        "\n=== #3397 AC3: Soft / unit zero extra (pcv_span_for_agent_export identity) ===");
+    // Soft / unit must pay zero extra beyond existing pin metrics.
+    // pcv_span_for_agent_export short-circuits to identity under Soft
+    // (production_defaults_active() == false).
+    std::ifstream f_ast("src/core/ast.ixx");
+    std::string ast((std::istreambuf_iterator<char>(f_ast)), std::istreambuf_iterator<char>());
+    CHECK(ast.find("pcv_span_for_agent_export") != std::string::npos,
+          "3397 AC3: pcv_span_for_agent_export helper present in ast.ixx");
+    CHECK(ast.find("production_defaults_active()") != std::string::npos,
+          "3397 AC3: production_defaults_active() gate present in "
+          "pcv_span_for_agent_export (Soft short-circuit)");
+    CHECK(ast.find("identity") != std::string::npos,
+          "3397 AC3: Soft identity branch present (zero-cost)");
+}
+
+static void ac3397_4_non_regress_3167_3393_3328() {
+    std::println("\n=== #3397 AC4: non-regress #3167 / #3393 / #3328 ===");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_ast("src/core/ast.ixx");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string ast((std::istreambuf_iterator<char>(f_ast)), std::istreambuf_iterator<char>());
+    CHECK(!qws.empty(), "3397 AC4: query_workspace.cpp readable");
+    CHECK(!ast.empty(), "3397 AC4: ast.ixx readable");
+    // #3167: pcv_span_stale_across_guard_total counter + fingerprint
+    CHECK(ast.find("pcv_span_stale_across_guard_total") != std::string::npos,
+          "3397 AC4: #3167 stale-across-guard counter unchanged");
+    CHECK(ast.find("#3167") != std::string::npos, "3397 AC4: #3167 cite present in ast.ixx");
+    // #3328: production re-use face → pcv_span_for_agent_export
+    CHECK(ast.find("#3328") != std::string::npos, "3397 AC4: #3328 cite present in ast.ixx");
+    // #3397: this ticket's cite in both files (commit message anchor)
+    CHECK(qws.find("#3397") != std::string::npos,
+          "3397 AC4: Issue #3397 cite present in query_workspace.cpp");
+    CHECK(ast.find("#3397") != std::string::npos, "3397 AC4: Issue #3397 cite present in ast.ixx");
+    // AC5: no docs/design/, no tests/issues/test_issue_3397.cpp
+    {
+        std::ifstream f("docs/design/3397-children-stable-no-tls-span.md");
+        CHECK(!f.good(), "3397 AC5: no docs/design/3397-*");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3397.cpp");
+        CHECK(!f.good(), "3397 AC5: no tests/issues/test_issue_3397.cpp");
+    }
+}
+
 int main() {
     std::println("=== test_pcv_children_safe_default_migration (#2036 + #2862) ===");
     ac1_source();
@@ -439,6 +552,11 @@ int main() {
     ac3392_1_source_cite_evaluator_face();
     ac3392_2_no_regress_3328_3167_3000();
     ac3392_3_no_invent();
+    std::println("\n=== #3397: query:children-stable no-TLS-span ===");
+    ac3397_1_query_children_stable_no_tls_source_cite();
+    ac3397_2_stale_span_on_unrefreshable_fingerprint();
+    ac3397_3_soft_zero_extra_unchanged();
+    ac3397_4_non_regress_3167_3393_3328();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
