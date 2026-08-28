@@ -5629,7 +5629,7 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 }
             }
 
-            // Issue #3152: forensic-source enum — maps typed-trail-miss
+            // Issue #3152 / #3371: forensic-source enum — maps typed-trail-miss
             // to the next forensic step. Pure loads only: one extra
             // O(kSecurityEventRingSize) scan when typed miss + mid, plus
             // two WAL is_enabled() bool probes. No file I/O, no mutate,
@@ -5641,6 +5641,17 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             //   3 = typed miss + mutation/SE WAL enabled (need durable
             //       forensic — crash / wrap-around cannot recover from
             //       typed trail alone)
+            //
+            // #3371 fix: SE ring (source=2) precedes the WAL flag. The
+            // previous `< 3 → 3` bump overwrote a confirmed ring hit just
+            // because WAL was on, which broke the Agent decision tree
+            // (production WAL-on force-set forensic-source=3, but the
+            // default query path doesn't read WAL — ring-internal reason
+            // was already available and cheaper). New order:
+            //   typed_hit   → 1
+            //   ring hit    → 2
+            //   WAL enabled → 3
+            //   else        → 0
             std::int64_t forensic_source = 0;
             bool se_ring_has_mid = false;
             if (join_mid != 0 && !typed_hit) {
@@ -5654,16 +5665,18 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                         break;
                     }
                 }
-                if (se_ring_has_mid)
-                    forensic_source = 2;
-                using ::aura::core::audit_wal::g_mutation_audit_wal;
-                using ::aura::core::security_event_wal::g_security_event_wal;
-                if (g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled()) {
-                    if (forensic_source < 3)
-                        forensic_source = 3;
-                }
-            } else if (typed_hit) {
+            }
+            using ::aura::core::audit_wal::g_mutation_audit_wal;
+            using ::aura::core::security_event_wal::g_security_event_wal;
+            const bool wal_enabled =
+                g_mutation_audit_wal().is_enabled() || g_security_event_wal().is_enabled();
+            // Issue #3371: priority order — typed > ring > WAL > 0.
+            if (typed_hit) {
                 forensic_source = 1;
+            } else if (se_ring_has_mid) {
+                forensic_source = 2;
+            } else if (wal_enabled) {
+                forensic_source = 3;
             }
 
             const auto cr = commit_readiness(commit_readiness_live_policy());
