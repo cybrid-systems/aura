@@ -3689,6 +3689,21 @@ def cmd_lint():
             "Issue #3259 restamp hot-cone budget linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_budget_3259.py"
         )
         return r
+    # Issue #3327: over-budget hot-cone unions Agent-held QueryResult /
+    # last-export StableNodeRef ids (still capped by restamp_hot_cone_
+    # budget). Soft never consults the held buffer. Extends
+    # test_stable_ref_tenant_capture + test_hygiene_mutate_closed_loop
+    # (#81967); no docs/design/; no test_issue_3327.cpp.
+    rhc3327_script = COVERAGE_CHECKS / "check_restamp_hot_cone_agent_held_3327.py"
+    if not rhc3327_script.exists():
+        fail(f"missing {rhc3327_script}")
+        return 1
+    r = run([sys.executable, str(rhc3327_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3327 restamp hot-cone Agent-held linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_agent_held_3327.py"
+        )
+        return r
     # Issue #3260: reconcile #1908 file-level vs per-eval provenance
     # counters. Extends test_clone_provenance_per_evaluator.cpp (#81967);
     # no docs/design/ (#1655).

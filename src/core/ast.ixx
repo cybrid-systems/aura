@@ -61,8 +61,13 @@ export using ::aura::ast::kQueryStableRestampLagStructuredIssue;
 export using ::aura::ast::kQueryStableRestampExportUniformIssue;
 export using ::aura::ast::kQueryStableRestampLagHardRejectIssue;
 export using ::aura::ast::kRestampHotConeBudgetIssue;
+export using ::aura::ast::kRestampHotConeAgentHeldIssue;
 export using ::aura::ast::restamp_over_budget_torn;
 export using ::aura::ast::restamp_hot_cone_budget;
+export using ::aura::ast::note_restamp_hot_cone_held_node;
+export using ::aura::ast::restamp_hot_cone_held_count;
+export using ::aura::ast::restamp_hot_cone_held_id_at;
+export using ::aura::ast::clear_restamp_hot_cone_held_for_test;
 export using ::aura::ast::kRestampLagErrorKind;
 export using ::aura::ast::kRestampLagReasonBudgetExceeded;
 export using ::aura::ast::unified_restamp_torn_visible_total_v_read;
@@ -8114,8 +8119,9 @@ public:
     // restamp when called explicitly).
     void restamp_all_node_generations();
 
-    // Issue #3259: after over-budget restamp_all degraded to lazy-align
-    // only, eager-restamp dirty/touched nodes + their parent chain up to
+    // Issue #3259 / #3327: after over-budget restamp_all degraded to
+    // lazy-align only, eager-restamp dirty/touched + parent chain **and**
+    // Agent-held QueryResult / last-export StableNodeRef ids, up to
     // max_nodes. Sets restamp_eager_ so stamp_query_stable_ref_export can
     // keep those Agent refs; does not clear workspace torn (remainder
     // stays restamp-lag). Returns the number restamped. max_nodes==0 is

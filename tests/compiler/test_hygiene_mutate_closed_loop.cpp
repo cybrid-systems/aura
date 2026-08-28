@@ -3580,6 +3580,18 @@ static void ac3259_5_source_and_linter() {
           "3259 AC5: build.py");
     CHECK(read_file("tests/compiler/test_issue_3259.cpp").empty(), "3259 AC5: no invent");
     CHECK(read_file("docs/design/3259-restamp-hot-cone.md").empty(), "3259 AC5: no docs/design");
+    CHECK(restamp.find("kRestampHotConeAgentHeldIssue = 3327") != std::string::npos,
+          "3327 AC4: hygiene cites Agent-held hot-cone stamp");
+}
+
+static void ac3327_multi_round_held_cite() {
+    std::println("\n--- #3327: multi-round held-set hot-cone cite ---");
+    const auto restamp = read_file("src/core/flatast_restamp.hh");
+    const auto impl = read_file("src/core/ast_impl.cpp");
+    CHECK(restamp.find("note_restamp_hot_cone_held_node") != std::string::npos,
+          "3327: note helper");
+    CHECK(impl.find("restamp_hot_cone_held_count") != std::string::npos,
+          "3327: cone unions held set");
 }
 
 static void ac3095_1_post_restore_invariant_keys() {
@@ -3871,6 +3883,7 @@ int main() {
     ac3259_2_outside_cone_query_lag();
     ac3259_3_soft_zero_extra();
     ac3259_5_source_and_linter();
+    ac3327_multi_round_held_cite();
     std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard (I2 residual) ===");
     ac3167_3_2906_non_regression();
     ac3167_6_source_and_linter();

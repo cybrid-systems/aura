@@ -1021,6 +1021,13 @@ std::size_t FlatAST::restamp_hot_cone_after_budget(std::uint32_t max_nodes,
                 continue;
             walk_seed(id);
         }
+        // Issue #3327: union Agent-held QueryResult / last-export
+        // StableNodeRef ids (noted at query export / pin dump). Remainder
+        // past the hot-cone cap stays lazy-align + torn (never green a pre-mutate gen).
+        // Nested log-from path does not consult this set.
+        const auto held_n = restamp_hot_cone_held_count();
+        for (std::uint16_t i = 0; i < held_n && restamped < max_nodes; ++i)
+            walk_seed(static_cast<NodeId>(restamp_hot_cone_held_id_at(i)));
     }
     if (restamped > 0) {
         restamp_incremental_nodes_total_.fetch_add(restamped, std::memory_order_relaxed);

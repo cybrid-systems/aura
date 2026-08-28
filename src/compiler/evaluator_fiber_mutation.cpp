@@ -560,6 +560,15 @@ aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept 
 // dtor, re_pin, GC safepoint, and yield-resume (#1497 unified hooks).
 // #1564: also bumps process-wide provenance hot_path_auto_refresh counters.
 // #1912: also records stable_ref_batch_refresh_total / stale_ref_prevented.
+// Issue #3327: dump pinned StableNodeRef ids into the Agent-held hot-cone set.
+void aura::compiler::Evaluator::note_restamp_hot_cone_held_from_pins_() noexcept {
+    for (const auto& ref : atomic_batch_pinned_refs_)
+        aura::ast::note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(ref.id));
+    std::lock_guard<std::mutex> lock(cow_boundary_pins_mtx_);
+    for (const auto& ref : cow_boundary_pinned_refs_)
+        aura::ast::note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(ref.id));
+}
+
 std::size_t aura::compiler::Evaluator::restamp_pinned_stable_refs() noexcept {
     const auto t0 = std::chrono::steady_clock::now();
     auto* ws = workspace_flat();
@@ -862,6 +871,7 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
             // so Agents poll query:query-epoch-stats after Guard (lazy-align
             // still ran above). Soft: metric-only (existing exceeded total).
             if (production) {
+                note_restamp_hot_cone_held_from_pins_(); // Issue #3327
                 // Issue #3259: lazy-only → eager hot cone; never green a pre-mutate gen.
                 if (r.nodes == 0)
                     r.nodes = ws->restamp_hot_cone_after_budget();
