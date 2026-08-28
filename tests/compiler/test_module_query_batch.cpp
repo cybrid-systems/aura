@@ -43,6 +43,7 @@ extern int run_test_module_require_freevar();
 extern int run_test_query_and_replace_batch();
 extern int run_test_query_by_marker_provenance();
 extern int run_test_query_epoch_contract();
+extern int run_test_query_find_by_define();
 extern int run_test_query_hygiene_default();
 extern int run_test_query_index_composite();
 extern int run_test_query_pattern_default_hygiene();
@@ -66,6 +67,7 @@ int main() {
         {"test_query_and_replace_batch", run_test_query_and_replace_batch},
         {"test_query_by_marker_provenance", run_test_query_by_marker_provenance},
         {"test_query_epoch_contract", run_test_query_epoch_contract},
+        {"test_query_find_by_define", run_test_query_find_by_define},
         {"test_query_hygiene_default", run_test_query_hygiene_default},
         {"test_query_index_composite", run_test_query_index_composite},
         {"test_query_pattern_default_hygiene", run_test_query_pattern_default_hygiene},
