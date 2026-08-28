@@ -465,14 +465,83 @@ void register_workspace_query_primitives(
         StableNodeRef ref{};
         ref.id = static_cast<aura::ast::NodeId>(as_int(ws.pairs[outer].car));
         const auto cdr = ws.pairs[outer].cdr;
-        if (is_pair(cdr)) {
-            const auto inner = as_pair_idx(cdr);
-            if (static_cast<std::size_t>(inner) >= ws.pairs.size())
+        // Issue #3396: v2 spine walker. Fills gen + wrap + tenant + cow from
+        // the nested pair spine (fiber + boundary if the next pair is also
+        // a pair). Mirrors the v2 contract in unpack_stable_ref_arg
+        // (src/compiler/evaluator_primitives_mutate.cpp).
+        auto walk_v2 = [&](const EvalValue& start) -> bool {
+            if (!is_pair(start))
+                return false;
+            const auto p_gen = as_pair_idx(start);
+            if (static_cast<std::size_t>(p_gen) >= ws.pairs.size())
+                return false;
+            if (!is_int(ws.pairs[p_gen].car))
+                return false;
+            ref.gen = static_cast<std::uint16_t>(as_int(ws.pairs[p_gen].car));
+            auto rest = ws.pairs[p_gen].cdr;
+            // wrap
+            if (!is_pair(rest))
+                return false;
+            const auto p_wrap = as_pair_idx(rest);
+            if (static_cast<std::size_t>(p_wrap) >= ws.pairs.size())
+                return false;
+            if (!is_int(ws.pairs[p_wrap].car))
+                return false;
+            ref.wrap_epoch = static_cast<std::uint32_t>(as_int(ws.pairs[p_wrap].car));
+            rest = ws.pairs[p_wrap].cdr;
+            // tenant
+            if (!is_pair(rest))
+                return false;
+            const auto p_tenant = as_pair_idx(rest);
+            if (static_cast<std::size_t>(p_tenant) >= ws.pairs.size())
+                return false;
+            if (!is_int(ws.pairs[p_tenant].car))
+                return false;
+            ref.tenant_id = static_cast<std::uint64_t>(as_int(ws.pairs[p_tenant].car));
+            rest = ws.pairs[p_tenant].cdr;
+            // cow
+            if (!is_pair(rest))
+                return false;
+            const auto p_cow = as_pair_idx(rest);
+            if (static_cast<std::size_t>(p_cow) >= ws.pairs.size())
+                return false;
+            if (!is_int(ws.pairs[p_cow].car))
+                return false;
+            ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(ws.pairs[p_cow].car));
+            rest = ws.pairs[p_cow].cdr;
+            // fiber (optional) + boundary (optional)
+            if (is_pair(rest)) {
+                const auto p_fiber = as_pair_idx(rest);
+                if (static_cast<std::size_t>(p_fiber) < ws.pairs.size() &&
+                    is_int(ws.pairs[p_fiber].car))
+                    ref.fiber_id = static_cast<std::uint32_t>(as_int(ws.pairs[p_fiber].car));
+                rest = ws.pairs[p_fiber].cdr;
+                if (is_pair(rest)) {
+                    const auto p_boundary = as_pair_idx(rest);
+                    if (static_cast<std::size_t>(p_boundary) < ws.pairs.size() &&
+                        is_int(ws.pairs[p_boundary].car))
+                        ref.boundary_pinned = as_int(ws.pairs[p_boundary].car) != 0;
+                }
+            }
+            return true;
+        };
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #3396: production requires v2 packed pair format.
+            // v1 (id . gen) or (id . (gen . _)) → nullopt (caller falls
+            // through to bare-int #3395 reject — no mutate of the slot).
+            if (!walk_v2(cdr))
                 return std::nullopt;
-            if (is_int(ws.pairs[inner].car))
-                ref.gen = static_cast<std::uint16_t>(as_int(ws.pairs[inner].car));
-        } else if (is_int(cdr)) {
-            ref.gen = static_cast<std::uint16_t>(as_int(cdr));
+        } else {
+            // Soft: existing v1 unpack (id . gen) or (id . (gen . _))
+            if (is_pair(cdr)) {
+                const auto inner = as_pair_idx(cdr);
+                if (static_cast<std::size_t>(inner) >= ws.pairs.size())
+                    return std::nullopt;
+                if (is_int(ws.pairs[inner].car))
+                    ref.gen = static_cast<std::uint16_t>(as_int(ws.pairs[inner].car));
+            } else if (is_int(cdr)) {
+                ref.gen = static_cast<std::uint16_t>(as_int(cdr));
+            }
         }
         return ref;
     };

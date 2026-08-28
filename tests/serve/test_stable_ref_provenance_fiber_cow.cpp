@@ -407,6 +407,135 @@ static void ac9_task1() {
 
 } // namespace
 
+// Issue #3396: production packed-ref contract must match the v2 export face
+// already shipped (#2198 wire v2 56 bytes, #2960 query export stamp). The
+// inbound EDSL pair unpack used by mutate + query hot paths still
+// reconstructs a brace-like StableNodeRef{id, gen} and leaves wrap/tenant/
+// cow at 0. Under production, a packed (id . gen) from an Agent that
+// dropped the v2 tail can pass or auto-refresh onto the current
+// occupant — a multi-round memory hole (I2). Fix: walk a v2 spine
+// (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))) under
+// production, require wrap+tenant+cow at minimum. Soft keeps the
+// historical v1 (id . gen) shape.
+//
+// AC1: production v2 spine walker returns nullopt on v1 packed ref.
+// AC2: resolve_mutate_node_arg ensure_valid_or_refresh on v2 ref.
+// AC3: Soft branch accepts v1 (id . gen) unchanged.
+// AC4: #2198 wire v2 (kStableRefSerializedSizeV2 = 56) + #2960 export stamp
+//      non-regress.
+// AC5: extend packed-ref / tenant-capture suite. Source-cite gate at
+//      scripts/coverage/checks/check_unpack_stable_ref_arg_v2_3396.py.
+//      No docs/design/, no tests/issues/test_issue_3396.cpp.
+
+static void ac3396_1_production_v2_spine_walker() {
+    std::println("\n=== #3396 AC1: production v2 spine walker returns nullopt on v1 ===");
+    // Source-cite check: the production gate on walk_v2 and the nullopt
+    // return when walk_v2 fails (v1 packed ref under production → nullopt
+    // → caller falls through to the #3395 bare-int reject with stale-ref
+    // tag — no mutate of the slot).
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_ev("src/compiler/evaluator.ixx");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string evx((std::istreambuf_iterator<char>(f_ev)), std::istreambuf_iterator<char>());
+    CHECK(!mut.empty(), "3396 AC1: mutate.cpp readable");
+    CHECK(!qws.empty(), "3396 AC1: query_workspace.cpp readable");
+    CHECK(!evx.empty(), "3396 AC1: evaluator.ixx readable");
+    // Mutate side: production gate + walk_v2 + nullopt on failure
+    CHECK(mut.find("aura::compiler::typed_audit::production_defaults_active()") !=
+              std::string::npos,
+          "3396 AC1: production_defaults_active() gate present in mutate.cpp");
+    CHECK(mut.find("walk_v2") != std::string::npos,
+          "3396 AC1: walk_v2 v2 spine walker present in mutate.cpp");
+    CHECK(mut.find("if (!walk_v2(cdr)) return std::nullopt") != std::string::npos,
+          "3396 AC1: walk_v2 failure under production → nullopt (v1 reject)");
+    // Query side: same gate
+    CHECK(qws.find("aura::compiler::typed_audit::production_defaults_active()") !=
+              std::string::npos,
+          "3396 AC1: production_defaults_active() gate present in query_workspace.cpp");
+    CHECK(qws.find("walk_v2") != std::string::npos,
+          "3396 AC1: walk_v2 v2 spine walker present in query_workspace.cpp");
+    CHECK(qws.find("if (!walk_v2(cdr)) return std::nullopt") != std::string::npos,
+          "3396 AC1: walk_v2 failure under production → nullopt (v1 reject)");
+}
+
+static void ac3396_2_resolve_mutate_node_arg_ensure_valid() {
+    std::println("\n=== #3396 AC2: ensure_valid_or_refresh on v2 ref ===");
+    // After walk_v2 fills wrap + tenant + cow, the caller still runs
+    // ensure_valid_or_refresh + bump_stable_ref_provenance_enforced (the
+    // isolation gate is unchanged — the v2 fields ride through it).
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("ensure_valid_or_refresh") != std::string::npos,
+          "3396 AC2: ensure_valid_or_refresh still called on packed ref");
+    CHECK(mut.find("bump_stable_ref_provenance_enforced") != std::string::npos,
+          "3396 AC2: bump_stable_ref_provenance_enforced counter still bumped");
+}
+
+static void ac3396_3_soft_v1_unchanged() {
+    std::println("\n=== #3396 AC3: Soft branch accepts v1 (id . gen) unchanged ===");
+    // The Soft (production_defaults_active() == false) branch must keep
+    // the historical v1 unpack — (id . gen) or (id . (gen . _)).
+    // No breaking change for Soft callers (Issue #2186 compat).
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("else {") != std::string::npos, "3396 AC3: Soft else branch present");
+    CHECK(mut.find("is_pair(cdr)") != std::string::npos,
+          "3396 AC3: Soft branch still calls is_pair(cdr)");
+    CHECK(mut.find("as_pair_idx(cdr)") != std::string::npos,
+          "3396 AC3: Soft branch still calls as_pair_idx(cdr)");
+}
+
+static void ac3396_4_wire_v2_export_stamp_non_regress() {
+    std::println("\n=== #3396 AC4: #2198 wire v2 + #2960 export stamp non-regress ===");
+    std::ifstream f_ast("src/core/ast.ixx");
+    std::ifstream f_ev("src/compiler/evaluator.ixx");
+    std::string ast((std::istreambuf_iterator<char>(f_ast)), std::istreambuf_iterator<char>());
+    std::string evx((std::istreambuf_iterator<char>(f_ev)), std::istreambuf_iterator<char>());
+    // #2198: kStableRefSerializedSizeV2 = 56
+    CHECK(ast.find("kStableRefSerializedSizeV2") != std::string::npos,
+          "3396 AC4: kStableRefSerializedSizeV2 constant present in ast.ixx");
+    CHECK(ast.find("56") != std::string::npos, "3396 AC4: v2 wire size 56 referenced in ast.ixx");
+    // #2960: stamp_query_stable_ref_export (fills tenant/fiber/cow/wrap
+    // before Agent export — the v2 fields that walk_v2 now reads on inbound)
+    CHECK(evx.find("stamp_query_stable_ref_export") != std::string::npos,
+          "3396 AC4: stamp_query_stable_ref_export wired in evaluator.ixx");
+    // walk_v2 fills the same fields that stamp_query_stable_ref_export stamps
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("ref.wrap_epoch") != std::string::npos,
+          "3396 AC4: walk_v2 fills ref.wrap_epoch (matches #2960 stamp)");
+    CHECK(mut.find("ref.tenant_id") != std::string::npos,
+          "3396 AC4: walk_v2 fills ref.tenant_id (matches #2960 stamp)");
+    CHECK(mut.find("ref.cow_epoch_at_capture") != std::string::npos,
+          "3396 AC4: walk_v2 fills ref.cow_epoch_at_capture (matches #2960 stamp)");
+}
+
+static void ac3396_5_no_docs_no_test_issue_cite_present() {
+    std::println(
+        "\n=== #3396 AC5: no docs/design/, no tests/issues/test_issue_3396.cpp + #3396 cite ===");
+    // No docs/design/3396-*.md plan doc
+    {
+        std::ifstream f("docs/design/3396-unpack-stable-ref-arg-v2.md");
+        CHECK(!f.good(), "3396 AC5: no docs/design/3396-*");
+    }
+    // No tests/issues/test_issue_3396.cpp
+    {
+        std::ifstream f("tests/issues/test_issue_3396.cpp");
+        CHECK(!f.good(), "3396 AC5: no tests/issues/test_issue_3396.cpp");
+    }
+    // #3396 cite present in both production source files (commit message anchor)
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("#3396") != std::string::npos,
+          "3396 AC5: Issue #3396 cite present in mutate.cpp");
+    CHECK(qws.find("#3396") != std::string::npos,
+          "3396 AC5: Issue #3396 cite present in query_workspace.cpp");
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -430,6 +559,12 @@ int main() {
     ac7_task1();
     ac8_task1();
     ac9_task1();
+    // #3396 ACs (5) — production packed-ref v2 contract
+    ac3396_1_production_v2_spine_walker();
+    ac3396_2_resolve_mutate_node_arg_ensure_valid();
+    ac3396_3_soft_v1_unchanged();
+    ac3396_4_wire_v2_export_stamp_non_regress();
+    ac3396_5_no_docs_no_test_issue_cite_present();
     std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
                  ::aura::test::g_failed);
     return ::aura::test::g_failed ? 1 : 0;

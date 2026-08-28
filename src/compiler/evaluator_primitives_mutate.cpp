@@ -992,6 +992,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     }
 
     // Issue #489: unified StableNodeRef / raw NodeId resolution for mutate hot paths.
+    // Issue #3396: production requires v2 packed pair format
+    //   (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))
+    // — wrap + tenant + cow at minimum. Soft keeps the historical v1
+    // (id . gen) shape. v1 packed refs under production fall through to
+    // the bare-int #3395 reject gate (resolve_mutate_node_arg below).
     // Defined inside register_mutate_primitives (Evaluator friend) for private access.
     auto unpack_stable_ref_arg = [&ev,
                                   safe_str](const EvalValue& arg) -> std::optional<StableNodeRef> {
@@ -1003,12 +1008,71 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         StableNodeRef ref{};
         ref.id = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
         const auto cdr = ev.pairs_[outer].cdr;
-        if (is_pair(cdr)) {
-            const auto inner = as_pair_idx(cdr);
-            if (is_int(ev.pairs_[inner].car))
-                ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
-        } else if (is_int(cdr)) {
-            ref.gen = static_cast<std::uint16_t>(as_int(cdr));
+        // Issue #3396: v2 spine walker. Fills gen + wrap + tenant + cow from
+        // the nested pair spine (fiber + boundary if the next pair is also
+        // a pair). Returns true iff at least gen + wrap + tenant + cow were
+        // filled (i.e., the spine had depth ≥ 4 beyond (id . ...)).
+        auto walk_v2 = [&](const EvalValue& start) -> bool {
+            if (!is_pair(start))
+                return false;
+            const auto p_gen = as_pair_idx(start);
+            if (!is_int(ev.pairs_[p_gen].car))
+                return false;
+            ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[p_gen].car));
+            auto rest = ev.pairs_[p_gen].cdr;
+            // wrap
+            if (!is_pair(rest))
+                return false;
+            const auto p_wrap = as_pair_idx(rest);
+            if (!is_int(ev.pairs_[p_wrap].car))
+                return false;
+            ref.wrap_epoch = static_cast<std::uint32_t>(as_int(ev.pairs_[p_wrap].car));
+            rest = ev.pairs_[p_wrap].cdr;
+            // tenant
+            if (!is_pair(rest))
+                return false;
+            const auto p_tenant = as_pair_idx(rest);
+            if (!is_int(ev.pairs_[p_tenant].car))
+                return false;
+            ref.tenant_id = static_cast<std::uint64_t>(as_int(ev.pairs_[p_tenant].car));
+            rest = ev.pairs_[p_tenant].cdr;
+            // cow
+            if (!is_pair(rest))
+                return false;
+            const auto p_cow = as_pair_idx(rest);
+            if (!is_int(ev.pairs_[p_cow].car))
+                return false;
+            ref.cow_epoch_at_capture = static_cast<std::uint64_t>(as_int(ev.pairs_[p_cow].car));
+            rest = ev.pairs_[p_cow].cdr;
+            // fiber (optional) + boundary (optional)
+            if (is_pair(rest)) {
+                const auto p_fiber = as_pair_idx(rest);
+                if (is_int(ev.pairs_[p_fiber].car))
+                    ref.fiber_id = static_cast<std::uint32_t>(as_int(ev.pairs_[p_fiber].car));
+                rest = ev.pairs_[p_fiber].cdr;
+                if (is_pair(rest)) {
+                    const auto p_boundary = as_pair_idx(rest);
+                    if (is_int(ev.pairs_[p_boundary].car))
+                        ref.boundary_pinned = as_int(ev.pairs_[p_boundary].car) != 0;
+                }
+            }
+            return true;
+        };
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #3396: production requires v2 packed pair format.
+            // v1 (id . gen) or (id . (gen . _)) → nullopt (caller falls
+            // through to bare-int #3395 reject — no mutate of the slot).
+            if (!walk_v2(cdr))
+                return std::nullopt;
+        } else {
+            // Soft: existing v1 unpack (id . gen) or (id . (gen . _))
+            if (is_pair(cdr)) {
+                const auto inner = as_pair_idx(cdr);
+                if (is_int(ev.pairs_[inner].car))
+                    ref.gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
+            } else if (is_int(cdr)) {
+                ref.gen = static_cast<std::uint16_t>(as_int(cdr));
+            }
         }
         return ref;
     };
