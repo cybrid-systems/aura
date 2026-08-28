@@ -5336,6 +5336,23 @@ def cmd_lint():
             "Issue #3371 evolution-audit-decision forensic-source priority linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_forensic_source_3371.py"
         )
         return r
+    # Issue #3372: Phase-5 densify fail window (had_moving_densify &&
+    # !pin_contract_held) must NOT publish envframe_ok=true /
+    # dual_epoch_ok=true — Steal LCP would otherwise AND a vacuous-green
+    # EnvFrame on a window that never ran the ownership scan. Fail-closed
+    # last-call. Pairing success path (#2376) + Soft vacuous-true branch
+    # unchanged. Pure publish-face fix — no new query keys, no second
+    # EnvFrame remap registry, Guard dtor scan unchanged.
+    dfw3372_script = COVERAGE_CHECKS / "check_densify_fail_window_vacuous_axes_3372.py"
+    if not dfw3372_script.exists():
+        fail(f"missing {dfw3372_script}")
+        return 1
+    r = run([sys.executable, str(dfw3372_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3372 densify fail-window vacuous axes linter failed — run python3 scripts/coverage/checks/check_densify_fail_window_vacuous_axes_3372.py"
+        )
+        return r
     # Issue #3113: typed trail 256 wrap vs SE ring 1024 + WAL. query:security-audit
     # must mark typed-trail-miss (plus window / se-ring-size / wal-replay-hint)
     # so a wrap miss is not read as "never audited". Soft / WAL-off: is_enabled()

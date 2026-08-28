@@ -3195,6 +3195,62 @@ int run_test_moving_densify_fail_closed() {
     ac3308_4_steal_complete_reconsult_lcp();
     ac3308_5_refuse_under_densify_incomplete();
     ac3308_6_source_and_linter();
+    std::println("\n=== Issue #3372: Phase-5 densify fail-window vacuous axes ===");
+    {
+        // AC1/AC2: had_moving_densify && !pin_contract_held must NOT publish
+        // envframe_ok=true / dual_epoch_ok=true as if pairing ran.
+        // Fail-closed last-call so Steal LCP would_allow_commit cannot be
+        // true solely from a vacuous EnvFrame axis.
+        const auto ev_mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(ev_mut.find("} else if (had_moving_densify) {") != std::string::npos,
+              "3372 AC1/AC2: fail-window branch present in evaluator_mutation_boundary.cpp");
+        CHECK(ev_mut.find("Issue #3372:") != std::string::npos,
+              "3372 AC1/AC2: #3372 fix comment present in fail-window branch");
+        // The exact fix: closure_remount_ok, envframe_ok, dual_epoch_ok must
+        // all be `false` in the fail-window branch (NOT `true`).
+        // We probe the source for the unique `= false;` substrings that
+        // appear inside this branch (each is unique enough not to collide
+        // with the Soft / empty branch which keeps `= true;`).
+        CHECK(ev_mut.find("closure_remount_ok = false;") != std::string::npos,
+              "3372 AC1: fail-window closure_remount_ok = false (NOT true)");
+        CHECK(ev_mut.find("envframe_ok = false;") != std::string::npos,
+              "3372 AC1: fail-window envframe_ok = false (NOT true)");
+        CHECK(ev_mut.find("note_last_densify_dual_epoch_ok(false);") != std::string::npos,
+              "3372 AC1: fail-window dual_epoch_ok = false (NOT true)");
+        CHECK(ev_mut.find("note_last_densify_remap_pairing_forced(false);") != std::string::npos,
+              "3372 AC1: fail-window remap_pairing_forced = false (unchanged)");
+        // AC2/AC4: success path (had_moving_densify && pin_contract_held)
+        // still runs force_densify_remap_pairing with pairing.* axes.
+        CHECK(ev_mut.find("if (had_moving_densify && pin_contract_held) {") != std::string::npos,
+              "3372 AC2/AC4: success-path pin-contract gate unchanged");
+        CHECK(ev_mut.find("force_densify_remap_pairing()") != std::string::npos,
+              "3372 AC4: success-path still runs force_densify_remap_pairing");
+        CHECK(ev_mut.find("pairing.closure_remount_ok") != std::string::npos &&
+                  ev_mut.find("pairing.dual_epoch_ok") != std::string::npos,
+              "3372 AC4: success-path axes sourced from pairing.*");
+        // AC3: Soft / empty densify (!had_moving_densify) keeps vacuous-true.
+        CHECK(ev_mut.find("// Soft / empty densify: vacuous axes") != std::string::npos,
+              "3372 AC3: Soft/empty branch vacuous-true comment preserved");
+        // AC4/AC5: no new query keys, last-call helpers unchanged.
+        CHECK(ev_mut.find("note_last_densify_envframe_ok(") != std::string::npos &&
+                  ev_mut.find("note_last_densify_dual_epoch_ok(") != std::string::npos,
+              "3372 AC4/AC5: last-call helpers still feed Agent poll");
+        // AC5: build.py wires the linter.
+        const auto build3372 = read_file("build.py");
+        CHECK(build3372.find("check_densify_fail_window_vacuous_axes_3372") != std::string::npos &&
+                  build3372.find("Issue #3372") != std::string::npos,
+              "3372 AC5: build.py wires 3372 linter");
+        // No-invent: extend existing test (this file) + no test_issue_3372.cpp.
+        std::ifstream inv3372("tests/core/test_issue_3372.cpp");
+        if (!inv3372.good())
+            inv3372.open("../tests/core/test_issue_3372.cpp");
+        CHECK(!inv3372.good(), "3372 AC5: no test_issue_3372.cpp (per #81967)");
+        CHECK(read_file("docs/design/3372-densify-fail-window.md").empty(),
+              "3372 AC5: no docs/design/3372-* (per #1655)");
+        const auto t3372_self = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+        CHECK(t3372_self.find("3372 AC") != std::string::npos,
+              "3372 AC5: existing test file cites #3372");
+    }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
