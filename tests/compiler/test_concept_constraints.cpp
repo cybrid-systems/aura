@@ -54,7 +54,8 @@ struct NotAPass {
 static void ac1_inventory() {
     std::println("\n--- AC1: concept inventory ---");
     CHECK(aura::compiler::pass_concepts::kConceptConstraintsPhase >= 1, "phase >= 1");
-    CHECK(aura::compiler::pass_concepts::kPassConceptCount == 13, "13 pass concepts (#2258)");
+    CHECK(aura::compiler::pass_concepts::kPassConceptCount == 17, "17 pass concepts (#3329)");
+    CHECK(aura::compiler::pass_concepts::kPassPurityGateIssue == 3329, "3329 stamp");
     aura::compiler::pass_concepts::note_concept_constraints_import();
     CHECK(aura::compiler::pass_concepts::concept_constraints_import_hits.load() >= 1,
           "import hits");
@@ -79,6 +80,21 @@ static void ac2_positive_negative() {
     CHECK(!static_cast<bool>(aura::compiler::Pass<NotAPass>), "NotAPass is not Pass");
     CHECK(!static_cast<bool>(aura::compiler::DirtyAwarePass<PureAnalysisStub>),
           "pure stub not DirtyAware");
+
+    struct ImpureWorkspaceWrite {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+    };
+    CHECK(static_cast<bool>(aura::compiler::Pass<ImpureWorkspaceWrite>),
+          "3329 AC2: impure stub is still Pass (Soft/unit)");
+    CHECK(!static_cast<bool>(aura::compiler::ProductionPipelinePass<ImpureWorkspaceWrite>),
+          "3329 AC1: impure stub fails ProductionPipelinePass");
+    CHECK(static_cast<bool>(aura::compiler::ProductionPipelinePass<
+                            aura::compiler::opt_registry::ConstantFoldingPass>),
+          "3329 AC3: CF production gate");
+    CHECK(static_cast<bool>(aura::compiler::DirtyPropagatorAwarePass<
+                            aura::compiler::opt_registry::ConstantFoldingPass>),
+          "3329 AC3: CF DirtyPropagatorAware");
 }
 
 static void ac3_reexport_via_pass_manager() {
@@ -121,7 +137,7 @@ static void ac5_stats_primitive() {
         cs.eval("(hash-ref (engine:metrics \"query:pass-concepts-stats\") 'concept-count)");
     CHECK(count.has_value() && aura::compiler::types::is_int(*count) &&
               aura::compiler::types::as_int(*count) == 12,
-          "concept-count == 12 (#2060)");
+          "concept-count == 17 (#3329)");
 }
 
 static void ac6_no_duplicate_in_pass_manager_source() {

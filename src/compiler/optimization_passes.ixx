@@ -1084,10 +1084,11 @@ static_assert(aura::compiler::ShapeStableAwarePass<RenderPass>,
               "RenderPass must be ShapeStableAware (#1578)");
 
 // ── Factory + default pipeline (#1576 AC3/AC4 + #1578 Render + #2025 DCE) ──
-// Run core concrete passes via run_pipeline (contracts + metrics).
-// Order: ConstantFold → TypePropagation → DeadCoercion → ComputeKind →
-// ShapeAwareFold → Render. DeadCoercion sits after TypePropagation so
-// type_id / narrow_evidence stamps drive CastOp elision.
+// Run core concrete passes via run_production_pipeline (#3329 purity
+// gate; contracts + metrics). Order: ConstantFold → TypePropagation →
+// DeadCoercion → ComputeKind → ShapeAwareFold → Render. DeadCoercion
+// sits after TypePropagation so type_id / narrow_evidence stamps drive
+// CastOp elision.
 inline bool run_default_optimization_pipeline(aura::ir::IRModule& mod) {
     opt_pipeline_factory_runs_total.fetch_add(1, std::memory_order_relaxed);
     ConstantFoldingPass cf;
@@ -1104,8 +1105,21 @@ inline bool run_default_optimization_pipeline(aura::ir::IRModule& mod) {
         dce.set_pipeline_epoch(epoch);
         rp.set_pipeline_epoch(epoch);
     }
-    return aura::compiler::run_pipeline(mod, cf, tp, dce, ck, sa, rp);
+    return aura::compiler::run_production_pipeline(mod, cf, tp, dce, ck, sa, rp);
 }
+
+static_assert(aura::compiler::ProductionPipelinePass<ConstantFoldingPass>,
+              "Issue #3329: ConstantFoldingPass production gate");
+static_assert(aura::compiler::ProductionPipelinePass<TypePropagationPass>,
+              "Issue #3329: TypePropagationPass production gate");
+static_assert(aura::compiler::ProductionPipelinePass<DeadCoercionPass>,
+              "Issue #3329: DeadCoercionPass production gate");
+static_assert(aura::compiler::ProductionPipelinePass<ComputeKindPass>,
+              "Issue #3329: ComputeKindPass production gate");
+static_assert(aura::compiler::ProductionPipelinePass<ShapeAwareFoldingPass>,
+              "Issue #3329: ShapeAwareFoldingPass production gate");
+static_assert(aura::compiler::ProductionPipelinePass<RenderPass>,
+              "Issue #3329: RenderPass production gate");
 
 // Incremental render only (dirty pipeline + optional define mask).
 inline bool
@@ -1115,7 +1129,7 @@ run_incremental_render_pipeline(aura::ir::IRModule& mod, RenderPass& pass,
     const auto epoch = aura::compiler::pipeline_mutation_epoch();
     if (epoch != 0)
         pass.set_pipeline_epoch(epoch);
-    return aura::compiler::run_incremental_dirty_pipeline(mod, pass, define_cache);
+    return aura::compiler::run_production_incremental_dirty_pipeline(mod, pass, define_cache);
 }
 
 // Instantiate a single core pass by kind and run it (factory entry).

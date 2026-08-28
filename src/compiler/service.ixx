@@ -2969,7 +2969,8 @@ public:
         // individual *.run() calls. Short-circuits on has_error().
         // Issue #1418: include DCE after ConstantFolding.
         // Issue #1457: type-propagation between TypeSpec and DCE.
-        aura::compiler::run_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
+        // Issue #3329: production purity / SoA / DirtyPropagator gate.
+        aura::compiler::run_production_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
         accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
 
@@ -3170,7 +3171,8 @@ public:
             dce.set_pipeline_epoch(pipeline_epoch);
             // Issue #163: run_pipeline (Pass concept fold) replaces
             // the individual *.run() calls. Issue #1418: include DCE.
-            aura::compiler::run_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
+            // Issue #3329: production purity / SoA / DirtyPropagator gate.
+            aura::compiler::run_production_pipeline(ir_mod, ts, tprop, ck, ar, cf, dce);
             accumulate_type_propagation_metrics(tprop);
             accumulate_coercion_pass_metrics(ts, dce);
             // Issue #253: accumulate linear-move elision count.
@@ -6621,10 +6623,11 @@ public:
             }
             const aura::compiler::DefineDirtyMaskView* mask_ptr =
                 define_mask.block_dirty_per_func ? &define_mask : nullptr;
-            (void)aura::compiler::run_incremental_dirty_pipeline(one, ck_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(one, cf_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(one, tp_pass, mask_ptr);
-            (void)aura::compiler::run_incremental_dirty_pipeline(one, shape_pass, mask_ptr);
+            (void)aura::compiler::run_production_incremental_dirty_pipeline(one, ck_pass, mask_ptr);
+            (void)aura::compiler::run_production_incremental_dirty_pipeline(one, cf_pass, mask_ptr);
+            (void)aura::compiler::run_production_incremental_dirty_pipeline(one, tp_pass, mask_ptr);
+            (void)aura::compiler::run_production_incremental_dirty_pipeline(one, shape_pass,
+                                                                            mask_ptr);
             new_func = std::move(one.functions[0]);
             // Issue #538 / #611: DCE after per-function post-mutate
             // re-lower; scoped to dirty blocks when mask matches.
@@ -7860,7 +7863,8 @@ public:
         dce.set_pipeline_epoch(pipeline_epoch);
         // Issue #163: run_pipeline (Pass concept fold) replaces
         // the individual *.run() calls. Issue #1418: include DCE.
-        aura::compiler::run_pipeline(*last_ir_mod_, ts, tprop, ck, ar, cf, dce);
+        // Issue #3329: production purity / SoA / DirtyPropagator gate.
+        aura::compiler::run_production_pipeline(*last_ir_mod_, ts, tprop, ck, ar, cf, dce);
         accumulate_type_propagation_metrics(tprop);
         accumulate_coercion_pass_metrics(ts, dce);
 
@@ -10800,11 +10804,11 @@ private:
         ShapeWrap shape_pass;
         EscapeAnalysisWrap escape_pass;
 
-        (void)run_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
-        (void)run_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
-        (void)run_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
-        (void)run_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
-        (void)run_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
+        (void)run_production_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
+        (void)run_production_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
+        (void)run_production_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);
+        (void)run_production_incremental_dirty_pipeline(ir_mod, shape_pass, mask_ptr);
+        (void)run_production_incremental_dirty_pipeline(ir_mod, escape_pass, mask_ptr);
 
         for (auto& func : ir_mod.functions) {
             if (func.id == ir_mod.entry_function_id)

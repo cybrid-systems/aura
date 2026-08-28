@@ -818,6 +818,19 @@ def cmd_lint():
             "Issue #3315 production DirtySoAEntry no-pred linter failed — run python3 scripts/coverage/checks/check_production_dirty_soa_no_pred_3315.py"
         )
         return r
+    # Issue #3329: production pipeline concept-rejects impure Pass
+    # (AnalysisPass + SoAView + DirtyPropagatorAware). Soft/unit keep
+    # run_pipeline. Extends test_hot_pass_hard_dod + concept_constraints.
+    pp3329_script = COVERAGE_CHECKS / "check_production_pipeline_purity_3329.py"
+    if not pp3329_script.exists():
+        fail(f"missing {pp3329_script}")
+        return 1
+    r = run([sys.executable, str(pp3329_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3329 production pipeline purity linter failed — run python3 scripts/coverage/checks/check_production_pipeline_purity_3329.py"
+        )
+        return r
     # Issue #3043: Soft-observe AURA_HOT_CONTRACT (metrics, no abort).
     # Production default stays OFF. Extends test_hot_contract_placement
     # + test_hot_contract_unify (#81967); no docs/design/ (#1655).
@@ -13971,6 +13984,16 @@ def cmd_hot_pass_hard_dod_coverage():
         fail("hot pass hard dod (#2434) coverage contract rows failed")
         return 1
     ok("hot pass hard dod (#2434) coverage clean")
+    # Issue #3329 residual: production purity / SoA / DirtyPropagator gate.
+    pp3329 = COVERAGE_CHECKS / "check_production_pipeline_purity_3329.py"
+    if not pp3329.exists():
+        fail(f"missing {pp3329}")
+        return 1
+    r3329 = subprocess.run([sys.executable, str(pp3329)], cwd=ROOT)
+    if r3329.returncode != 0:
+        fail("production pipeline purity (#3329) coverage contract rows failed")
+        return 1
+    ok("production pipeline purity (#3329) coverage clean")
     return 0
 
 
