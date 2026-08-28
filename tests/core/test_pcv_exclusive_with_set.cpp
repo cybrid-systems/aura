@@ -29,6 +29,7 @@ using aura::ast::FlatAST;
 using aura::ast::g_pcv_hotpath_metrics;
 using aura::ast::kPcvExclusiveSetIssue;
 using aura::ast::kPcvHotpathIssue;
+using aura::ast::kPcvSpanQueryRefreshIssue;
 using aura::ast::kPcvStaleSpanExclusiveIssue;
 using aura::ast::NodeId;
 using aura::ast::pcv_checkpoint_live_enter;
@@ -69,6 +70,9 @@ static void ac3233_4_soft_unchanged_source();
 static void ac3167_1_production_stale_refresh();
 static void ac3167_2_happy_path_zero_extra();
 static void ac3167_4_additive_counter_only();
+static void ac3328_1_production_held_span_refresh();
+static void ac3328_2_soft_frozen_view();
+static void ac3328_3_2906_3233_non_regression();
 
 int run_test_pcv_exclusive_with_set() {
     std::println("=== Issue #2140: PCV exclusive with_set ===");
@@ -321,6 +325,11 @@ int run_test_pcv_exclusive_with_set() {
     ac3167_2_happy_path_zero_extra();
     ac3167_4_additive_counter_only();
 
+    std::println("\n=== Issue #3328: production children_stable / query re-use refresh ===");
+    ac3328_1_production_held_span_refresh();
+    ac3328_2_soft_frozen_view();
+    ac3328_3_2906_3233_non_regression();
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -514,4 +523,94 @@ static void ac3167_4_additive_counter_only() {
     CHECK(pins_after > pins_before, "3167 AC4: pcv_pin_count incremented (captures)");
     CHECK(hit_rate_after == hit_rate_before || hit_rate_after > 0,
           "3167 AC4: pcv_columnar_hit_rate_bp surfaces");
+}
+
+// ── Issue #3328 ACs ──
+// Production Agent export / re-use of a SafePCVSpan held across a
+// structural Guard must force_refresh (live children) or structured
+// stale-span — never a silent pre-mutate walk. Soft keeps the frozen
+// COW view (is_stale + #3167 counter only). #2906 / #3233 mutate
+// exclusive policy is untouched (read/export face only).
+
+static void ac3328_1_production_held_span_refresh() {
+    std::println("\n--- #3328 AC1: production held span → refreshed live children ---");
+    CHECK(kPcvSpanQueryRefreshIssue == 3328, "3328 AC1: issue stamp");
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    auto span = flat.children_safe_view(root);
+    CHECK(span.has_fingerprint(), "3328 AC1: held span fingerprinted");
+    CHECK(span.size() == 2, "3328 AC1: pre-mutate arity");
+    const auto extra = flat.add_literal(42);
+    flat.insert_child(root, 0, extra);
+    CHECK(span.size() == 2, "3328 AC1: held span still frozen (COW)");
+    CHECK(span.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                        flat.node_gen_for(root)),
+          "3328 AC1: fingerprint stale after Guard");
+    const auto stale_before = flat.pcv_span_stale_across_guard_total();
+    auto exported = flat.pcv_span_for_agent_export(span, root, /*production=*/true);
+    CHECK(exported.has_fingerprint(), "3328 AC1: production re-export has fingerprint");
+    CHECK(exported.size() == 3, "3328 AC1: production returns refreshed live children");
+    CHECK(!exported.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                             flat.node_gen_for(root)),
+          "3328 AC1: refreshed span not stale");
+    CHECK(flat.pcv_span_stale_across_guard_total() > stale_before,
+          "3328 AC1: #3167 counter bumped on refresh");
+    auto live = flat.children_stable(root);
+    CHECK(live.size() == 3, "3328 AC1: subsequent children_stable is live");
+}
+
+static void ac3328_2_soft_frozen_view() {
+    std::println("\n--- #3328 AC2: Soft / Off → frozen view, counter unchanged ---");
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[1] = {flat.add_literal(1)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 1));
+    auto span = flat.children_safe_view(root);
+    const auto extra = flat.add_literal(99);
+    flat.insert_child(root, 0, extra);
+    const auto before = flat.pcv_span_stale_across_guard_total();
+    auto exported = flat.pcv_span_for_agent_export(span, root, /*production=*/false);
+    CHECK(exported.size() == 1, "3328 AC2: Soft frozen view remains valid");
+    CHECK(exported.has_fingerprint(), "3328 AC2: Soft span still fingerprinted");
+    CHECK(flat.pcv_span_stale_across_guard_total() == before,
+          "3328 AC2: Soft does not bump counter (is_stale + counter only)");
+    auto happy = flat.pcv_span_for_agent_export(span, root, /*production=*/true);
+    (void)happy;
+    auto fresh = flat.children_safe_view(root);
+    const auto after_refresh = flat.pcv_span_stale_across_guard_total();
+    auto noop = flat.pcv_span_for_agent_export(fresh, root, /*production=*/true);
+    CHECK(noop.size() == fresh.size(), "3328 AC2: production happy path returns original");
+    CHECK(flat.pcv_span_stale_across_guard_total() == after_refresh,
+          "3328 AC2: happy path zero extra (counter unchanged)");
+}
+
+static void ac3328_3_2906_3233_non_regression() {
+    std::println("\n--- #3328 AC3+AC5: #2906/#3233 mutate exclusive non-regress; source-cite ---");
+    CHECK(kPcvStaleSpanExclusiveIssue == 3233, "3328 AC3: #3233 stamp intact");
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("kPcvSpanQueryRefreshIssue = 3328") != std::string::npos, "3328 AC5: stamp");
+    CHECK(hh.find("kPcvFlatastLockedExclusiveIssue = 2906") != std::string::npos,
+          "3328 AC3: #2906 stamp intact");
+    CHECK(hh.find("kPcvStaleSpanExclusiveIssue = 3233") != std::string::npos,
+          "3328 AC3: #3233 stamp intact");
+    CHECK(ast.find("pcv_span_for_agent_export") != std::string::npos,
+          "3328 AC5: pcv_span_for_agent_export in ast.ixx");
+    CHECK(qws.find("force_refresh_pcv_span") != std::string::npos,
+          "3328 AC5: query:children-stable force_refresh");
+    CHECK(qws.find("stale-span") != std::string::npos, "3328 AC5: structured stale-span");
+    CHECK(qws.find("across-guard") != std::string::npos, "3328 AC5: across-guard reason");
+    CHECK(fiber.find("pcv_span_for_agent_export") != std::string::npos,
+          "3328 AC5: children_stable_batch production refresh");
+    CHECK(build.find("check_pcv_stale_span_query_refresh_3328") != std::string::npos,
+          "3328 AC5: build.py");
+    CHECK(read_file("docs/design/3328-pcv-query-refresh.md").empty(),
+          "3328 AC4: no docs/design per #1655");
+    CHECK(read_file("tests/core/test_issue_3328.cpp").empty(), "3328 AC4: no invent per #81967");
+    CHECK(read_file("tests/issues/test_issue_3328.cpp").empty(), "3328 AC4: no invent per #81967");
 }

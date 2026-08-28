@@ -2266,6 +2266,20 @@ def cmd_lint():
             "Issue #3233 PCV stale-span exclusive linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_exclusive_3233.py"
         )
         return r
+    # Issue #3328: production children_stable / query re-use of a held
+    # SafePCVSpan force_refresh or structured stale-span (across-guard).
+    # Soft frozen view. #2906/#3233 mutate exclusive unchanged.
+    # Extends test_pcv_exclusive_with_set + hygiene; no docs/design / invent.
+    pcv3328_script = COVERAGE_CHECKS / "check_pcv_stale_span_query_refresh_3328.py"
+    if not pcv3328_script.exists():
+        fail(f"missing {pcv3328_script}")
+        return 1
+    r = run([sys.executable, str(pcv3328_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3328 PCV stale-span query refresh linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_query_refresh_3328.py"
+        )
+        return r
     # Issue #3234: compute_sccs Tarjan local recursive struct (zero
     # std::function on the pass surface). Soft/behaviour unchanged.
     # Extends test_hot_pass_hard_dod; no docs/design / invent.
@@ -11561,6 +11575,16 @@ def cmd_pcv_span_stale_coverage_3167():
         fail("pcv span stale (#3167) coverage contract rows failed")
         return 1
     ok("pcv span stale (#3167) coverage clean")
+    # Issue #3328 residual: production children_stable / query re-use.
+    pcv3328 = COVERAGE_CHECKS / "check_pcv_stale_span_query_refresh_3328.py"
+    if not pcv3328.exists():
+        fail(f"missing {pcv3328}")
+        return 1
+    r3328 = subprocess.run([sys.executable, str(pcv3328)], cwd=ROOT)
+    if r3328.returncode != 0:
+        fail("pcv stale-span query refresh (#3328) coverage contract rows failed")
+        return 1
+    ok("pcv stale-span query refresh (#3328) coverage clean")
     return 0
 
 

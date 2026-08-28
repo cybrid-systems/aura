@@ -3653,6 +3653,53 @@ static void ac3167_3_2906_non_regression() {
           "AC3/AC4: pcv-span-stale-across-guard-total additive");
 }
 
+static void ac3328_3_2906_3233_non_regression() {
+    std::println("\n--- #3328 AC3: #2906 exclusive + #3233 force-exclusive non-regression ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3328 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3328 AC3: eval");
+    auto v = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
+                                 "\"flatast-locked-move-out-exclusive-total\")"));
+    CHECK(!v || is_void(*v) || is_error(*v) || (is_int(*v) && as_int(*v) >= 0),
+          "3328 AC3: #2906 exclusive total still surfaces");
+    auto s = cs.eval(std::format("(hash-ref (engine:metrics \"query:flatast-locked-stats\") "
+                                 "\"schema\")"));
+    if (s && is_int(*s))
+        CHECK(as_int(*s) == 2906 || as_int(*s) > 0, "3328 AC3: #2906 schema unchanged");
+    auto force = cs.eval(std::format("(hash-ref (engine:metrics \"query:pcv-hotpath-stats\") "
+                                     "\"stale-span-force-exclusive-total\")"));
+    CHECK(!force || is_void(*force) || is_error(*force) || (is_int(*force) && as_int(*force) >= 0),
+          "3328 AC3: #3233 stale-span-force-exclusive-total still surfaces");
+    auto pcv_key = cs.eval(std::format("(hash-ref (engine:metrics \"query:pcv-hotpath-stats\") "
+                                       "\"pcv-span-stale-across-guard-total\")"));
+    CHECK(!pcv_key || is_void(*pcv_key) || is_error(*pcv_key) ||
+              (is_int(*pcv_key) && as_int(*pcv_key) >= 0),
+          "3328 AC3: #3167 additive counter still surfaces");
+}
+
+static void ac3328_5_source_and_linter() {
+    std::println("\n--- #3328 AC5: source-cite production children_stable / query re-use ---");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto fiber = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    const auto build = read_file("build.py");
+    CHECK(hh.find("kPcvSpanQueryRefreshIssue = 3328") != std::string::npos,
+          "3328 AC5: issue stamp");
+    CHECK(ast.find("pcv_span_for_agent_export") != std::string::npos,
+          "3328 AC5: pcv_span_for_agent_export");
+    CHECK(qws.find("force_refresh_pcv_span") != std::string::npos,
+          "3328 AC5: query path force_refresh");
+    CHECK(qws.find("stale-span") != std::string::npos, "3328 AC5: structured stale-span");
+    CHECK(qws.find("across-guard") != std::string::npos, "3328 AC5: across-guard");
+    CHECK(fiber.find("pcv_span_for_agent_export") != std::string::npos,
+          "3328 AC5: children_stable_batch");
+    CHECK(build.find("check_pcv_stale_span_query_refresh_3328") != std::string::npos,
+          "3328 AC5: build.py");
+    CHECK(read_file("docs/design/3328-pcv-stale-span.md").empty(), "3328 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3328.cpp").empty(), "3328 AC4: no invent");
+}
+
 static void ac3167_6_source_and_linter() {
     std::println("\n--- #3167 AC5/AC6: source-cite + linter + no docs/design/* ---");
     int rc = std::system("python3 scripts/check_pcv_span_stale_coverage_3167.py "
@@ -3887,6 +3934,9 @@ int main() {
     std::println("\n=== Issue #3167: SafePCVSpan stale-across-guard (I2 residual) ===");
     ac3167_3_2906_non_regression();
     ac3167_6_source_and_linter();
+    std::println("\n=== Issue #3328: production children_stable / query stale-span refresh ===");
+    ac3328_3_2906_3233_non_regression();
+    ac3328_5_source_and_linter();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

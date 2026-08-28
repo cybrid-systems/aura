@@ -247,9 +247,16 @@ void register_workspace_query_primitives(
     // Issue #2989: production query children default is SafePCVSpan
     // (children_columnar). Bans raw children() / NodeView.children on the
     // hot path so a concurrent mutate COW cannot UAF a long-running reader.
+    // Issue #3328: production re-use face — pcv_span_for_agent_export
+    // force_refresh on fingerprint mismatch so query:children /
+    // query:children-stable never walk a stale COW frozen view.
+    // Soft: helper is identity (AC2 zero extra).
     auto pin_query_children = [&ev](aura::ast::FlatAST& flat, aura::ast::NodeId id) {
         ev.bump_query_safe_span_pin();
-        return flat.children_columnar(id);
+        auto kids = flat.children_columnar(id);
+        kids = flat.pcv_span_for_agent_export(
+            kids, id, aura::compiler::typed_audit::production_defaults_active());
+        return kids;
     };
 
     // Issue #2933: wrap a bare match list into a first-class QueryResult
@@ -651,8 +658,25 @@ void register_workspace_query_primitives(
         // (lazy-align would hide a pre-mutate node_gen_). Production +
         // restamp-budget exceeded + child not eagerly restamped → typed
         // restamp-lag (not -1 / no last-reason). Soft: observe, stamp as today.
+        // Issue #3328: production children_stable re-use — if the pin is
+        // still stale after pcv_span_for_agent_export (owner gone /
+        // unrefreshable), structured stale-span / across-guard rather
+        // than a silent pre-mutate walk. Soft: is_stale + counter only.
         {
             auto kids = pin_query_children(flat, node);
+            if (aura::compiler::typed_audit::production_defaults_active() &&
+                kids.has_fingerprint()) {
+                const auto ng = flat.node_gen_for(node);
+                if (kids.is_stale(static_cast<std::uint64_t>(flat.generation()), flat.wrap_epoch(),
+                                  ng)) {
+                    kids = flat.force_refresh_pcv_span(kids, node);
+                    if (!kids.has_fingerprint())
+                        return mev("stale-span",
+                                   "across-guard: query:children-stable: SafePCVSpan fingerprint "
+                                   "mismatch after Guard (Issue #3328 / #3167); recovery: re-query "
+                                   "children after mutate");
+                }
+            }
             for (std::size_t ki = 0; ki < kids.size(); ++ki) {
                 const auto cid = kids[ki];
                 if (cid == aura::ast::NULL_NODE)
