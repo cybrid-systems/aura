@@ -88,6 +88,18 @@ def main() -> int:
     must("rebind_hygiene_reject_total", "AC5 counter decl", ast)
     must("3301 AC5", "AC5 test marker", test)
 
+    # ── AC7 #3374 new-body subtree walk (lockless rebind twin of #2792) ──
+    # Refine: AC5 destination gate is necessary but not sufficient — a
+    # macro-introduced body can still be rebound onto a normal Define.
+    # The walk must run after new_value is resolved, use the same opt-out
+    # (allow_macro_mutate || parse_allow_macro_opt_out), and stamp the
+    # same reason + counter as the destination gate.
+    must("walk_subtree(new_value", "AC7 new-body walk on new_value", efl)
+    must("flat.is_macro_introduced(id)", "AC7 walk probe is_macro_introduced", efl)
+    must("batch :rebind: cannot install MacroIntroduced body", "AC7 new-body reject message", efl)
+    must("kHygieneLimitReasonMacroIntroduced", "AC7 reason stamp in walk", efl)
+    must("#3374", "AC7 cite in lockless helper", efl)
+
     # ── AC6 observability + lineage + no-invent ────────────────────────
     must('insert_kv("hygiene-violations"', "AC6 stats-hash key", mutq)
     must('insert_kv("schema-3301"', "AC6 schema-3301", mutq)

@@ -1897,6 +1897,11 @@ aura_issue_test_link_light(test_rebind_parse_failure_no_leak)
 # Issue #2792: rebind new-body MacroIntroduced hygiene (not only old_define).
 aura_add_issue_test(test_rebind_new_body_hygiene)
 aura_issue_test_link_light(test_rebind_new_body_hygiene)
+# Issue #3374: lockless rebind (eval_flat_apply_mutate_rebind) new-body
+# MacroIntroduced hygiene — #2792 twin for the atomic-batch path.
+aura_add_issue_test(test_atomic_batch_rebind_hygiene_lockless)
+aura_issue_test_link_light(test_atomic_batch_rebind_hygiene_lockless)
+add_dependencies(all_test_issue_targets test_atomic_batch_rebind_hygiene_lockless)
 # Issue #2793: replace-value Guard abort marks mutation_log RolledBack (no torn audit).
 aura_add_issue_test(test_replace_value_audit_consistency)
 aura_issue_test_link_light(test_replace_value_audit_consistency)
