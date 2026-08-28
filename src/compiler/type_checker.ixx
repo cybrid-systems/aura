@@ -47,6 +47,10 @@ export inline std::atomic<std::uint64_t> g_type_dep_graph_invalidate_total{0};
 // Missing NodeTag must not silently become Dynamic under Production.
 // Quiet covered path: no extra load (gate lives in synthesize_flat default).
 export inline constexpr int kBidirectionalUncoveredTagIssue = 3044;
+// Issue #3330: Production synthesize_flat default must fail-closed —
+// never return / cache Dynamic after uncovered tag (I1 渐进不撒谎).
+// Soft still Warning + Dynamic. Residual of #3044.
+export inline constexpr int kBidirectionalUncoveredNoDynamicIssue = 3330;
 
 export [[nodiscard]] constexpr bool is_bidirectional_tag_covered(aura::ast::NodeTag tag) noexcept {
     using T = aura::ast::NodeTag;
@@ -2320,8 +2324,10 @@ private:
                                      const std::string& suggestion,
                                      aura::core::TypeId binding_ty = {});
 
-    // Issue #3044: uncovered NodeTag in synthesize_flat default.
+    // Issue #3044 / #3330: uncovered NodeTag in synthesize_flat default.
     // Production/strict → TypeError + hard fail; Soft → Warning + counter.
+    // Does not change the returned TypeId — caller must not return
+    // Dynamic under hard (#3330).
     bool note_uncovered_bidirectional_tag(aura::ast::FlatAST& flat, aura::ast::NodeId node_id,
                                           aura::ast::NodeTag tag);
 

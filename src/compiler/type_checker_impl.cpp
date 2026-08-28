@@ -4855,12 +4855,21 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             // Declarative forms: no runtime value; Void is the safe type.
             result = reg_.void_type();
             break;
-        default:
-            // Issue #3044: missing tag must not silently become Dynamic
-            // under Production (consistent_unify(Dynamic, T) would succeed).
-            (void)note_uncovered_bidirectional_tag(flat, id, v.tag);
-            result = reg_.dynamic_type();
+        default: {
+            // Issue #3044 / Issue #3330: missing tag must not silently become
+            // Dynamic under Production (consistent_unify(Dynamic, T)
+            // would succeed — I1 渐进不撒谎). Gate only on default
+            // (AC3: covered tags zero extra load).
+            const bool hard = note_uncovered_bidirectional_tag(flat, id, v.tag);
+            if (hard) {
+                // TypeError already stamped by the note. Do not cache a
+                // usable TypeId and do not clear_dirty — partial cannot
+                // commit green. never Dynamic.
+                return reg_.void_type();
+            }
+            result = reg_.dynamic_type(); // Soft only
             break;
+        }
     }
 
     // Cache result for future incremental calls.
@@ -7271,9 +7280,10 @@ bool InferenceEngine::note_linear_synth_violation(FlatAST& flat, NodeId node_id,
     return hard;
 }
 
-// Issue #3044: synthesize_flat default — Production/strict TypeError;
+// Issue #3044 / #3330: synthesize_flat default — Production/strict TypeError;
 // Soft Warning + counter only (unit tests unchanged). Covered tags never
-// enter this helper (zero extra cost on the quiet path).
+// enter this helper (zero extra cost on the quiet path). Returns hard so
+// the default arm can refuse Dynamic (#3330).
 bool InferenceEngine::note_uncovered_bidirectional_tag(FlatAST& flat, NodeId node_id, NodeTag tag) {
     const bool hard = strict_ || aura::compiler::typed_audit::production_defaults_active();
     const auto kind = hard ? ErrorKind::TypeError : ErrorKind::Warning;
