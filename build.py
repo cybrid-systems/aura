@@ -9011,6 +9011,26 @@ def cmd_mid_join_fail_closed_2707_coverage():
     return 0
 
 
+def cmd_provenance_contributing_mid_3333():
+    """Issue #3333: provenance_ok mid join is per contributing grant.
+
+    Unrelated live grants must not poison the tenant. #2707 fail-closed
+    zero mid is unchanged. Soft/Off skip-when-zero unchanged.
+    Extends test_capability_single_use_consume; no test_issue_3333.cpp.
+    """
+    print(f"{B}=== provenance contributing mid (#3333) ==={N}")
+    script = COVERAGE_CHECKS / "check_provenance_contributing_mid_3333.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("provenance contributing mid (#3333) coverage contract rows failed")
+        return 1
+    ok("provenance contributing mid (#3333) coverage clean")
+    return 0
+
+
 def cmd_require_effect_auto_isolation_2490_coverage():
     """Issue #2490: require_effect auto-enforces workspace isolation.
 
@@ -21382,6 +21402,8 @@ def main():
         "require-effect-on-ref-2689": cmd_require_effect_on_ref_2689_coverage,
         "sole-require-effect-2706": cmd_sole_require_effect_2706_coverage,
         "mid-join-fail-closed-2707": cmd_mid_join_fail_closed_2707_coverage,
+        "provenance-contributing-mid-3333": cmd_provenance_contributing_mid_3333,
+        "provenance-contributing-mid-3333-coverage": cmd_provenance_contributing_mid_3333,
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,

@@ -67,7 +67,7 @@ def main() -> int:
     must("Issue #3126", "AC1", cm)
     # Public unlocked effects_for / provenance_ok still exist (no API break).
     must("[[nodiscard]] Effect effects_for(TenantId tenant) const", "AC1", cm)
-    must("[[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const", "AC1", cm)
+    must("[[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov", "AC1", cm)
 
     # AC2 — grant_effect_capability fence locks + uses locked variants.
     cap_pos = es.find("void Evaluator::grant_effect_capability(")
