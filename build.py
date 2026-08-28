@@ -14421,6 +14421,32 @@ def cmd_unpack_stable_ref_arg_v2_coverage():
     return 0
 
 
+def cmd_as_stable_ref_v2_coverage():
+    """Issue #3398: production query:as-stable-ref must pack the v2 spine.
+
+    The EDSL primitive query:as-stable-ref currently packs a 2-field
+    (id . gen) pair even after export_ref stamps full provenance. Under
+    production, the Agent-visible pair must carry wrap + tenant + cow
+    (same shape as the #3396 v2 unpacker reads) so the round-trip is
+    identity — no occupancy remap via zeroed wrap/tenant. Soft keeps
+    the v1 (id . gen) pair (Issue #2186 compat). One SSOT spine for both
+    pack (this fn) and unpack (#3396 walk_v2) — same field order, same
+    nested-pair shape. Non-regress: #2198 wire v2, #2960 stamp, #3396
+    unpack. No docs/design/, no tests/issues/test_issue_3398.cpp.
+    """
+    print(f"{B}=== as-stable-ref v2 spine contract coverage (#3398) ==={N}")
+    script = COVERAGE_CHECKS / "check_as_stable_ref_v2_3398.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("as-stable-ref v2 (#3398) coverage contract rows failed")
+        return 1
+    ok("as-stable-ref v2 (#3398) coverage clean")
+    return 0
+
+
 def cmd_query_result_soft_prod_transition_coverage():
     """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
 
@@ -21680,6 +21706,7 @@ def main():
         "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
         "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
+        "as-stable-ref-v2": cmd_as_stable_ref_v2_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
