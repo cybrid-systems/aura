@@ -168,6 +168,32 @@ bool HotUpdateRegistry::hard_invalidate_via_facade(const char* name, ReemitReaso
     if (aura_aot_func_table_epoch() == epoch_before && aura_aot_state_map_size() > 1)
         aura_aot_mark_peer_jit_name_soft_stale(name);
     aura_aot_note_cross_eval_hard_owner_scoped();
+    // Issue #3377: owner-scoped hard invalidate must physically clear the
+    // owner AOT slot for the mutated define. The owner-scoped branch of
+    // aura_aot_bump_func_table_epoch does NOT advance g_aot_table_epoch
+    // (preserve #2841/#2951), so aot_invalidate_all_stale_slots_for_eval
+    // skips every owner slot with table_generation == cur_epoch and the
+    // invalidate count stays 0. Without this call, pre-mutate native can
+    // ride the same table epoch on the owner eval and dual-fresh / AOT
+    // probes return the stale fn_ptr. Fix: for the mutated define's
+    // stable func_id, zero fn_ptr + set soft_stale=1 on the OWNER slot
+    // (do not touch foreign / unowned slots) in the same mutate_mtx_
+    // window as the facade. Gated on the same condition as the peer
+    // JIT-name soft-stale above (epoch didn't move AND multi-eval live
+    // > 1). Reuses existing slot-invalidate counters + new
+    // g_aot_owner_scoped_slot_invalidate_total so Agent dashboards
+    // can distinguish the physical clear from the generation-behind path.
+    if (aura_aot_func_table_epoch() == epoch_before && aura_aot_state_map_size() > 1) {
+        int preserved = 0;
+        const std::uint32_t fid = aura_get_or_preserve_stable_func_id(name, &preserved);
+        if (fid != 0) {
+            void* owner = aura_aot_get_reemit_owner_eval();
+            if (!owner)
+                owner = aura_aot_get_register_owner_eval();
+            if (owner)
+                aura_aot_invalidate_owner_slot_for_func_id(static_cast<std::int64_t>(fid), owner);
+        }
+    }
     // Issue #3150: publish the mutated define into the dirty set that
     // aura_reemit_aot_for_dirty reads. Without this, production-path
     // reemit could observe an empty candidate set / mismatched dual-
