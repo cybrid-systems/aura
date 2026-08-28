@@ -2519,6 +2519,20 @@ def cmd_lint():
             "Issue #3196 nested Guard authority-gap linter failed — run python3 scripts/coverage/checks/check_nested_guard_authority_gap_3196.py"
         )
         return r
+    # Issue #3312: nested return is never triad-complete. Thin hot-cone
+    # of nested-touched nodes (reuse #3259 collector); gap remains
+    # outside the cone. Extends hygiene nested Guard fixtures; no
+    # docs/design / invent.
+    nrnt3312_script = COVERAGE_CHECKS / "check_nested_return_not_triad_3312.py"
+    if not nrnt3312_script.exists():
+        fail(f"missing {nrnt3312_script}")
+        return 1
+    r = run([sys.executable, str(nrnt3312_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3312 nested-return-not-triad linter failed — run python3 scripts/coverage/checks/check_nested_return_not_triad_3312.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

@@ -9514,6 +9514,17 @@ struct CompilerMetrics {
     // bumped (AC2). Not a public query key (AC4).
     static constexpr int kNestedGuardAuthorityGapIssue = 3196;
     std::atomic<std::uint64_t> nested_authority_gap_total{0};
+    // Issue #3312: nested return is never triad-complete. Thin hot-cone
+    // restamp (Option A) of nested-touched nodes when the nested log
+    // delta fits the hot-cone cap; window length is Agent-visible so
+    // multi-round Agents do not treat nested OK as durable memory.
+    // Soft / Off: never bumped (AC2). Not a new public query prim.
+    static constexpr int kNestedReturnNotTriadIssue = 3312;
+    std::atomic<std::uint64_t> nested_hot_cone_restamp_total{0};
+    std::atomic<std::uint64_t> nested_hot_cone_restamp_nodes_total{0};
+    std::atomic<std::uint64_t> nested_authority_gap_last_window_ns{0};
+    std::atomic<std::uint64_t> nested_authority_gap_windows_total{0};
+    std::atomic<std::uint64_t> nested_return_not_triad_complete{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header

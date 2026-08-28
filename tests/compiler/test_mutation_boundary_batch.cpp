@@ -753,8 +753,18 @@ namespace _3196_detail {
                 CHECK(flat->nested_authority_gap(), "3196 AC1: gap after nested success");
                 CHECK(m->nested_authority_gap_total.load(std::memory_order_relaxed) > gap0,
                       "3196 AC1: gap total bumped");
-                CHECK(!ev.allow_query_stable_ref_export(0),
-                      "3196 AC1: query:*-stable export fail-closed");
+                aura::ast::NodeId outside = aura::ast::NULL_NODE;
+                for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+                    if (flat->is_live_node(id) && !flat->is_free_slot(id) &&
+                        !flat->node_eagerly_restamped(id)) {
+                        outside = id;
+                        break;
+                    }
+                }
+                if (outside != aura::ast::NULL_NODE) {
+                    CHECK(!ev.allow_query_stable_ref_export(outside),
+                          "3196 AC1: query:*-stable export fail-closed outside nested cone");
+                }
                 auto r = cs.eval("(eval-current)");
                 CHECK(r.has_value(), "3196 AC5: eval-current in window does not crash");
             }

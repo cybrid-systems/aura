@@ -287,9 +287,10 @@ void ac3259_5_source_and_linter() {
     auto nwin = emb.substr(npos, 3200);
     CHECK(nwin.find("restamp_all_node_generations") != std::string::npos,
           "3259 AC5: nested still restamp_all");
-    CHECK(nwin.find("restamp_hot_cone_after_budget(") == std::string::npos,
-          "3259 AC5: nested does not hot-cone");
+    CHECK(nwin.find("unified_restamp_after_boundary(") == std::string::npos,
+          "3259 AC5: nested does not run full triad");
     CHECK(nwin.find("Issue #3259") != std::string::npos, "3259 AC5: nested cite");
+    CHECK(nwin.find("Issue #3312") != std::string::npos, "3259 AC5: nested thin hot-cone #3312");
     CHECK(sec.find("Issue #3259") != std::string::npos, "3259 AC5: stamp/allow cite");
     CHECK(!lint.empty() && lint.find("Issue #3259") != std::string::npos, "3259 AC5: linter");
     CHECK(build.find("check_restamp_hot_cone_budget_3259") != std::string::npos,

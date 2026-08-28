@@ -2152,7 +2152,10 @@ public:
     // production/Full success exit; cleared after outermost triad.
     // query:*-stable / stamp export / QueryResult freshness fail-closed
     // until outermost unified_restamp. Soft never sets this.
+    // Issue #3312: open-since ns so Agents can measure nested-return →
+    // outermost triad window (nested return is never triad-complete).
     mutable std::atomic<std::uint32_t> nested_authority_gap_{0};
+    mutable std::atomic<std::uint64_t> nested_authority_gap_open_ns_{0};
     // Eager-restamp bits: set only when restamp_all writes node_gen_.
     // Lazy-align must not flip these (#3037: no silent pre-mutate export).
     std::vector<std::uint8_t> restamp_eager_;
@@ -7971,15 +7974,30 @@ public:
                                                      restamp_generation_torn());
     }
     // Issue #3196: nested success → outermost dtor window.
+    // Issue #3312: stamp open-since so the window length is Agent-visible.
     void note_nested_authority_gap() noexcept {
         nested_authority_gap_.store(1, std::memory_order_relaxed);
+        const auto ns =
+            static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                           std::chrono::steady_clock::now().time_since_epoch())
+                                           .count());
+        nested_authority_gap_open_ns_.store(ns, std::memory_order_relaxed);
     }
     void clear_nested_authority_gap() noexcept {
         nested_authority_gap_.store(0, std::memory_order_relaxed);
+        nested_authority_gap_open_ns_.store(0, std::memory_order_relaxed);
     }
     [[nodiscard]] bool nested_authority_gap() const noexcept {
         return nested_authority_gap_.load(std::memory_order_relaxed) != 0;
     }
+    [[nodiscard]] std::uint64_t nested_authority_gap_open_ns() const noexcept {
+        return nested_authority_gap_open_ns_.load(std::memory_order_relaxed);
+    }
+    // Issue #3312: drop restamp_all eager bits before nested thin hot-cone
+    // so a full-tree eager restamp cannot leak export outside the nested cone.
+    // Out-of-line (ast_impl.cpp): GCC modules can drop in-class inline
+    // bodies on this TU's import path.
+    void clear_restamp_eager_bits() noexcept;
     // Issue #3037: true only if restamp_all wrote node_gen_[id] this call.
     // Lazy-align / is_valid must not flip this bit.
     [[nodiscard]] bool node_eagerly_restamped(NodeId id) const noexcept {
@@ -8102,7 +8120,11 @@ public:
     // keep those Agent refs; does not clear workspace torn (remainder
     // stays restamp-lag). Returns the number restamped. max_nodes==0 is
     // a no-op (Soft / budget==0 never call this).
-    std::size_t restamp_hot_cone_after_budget(std::uint32_t max_nodes);
+    // Issue #3312: mutation_log_from != ~0 restamps only that nested log
+    // delta (target / parent / old+new child) + parent chain so a
+    // historical dirty walk cannot starve newly added nested nodes.
+    std::size_t restamp_hot_cone_after_budget(std::uint32_t max_nodes,
+                                              std::size_t mutation_log_from = ~std::size_t{0});
     std::size_t restamp_hot_cone_after_budget() {
         return restamp_hot_cone_after_budget(
             restamp_hot_cone_budget(restamp_budget_nodes_effective()));
