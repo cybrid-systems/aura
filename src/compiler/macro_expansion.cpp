@@ -34,8 +34,44 @@ extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t 
                                                     int was_violation);
 // Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
 extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
+// Issue #3378: forward-declared Evaluator (full type lives in
+// aura::compiler::Evaluator) so the tenant_for_macro_self_evo_check
+// helper can read capability_tenant_id() on the live Evaluator. The
+// same bridge that steal-side provenance already uses
+// (aura_macro_provenance_repin_on_steal at #2810).
+namespace aura::compiler {
+class Evaluator;
+} // namespace aura::compiler
+
 
 namespace aura::compiler::macro_exp {
+
+// Issue #3378: resolve the tenant id for the live Evaluator the same
+// way steal-side provenance (#2810) already does, then pass that
+// principal to check_macro_self_evo. The previous wiring used
+// g_capability_registry().default_tenant — process-global — so:
+//   1. Evaluator A grants MacroSelfEvo on tenant 5; default_tenant
+//      stays 0/1. clone / macro_expand_all on A consulted the wrong
+//      tenant and denied even though A was granted.
+//   2. default_tenant holds a live grant; Evaluator B on tenant 6
+//      with no grant passed TopLevelMacroCapGuard / macro_expand_all
+//      because the check never looked at B's principal.
+// Steal-side provenance already resolved the current Evaluator
+// (aura_evaluator_resolve_current_for_macro + aura_macro_provenance_repin_on_steal
+// at #2810). Expand capability check did not take that bridge. Fix:
+// resolve current Evaluator, read capability_tenant_id(), fall back to
+// default_tenant when no Evaluator (tests / CLI). No new query keys.
+// Deny reason strings stay `MacroSelfEvo capability not granted` /
+// `MacroSelfEvo provenance fence` / `MacroSelfEvo policy missing`.
+[[nodiscard]] static std::uint16_t tenant_for_macro_self_evo_check() noexcept {
+    if (void* ev = aura_evaluator_resolve_current_for_macro()) {
+        const auto tid = static_cast<aura::compiler::Evaluator*>(ev)->capability_tenant_id();
+        if (tid != 0)
+            return tid;
+    }
+    using aura::core::capability::g_capability_registry;
+    return g_capability_registry().default_tenant.load();
+}
 
 // Issue #3062 / #3029: lightweight expand checkpoint so a production
 // pass/depth limit can refuse a half-expanded tree even when the
@@ -376,8 +412,7 @@ static int combine_depth_limit(int capability_depth) noexcept {
 int effective_hygiene_depth_limit() noexcept {
     ensure_runtime_caps_env_loaded();
     using aura::core::capability::check_macro_self_evo;
-    using aura::core::capability::g_capability_registry;
-    const auto tenant = g_capability_registry().default_tenant.load();
+    const auto tenant = tenant_for_macro_self_evo_check();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
     const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
     int cap_depth = 0;
@@ -391,8 +426,7 @@ int effective_hygiene_depth_limit() noexcept {
 int effective_hygiene_pass_cap() noexcept {
     ensure_runtime_caps_env_loaded();
     using aura::core::capability::check_macro_self_evo;
-    using aura::core::capability::g_capability_registry;
-    const auto tenant = g_capability_registry().default_tenant.load();
+    const auto tenant = tenant_for_macro_self_evo_check();
     const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
     const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
     int lim = 0; // 0 = no extra clamp
@@ -1501,8 +1535,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             if (depth != 0)
                 return;
             using aura::core::capability::check_macro_self_evo;
-            using aura::core::capability::g_capability_registry;
-            const auto tenant = g_capability_registry().default_tenant.load();
+            const auto tenant = tenant_for_macro_self_evo_check();
             const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
             const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
             if (!chk.allowed) {
@@ -2739,8 +2772,7 @@ aura::ast::NodeId macro_expand_all(aura::ast::FlatAST& flat, aura::ast::StringPo
     {
         using aura::core::capability::check_macro_self_evo;
         using aura::core::capability::g_capability_effect_metrics;
-        using aura::core::capability::g_capability_registry;
-        const auto tenant = g_capability_registry().default_tenant.load();
+        const auto tenant = tenant_for_macro_self_evo_check();
         const bool sandbox_active = aura::core::sandbox::is_sandbox_active();
         const auto chk = check_macro_self_evo(tenant, sandbox_active, /*wildcard_ok=*/false);
         if (!chk.allowed) {

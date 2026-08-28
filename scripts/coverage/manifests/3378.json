@@ -1,0 +1,62 @@
+{
+  "issue": 3378,
+  "title": "Issue #3378: check_macro_self_evo at clone/expand-all is keyed by process default_tenant, not Evaluator principal.",
+  "ok": "OK: Issue #3378 check_macro_self_evo uses Evaluator principal \u2014 all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "tenant_for_macro_self_evo_check",
+        "#3378",
+        "aura_evaluator_resolve_current_for_macro",
+        "capability_tenant_id()",
+        "g_capability_registry().default_tenant.load()"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "namespace aura::compiler {",
+        "class Evaluator;",
+        "static_cast<aura::compiler::Evaluator*>(ev)",
+        "tid != 0"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "extern \"C\" void* aura_evaluator_resolve_current_for_macro",
+        "aura_macro_provenance_repin_on_steal",
+        "tenant_for_macro_self_evo_check"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/macro_expansion.cpp",
+      "contains": [
+        "wildcard_ok=*/false"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_macro_self_evo_check_evaluator_principal.cpp",
+      "contains": [
+        "3378",
+        "ac1_new_helper_4_sites",
+        "ac2_evaluator_forward_decl_fallback",
+        "ac3_bridge_reuse",
+        "ac4_wildcard_ok_false_unchanged"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_macro_self_evo_check_evaluator_principal"
+      ]
+    }
+  ]
+}
