@@ -4255,13 +4255,18 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             aura::core::densify_consistency::note_last_densify_dual_epoch_ok(pairing.dual_epoch_ok);
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(pairing.forced);
         } else if (had_moving_densify) {
-            // Issue #2499: Moving densify ran but unified contract failed —
-            // still publish densify-call RootRemap axis (not vacuous true).
-            // Soft vacuous remains on the Soft / empty branch below.
+            // Issue #3372: Moving densify ran but unified pin contract
+            // failed. The densify-call RootRemap axis is real (the call
+            // ran); the EnvFrame / closure-remount / dual-epoch axes are
+            // NOT — pairing did not run, so Steal LCP would otherwise AND
+            // a vacuous-green EnvFrame on a window that never ran the
+            // ownership scan. Fail-closed last-call so Steal hard-AND
+            // cannot be true solely from a vacuous EnvFrame axis. The
+            // Soft / empty branch below keeps vacuous-true (zero-cost).
             densify_consistency.root_remap_ok = densify_root_remap_call_ok;
-            densify_consistency.closure_remount_ok = true;
-            densify_consistency.envframe_ok = true;
-            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(true);
+            densify_consistency.closure_remount_ok = false;
+            densify_consistency.envframe_ok = false;
+            aura::core::densify_consistency::note_last_densify_dual_epoch_ok(false);
             aura::core::densify_consistency::note_last_densify_remap_pairing_forced(false);
         } else {
             // Soft / empty densify: vacuous axes (do not read stale
