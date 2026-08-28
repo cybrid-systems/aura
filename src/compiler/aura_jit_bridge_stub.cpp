@@ -1359,6 +1359,7 @@ aura_hygiene_violation_prevented_on_boundary_total(void) {
 extern "C" __attribute__((weak)) void* aura_evaluator_resolve_current_for_macro(void) noexcept {
     return nullptr;
 }
+extern "C" __attribute__((weak)) void aura_evaluator_note_steal_abort_mid_expand(void) noexcept {}
 extern "C" __attribute__((weak)) std::uint64_t
 aura_evaluator_capability_tenant_id(void* /*ev*/) noexcept {
     return 0;

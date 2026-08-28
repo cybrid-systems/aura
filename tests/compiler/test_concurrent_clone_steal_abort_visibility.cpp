@@ -324,7 +324,35 @@ int run_test_concurrent_clone_steal_abort_visibility() {
         CHECK(read_file("tests/issues/test_issue_3321.cpp").empty(), "3321 AC5: no tests/issues");
     }
 
-    std::println("\n=== Issue #3303 + #3321 done ===");
+    // Issue #3341: steal-abort mid-expand durable Agent string on
+    // last_mutate_error_ (was counter-only). Per-fiber last_limit_reason
+    // lives on FiberHygieneStats; this suite source-cites the steal site.
+    {
+        std::println("\n--- #3341: steal-abort-mid-expand Agent string ---");
+        auto me = read_file("src/compiler/macro_expansion.cpp");
+        CHECK(me.find("aura_evaluator_note_steal_abort_mid_expand") != std::string::npos,
+              "3341: steal-abort site stamps last_mutate_error_");
+        const auto steal_pos = me.find("g_macro_clone_steal_abort_total.fetch_add");
+        CHECK(steal_pos != std::string::npos, "3341: steal-abort counter still present");
+        if (steal_pos != std::string::npos) {
+            const auto scope = me.substr(steal_pos, 1600);
+            CHECK(scope.find("aura_evaluator_note_steal_abort_mid_expand") != std::string::npos,
+                  "3341: helper called in the steal-abort block (not a distant cite)");
+            CHECK(scope.find("note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort)") !=
+                      std::string::npos,
+                  "3341: StealAbort reason still stamped");
+        }
+        auto ixx = read_file("src/compiler/macro_expansion.ixx");
+        CHECK(ixx.find("last_limit_reason = 0") != std::string::npos,
+              "3341: FiberHygieneStats.last_limit_reason");
+        auto ev = read_file("src/compiler/evaluator.ixx");
+        CHECK(ev.find("steal-abort-mid-expand") != std::string::npos,
+              "3341: Evaluator notes steal-abort-mid-expand");
+        CHECK(read_file("docs/design/3341-fiber-reason.md").empty(), "3341: no docs/design");
+        CHECK(read_file("tests/issues/test_issue_3341.cpp").empty(), "3341: no invent test");
+    }
+
+    std::println("\n=== Issue #3303 + #3321 + #3341 done ===");
     return g_failed == 0 ? 0 : 1;
 }
 

@@ -2140,6 +2140,20 @@ def cmd_lint():
             "Issue #3340 cross-flat provenance homology linter failed — run python3 scripts/coverage/checks/check_cross_flat_provenance_homology_3340.py"
         )
         return r
+    # Issue #3341: per-fiber last_limit_reason + steal-abort-mid-expand Agent
+    # string on last_mutate_error_. Extends test_macro_fiber_hygiene +
+    # test_concurrent_clone_steal_abort_visibility + test_hygiene_mutate_closed_loop;
+    # no docs/design; no new query:* name.
+    fhlr_script = COVERAGE_CHECKS / "check_fiber_hygiene_last_limit_reason_3341.py"
+    if not fhlr_script.exists():
+        fail(f"missing {fhlr_script}")
+        return 1
+    r = run([sys.executable, str(fhlr_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3341 per-fiber last_limit_reason linter failed — run python3 scripts/coverage/checks/check_fiber_hygiene_last_limit_reason_3341.py"
+        )
+        return r
     # Issue #3030: abort/restore clears TypeLinearCommitProof + linear_fast_path
     # face. Extends test_escape_move_elision_gate + test_type_linear_commit_health
     # (#81967); no docs/design.

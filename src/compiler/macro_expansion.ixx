@@ -176,6 +176,13 @@ export inline constexpr std::uint8_t kHygieneLimitReasonSameFlatReject = 8;
 export inline constexpr std::uint8_t kHygieneLimitReasonNameMapShared = 9;
 export inline constexpr int kConcurrentCloneProdZeroHalfTreeIssue = 3321;
 export void note_hygiene_last_limit_reason(std::uint8_t code) noexcept;
+// Issue #3341: stamp the process-global last_limit_reason AND a specific
+// fiber's FiberHygieneStats.last_limit_reason. Concurrent fibers no longer
+// last-writer-wins on the only Agent-visible reason. Tests use this to
+// simulate two fibers without a live Fiber TLS. Production
+// note_hygiene_last_limit_reason(code) routes through current fiber id.
+export void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id,
+                                                     std::uint8_t code) noexcept;
 export [[nodiscard]] const char* hygiene_last_limit_reason_string() noexcept;
 // Issue #2807: pre_scan stopped at unquote-splicing (caller-scope boundary).
 export extern std::atomic<std::uint64_t> g_unquote_splicing_hygiene_mismatch_total;
@@ -207,6 +214,10 @@ export struct FiberHygieneStats {
     int depth = 0;
     std::uint64_t violations = 0;
     std::size_t gensym_map_size = 0;
+    // Issue #3341: same codes as g_macro_hygiene_last_limit_reason (0–9).
+    // Process-global atomic is last-writer-wins under concurrent fibers;
+    // this field is the per-fiber Agent-replay surface.
+    std::uint8_t last_limit_reason = 0;
 };
 
 // Snapshot a fiber's accumulated hygiene state. Returns a default-constructed

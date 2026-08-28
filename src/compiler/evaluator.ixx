@@ -3082,6 +3082,9 @@ public:
         clear_strict_mutate_hold();
     }
     bool has_type_error() const { return !last_mutate_error_.empty(); }
+    // Issue #3341: steal-abort mid-expand stable Agent reason on the
+    // mutate-hygiene reject surface (same family as mev("hygiene", ...)).
+    void note_steal_abort_mid_expand() noexcept { last_mutate_error_ = "steal-abort-mid-expand"; }
 
     // ── Panic auto-rollback (Issue #39) ─────────────────────
     // When enabled, runtime errors after mutations automatically
