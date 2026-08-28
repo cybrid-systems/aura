@@ -13,9 +13,10 @@
 #     src/compiler/service_dirty.cpp), each with the inline
 #     `aura_production_defaults_active_probe() != 0` gate before the
 #     `note_relower_success_coverage(...)` call. Service.ixx uses
-#     `fnv1a_64(name) & 63`; service_dirty.cpp uses
-#     `std::hash<std::string_view>{}(name_or_d) & 63` (cross-TU
-#     deterministic, libstdc++ _Hash_bytes is process-stable).
+#     `fnv1a_64(name) & 63` directly; service_dirty.cpp uses the shared
+#     `relower_success_region_bit(name_or_d)` helper (inlined fnv1a_64
+#     in hot_update_registry.hh — #3383 unified the bitmap identity so
+#     both call sites stamp the same bit for the same define).
 #
 #  3. Soft / Off zero-cost guarantee: each call site gates BEFORE
 #     `fnv1a_64(...)` / `std::hash<...>(...)` so the hash computation
@@ -60,12 +61,15 @@ INFRA_REQUIRED: tuple[tuple[str, str, str], ...] = (
     ),
     ("src/compiler/service.ixx", r"aura_production_defaults_active_probe\(\)\s*!=\s*0", "service.ixx inline gate"),
     # Service_dirty.cpp — 2 call sites (root restamp with `name` +
-    # dependent restamp with `d`). Uses std::hash<std::string_view>
-    # for cross-TU determinism. Single regex covers both via `\w+`.
+    # dependent restamp with `d`). Uses the shared
+    # `relower_success_region_bit(name_or_d)` helper (inlined fnv1a_64,
+    # same hash as service.ixx `store_define_v2` — #3383 unified the
+    # bitmap identity so both call sites stamp the same bit for the
+    # same define). Single regex covers both via `\w+`.
     (
         "src/compiler/service_dirty.cpp",
-        r"note_relower_success_coverage\(\s*1ULL << \(std::hash<std::string_view>\{}\(\w+\) & 63\)\)",
-        "service_dirty.cpp root + dependent call sites",
+        r"note_relower_success_coverage\(\s*relower_success_region_bit\(\w+\)\)",
+        "service_dirty.cpp root + dependent call sites (shared fnv1a_64 helper)",
     ),
     (
         "src/compiler/service_dirty.cpp",
@@ -148,10 +152,10 @@ def _self_test() -> int:
     restamp_cache_entry_live_(entry);
     if (aura_production_defaults_active_probe() != 0)
         hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));
-    // service_dirty.cpp — 2 sites, each gated, std::hash
+    // service_dirty.cpp — 2 sites, each gated, shared fnv1a_64 helper (#3383)
     if (aura_production_defaults_active_probe() != 0)
         hot_update_registry().note_relower_success_coverage(
-            1ULL << (std::hash<std::string_view>{}(name) & 63));
+            relower_success_region_bit(name));
     // test
     // Issue #3136 — relower-success-path bitmap coherence
     """
