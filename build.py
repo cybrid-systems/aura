@@ -10448,6 +10448,51 @@ def cmd_steal_safety_lifetime_proof_latch_3385_coverage():
     return 0
 
 
+def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
+    """Issue #3386: shared probe Evaluator::query_stable_hard_reject_torn()
+    must OR restamp_over_budget_torn() under multi-worker latch (I6 residual).
+
+    Closes the production residual where the shared probe used by
+    query:*-stable / internal consumers could return false while the
+    workspace was still torn (restamp_over_budget_torn() set) or while
+    Ready was latched and production_defaults_active() flipped Soft. The
+    fix is additive: the hard gate becomes (should_hard_reject_soft_sibling
+    OR aura_runtime_multi_worker_production_latched), and the predicate
+    ORs restamp_over_budget_torn() alongside restamp_last_budget_exceeded()
+    and nested_authority_gap().
+
+    Contract rows (AC1-AC5 from the test file):
+
+      AC1: production/latched + restamp_over_budget_torn() → probe true
+           even if restamp_last_budget_exceeded() is false (probe
+           observes the same face as allow_query_stable_ref_export).
+      AC2: latched + defaults flipped Soft → probe still true while
+           torn/gap bits are set (process latch is sticky post-Ready).
+      AC3: Soft + unlatched + torn → probe false (short-circuit on
+           !hard; no extra beyond the existing defaults load).
+      AC4: allow_query_stable_ref_export per-node eager-bit allow
+           preserved (hot-cone eagerly restamped node stays exportable;
+           the probe may be true while workspace is torn without forcing
+           that specific node green).
+      AC5: Source-cite only. No docs/design/3386-* (per MEMORY 2026-07-19).
+           No tests/issues/test_issue_3386.cpp (#81967). Existing #3100 /
+           #3138 / #3230 / #3287 / #3309 suites green — regression guard
+           lives in test_restamp_budget_hard_gate.cpp #3386 source-cite
+           rows.
+    """
+    print(f"{B}=== query stable hard reject torn latch (#3386) ==={N}")
+    script = ROOT / "scripts" / "check_query_stable_hard_reject_torn_latch_3386.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script), "--strict"], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query stable hard reject torn latch (#3386) contract rows failed")
+        return 1
+    ok("query stable hard reject torn latch (#3386) clean")
+    return 0
+
+
 def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
     """Issue #3307: budget-allow must hard-latch pending residual face
     (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
@@ -20000,6 +20045,7 @@ def cmd_gate():
         or cmd_chaos_soak_residual_zero_2755_coverage()
         or cmd_mutation_boundary_ssot_3384_coverage()
         or cmd_steal_safety_lifetime_proof_latch_3385_coverage()
+        or cmd_query_stable_hard_reject_torn_latch_3386_coverage()
     )
     if rc:
         return rc

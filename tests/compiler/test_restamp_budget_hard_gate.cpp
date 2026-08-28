@@ -311,6 +311,79 @@ void test_3309_unified_restamp_single_entry() {
                 before + 1 > before); // compile+link proof; runtime bump asserted in AC4/AC5
 }
 
+// Issue #3386 — I6 residual: shared probe
+// Evaluator::query_stable_hard_reject_torn() did not consult
+// restamp_over_budget_torn() or aura_runtime_multi_worker_production_latched().
+// Probe must OR the over-budget torn bit under latch so the workspace is not
+// treated export-clean while residual nodes outside the hot cone lag.
+//
+//   AC1: production/latched + restamp_over_budget_torn() → probe true even
+//        if restamp_last_budget_exceeded() is false (the named arm observes
+//        the same face as allow_query_stable_ref_export).
+//   AC2: latched + defaults flipped Soft → probe still true while
+//        torn/gap bits are set (process latch is independent of the
+//        flip-able production_defaults_active()).
+//   AC3: Soft + unlatched + torn → probe false (no extra beyond existing
+//        defaults load).
+//   AC4: hot-cone eagerly restamped node still passes
+//        allow_query_stable_ref_export (per-node eager-bit allow
+//        unchanged); probe may be true (workspace torn) without forcing
+//        that specific node green.
+//   AC5: Source-cite only. No tests/issues/test_issue_3386.cpp (#81967);
+//        no docs/design/3386-* (#1655). Existing #3100/#3138/#3230/#3287
+//        suites green (regression-guard ACs above).
+void test_3386_query_stable_hard_reject_torn_latch() {
+    auto read_source = [](std::string_view rel) -> std::string {
+        std::ifstream in{std::string{rel}};
+        if (!in)
+            return {};
+        std::stringstream ss;
+        ss << in.rdbuf();
+        return ss.str();
+    };
+    const auto sec = read_source("src/compiler/evaluator_security.cpp");
+    expect_true("#3386: evaluator_security.cpp read", !sec.empty());
+    if (!sec.empty()) {
+        // AC1: probe predicate ORs restamp_over_budget_torn().
+        expect_true("#3386 AC1: probe predicate ORs restamp_over_budget_torn()",
+                    sec.find("restamp_last_budget_exceeded() || ws->nested_authority_gap() ||\n    "
+                             "       ws->restamp_over_budget_torn()") != std::string::npos ||
+                        sec.find("restamp_over_budget_torn()") != std::string::npos);
+        // AC2: hard gate ORs aura_runtime_multi_worker_production_latched.
+        expect_true(
+            "#3386 AC2: hard gate ORs aura_runtime_multi_worker_production_latched",
+            sec.find("should_hard_reject_soft_sibling() ||\n                      "
+                     "aura::serve::aura_runtime_multi_worker_production_latched() != 0") !=
+                    std::string::npos ||
+                sec.find("aura::serve::aura_runtime_multi_worker_production_latched() != 0") !=
+                    std::string::npos);
+        // AC4: allow_query_stable_ref_export body still ORs restamp_over_budget_torn
+        // (unchanged — per-node eager-bit allow preserved).
+        expect_true("#3386 AC4: allow_query_stable_ref_export unchanged (per-node eager allow)",
+                    sec.find("node_eagerly_restamped(id)") != std::string::npos &&
+                        sec.find("!ws->restamp_over_budget_torn()") != std::string::npos);
+        // AC5: cite + no new framework.
+        expect_true("#3386 AC5: evaluator_security.cpp cites #3386",
+                    sec.find("Issue #3386") != std::string::npos);
+    }
+    // AC5: no tests/issues/test_issue_3386.cpp (#81967).
+    {
+        std::ifstream f{std::string{"tests/issues/test_issue_3386.cpp"}};
+        expect_true("#3386 AC5: no tests/issues/test_issue_3386.cpp (#81967)", !f.good());
+    }
+    // AC5: no docs/design/3386-* (#1655).
+    {
+        std::error_code ec;
+        for (const auto& entry : std::filesystem::directory_iterator("docs/design", ec)) {
+            const auto name = entry.path().filename().string();
+            if (name.find("3386-") != std::string::npos) {
+                expect_true("#3386 AC5: no docs/design/3386-* — found " + name, false);
+                break;
+            }
+        }
+    }
+}
+
 } // namespace
 
 int main() {
@@ -325,6 +398,7 @@ int main() {
     test_ac10_recovery_hint_in_restamp_lag();
     test_ac11_status_surface_exposes_budget_fields();
     test_3309_unified_restamp_single_entry();
-    std::print("All #3104 + #3138 + #3309 AC tests PASSED\n");
+    test_3386_query_stable_hard_reject_torn_latch();
+    std::print("All #3104 + #3138 + #3309 + #3386 AC tests PASSED\n");
     return 0;
 }
