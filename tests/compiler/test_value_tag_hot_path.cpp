@@ -160,6 +160,7 @@ static void ac5_eval_semantics() {
     CHECK(f.has_value() && is_int(*f) && as_int(*f) == 42, "mul");
 }
 
+
 } // namespace
 
 int run_test_value_tag_hot_path() {

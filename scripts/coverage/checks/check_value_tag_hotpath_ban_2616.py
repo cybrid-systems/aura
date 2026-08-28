@@ -154,6 +154,41 @@ def main() -> int:
         if (ROOT / rel).is_file():
             fails.append(f"AC5: unexpected design doc {rel}")
 
+    # AC6 (Issue #3391): note_value_tag_hot_path() body must be guarded
+    # by AURA_CONTRACTS_OBSERVE so production / NDEBUG is zero-overhead.
+    # The fetch_add on value_tag_hot_path_total must appear inside the
+    # guard — a bare unconditional fetch_add would re-introduce the
+    # hot-path RMW #2616 banned and #3391 must close.
+    note_m = re.search(
+        r"inline\s+void\s+note_value_tag_hot_path\s*\(\s*\)\s*(?:noexcept)?[^{]*\{([^}]+)\}",
+        tags,
+        re.S,
+    )
+    if not note_m:
+        fails.append("AC6: missing note_value_tag_hot_path() def in value_tags.h")
+    else:
+        body = note_m.group(1)
+        if "AURA_CONTRACTS_OBSERVE" not in body:
+            fails.append(
+                "AC6: note_value_tag_hot_path() body lacks AURA_CONTRACTS_OBSERVE guard"
+                " (Issue #3391: hot-path atomic must compile out under NDEBUG)"
+            )
+        if "fetch_add" in body and "AURA_CONTRACTS_OBSERVE" not in body:
+            fails.append(
+                "AC6: note_value_tag_hot_path() has unconditional fetch_add"
+                " (would defeat the #3391 zero-overhead target)"
+            )
+    must("Issue #3391", "AC6", tags)
+    must("ac3391", "AC6", test)
+    # AC6: no docs/design/3391-*, no tests/issues/test_issue_3391.cpp.
+    for rel in (
+        "docs/design/3391-as-note-zero-overhead.md",
+        "docs/design/3391-value-tag-hot-path.md",
+        "tests/issues/test_issue_3391.cpp",
+    ):
+        if (ROOT / rel).is_file():
+            fails.append(f"AC6: unexpected file {rel}")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}", file=sys.stderr)
