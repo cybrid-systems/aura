@@ -1205,6 +1205,25 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
         }
         if (is_int(arg)) {
+            // Issue #3395: production rejects bare int (occupancy, not
+            // identity — make_stamped_ref captures current generation of
+            // whatever still lives at the index, so an Agent holding a
+            // cached NodeId across a structural mutate + restamp will edit
+            // a different generation of the same index — I6 multi-round
+            // memory hole). Agent must pass packed v2 StableNodeRef or
+            // QueryResult match under production. Soft/Off keeps the
+            // historical "stamp current gen + auto-refresh" path
+            // (Issue #2186). bump_raw_nodeid_usage_in_primitives_count
+            // fires on the reject path so dashboards see the production
+            // gate blocking the occupancy input.
+            if (aura::compiler::typed_audit::production_defaults_active()) {
+                *ok = false;
+                ev.bump_raw_nodeid_usage_in_primitives_count();
+                return mev("stale-ref",
+                           std::string(op) +
+                               ": raw node-id rejected under production; "
+                               "use packed v2 StableNodeRef or QueryResult match (Issue #3395)");
+            }
             ev.bump_raw_nodeid_usage_in_primitives_count();
             const auto node = static_cast<aura::ast::NodeId>(as_int(arg));
             if (node >= flat.size()) {
