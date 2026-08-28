@@ -1690,6 +1690,20 @@ def cmd_lint():
             "Issue #2778 scope BP map lifecycle linter failed — run python3 scripts/coverage/checks/check_scope_bp_map_lifecycle_2778.py"
         )
         return r
+    # Issue #3337: production AgentScope dtor erases named BP gauges;
+    # at-cap production does not LRU-evict live tenants. Soft/Off LRU
+    # unchanged. Extends test_mailbox_bp_admit + test_per_scope_bp_admit
+    # (#81967); no docs/design/ (#1655). Residual of #3127.
+    sbot3337_script = COVERAGE_CHECKS / "check_scope_bp_overflow_teardown_3337.py"
+    if not sbot3337_script.exists():
+        fail(f"missing {sbot3337_script}")
+        return 1
+    r = run([sys.executable, str(sbot3337_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3337 scope BP overflow teardown linter failed — run python3 scripts/coverage/checks/check_scope_bp_overflow_teardown_3337.py"
+        )
+        return r
     # Issue #2779: resume fence fail aggregate (#2677 residual). Sum of
     # hard-fail + ticket + layout stamp counters for one production alert.
     # ac2779_* in test_steal_safety_ticket per #81967.

@@ -164,6 +164,10 @@ inline constexpr int kAgentScopeConcurrentHardDenyIssue = 2946;
 inline constexpr std::size_t kMailboxBpScopeMapCap = 256;
 inline constexpr int kMailboxBpScopeGaugeIssue = 2633;
 inline constexpr int kMailboxBpScopeMapLifecycleIssue = 2778;
+// Issue #3337: production AgentScope dtor erases its named BP gauge;
+// at-cap production does not LRU-evict live tenants (overflow-only
+// for new named scopes). Soft/Off LRU + process-bucket unchanged.
+inline constexpr int kMailboxBpScopeOverflowTeardownIssue = 3337;
 inline constexpr int kMailboxBpScopeDecayRaceIssue = 2780;
 // Issue #2887: AgentScope::watch_all on_backpressure degrade (Cancel /
 // Throttle / optional RestartN) for BP-hot producers — complements
@@ -926,6 +930,10 @@ struct OrchModuleStats {
     // preference vs agent_send_safe). Quiet path (no held_ref /
     // already-stamped) does not store. Appended at struct END (#2906).
     std::atomic<std::uint64_t> agent_send_raw_held_ref_total{0};
+    // Issue #3337: production AgentScope / session teardown erased a
+    // named BP gauge (map pressure drops after tenant churn). Soft /
+    // empty / "-" never bump. Appended at struct END (#2906).
+    std::atomic<std::uint64_t> scope_bp_gauge_teardown_erase_total{0};
 };
 
 // Issue #2636: env opt-in flag for force-safepoint on mark_reclaimed.
@@ -1124,6 +1132,20 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
         ScopeBpGauge* gauge = nullptr;
         if (it == g_scope_bp_map.end()) {
             if (g_scope_bp_map.size() >= kMailboxBpScopeMapCap) {
+                // Issue #3337: production does not LRU-evict a live tenant
+                // to make room. New named scopes go to the overflow-only
+                // bucket (admit may typed-BpAdmit via overflow recent).
+                // Live gauges stay. Soft/Off keeps LRU-evict + insert
+                // (overflow gauge never touched — zero extra cost).
+                if (production_defaults_active()) {
+                    g_scope_bp_overflow.recent.fetch_add(1, std::memory_order_relaxed);
+                    g_scope_bp_overflow.last_event_us.store(now_us, std::memory_order_release);
+                    g_orch_module_stats.spawn_bp_scope_overflow_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    g_orch_module_stats.spawn_bp_scope_overflow_dropped_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    return;
+                }
                 // Issue #2778: LRU-evict coldest last_event_us (quiet /
                 // never-touched scopes first). Prefer free path over
                 // permanent process-bucket fallback so multi-tenant
@@ -1144,23 +1166,6 @@ inline void note_mailbox_bp_recent_event(std::string_view scope_id = {}) noexcep
                 g_scope_bp_map.erase(coldest);
                 g_orch_module_stats.spawn_bp_scope_overflow_total.fetch_add(
                     1, std::memory_order_relaxed);
-                // Issue #3127: production-gated overflow-only bucket.
-                // Under production, prefer fail-closed isolation over masking
-                // the overflowed scope with a fresh per-scope gauge (which
-                // would misrepresent BP pressure and leave a multi-tenant
-                // mis-fire window open). Soft/Off falls through to existing
-                // LRU-evict + insert (zero extra cost: overflow gauge never
-                // touched under Soft).
-                if (production_defaults_active()) {
-                    g_scope_bp_overflow.recent.fetch_add(1, std::memory_order_relaxed);
-                    g_scope_bp_overflow.last_event_us.store(now_us, std::memory_order_release);
-                    g_orch_module_stats.spawn_bp_scope_overflow_dropped_total.fetch_add(
-                        1, std::memory_order_relaxed);
-                    // Skip insert — gauge stays nullptr. The outer
-                    // `if (!gauge) return;` exits before the per-scope
-                    // gauge bump. Lock_guard dtor releases on scope exit.
-                    return;
-                }
             }
             auto g = std::make_shared<ScopeBpGauge>();
             gauge = g.get();
@@ -1204,11 +1209,10 @@ inline std::shared_ptr<ScopeBpGauge> lookup_scope_bp_gauge(std::string_view scop
     }
     if (auto gauge = lookup_scope_bp_gauge(scope_id))
         return gauge->recent.load(std::memory_order_relaxed);
-    // Issue #3127: overflow-only bucket fallback. Named scope that hit
-    // map cap under production was redirected to g_scope_bp_overflow
-    // (process bucket recent is NOT touched — preserves AC1 "not silently
-    // inflated"). Soft/Off returns 0 (overflow gauge never bumped under
-    // Soft, no mis-fire signal).
+    // Issue #3127 / #3337: overflow-only bucket fallback for named
+    // scopes not in the map (new scopes at cap). Live tenants still
+    // in the map keep their own gauge (production no longer LRU-evicts
+    // them). Process-bucket recent is NOT touched. Soft/Off returns 0.
     if (production_defaults_active()) {
         return g_scope_bp_overflow.recent.load(std::memory_order_relaxed);
     }
@@ -1224,6 +1228,21 @@ inline bool erase_scope_bp_gauge(std::string_view scope_id) noexcept {
         return false;
     std::lock_guard<std::mutex> lock(g_scope_bp_map_mtx);
     return g_scope_bp_map.erase(std::string{scope_id}) > 0;
+}
+
+// Issue #3337: production Scope / session teardown. Erases the named
+// gauge when id is non-empty and not the process-bucket sentinel.
+// Idempotent. Soft / Off / empty / "-": no lock, no atomic.
+inline bool maybe_erase_scope_bp_gauge_on_teardown(std::string_view scope_id) noexcept {
+    if (scope_id.empty() || scope_id == kBpScopeProcessBucket)
+        return false;
+    if (!production_defaults_active())
+        return false;
+    const bool erased = erase_scope_bp_gauge(scope_id);
+    if (erased)
+        g_orch_module_stats.scope_bp_gauge_teardown_erase_total.fetch_add(
+            1, std::memory_order_relaxed);
+    return erased;
 }
 
 // Issue #2778: process-wide clear of the scope BP map (tests + session

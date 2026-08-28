@@ -885,6 +885,10 @@ public:
     // only release reservations (fiber* already nulled by observer).
     ~AgentScope() {
         ScopeEnterGuard g(this, "~AgentScope");
+        // Issue #3337: production teardown frees this scope's named BP
+        // gauge so sequential tenant churn does not saturate the 256-cap
+        // map. Soft / empty / "-" : no extra lock/atomic.
+        (void)aura::orch::maybe_erase_scope_bp_gauge_on_teardown(bp_scope_id_);
         if (sched_) {
             sched_->unregister_agent_scope_observer(this);
             // Leave sched_ non-null for cancel/join below; observer
