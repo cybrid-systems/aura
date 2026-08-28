@@ -1492,18 +1492,16 @@ struct CapabilityRegistry {
             const auto mode = sandbox_mode.load(std::memory_order_acquire);
             if (mode != EffectSandboxMode::Off) {
                 auto has_admin = [&](TenantId t) -> bool {
-                    auto it = by_tenant.find(t);
-                    if (it == by_tenant.end())
-                        return false;
-                    for (const auto& g : it->second) {
-                        if (g.revoked)
-                            continue;
-                        if ((g.effects & Effect::TenantAdmin) != Effect::None)
-                            return true;
-                        if (g.name == "tenant-admin" || g.name == "capability")
-                            return true;
-                    }
-                    return false;
+                    // Issue #3362: use effects_for_locked (under mtx) which
+                    // strips wildcard-only TenantAdmin / MacroSelfEvo bits
+                    // (#3144) — closes the privilege-escalation path where a
+                    // `*` grant alone could pass the admin check and then
+                    // synthesize explicit TA via security:grant-effect!. Now
+                    // aligns with try_grant_capability_string_path_privileged_locked
+                    // / try_grant_cross_tenant_privileged (all use the same
+                    // effects_for_locked face). Caller holds mtx so the
+                    // _locked variant is safe.
+                    return has_effect(effects_for_locked(t), Effect::TenantAdmin);
                 };
                 const auto caller = caller_principal != 0
                                         ? caller_principal
