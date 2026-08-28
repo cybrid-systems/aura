@@ -820,6 +820,15 @@ public:
         // linear metadata + JIT unhandled invalidate).
         install_lowering_compiler_core_hooks();
         aura_set_jit_unhandled_invalidate_fn(&CompilerService::jit_unhandled_invalidate_trampoline);
+        // Issue #3373: production CompilerService wires the candidate
+        // iterator so aura_reemit_aot_for_dirty sees the dirty set under
+        // production. Soft / Off: aura_install_production_dirty_iterator
+        // is a no-op (returns 0) so reemit_provider_wired==0 stays zero-cost
+        // and the Phase-1 skeleton path remains in effect (#3373 AC3).
+        // Test fixtures may overwrite via aura_set_reemit_candidate_fn
+        // after construction; the install is idempotent on the registry
+        // wired bit. Single-workspace MVP scope; no BFS / cross-COW.
+        (void)aura_install_production_dirty_iterator();
         // Phase 2: pre-populate v2 IR cache from workspace defines.
         // Called from (set-code ...) primitive after a successful parse.
         // Plan A + Follow-up 3: hook calls BOTH the lightweight

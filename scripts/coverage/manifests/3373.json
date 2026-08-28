@@ -1,0 +1,93 @@
+{
+  "issue": 3373,
+  "title": "Issue #3373: production CompilerService wires aura_set_reemit_candidate_fn so decide_and_reemit is not a skeleton no-op.",
+  "ok": "OK: Issue #3373 production reemit provider wired \u2014 all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_install_production_dirty_iterator",
+        "production_dirty_candidate_iter",
+        "kProductionDirtyRingCap"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "aura_install_production_dirty_iterator",
+        "#3373"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/service.ixx",
+      "contains": [
+        "aura_install_production_dirty_iterator",
+        "#3373"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/service_dirty.cpp",
+      "contains": [
+        "aura_production_dirty_ring_push",
+        "#3373"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "tests/compiler/test_reemit_production_provider_wired.cpp",
+      "contains": [
+        "ac1_production_install_wires",
+        "ac2_push_reemit_walks_iterator"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "if (aura_production_defaults_active_probe() == 0)"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "tests/compiler/test_reemit_production_provider_wired.cpp",
+      "contains": [
+        "ac3_soft_off_install_noop"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_reemit_production_provider_wired.cpp",
+      "contains": [
+        "ac4_manual_set_wins",
+        "manual_iter"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "src/compiler/aura_jit_bridge_stub.cpp",
+      "contains": [
+        "aura_install_production_dirty_iterator",
+        "aura_production_dirty_ring_push"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_reemit_production_provider_wired.cpp",
+      "contains": [
+        "ac5_query_schema_and_source",
+        "schema-3373"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_reemit_production_provider_wired.cpp"
+      ]
+    }
+  ]
+}

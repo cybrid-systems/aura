@@ -3766,11 +3766,14 @@ if(TARGET all_test_issue_targets)
     add_dependencies(all_test_issue_targets test_lock_order_audit_batch)
 endif()
 
-# Domain batch: Reemit production default defer (Stream C soft-home for 2205/2208) (2 members + driver). Stream S2.
+# Domain batch: Reemit production default defer (Stream C soft-home for 2205/2208) (3 members + driver). Stream S2.
+#   #3373: production CompilerService wires aura_set_reemit_candidate_fn
+#   so decide_and_reemit is no longer a skeleton no-op under production.
 add_executable(test_reemit_defer_batch
     tests/compiler/test_reemit_defer_batch.cpp
     tests/compiler/test_reemit_production_default_defer.cpp
     tests/compiler/test_reemit_production_default_defer_v2.cpp
+    tests/compiler/test_reemit_production_provider_wired.cpp
 )
 set_property(TARGET test_reemit_defer_batch PROPERTY CXX_MODULE_STD ON)
 target_include_directories(test_reemit_defer_batch PRIVATE src tests)

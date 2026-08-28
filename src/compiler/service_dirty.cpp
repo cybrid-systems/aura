@@ -127,6 +127,12 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
     auto& reg = hot_update_registry();
     // Always fan-out dirty listeners (agents / plugins / tests).
     reg.notify_dirty_define(name.c_str());
+    // Issue #3373: cascade root feeds the production candidate ring so
+    // aura_reemit_aot_for_dirty sees the dirty set under production. Soft
+    // / Off stay zero-cost (probe gates the push). Body-region bit default
+    // — the reemit pipeline filters by emit_region_mask, not per-candidate.
+    if (aura_production_defaults_active_probe() != 0)
+        aura_production_dirty_ring_push(name.c_str(), 1ULL << 1, 0);
     std::uint64_t mask = 0;
     if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end())
         mask |= it->second.compute_region_mask_from_dirty();
@@ -134,6 +140,11 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
         if (d.empty() || d == name)
             continue;
         reg.notify_dirty_define(d.c_str());
+        // Issue #3373: each cascade dependent feeds the ring too. Cascading
+        // duplicates are bounded by ring cap (256); the reemit pipeline
+        // is idempotent on the second pass (entry already restamped).
+        if (aura_production_defaults_active_probe() != 0)
+            aura_production_dirty_ring_push(d.c_str(), 1ULL << 1, 0);
         if (auto it = ir_cache_v2_.find(d); it != ir_cache_v2_.end())
             mask |= it->second.compute_region_mask_from_dirty();
     }
@@ -398,6 +409,12 @@ void CompilerService::mark_define_dirty(const std::string& name) {
     if (it != ir_cache_v2_.end()) {
         auto& primary = it->second;
         primary.dirty = true;
+        // Issue #3373: single-name IR dirty fills the production candidate
+        // ring even if cascade fan-out is deferred (frame budget / soft /
+        // before dep_graph BFS completes). Cascade path also pushes — ring
+        // is bounded and pipeline is idempotent, so duplicates are safe.
+        if (aura_production_defaults_active_probe() != 0)
+            aura_production_dirty_ring_push(name.c_str(), 1ULL << 1, 0);
         // Issue #1495 / #1505 / #1506 / #2126: prefer impact-scope instr/block
         // dirty under partial threshold, then body-only; last resort full.
         // Shapes:
@@ -909,6 +926,11 @@ void CompilerService::invalidate_function(const std::string& name) {
     // mark_all_blocks_dirty (full-function degradation).
     if (auto vit = ir_cache_v2_.find(name); vit != ir_cache_v2_.end()) {
         const auto n = vit->second.mark_body_only_dirty();
+        // Issue #3373: hard-path single-name IR dirty feeds the production
+        // candidate ring. mark_body_only_dirty already sets the dirty bit;
+        // the push mirrors the soft-path site in mark_define_dirty.
+        if (aura_production_defaults_active_probe() != 0)
+            aura_production_dirty_ring_push(name.c_str(), 1ULL << 1, 0);
         metrics_.invalidate_per_block_dirty_total.fetch_add(1, std::memory_order_relaxed);
         if (n > 0) {
             // body-only path: n is blocks of body; precision = block marks
