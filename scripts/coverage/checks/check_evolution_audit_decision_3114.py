@@ -170,8 +170,8 @@ def main() -> int:
     # + schema-3149 + issue-3149 + forensic-source + 3 enum sentinels +
     # schema-3152 + issue-3152. overflow=0 on the normal path.
     must(
-        "kEvolutionAuditDecisionPlannedKeys = 56",
-        "AC9 planned keys bumped to 48 (#3149+#3152+#3205+#3242+#3246)",
+        "kEvolutionAuditDecisionPlannedKeys = 72",
+        "AC9 planned keys 72 (#3339 Agent facade headroom)",
         query,
     )
     must("schema-3205", "AC9 schema-3205 sentinel", query)

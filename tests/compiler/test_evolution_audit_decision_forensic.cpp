@@ -109,8 +109,8 @@ static void ac3_soft_zero_cost() {
 static void ac4_capacity_schema() {
     std::println("\n--- AC4: capacity / schema ---");
     auto src = read_file("src/compiler/evaluator_primitives_security.cpp");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 56") != std::string::npos,
-          "planned_keys bumped 48 -> 56 (#3284)");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+          "planned_keys 72 (#3339 Agent facade headroom)");
     CHECK(src.find("insert_kv(\"schema-3152\", 3152)") != std::string::npos,
           "schema-3152 sentinel present");
     CHECK(src.find("insert_kv(\"issue-3152\", 3152)") != std::string::npos,
@@ -169,8 +169,8 @@ static void ac7_typed_summary_3242() {
               std::string::npos,
           "typed-summary-from-wal key");
     CHECK(src.find("insert_kv(\"schema-3242\",") != std::string::npos, "schema-3242");
-    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 56") != std::string::npos,
-          "planned keys 56");
+    CHECK(src.find("kEvolutionAuditDecisionPlannedKeys = 72") != std::string::npos,
+          "planned keys 72 (#3339 headroom)");
 }
 
 // AC8: Issue #3284 — SE match discipline. When a join mid is in scope

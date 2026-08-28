@@ -8710,7 +8710,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             ReloadRecoveryPlaybookResult pb{};
             aura_hot_update_reload_recovery_playbook_get(&pb);
             // Issue #3020: ~26 live keys; next_pow2(planned*2) ≥64.
-            constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 36;
+            // Issue #3339: live 31; planned 48 (>= 31+8). Additive insert_kv
+            // must raise planned_keys; Agent facade forbids hash-overflow.
+            constexpr std::size_t kReloadRecoveryPlaybookPlannedKeys = 48;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kReloadRecoveryPlaybookPlannedKeys));
             if (!ht)

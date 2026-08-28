@@ -1184,6 +1184,15 @@ namespace primitives_detail {
     // / reload-recovery-playbook migrated first. Remaining
     // FlatHashTable::create(N) catalogs are static (key count << 0.7*N)
     // or already N>=64; migrate when adding keys. headroom-3020.
+    //
+    // Issue #3339: Agent decision facades (evolution-audit-decision,
+    // security-posture, type-linear-commit-health, type-linear-evolution-
+    // snapshot, reload-recovery-playbook) MUST keep
+    // planned_keys >= actual insert_kv count + kAgentDecisionFacadeHeadroom.
+    // Additive insert_kv must raise planned_keys. Those facades forbid
+    // hash-overflow (CI: check_agent_decision_facade_headroom_3339.py).
+    inline constexpr std::size_t kAgentDecisionFacadeHeadroom = 8;
+    inline constexpr int kAgentDecisionFacadeHeadroomIssue = 3339;
     extern std::atomic<std::uint64_t> g_query_hash_overflow_total;
     extern std::atomic<std::uint64_t> g_query_hash_force_cap;
 

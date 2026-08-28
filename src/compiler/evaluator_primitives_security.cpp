@@ -5151,6 +5151,9 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // Issue #3056: +4 keys (breach/wired/schema/issue).
             // Issue #3113: +5 keys (wrap-risk/wrap-total/window/schema/issue).
             // Issue #3302: +3 keys (defaulted-by-force-wal / schema / issue).
+            // Issue #3338: +5 WAL window keys. Live 74. #3339: Agent
+            // facade planned >= actual + 8 (keep 96). Additive insert_kv
+            // must raise planned_keys; this facade forbids hash-overflow.
             constexpr std::size_t kSecurityPosturePlannedKeys = 96;
             auto* ht = FlatHashTable::create(query_hash_capacity_for(kSecurityPosturePlannedKeys));
             if (!ht)
@@ -5558,8 +5561,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
             // + 4 additive keys (suggested-next + suggested-next-code +
             //   schema-3246 + issue-3246)
             // + 3 additive keys (se-mid-miss + schema-3284 + issue-3284)
-            // = 49 minimum; planned 56 → query_hash_capacity_for 128.
-            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 56;
+            // = 49 live keys. Issue #3339: planned 72 (>= 49+8 headroom;
+            // +20 dummy keys without a raise must fail the CI headroom
+            // gate). Additive insert_kv must raise planned_keys; this
+            // Agent facade forbids hash-overflow.
+            constexpr std::size_t kEvolutionAuditDecisionPlannedKeys = 72;
             auto* ht =
                 FlatHashTable::create(query_hash_capacity_for(kEvolutionAuditDecisionPlannedKeys));
             if (!ht)

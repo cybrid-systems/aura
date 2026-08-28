@@ -55,7 +55,7 @@ def main() -> int:
     must("ac3246_3_soft", "AC3 Soft test", unify)
     must("ac3246_4_ok", "AC4 ok test", unify)
     must("ac3246_4_breach", "AC4 breach test", unify)
-    must("kEvolutionAuditDecisionPlannedKeys = 56", "AC5 planned 48", sec)
+    must("kEvolutionAuditDecisionPlannedKeys = 72", "AC5 planned 72 (#3339 headroom)", sec)
     must("check_evolution_audit_suggested_next_3246", "AC5 build.py", build)
     must("schema-3246", "AC5 facade", facade)
     if _read("tests/compiler/test_issue_3246.cpp"):
