@@ -171,6 +171,14 @@ int run_test_mailbox_bp_admit() {
             g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed);
         const auto spawn_failures_before =
             g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed);
+        // Issue #3364: capture arena usage + release gauges BEFORE spawn so we
+        // can assert that the BP-deny path actually releases the consumed arena
+        // (was a no-leak false-positive before rollback_spawn_reservation
+        // was added — finalize_spawn_quota_reject took the no_leak_ok arm
+        // without releasing).
+        const auto& pq_for_gauge = aura::core::resource_quota::process_resource_quota();
+        const auto arena_usage_before = pq_for_gauge.agent_arena_usage_bytes.load();
+        const auto arena_release_before = pq_for_gauge.agent_arena_release_total.load();
 
         AgentSpec spec;
         spec.name = "bp-reject-test";
@@ -186,6 +194,9 @@ int run_test_mailbox_bp_admit() {
                 spawn_bp_reject_before,
             g_orch_module_stats.spawn_failures.load(std::memory_order_relaxed) -
                 spawn_failures_before);
+        std::println("  agent_arena_usage_bytes {}→{}  agent_arena_release_total {}→{}",
+                     arena_usage_before, arena_usage_after, arena_release_before,
+                     arena_release_after);
         CHECK(!h.ok, "AC1: spawn returns !ok on BP reject");
         CHECK(h.quota_exceeded, "AC1: quota_exceeded == true");
         CHECK(h.quota_dimension == "mailbox-bp", "AC1: quota_dimension == 'mailbox-bp'");
@@ -197,6 +208,21 @@ int run_test_mailbox_bp_admit() {
               "AC1: reserved_memory_bytes == 0 (#2155 no-leak parity)");
         CHECK(h.fiber == nullptr, "AC1: no fiber allocated on reject");
         CHECK(h.mailbox == nullptr, "AC1: no mailbox created on reject");
+        // Issue #3364: arena usage MUST return to pre-spawn baseline after
+        // BP deny (rollback_spawn_reservation releases the arena before
+        // finalize_spawn_quota_reject zeros reserved_memory_bytes).
+        // Previously the arena was charged (try_consume_agent_arena
+        // succeeded) but never released, so agent_arena_usage_bytes
+        // stayed inflated under BP storms and starved later spawns.
+        const auto arena_usage_after =
+            pq_for_gauge.agent_arena_usage_bytes.load(std::memory_order_relaxed);
+        const auto arena_release_after =
+            pq_for_gauge.agent_arena_release_total.load(std::memory_order_relaxed);
+        CHECK(
+            arena_usage_after == arena_usage_before,
+            "AC1: agent_arena_usage_bytes returns to baseline after BP deny (#3364 no-leak real)");
+        CHECK(arena_release_after == arena_release_before + 1,
+              "AC1: agent_arena_release_total bumps by 1 (rollback_spawn_reservation fired)");
         CHECK(g_orch_module_stats.spawn_bp_admit_reject_total.load(std::memory_order_relaxed) >
                   spawn_bp_reject_before,
               "AC2: spawn_bp_admit_reject_total bumped");
