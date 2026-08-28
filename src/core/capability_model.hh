@@ -382,6 +382,8 @@ struct CapabilityEffectMetrics {
 
 // Issue #2149: security provenance vocabulary — Mutation only.
 inline constexpr int kEffectEpochUnifyIssue = 2149;
+// Issue #3335: mutation audit ring.epoch uses Mutation (not Bridge).
+inline constexpr int kMutationAuditEpochUnifyIssue = 3335;
 // Issue #2151: optional hard-deny on grant_fiber_id mismatch.
 inline constexpr int kHardFiberIsolationIssue = 2151;
 // Issue #3333: provenance_ok mid/epoch/fiber join is per contributing grant

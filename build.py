@@ -2418,6 +2418,21 @@ def cmd_lint():
             "Issue #3296 require_effect mid SSOT linter failed — run python3 scripts/coverage/checks/check_require_effect_mid_ssot_3296.py"
         )
         return r
+    # Issue #3335: emit_mutation_audit stamps Mutation epoch (not Bridge)
+    # so the mutation audit ring joins grant / SE / TypedMid. Additive
+    # slot.bridge_epoch END-append. Extends
+    # test_effect_epoch_mutation_unify.cpp (#81967); no docs/design/
+    # (#1655). Residual of #2149 ring vocabulary.
+    mae3335_script = COVERAGE_CHECKS / "check_mutation_audit_epoch_3335.py"
+    if not mae3335_script.exists():
+        fail(f"missing {mae3335_script}")
+        return 1
+    r = run([sys.executable, str(mae3335_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3335 mutation-audit epoch linter failed — run python3 scripts/coverage/checks/check_mutation_audit_epoch_3335.py"
+        )
+        return r
     # Issue #3297: ~AgentHandle under-account observability when the
     # Reclaimed body is still non-yielding (long-lived C++ supervisor
     # after production auto-wait Timeout). Additive counter

@@ -817,6 +817,12 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("mutation-bridge-split-total",
                           static_cast<std::int64_t>(snap.mutation_bridge_split));
                 insert_kv("effect-epoch-mutation-wired", 1);
+                // Issue #3335: mutation audit ring.epoch is Mutation (not
+                // Bridge). Additive; schema-2149 keys unchanged.
+                using aura::core::capability::kMutationAuditEpochUnifyIssue;
+                insert_kv("schema-3335", kMutationAuditEpochUnifyIssue);
+                insert_kv("issue-3335", kMutationAuditEpochUnifyIssue);
+                insert_kv("mutation-audit-epoch-mutation-wired", 1);
             }
             // Issue #2151: optional hard-deny on grant_fiber_id mismatch
             // (fiber-mismatch count already exposed under schema-2055).
@@ -4637,10 +4643,11 @@ void register_security_primitives(PrimRegistrar add, Evaluator& ev) {
                     continue;
                 auto line = std::format(
                     "seq={} fiber={} op={} target={} nodes={} epoch_delta={} ts={} "
-                    "effect={} tenant={} mutation_id={} epoch={} denied={}",
+                    "effect={} tenant={} mutation_id={} epoch={} denied={} bridge_epoch={}",
                     entry.seq, entry.fiber_id, entry.op, entry.target_node, entry.nodes_changed,
                     entry.epoch_delta, entry.timestamp_ms, entry.effect_bits, entry.tenant_id,
-                    entry.provenance_mutation_id, entry.epoch, entry.effect_denied ? 1 : 0);
+                    entry.provenance_mutation_id, entry.epoch, entry.effect_denied ? 1 : 0,
+                    entry.bridge_epoch);
                 auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(std::move(line));
                 auto pid = ev.pairs_.size();
