@@ -103,9 +103,16 @@ def main() -> int:
     must("enum class NodeTag", "AC5 ast", ast)
     must("Issue #3044", "AC5 impl", impl)
     must("kBidirectionalUncoveredTagIssue = 3044", "AC5 hdr", hdr)
+    must("kBidirectionalUncoveredNoDynamicIssue = 3330", "AC5 3330 stamp", hdr)
+    must("Issue #3330", "AC5 3330 impl", impl)
+    must("never Dynamic", "AC5 3330 never Dynamic", impl)
+    must("return reg_.void_type()", "AC5 3330 void path", impl)
+    must("Soft only", "AC5 3330 Soft Dynamic", impl)
+    must("3330 AC1", "AC5 3330 test", test)
 
     # ── AC6 ──
     must("check_bidirectional_tag_coverage_3044", "AC6", build)
+    must("check_bidirectional_uncovered_no_dynamic_3330", "AC6 3330", build)
     if (ROOT / "tests" / "compiler" / "test_issue_3044.cpp").is_file():
         fails.append("AC6: test_issue_3044.cpp present (forbidden #81967)")
     docs = ROOT / "docs" / "design"

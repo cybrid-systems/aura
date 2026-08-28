@@ -974,6 +974,19 @@ def cmd_lint():
             "Issue #3044 bidirectional tag coverage linter failed — run python3 scripts/coverage/checks/check_bidirectional_tag_coverage_3044.py"
         )
         return r
+    # Issue #3330: Production synthesize_flat default must not return
+    # Dynamic after uncovered tag (I1 fail-closed). Soft keeps Dynamic.
+    # Extends check_bidirectional_tag_coverage_3044 + match-check tests.
+    bt3330_script = COVERAGE_CHECKS / "check_bidirectional_uncovered_no_dynamic_3330.py"
+    if not bt3330_script.exists():
+        fail(f"missing {bt3330_script}")
+        return 1
+    r = run([sys.executable, str(bt3330_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3330 bidirectional uncovered no-Dynamic linter failed — run python3 scripts/coverage/checks/check_bidirectional_uncovered_no_dynamic_3330.py"
+        )
+        return r
     # Issue #3045: ADT exhaustiveness under-mark cone-force. Variant add /
     # arm delete still puts match sites in the dirty cone; Production
     # hard-rejects non-exhaustive. Extends test_adt_match_goal_table

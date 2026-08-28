@@ -10,6 +10,7 @@
 //   AC4: Observability — match-check / match-refined / schema-2348 keys
 //   AC5: Source-cite check_flat_match + selective renarrow integration
 //   #3044: exhaustive NodeTag coverage — Production TypeError / Soft Warning
+//   #3330: Production default must not return/cache Dynamic after uncovered tag
 
 #include "test_harness.hpp"
 
@@ -253,9 +254,10 @@ static void ac3044_exhaustive_tag_coverage() {
         diag.clear();
         auto id = flat.add_literal(7);
         flat.tag(id) = static_cast<NodeTag>(0xFE);
-        (void)tc.infer_flat(flat, pool, id, diag);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
         CHECK(tc.last_uncovered_bidirectional_tag_count() >= 1, "3044 AC2: soft counter");
         CHECK(!tc.last_uncovered_bidirectional_tag_hard_fail(), "3044 AC2: soft no hard-fail");
+        CHECK(ty == treg.dynamic_type(), "3330 AC2: Soft keeps Dynamic");
         bool warn = false, err = false;
         for (const auto& d : diag.diagnostics()) {
             if (d.message.find("uncovered bidirectional") == std::string::npos)
@@ -275,7 +277,7 @@ static void ac3044_exhaustive_tag_coverage() {
         diag.clear();
         auto id = flat.add_literal(8);
         flat.tag(id) = static_cast<NodeTag>(0xFD);
-        (void)tc.infer_flat(flat, pool, id, diag);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
         CHECK(tc.last_uncovered_bidirectional_tag_hard_fail(), "3044 AC1: strict hard-fail");
         bool err = false;
         for (const auto& d : diag.diagnostics()) {
@@ -284,6 +286,9 @@ static void ac3044_exhaustive_tag_coverage() {
                 err = true;
         }
         CHECK(err, "3044 AC1: Production/strict TypeError before commit");
+        CHECK(ty != treg.dynamic_type(), "3330 AC1: no Dynamic TypeId written");
+        CHECK(ty == treg.void_type(), "3330 AC1: void-with-error path (never Dynamic)");
+        CHECK(flat.type_id(id) != treg.dynamic_type().index, "3330 AC1: cache not Dynamic");
     }
 
     auto impl = read_file("src/compiler/type_checker_impl.cpp");
@@ -297,6 +302,15 @@ static void ac3044_exhaustive_tag_coverage() {
     CHECK(impl.find("note_uncovered_bidirectional_tag") != std::string::npos,
           "3044 AC5: synthesize default gate");
     CHECK(impl.find("Issue #3044") != std::string::npos, "3044 AC5: impl cite");
+    CHECK(aura::compiler::kBidirectionalUncoveredNoDynamicIssue == 3330, "3330 AC4: issue stamp");
+    CHECK(impl.find("Issue #3330") != std::string::npos, "3330 AC4: impl cite");
+    CHECK(impl.find("never Dynamic") != std::string::npos, "3330 AC4: never Dynamic");
+    CHECK(impl.find("return reg_.void_type()") != std::string::npos, "3330 AC4: void path");
+    CHECK(hdr.find("kBidirectionalUncoveredNoDynamicIssue = 3330") != std::string::npos,
+          "3330 AC4: header stamp");
+    CHECK(read_file("docs/design/3330-uncovered-no-dynamic.md").empty(),
+          "3330 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3330.cpp").empty(), "3330 AC4: no invent");
     CHECK(ev.find("uncovered bidirectional tag") != std::string::npos,
           "3044 AC5: mutate fail-closed");
     CHECK(prim.find("schema-3044") != std::string::npos, "3044 AC4: schema-3044");

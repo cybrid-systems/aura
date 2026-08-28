@@ -2725,8 +2725,7 @@ add_dependencies(all_test_issue_targets test_aot_incremental_reemit)
 # both call sites now stamp the same bit. #3229 define-id side set
 # kept (collision insurance, not hash unification). No new query key;
 # no new proof schema. AC1-AC5 source-cite in the test.
-aura_add_issue_test(test_hot_update_relower_success_coverage)
-aura_issue_test_link_light(test_hot_update_relower_success_coverage)
+# (target already registered above — duplicate aura_add_issue_test removed)
 # Issue #3377: owner-scoped hard invalidate physically clears owner AOT
 # slot (generation-behind predicate is vacuous when table epoch is not
 # bumped). Full link so the production aura_aot_invalidate_owner_slot
