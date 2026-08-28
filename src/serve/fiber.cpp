@@ -12,6 +12,7 @@
 #include "../compiler/shape.h"                // Issue #570: record_shape_fiber_refresh
 #include "../compiler/typed_mutation_audit.h" // Issue #2853: production_residual_policy_locked()
 #include "../compiler/mutation_hold_budget.h" // Issue #3071: in-body cancel-arm watchdog
+#include "runtime_production_abi.h"           // Issue #3325: production multi-worker latch
 #include "aura_platform.h"
 #include "core/gc_hooks.h"      // Issue #1364
 #include "core/lifetime_pin.hh" // Issue #3023: post-join linear_roots unpin
@@ -384,6 +385,13 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
         return 0;
     }
     g_mutation_hold_budget_inbody_window_exceeded_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3325: production multi-worker no-edge residual metric.
+    // Soft still returns below (metric-only). Foreign unique_lock stays
+    // with the holder — poll never drops it from this thread.
+    const bool no_edge_latched =
+        g_production_multi_worker_latched.load(std::memory_order_acquire) != 0;
+    if (no_edge_latched)
+        g_hold_budget_no_edge_force_total.fetch_add(1, std::memory_order_relaxed);
     if (!mutation_hold_budget_reject_enabled())
         return 0; // Soft / sandbox=off: metric-only (AC1/AC2)
     const auto fid = snap.fiber_id != 0 ? snap.fiber_id : armed_fiber;
@@ -420,6 +428,16 @@ extern "C" int aura_hold_budget_poll_inbody_window(void) noexcept {
     if (auto* cur = g_current_fiber; cur && cur->id() == fid)
         cur->inject_synthetic_mutation_boundary_yield();
     aura_evaluator_force_release_outermost_holder(fid);
+    // Issue #3325: under production multi-worker, re-inject the synthetic
+    // MutationBoundary yield + force_safepoint on the live holder so the
+    // residual for steal/mailbox observers is bounded by one idle/park
+    // poll interval. Same-fiber consume already ran above. Cross-fiber
+    // never drops unique_lock (TLS Guard only). Soft already returned.
+    if (no_edge_latched) {
+        std::lock_guard<std::mutex> lock(g_fiber_registry_mtx);
+        if (Fiber* f = find_fiber_by_id_locked_held(fid))
+            f->inject_synthetic_mutation_boundary_yield();
+    }
     return 1;
 }
 

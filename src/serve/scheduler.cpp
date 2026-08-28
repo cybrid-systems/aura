@@ -968,8 +968,10 @@ void Scheduler::run() {
         // Zero cost when orphan_count_cached_ == 0; interval-gated when set.
         // Cancel storms converge without test-only reap_orphans_now calls.
         (void)maybe_reap_orphans_on_tick();
-        // Issue #3071: idle-tick poll of the in-body cancel window.
+        // Issue #3071 / #3325: idle-tick poll of the in-body cancel window.
         // Happy path (armed_ns == 0): one acquire inside the C ABI.
+        // #3325: production multi-worker re-injects no-edge holders past
+        // 2×SLO (same-fiber consume; foreign unique_lock stays with owner).
         (void)aura_hold_budget_poll_inbody_window();
     }
 #else

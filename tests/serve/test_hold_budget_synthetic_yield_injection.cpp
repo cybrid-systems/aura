@@ -24,6 +24,7 @@
 #include "compiler/mutation_hold_budget.h"
 #include "compiler/typed_mutation_audit.h"
 #include "serve/fiber.h"
+#include "serve/runtime_production_abi.h"
 #include "serve/scheduler.h"
 
 #include <atomic>
@@ -1175,6 +1176,258 @@ int run_test_hold_budget_1slo_inject_3285() {
     return failed == 0 ? 0 : 1;
 }
 
+// Issue #3325: residual after #3254/#3285/#3071 — a tight pure-compute
+// outermost MutationBoundaryGuard body can exceed 2×SLO without a
+// cooperative edge. Scheduler idle / worker park under
+// production_multi_worker_latched re-injects synthetic MutationBoundary
+// yield + force_safepoint on the holder and bumps
+// hold_budget_no_edge_force_total. Same-fiber poll consumes (depth 0 +
+// drop hold) without a natural check_gc_safepoint. Cross-fiber never
+// drops unique_lock. Soft: metric-only.
+int run_test_hold_budget_no_edge_force_3325() {
+    std::println("\n=== Issue #3325: no-edge outermost hold past 2×SLO re-inject ===");
+    int saved_failed = aura::test::g_failed;
+    int saved_passed = aura::test::g_passed;
+
+    // ac3325_1_same_fiber_poll_consumes_without_natural_edge
+    {
+        std::println("\n--- AC1: same-fiber poll consume without natural edge ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        CHECK(aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3325 AC1: reject_enabled under production");
+        aura::serve::set_production_multi_worker_latched_for_test(true);
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> ran{0};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        std::atomic<int> polled{0};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3325 AC1: fiber current");
+                f->request_hold_budget_cancel();
+                aura::compiler::mutation_hold_budget_note_cancel_armed(f->id());
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                // Tight pure-compute body: no yield / no check_gc_safepoint.
+                volatile std::uint64_t sink = 0;
+                for (int i = 0; i < 64; ++i)
+                    sink += static_cast<std::uint64_t>(i);
+                (void)sink;
+                polled.store(aura::serve::aura_hold_budget_poll_inbody_window(),
+                             std::memory_order_relaxed);
+                held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                                 std::memory_order_relaxed);
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                                  std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3325 AC1: fiber body ran");
+        CHECK(polled.load() == 1, "3325 AC1: poll exceeded bound");
+        CHECK(ok_flag.load() == 0, "3325 AC1: success flag forced false");
+        CHECK(held_after.load() == 0, "3325 AC1: workspace hold cleared without natural edge");
+        CHECK(depth_after.load() == 0, "3325 AC1: depth slot == 0 without natural edge");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() >= 1,
+              "3325 AC1: forced_unlock_total");
+        CHECK(aura::compiler::mutation_hold_budget_forced_fail_closed_total_v_read() >= 1,
+              "3325 AC1: forced_fail_closed_total");
+        CHECK(aura::compiler::hold_budget_no_edge_force_total_v_read() >= 1,
+              "3325 AC1: hold_budget_no_edge_force_total");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::serve::set_production_multi_worker_latched_for_test(false);
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    }
+
+    // ac3325_2_cross_fiber_idle_poll_no_foreign_unique_lock
+    {
+        std::println("\n--- AC2: cross-fiber idle poll re-injects; foreign unique_lock stays ---");
+        using aura::compiler::CompilerService;
+        using aura::compiler::Evaluator;
+        using aura::serve::Scheduler;
+        ::unsetenv("AURA_SANDBOX");
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        ::setenv("AURA_HOLD_BUDGET_INBODY_BOUND_US", "1000", 1);
+        aura::compiler::typed_audit::apply_production_audit_defaults();
+        aura::serve::set_production_multi_worker_latched_for_test(true);
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_forced_fail_closed_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+        CompilerService cs;
+        Evaluator::set_query_evaluator(&cs.evaluator());
+        std::atomic<std::uint64_t> holder_id{0};
+        std::atomic<int> ready{0};
+        std::atomic<int> go{0};
+        std::atomic<int> ran{0};
+        std::atomic<int> ok_flag{1};
+        std::atomic<int> held_after{-1};
+        std::atomic<int> depth_after{-1};
+        Scheduler sched(2);
+        sched.spawn([&]() {
+            bool ok = true;
+            {
+                Evaluator::MutationBoundaryGuard g(cs.evaluator(), &ok);
+                auto* f = aura::serve::g_current_fiber;
+                CHECK(f != nullptr, "3325 AC2: holder fiber current");
+                holder_id.store(f->id(), std::memory_order_release);
+                ready.store(1, std::memory_order_release);
+                for (int i = 0; i < 400 && go.load(std::memory_order_acquire) == 0; ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+                (void)aura::serve::aura_hold_budget_poll_inbody_window();
+                held_after.store(cs.evaluator().mutation_boundary_held() ? 1 : 0,
+                                 std::memory_order_relaxed);
+                depth_after.store(cs.evaluator().mutation_boundary_depth_slot_value(),
+                                  std::memory_order_relaxed);
+                ran.store(1, std::memory_order_relaxed);
+            }
+            ok_flag.store(ok ? 1 : 0, std::memory_order_relaxed);
+        });
+        std::thread io([&]() { sched.run(); });
+        for (int i = 0; i < 200 && ready.load(std::memory_order_acquire) == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        CHECK(ready.load() == 1, "3325 AC2: holder entered Guard");
+        const auto fid = holder_id.load(std::memory_order_acquire);
+        CHECK(fid != 0, "3325 AC2: holder id published");
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_cancel_armed_fiber.store(fid, std::memory_order_release);
+        const int idle_polled = aura::serve::aura_hold_budget_poll_inbody_window();
+        CHECK(idle_polled == 1 || idle_polled == 0, "3325 AC2: idle poll returned");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3325 AC2: foreign idle poll did not drop unique_lock");
+        CHECK(aura::compiler::hold_budget_no_edge_force_total_v_read() >= 1,
+              "3325 AC2: hold_budget_no_edge_force_total bumped on idle poll");
+        go.store(1, std::memory_order_release);
+        for (int i = 0; i < 200 && ran.load() == 0; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        sched.stop();
+        io.join();
+        CHECK(ran.load() == 1, "3325 AC2: holder body ran");
+        CHECK(ok_flag.load() == 0, "3325 AC2: success flag forced false");
+        CHECK(held_after.load() == 0, "3325 AC2: steal/mailbox observer sees depth cleared");
+        CHECK(depth_after.load() == 0, "3325 AC2: depth slot == 0 within one idle poll");
+        Evaluator::set_query_evaluator(nullptr);
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        aura::serve::set_production_multi_worker_latched_for_test(false);
+        ::unsetenv("AURA_HOLD_BUDGET_INBODY_BOUND_US");
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    }
+
+    // ac3325_3_soft_observe_only
+    {
+        std::println("\n--- AC3: Soft metric-only (no force) ---");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+        ::unsetenv("AURA_MUTATION_HOLD_BUDGET_HARD");
+        CHECK(!aura::compiler::mutation_hold_budget_reject_enabled(),
+              "3325 AC3: Soft reject_enabled false");
+        aura::serve::set_production_multi_worker_latched_for_test(true);
+        aura::compiler::clear_mutation_hold_budget_forced_unlock_for_test();
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+        aura::compiler::g_hold_budget_cancel_armed_ns.store(1, std::memory_order_release);
+        aura::compiler::g_hold_budget_cancel_armed_fiber.store(1, std::memory_order_release);
+        const auto u0 = aura::compiler::mutation_hold_budget_forced_unlock_total_v_read();
+        CHECK(aura::serve::aura_hold_budget_poll_inbody_window() == 0,
+              "3325 AC3: Soft poll does not force");
+        CHECK(aura::compiler::mutation_hold_budget_forced_unlock_total_v_read() == u0,
+              "3325 AC3: no force-drop under Soft");
+        aura::serve::set_production_multi_worker_latched_for_test(false);
+        aura::compiler::clear_mutation_hold_budget_inbody_window_for_test();
+        aura::compiler::clear_hold_budget_no_edge_force_for_test();
+    }
+
+    // ac3325_4_counters + worker park
+    {
+        std::println("\n--- AC4: existing counters + new no-edge total ---");
+        const auto mhb = read_file("src/compiler/mutation_hold_budget.h");
+        const auto fc = read_file("src/serve/fiber.cpp");
+        const auto wc = read_file("src/serve/worker.cpp");
+        const auto sc = read_file("src/serve/scheduler.cpp");
+        CHECK(mhb.find("g_mutation_hold_budget_forced_unlock_total") != std::string::npos,
+              "3325 AC4: forced_unlock_total preserved");
+        CHECK(mhb.find("g_mutation_hold_budget_forced_fail_closed_total") != std::string::npos,
+              "3325 AC4: forced_fail_closed_total preserved");
+        CHECK(mhb.find("g_hold_budget_no_edge_force_total") != std::string::npos,
+              "3325 AC4: hold_budget_no_edge_force_total");
+        CHECK(mhb.find("kMutationHoldBudgetNoEdgeForceIssue") != std::string::npos,
+              "3325 AC4: issue stamp");
+        CHECK(fc.find("Issue #3325") != std::string::npos, "3325 AC4: poll cites #3325");
+        CHECK(fc.find("g_production_multi_worker_latched") != std::string::npos,
+              "3325 AC4: poll gates on production_multi_worker_latched");
+        CHECK(wc.find("aura_hold_budget_poll_inbody_window()") != std::string::npos,
+              "3325 AC4: worker park polls inbody window");
+        CHECK(sc.find("aura_hold_budget_poll_inbody_window()") != std::string::npos,
+              "3325 AC4: scheduler idle poll preserved");
+        CHECK(fc.find("aura_evaluator_force_unlock_outermost_holder") == std::string::npos ||
+                  fc.find("aura_hold_budget_poll_inbody_window(void) noexcept") !=
+                      std::string::npos,
+              "3325 AC4: poll definition present");
+        auto poll_pos = fc.find("aura_hold_budget_poll_inbody_window(void) noexcept");
+        auto poll_win = poll_pos == std::string::npos ? std::string{} : fc.substr(poll_pos, 8000);
+        CHECK(poll_win.find("aura_evaluator_force_unlock_outermost_holder") == std::string::npos,
+              "3325 AC4: poll does not spell force_unlock (#3160 AC12)");
+    }
+
+    // ac3325_5 chaos + linter + no invent
+    {
+        std::println("\n--- AC5: chaos extension + linter ---");
+        const auto t = read_file("tests/serve/test_hold_budget_synthetic_yield_injection.cpp");
+        const auto chaos = read_file("tests/serve/test_chaos_mutate_steal_gc_mailbox.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_hold_budget_no_edge_force_3325.py");
+        const auto build = read_file("build.py");
+        CHECK(t.find("ac3325_1_same_fiber_poll_consumes_without_natural_edge") !=
+                      std::string::npos ||
+                  t.find("3325 AC1:") != std::string::npos,
+              "3325 AC5: AC1 in this suite");
+        CHECK(t.find("ac3325_2_cross_fiber_idle_poll_no_foreign_unique_lock") !=
+                      std::string::npos ||
+                  t.find("3325 AC2:") != std::string::npos,
+              "3325 AC5: AC2 densify×steal residual in this suite");
+        CHECK(chaos.find("aura_hold_budget_poll_inbody_window") != std::string::npos,
+              "3325 AC5: chaos suite still exercises the poll path");
+        CHECK(!lint.empty() && lint.find("3325") != std::string::npos, "3325 AC5: linter");
+        CHECK(build.find("check_hold_budget_no_edge_force_3325") != std::string::npos,
+              "3325 AC5: build.py");
+        CHECK(read_file("docs/design/3325-hold-budget-no-edge-force.md").empty(),
+              "3325 AC5: no docs/design/");
+        CHECK(read_file("tests/serve/test_issue_3325.cpp").empty(),
+              "3325 AC5: no invent test_issue_3325");
+        CHECK(read_file("tests/issues/test_issue_3325.cpp").empty(),
+              "3325 AC5: no tests/issues/test_issue_3325");
+    }
+
+    int failed = aura::test::g_failed - saved_failed;
+    int passed = aura::test::g_passed - saved_passed;
+    std::println("\n=== #3325 no-edge force: {} passed, {} failed ===", passed, failed);
+    return failed == 0 ? 0 : 1;
+}
+
 #ifndef AURA_ISSUE_BATCH_MEMBER
 int main() {
     const int rc1 = run_test_hold_budget_synthetic_yield_injection();
@@ -1184,11 +1437,15 @@ int main() {
     const int rc5 = run_test_hold_budget_cross_fiber_urgent_inbody_poll();
     const int rc6 = run_test_hold_budget_noncoop_force_edge();
     const int rc7 = run_test_hold_budget_1slo_inject_3285();
+    const int rc8 = run_test_hold_budget_no_edge_force_3325();
     return rc1 != 0
                ? rc1
                : (rc2 != 0
                       ? rc2
                       : (rc3 != 0 ? rc3
-                                  : (rc4 != 0 ? rc4 : (rc5 != 0 ? rc5 : (rc6 != 0 ? rc6 : rc7)))));
+                                  : (rc4 != 0 ? rc4
+                                              : (rc5 != 0 ? rc5
+                                                          : (rc6 != 0 ? rc6
+                                                                      : (rc7 != 0 ? rc7 : rc8))))));
 }
 #endif

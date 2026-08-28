@@ -725,9 +725,20 @@ void WorkerThread::run() {
                 }
             }
 
+            // Issue #3325: park-path poll of the in-body cancel window
+            // (scheduler idle already polls #3071). Happy path: one
+            // acquire. Never drops unique_lock from this thread.
+            (void)aura_hold_budget_poll_inbody_window();
+
+            // Issue #3071/#3325: when hold-budget cancel is armed, shrink
+            // park wait so the watchdog polls well inside 2×SLO (match
+            // scheduler idle 10ms).
+            const auto park_ms = aura_hold_budget_cancel_armed() ? std::chrono::milliseconds(10)
+                                                                 : std::chrono::milliseconds(100);
+
             // Wait on condition variable
             std::unique_lock<std::mutex> lock(wake_mutex_);
-            wake_cv_.wait_for(lock, std::chrono::milliseconds(100), [this]() {
+            wake_cv_.wait_for(lock, park_ms, [this]() {
                 return !local_queue_.empty_approx() || !running_.load(std::memory_order_acquire);
             });
         } else {

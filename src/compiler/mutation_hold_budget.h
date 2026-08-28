@@ -471,6 +471,24 @@ inline constexpr int kMutationHoldBudgetCrossFiberUrgentInbodyPollIssue = 3223;
 // injects so the victim's next edge matches same-fiber. Soft: observe
 // only. Reuses forced_unlock_total + forced_fail_closed_total.
 inline constexpr int kMutationHoldBudgetNoncoopForceEdgeIssue = 3254;
+// Issue #3325: residual after #3254/#3285/#3071 — scheduler idle /
+// worker park under production_multi_worker_latched re-injects the
+// synthetic MutationBoundary yield + force_safepoint on a live
+// outermost holder past 2×SLO when the body has not consumed a
+// cooperative edge. Same-fiber consume still via force_release
+// (unique_lock owner). Cross-fiber never drops the foreign unique_lock.
+// Soft / sandbox=off: metric-only. New residual counter.
+inline std::atomic<std::uint64_t> g_hold_budget_no_edge_force_total{0};
+inline constexpr int kMutationHoldBudgetNoEdgeForceIssue = 3325;
+
+[[nodiscard]] inline std::uint64_t hold_budget_no_edge_force_total_v_read() noexcept {
+    return g_hold_budget_no_edge_force_total.load(std::memory_order_relaxed);
+}
+
+inline void clear_hold_budget_no_edge_force_for_test() noexcept {
+    g_hold_budget_no_edge_force_total.store(0, std::memory_order_relaxed);
+}
+
 // Issue #3073: production soak readiness gate (residual-zero ×
 // hold-after-cancel max). Wired sentinel only — no extra hot-path work.
 // Soak abort lives in the chaos harness; Agents read schema-3073.

@@ -4221,6 +4221,23 @@ def cmd_lint():
             "Issue #3324 abort-restore stale map/stamp linter failed — run python3 scripts/coverage/checks/check_abort_restore_stale_map_stamp_3324.py"
         )
         return r
+    # Issue #3325: residual outermost hold past 2×SLO with no cooperative
+    # edge. Scheduler idle / worker park under production_multi_worker_
+    # latched re-injects synthetic MutationBoundary yield + force_safepoint
+    # and bumps hold_budget_no_edge_force_total. Same-fiber consume via
+    # force_release; foreign unique_lock stays with the holder. Soft
+    # metric-only. Extends test_hold_budget_synthetic_yield_injection
+    # (#81967); no docs/design/; no test_issue_3325.cpp.
+    nfe3325_script = COVERAGE_CHECKS / "check_hold_budget_no_edge_force_3325.py"
+    if not nfe3325_script.exists():
+        fail(f"missing {nfe3325_script}")
+        return 1
+    r = run([sys.executable, str(nfe3325_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3325 hold-budget no-edge force linter failed — run python3 scripts/coverage/checks/check_hold_budget_no_edge_force_3325.py"
+        )
+        return r
     # Issue #3185: densify-entry LCP consult (steal×GC residual).
     # Closes the entry-side consultation gap from #2888 / #2957: production
     # densify entry (Phase-5) + optional one-shot Moving densify
