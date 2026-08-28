@@ -386,7 +386,8 @@ aura::compiler::Evaluator::active_yield_checkpoint_stack_static() {
 namespace boundary_ssot_detail {
     inline int boundary_depth_ssot(Evaluator* ev) noexcept {
         if (aura::compiler::Evaluator::g_current_fiber_void != nullptr)
-            return static_cast<int>(aura::compiler::Evaluator::active_mutation_stack().size());
+            return static_cast<int>(
+                aura::compiler::Evaluator::active_mutation_stack_static().size());
         int* slot = aura::compiler::Evaluator::mutation_boundary_depth_slot(ev);
         return slot ? *slot : 0;
     }

@@ -4008,6 +4008,20 @@ def cmd_lint():
             "Issue #3010 allow_cross TenantAdmin gate linter failed — run python3 scripts/coverage/checks/check_allow_cross_tenant_admin_3010.py"
         )
         return r
+    # Issue #3332: Restricted allow_cross_tenant is scoped to cross_grants
+    # (not a full isolation bypass). Soft/Off keep the zero-cost
+    # short-circuit. Extends test_tenant_isolation_enforcement.cpp
+    # (#81967); no docs/design/ (#1655). Residual of #3010 read path.
+    acx3332_script = COVERAGE_CHECKS / "check_allow_cross_scoped_grant_3332.py"
+    if not acx3332_script.exists():
+        fail(f"missing {acx3332_script}")
+        return 1
+    r = run([sys.executable, str(acx3332_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3332 allow_cross scoped-grant linter failed — run python3 scripts/coverage/checks/check_allow_cross_scoped_grant_3332.py"
+        )
+        return r
     # Issue #3011: IsolationDeny SecurityEvent stamps live fiber via
     # effect_fiber_id_or (no hard-coded 0). query:security-audit filters
     # IsolationDeny by fiber. Extends

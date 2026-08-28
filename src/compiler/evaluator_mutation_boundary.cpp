@@ -2773,7 +2773,7 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // because TLS would be the victim worker's after steal (see #3384 AC1).
     const bool on_fiber = (aura::compiler::Evaluator::g_current_fiber_void != nullptr);
     if (on_fiber) {
-        auto& fiber_stack = Evaluator::active_mutation_stack();
+        auto& fiber_stack = Evaluator::active_mutation_stack_static();
         prev = static_cast<int>(fiber_stack.size()) + 1;
         (void)slot;
     } else {

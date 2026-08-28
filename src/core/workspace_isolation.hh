@@ -29,6 +29,10 @@ namespace aura::core::workspace_isolation {
 
 inline constexpr int kWorkspaceIsolationPhase = 2; // #1566 enforcement
 inline constexpr int kWorkspaceIsolationIssue = 1566;
+// Issue #3332: Restricted/Strict allow_cross_tenant is not a full isolation
+// bypass — authorization stays on cross_grants + ref provenance. Soft/Off
+// keep the zero-cost short-circuit (AC5).
+inline constexpr int kAllowCrossScopedGrantIssue = 3332;
 
 using TenantId = std::uint64_t;
 
@@ -388,7 +392,9 @@ struct WorkspaceIsolationPolicy {
     //   - current.id==0 + Restricted + required_effects!=0 → deny
     //       (production default footgun closed — #2385)
     //   - current.id==0 + Restricted + required_effects==0 → allow (query-only)
-    //   - current.allow_cross_tenant → allow
+    //   - Soft/Off + allow_cross_tenant → allow (zero-cost short-circuit, AC5)
+    //   - Restricted/Strict + allow_cross_tenant → still require cross_grants
+    //     covering required_effects + ref provenance (#3332; not a full bypass)
     //   - current.id == target (or target==0 meaning "same workspace") → allow
     //   - ref_tenant != 0 && ref_tenant != current.id && != target → provenance deny
     //   - cross_grants[current→target] covers required_effects → allow
@@ -445,10 +451,14 @@ struct WorkspaceIsolationPolicy {
                 record_audit(target, ref_tenant, true, false, false, op, required_effects);
                 return false;
             }
-            // Issue #3010: this bypass remains; *writing* allow_cross_tenant_
-            // is gated at Evaluator::set_tenant_principal /
-            // security:set-tenant-principal! (TenantAdmin | wildcard).
-            if (allow_cross_tenant) {
+            // Issue #3010: *writing* allow_cross_tenant_ is gated at
+            // Evaluator::set_tenant_principal / security:set-tenant-principal!
+            // (TenantAdmin | wildcard). Issue #3332: Restricted/Strict no
+            // longer short-circuit the isolation walk — the flag only means
+            // admin opened cross-tenant negotiation. Actual authorization is
+            // still cross_grants + ref provenance (#2968 SSOT). Soft/Off keep
+            // the zero-cost bypass (AC5; no extra lock/counter).
+            if (allow_cross_tenant && !(strict || sandbox_restricted)) {
                 record_audit(target, ref_tenant, false, false, false, op, required_effects);
                 return true;
             }

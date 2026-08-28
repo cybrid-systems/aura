@@ -765,8 +765,7 @@ int run_test_mutation_safety_snapshot_steal() {
         CHECK(emb.find("mutation_boundary_depth_slot(") != std::string::npos,
               "3384 AC5: existing TLS slot accessor preserved (no rename)");
         CHECK(efm.find("boundary_depth_ssot") != std::string::npos &&
-                  efm.find("static_cast<int>(aura::compiler::Evaluator::active_mutation_stack()."
-                           "size())") != std::string::npos,
+                  efm.find("active_mutation_stack_static()") != std::string::npos,
               "3384 AC5: SSOT helper returns fiber stack on fiber");
         // No new query key / no new proof schema (per issue AC5).
         CHECK(true, "3384 AC5: no new query key / no new proof schema");
