@@ -9531,6 +9531,13 @@ struct CompilerMetrics {
     // Not a public query key.
     static constexpr int kNestedObservationWindowIssue = 3322;
     std::atomic<std::uint64_t> nested_observation_window_closed_total{0};
+    // Issue #3331: Soft + allow_timeout_commit TIMEOUT quarantine of
+    // live priority/pending/touched/let-poly roots (not persist log).
+    // Bumped only when a set was non-empty (zero extra when already
+    // empty). Production uses solve_delta_partial_cleared_total (#3169).
+    // Additive, struct-end layout-stable (#2906) — Agent dashboards.
+    static constexpr int kSoftTimeoutQuarantineIssue = 3331;
+    std::atomic<std::uint64_t> solve_delta_soft_timeout_quarantine_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header

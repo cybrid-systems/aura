@@ -448,6 +448,10 @@ export enum class SolveResult : std::uint8_t {
 inline constexpr int kDeltaTimeoutFailClosedIssue = 3003;
 // Issue #3081: Soft + allow_timeout_commit TIMEOUT is never query:type authority.
 inline constexpr int kSoftTimeoutExportNonAuthoritativeIssue = 3081;
+// Issue #3331: Soft + allow_timeout_commit TIMEOUT must quarantine live
+// priority/pending/touched/let-poly roots so the next empty solve_delta
+// is not seeded as residual work. Production still uses #3169 hard clear.
+inline constexpr int kSoftTimeoutQuarantineIssue = 3331;
 // Issue #3203: uniform enforcement — Soft TIMEOUT/CONFLICT must not grant
 // durable query:type / occurrence TypeId even if persist later stamps grant.
 inline constexpr int kSoftTimeoutExportUniformGateIssue = 3203;
@@ -740,6 +744,13 @@ private:
     // (AC3). Bumps solve_delta_partial_cleared_total on metrics_ when
     // production_defaults_active() (AC4 additive observability).
     void clear_partial_goals_and_unresolved() noexcept;
+    // Issue #3331: Soft-only quarantine after allow_timeout_commit
+    // TIMEOUT export. Clears the same four root sets as #3169 plus
+    // dirty_count_, keeps occurrence_persist_log_, bumps
+    // solve_delta_soft_timeout_quarantine_total when any set was
+    // non-empty (zero extra atomics when already empty). Production
+    // early-returns — hard clear stays clear_partial_goals_and_unresolved.
+    void soft_quarantine_partial_goals_after_timeout() noexcept;
     // Issue #466: when true, consistent_unify records constraints
     // via add_delta for incremental solve_delta replay.
     bool delta_record_mode_ = false;
@@ -828,9 +839,10 @@ public:
     //   - production: still escalates (budget cannot disable / allow half-solved);
     //     bumps solver_budget_full_escalate_total
     //   - Soft + allow_timeout_commit: keep TIMEOUT (never SOLVED); bump
-    //     solver_budget_timeout_export_total
+    //     solver_budget_timeout_export_total; #3331 quarantines live
+    //     priority/pending/touched/let-poly roots (not persist log)
     //   - Soft + default: pass-through (unchanged)
-    // Issue #2963: production + prefer_instance_repair_before_full (default
+    // Issue #2963: production + prefer_instance_repair_before_full (default)
     // true) → try local dirty / pending-root instance repair before full
     // solve; never ship TIMEOUT / half-solved under production.
     SolveResult escalate_if_production(SolveResult prior,

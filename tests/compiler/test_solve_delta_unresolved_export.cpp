@@ -2033,6 +2033,236 @@ static void ac3169_6_source_and_linter() {
           "3169 AC6: build.py wires linter");
 }
 
+// ── Issue #3331: Soft allow_timeout_commit TIMEOUT quarantines residual roots ──
+// AC1 Soft + allow_timeout_commit + TIMEOUT → next empty solve_delta SOLVED /
+//        zero priority/pending/touched/let-poly roots (no live residual seed).
+// AC2 Soft still exports TIMEOUT + unresolved; last_type_export_authoritative_
+//        stays false (#3081/#3203 preserved).
+// AC3 Production path unchanged (#3169 hard clear + reject).
+// AC4 Soft locality observe (#2994) out of scope — TIMEOUT/CONFLICT export only.
+// AC5 Extend this suite; no test_issue_3331.cpp; no docs/design/3331-*.
+static void ac3331_1_soft_timeout_quarantines_roots() {
+    std::println("\n--- #3331 AC1: Soft allow TIMEOUT quarantines roots; next empty SOLVED ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.allow_timeout_commit = true;
+    cs.set_solver_budget(b);
+
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.mark_let_poly_dirty(v);
+    cs.mark_touched_on_delta(v, /*occurrence_narrow=*/true);
+    cs.seed_pending_full_solve_root_for_test(cs.find(v).index);
+    // Drop live occurrence goals so the next empty solve_delta is SOLVED
+    // (goal-forced reverify is #2647; this issue is root-set quarantine).
+    (void)cs.restore_or_clear_occurrence_to_entry(0);
+    CHECK(cs.is_dirty(), "3331 AC1: dirty before TIMEOUT");
+    CHECK(cs.pending_full_solve_roots_size() > 0, "3331 AC1: pending seeded");
+    CHECK(cs.occurrence_priority_roots_size() > 0, "3331 AC1: occurrence priority seeded");
+    CHECK(cs.let_poly_dirty_roots_size() > 0, "3331 AC1: let-poly seeded");
+    CHECK(cs.touched_roots_size() > 0, "3331 AC1: touched seeded");
+
+    const auto persist0 = cs.occurrence_persist_log_size();
+    const auto q0 = metrics.solve_delta_soft_timeout_quarantine_total.load();
+    const auto aq0 = g_typed_mutation_audit_counters.solve_delta_soft_timeout_quarantine_total.load(
+        std::memory_order_relaxed);
+    const auto exp0 = g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+        std::memory_order_relaxed);
+
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    auto status = cs.solve_delta(&unresolved);
+    CHECK(status == SolveResult::TIMEOUT, "3331 AC1: solve_delta TIMEOUT");
+    CHECK(!unresolved.empty(), "3331 AC1: unresolved exported");
+    auto post = cs.escalate_if_production(status, &unresolved);
+    CHECK(post == SolveResult::TIMEOUT, "3331 AC1: Soft allow keeps TIMEOUT");
+    CHECK(post != SolveResult::SOLVED, "3331 AC1: never pretend SOLVED");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3331 AC1: pending quarantined");
+    CHECK(cs.occurrence_priority_roots_size() == 0, "3331 AC1: occurrence priority quarantined");
+    CHECK(cs.let_poly_dirty_roots_size() == 0, "3331 AC1: let-poly quarantined");
+    CHECK(cs.touched_roots_size() == 0, "3331 AC1: touched quarantined");
+    CHECK(!cs.is_dirty(), "3331 AC1: dirty_count_ zeroed");
+    CHECK(cs.occurrence_persist_log_size() == persist0, "3331 AC1: persist log intact");
+    CHECK(metrics.solve_delta_soft_timeout_quarantine_total.load() > q0,
+          "3331 AC1: metrics quarantine bumps");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_soft_timeout_quarantine_total.load(
+              std::memory_order_relaxed) > aq0,
+          "3331 AC1: audit quarantine bumps");
+    CHECK(g_typed_mutation_audit_counters.solver_budget_timeout_export_total.load(
+              std::memory_order_relaxed) > exp0,
+          "3331 AC1: timeout_export still bumps");
+
+    std::vector<Constraint> unresolved2;
+    auto next = cs.solve_delta(&unresolved2);
+    CHECK(next == SolveResult::SOLVED, "3331 AC1: next empty solve_delta SOLVED");
+    CHECK(cs.occurrence_priority_roots_size() == 0, "3331 AC1: no residual priority seed");
+    CHECK(cs.pending_full_solve_roots_size() == 0, "3331 AC1: no residual pending seed");
+
+    const auto q1 = metrics.solve_delta_soft_timeout_quarantine_total.load();
+    (void)cs.escalate_if_production(SolveResult::TIMEOUT);
+    CHECK(metrics.solve_delta_soft_timeout_quarantine_total.load() == q1,
+          "3331 AC1: empty sets → zero extra quarantine");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3331_2_timeout_unresolved_not_authoritative() {
+    std::println("\n--- #3331 AC2: TIMEOUT + unresolved; not query:type authority ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    DiagnosticCollector diag;
+    InferenceEngine engine(reg, diag);
+    engine.set_incremental_delta_mode(true, true);
+    SolverBudget b{};
+    b.allow_timeout_commit = true;
+    engine.constraint_system().set_solver_budget(b);
+    auto v = engine.constraint_system().fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    engine.constraint_system().add_delta(std::move(eq));
+    engine.constraint_system().force_next_delta_timeout_for_test(true);
+    CHECK(engine.last_type_export_authoritative(), "3331 AC2: default authoritative");
+
+    FlatAST flat;
+    StringPool pool;
+    const auto nid = flat.add_literal(1);
+    flat.root = nid;
+    (void)engine.infer_flat(flat, pool, nid, /*preserve_cs=*/true);
+    CHECK(engine.last_solve_status() == SolveResult::TIMEOUT, "3331 AC2: infer TIMEOUT");
+    CHECK(!engine.last_type_export_authoritative(),
+          "3331 AC2: last_type_export_authoritative stays false (#3081)");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3331_3_production_unchanged() {
+    std::println("\n--- #3331 AC3: Production hard clear unchanged ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.allow_timeout_commit = true; // ignored under production
+    cs.set_solver_budget(b);
+    const auto q0 = metrics.solve_delta_soft_timeout_quarantine_total.load();
+    const auto aq0 = g_typed_mutation_audit_counters.solve_delta_soft_timeout_quarantine_total.load(
+        std::memory_order_relaxed);
+    auto post = cs.escalate_if_production(SolveResult::TIMEOUT);
+    CHECK(post == SolveResult::SOLVED, "3331 AC3: production escalate SOLVED on empty");
+    CHECK(metrics.solve_delta_soft_timeout_quarantine_total.load() == q0,
+          "3331 AC3: no Soft quarantine under production");
+    CHECK(g_typed_mutation_audit_counters.solve_delta_soft_timeout_quarantine_total.load(
+              std::memory_order_relaxed) == aq0,
+          "3331 AC3: audit quarantine not bumped under production");
+
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept") !=
+              std::string::npos,
+          "3331 AC3: #3169 helper retained");
+    const auto helper_pos =
+        impl.find("void ConstraintSystem::clear_partial_goals_and_unresolved() noexcept");
+    if (helper_pos != std::string::npos) {
+        const auto helper_block = impl.substr(helper_pos, 1200);
+        const auto gate_pos =
+            helper_block.find("if (!aura::compiler::typed_audit::production_defaults_active())");
+        CHECK(gate_pos != std::string::npos, "3331 AC3: #3169 still production-gated");
+    }
+    CHECK(impl.find("soft_quarantine_partial_goals_after_timeout") != std::string::npos,
+          "3331 AC3: Soft helper is a distinct path");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3331_4_locality_observe_out_of_scope() {
+    std::println("\n--- #3331 AC4: Soft locality observe (#2994) not quarantined ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto loc_pos = impl.find("ConstraintSystem::escalate_locality_slo_if_production");
+    CHECK(loc_pos != std::string::npos, "3331 AC4: locality gate present");
+    if (loc_pos != std::string::npos) {
+        const auto loc_block = impl.substr(loc_pos, 2800);
+        CHECK(loc_block.find("soft_quarantine_partial_goals_after_timeout") == std::string::npos,
+              "3331 AC4: locality path does not call Soft TIMEOUT quarantine");
+    }
+    CHECK(impl.find("delta_locality_budget_allow_total") != std::string::npos ||
+              read_file("src/compiler/typed_mutation_audit.h")
+                      .find("delta_locality_budget_allow_total") != std::string::npos,
+          "3331 AC4: #2994 budget-allow surface preserved");
+}
+
+static void ac3331_5_source_and_linter() {
+    std::println("\n--- #3331 AC5: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_soft_timeout_quarantine_3331.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kSoftTimeoutQuarantineIssue = 3331") != std::string::npos, "3331 AC5: stamp");
+    CHECK(ixx.find("void soft_quarantine_partial_goals_after_timeout() noexcept") !=
+              std::string::npos,
+          "3331 AC5: helper decl");
+    CHECK(impl.find(
+              "void ConstraintSystem::soft_quarantine_partial_goals_after_timeout() noexcept") !=
+              std::string::npos,
+          "3331 AC5: helper impl");
+    CHECK(impl.find("soft_quarantine_partial_goals_after_timeout();") != std::string::npos,
+          "3331 AC5: called from escalate Soft allow path");
+    CHECK(obs.find("solve_delta_soft_timeout_quarantine_total{0}") != std::string::npos,
+          "3331 AC5: CompilerMetrics counter");
+    CHECK(aud.find("solve_delta_soft_timeout_quarantine_total{0}") != std::string::npos,
+          "3331 AC5: audit counter");
+    const auto helper_pos =
+        impl.find("void ConstraintSystem::soft_quarantine_partial_goals_after_timeout() noexcept");
+    if (helper_pos != std::string::npos) {
+        const auto helper_block = impl.substr(helper_pos, 1600);
+        CHECK(helper_block.find("occurrence_persist_log_") == std::string::npos,
+              "3331 AC5: helper does not touch persist log");
+        CHECK(helper_block.find("touched_roots_.clear()") != std::string::npos,
+              "3331 AC5: touched");
+        CHECK(helper_block.find("pending_full_solve_roots_.clear()") != std::string::npos,
+              "3331 AC5: pending");
+        CHECK(helper_block.find("occurrence_priority_roots_.clear()") != std::string::npos,
+              "3331 AC5: occurrence");
+        CHECK(helper_block.find("let_poly_dirty_roots_.clear()") != std::string::npos,
+              "3331 AC5: let-poly");
+    }
+    CHECK(t.find("ac3331_1_soft_timeout_quarantines_roots") != std::string::npos, "3331 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3331") != std::string::npos, "3331 AC5: linter");
+    CHECK(build.find("check_soft_timeout_quarantine_3331") != std::string::npos,
+          "3331 AC5: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3331.cpp").empty(),
+          "3331 AC5: no invent test_issue_3331");
+    CHECK(read_file("docs/design/3331-soft-timeout-quarantine.md").empty(),
+          "3331 AC5: no docs/design/");
+}
+
 // ── Issue #3031: pending_full_solve / locality residual before commit ──
 // AC1 production pending/locality → escalate; still dirty → reject
 // AC2 Soft observe allow
@@ -3465,6 +3695,12 @@ int run_test_solve_delta_unresolved_export() {
     ac3169_4_additive_counter_only();
     ac3169_5_existing_3003_2963_2913_preserved();
     ac3169_6_source_and_linter();
+    std::println("\n=== Issue #3331: Soft TIMEOUT allow_timeout_commit quarantines residual ===");
+    ac3331_1_soft_timeout_quarantines_roots();
+    ac3331_2_timeout_unresolved_not_authoritative();
+    ac3331_3_production_unchanged();
+    ac3331_4_locality_observe_out_of_scope();
+    ac3331_5_source_and_linter();
     // ── Issue #3307: budget-allow must hard-latch pending residual face
     // (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994)
     std::println("\n=== Issue #3307: budget-allow hard-latch pending residual face ===");
