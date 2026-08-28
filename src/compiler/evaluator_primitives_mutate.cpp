@@ -2845,6 +2845,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         });
 
     // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
+    // Issue #3398: production + query:as-stable-ref must pack the v2 spine
+    // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary))))) so the
+    // Agent-visible pair carries wrap + tenant + cow (the fields that
+    // #3396 inbound unpack now requires under production). Soft keeps the
+    // historical v1 (id . gen) pair (Issue #2186 compat). One SSOT spine
+    // for both pack (this fn) and unpack (#3396 walk_v2) — same field
+    // order, same nested-pair shape.
     add("query:as-stable-ref", [&ev, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
             return make_void();
@@ -2871,6 +2878,56 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                        "generation torn for export (Issue #3198 / #3121 / #3058); ; // Issue "
                        "#3138: Agent recovery hint recovery: re-query after budget window or force "
                        "full restamp before reusing refs");
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            // Issue #3398: v2 spine packer. Builds the nested pair
+            // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))
+            // — same shape as the #3396 v2 unpacker reads, so the
+            // round-trip is identity (no occupancy remap via zeroed
+            // wrap/tenant). fiber + boundary are included only when
+            // non-default (non-zero fiber_id or boundary_pinned true) to
+            // keep the spine minimal when the stamped ref is
+            // single-tenant / not boundary-pinned.
+            const auto p_id = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)), make_void()});
+            const auto p_gen = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.gen)), make_void()});
+            const auto p_wrap = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.wrap_epoch)), make_void()});
+            const auto p_tenant = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.tenant_id)), make_void()});
+            const auto p_cow = ev.pairs_.size();
+            ev.pairs_.push_back(
+                {make_int(static_cast<std::int64_t>(ref.cow_epoch_at_capture)), make_void()});
+            std::size_t last_inner = p_cow;
+            if (ref.fiber_id != 0) {
+                const auto p_fiber = ev.pairs_.size();
+                ev.pairs_.push_back(
+                    {make_int(static_cast<std::int64_t>(ref.fiber_id)), make_void()});
+                if (ref.boundary_pinned) {
+                    const auto p_boundary = ev.pairs_.size();
+                    ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
+                    ev.pairs_[p_fiber].cdr = make_pair(p_boundary);
+                }
+                ev.pairs_[p_cow].cdr = make_pair(p_fiber);
+                last_inner = p_fiber;
+            } else if (ref.boundary_pinned) {
+                const auto p_boundary = ev.pairs_.size();
+                ev.pairs_.push_back({make_bool(ref.boundary_pinned), make_void()});
+                ev.pairs_[p_cow].cdr = make_pair(p_boundary);
+                last_inner = p_boundary;
+            }
+            (void)last_inner; // spine is fully wired below; suppress unused if no optionals
+            // Wire the spine: (tenant . (cow . ...)) ← (cow . ...)
+            ev.pairs_[p_tenant].cdr = make_pair(p_cow);
+            // (wrap . (tenant . (cow . ...))) ← (tenant . ...)
+            ev.pairs_[p_wrap].cdr = make_pair(p_tenant);
+            // (gen . (wrap . (tenant . (cow . ...))) ← (wrap . ...)
+            ev.pairs_[p_gen].cdr = make_pair(p_wrap);
+            // (id . (gen . (wrap . (tenant . (cow . ...))) ← (gen . ...)
+            ev.pairs_[p_id].cdr = make_pair(p_gen);
+            return make_pair(p_id);
+        }
+        // Soft (or sandbox=off): historical v1 (id . gen) pair.
         const auto pid = ev.pairs_.size();
         ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
                              make_int(static_cast<std::int64_t>(ref.gen))});

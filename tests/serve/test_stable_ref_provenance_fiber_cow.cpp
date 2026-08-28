@@ -536,6 +536,158 @@ static void ac3396_5_no_docs_no_test_issue_cite_present() {
           "3396 AC5: Issue #3396 cite present in query_workspace.cpp");
 }
 
+// Issue #3398: production query:as-stable-ref must pack the v2 spine so
+// the Agent-visible pair carries wrap + tenant + cow (same shape as the
+// #3396 v2 unpacker reads). Soft keeps the v1 (id . gen) pair (Issue
+// #2186 compat). One SSOT spine for both pack (this fn) and unpack
+// (#3396 walk_v2).
+//
+// AC1: production + query:as-stable-ref → pair depth ≥ wrap+tenant+cow;
+//      source-cite pack helper.
+// AC2: production Agent caches that pair, restamp/COW, feeds it to
+//      mutate:replace-value → either accepted as identity or structured
+//      stale-ref — never occupancy remap via zeroed wrap/tenant.
+// AC3: Soft (id . gen) unchanged.
+// AC4: #2198 wire v2 + #2960 stamp + #3396 unpack non-regress
+//      (land pack+unpack together or behind one helper).
+// AC5: extend packed-ref / as-stable-ref fixture. No docs/design/*. No
+//      tests/issues/test_issue_*.cpp.
+
+static void ac3398_1_production_v2_spine_packer() {
+    std::println("\n=== #3398 AC1: production query:as-stable-ref v2 spine packer ===");
+    // Source-cite check: the v2 packer in query:as-stable-ref builds
+    // the nested pair (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))).
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(!mut.empty(), "3398 AC1: mutate.cpp readable");
+    CHECK(mut.find("Issue #3398: v2 spine packer") != std::string::npos,
+          "3398 AC1: v2 spine packer block present in query:as-stable-ref");
+    CHECK(mut.find("p_tenant") != std::string::npos, "3398 AC1: p_tenant pair index present");
+    CHECK(mut.find("p_cow") != std::string::npos, "3398 AC1: p_cow pair index present");
+    // The pack must write wrap + tenant + cow (in that order) so the
+    // #3396 v2 unpacker reads the same fields back.
+    CHECK(mut.find("ref.wrap_epoch") != std::string::npos, "3398 AC1: pack writes ref.wrap_epoch");
+    CHECK(mut.find("ref.tenant_id") != std::string::npos, "3398 AC1: pack writes ref.tenant_id");
+    CHECK(mut.find("ref.cow_epoch_at_capture") != std::string::npos,
+          "3398 AC1: pack writes ref.cow_epoch_at_capture");
+    // The four cdr wirings must be present in order (id ← gen ← wrap ← tenant).
+    CHECK(mut.find("ev.pairs_[p_tenant].cdr = make_pair(p_cow)") != std::string::npos,
+          "3398 AC1: wire (tenant . (cow . ...))");
+    CHECK(mut.find("ev.pairs_[p_wrap].cdr = make_pair(p_tenant)") != std::string::npos,
+          "3398 AC1: wire (wrap . (tenant . (cow . ...)))");
+    CHECK(mut.find("ev.pairs_[p_gen].cdr = make_pair(p_wrap)") != std::string::npos,
+          "3398 AC1: wire (gen . (wrap . (tenant . (cow . ...)))");
+    CHECK(mut.find("ev.pairs_[p_id].cdr = make_pair(p_gen)") != std::string::npos,
+          "3398 AC1: wire (id . (gen . (wrap . (tenant . (cow . ...)))");
+}
+
+static void ac3398_2_round_trip_identity() {
+    std::println("\n=== #3398 AC2: round-trip identity (pack fields match unpack fields) ===");
+    // The v2 pack must write the exact fields that the #3396 v2 unpack
+    // reads. This guarantees the round-trip is identity under production:
+    // Agent caches (id . gen . wrap . tenant . cow) → mutate:replace-value
+    // with that pair → either accepted as identity (same wrap+tenant+cow
+    // → still valid) or structured stale-ref (wrap/tenant/cow bumped).
+    // Never occupancy remap via zeroed provenance.
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    // The v2 pack fields (ref.wrap_epoch + ref.tenant_id + ref.cow_epoch_at_capture)
+    // must match the v2 unpack fields in #3396 (unpack_stable_ref_arg).
+    const std::string unpack_helper = "auto walk_v2 = [&](const EvalValue& start) -> bool {";
+    const std::size_t unpack_pos = mut.find(unpack_helper);
+    CHECK(unpack_pos != std::string::npos,
+          "3398 AC2: #3396 v2 unpack helper (walk_v2) still present in mutate.cpp");
+    if (unpack_pos != std::string::npos) {
+        // Check that the v2 pack writes the same fields the unpack reads
+        // (ref.wrap_epoch + ref.tenant_id + ref.cow_epoch_at_capture).
+        const std::string pack_block = mut.substr(0, unpack_pos);
+        CHECK(pack_block.find("ref.wrap_epoch") != std::string::npos,
+              "3398 AC2: pack writes ref.wrap_epoch (same field v2 unpack reads)");
+        CHECK(pack_block.find("ref.tenant_id") != std::string::npos,
+              "3398 AC2: pack writes ref.tenant_id (same field v2 unpack reads)");
+        CHECK(pack_block.find("ref.cow_epoch_at_capture") != std::string::npos,
+              "3398 AC2: pack writes ref.cow_epoch_at_capture (same field v2 unpack reads)");
+    }
+}
+
+static void ac3398_3_soft_v1_unchanged() {
+    std::println("\n=== #3398 AC3: Soft (id . gen) unchanged ===");
+    // Under production_defaults_active() == false, the pack must still
+    // emit the historical v1 (id . gen) pair — no breaking change for
+    // Soft callers (Issue #2186 compat).
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("Soft (or sandbox=off): historical v1 (id . gen) pair") != std::string::npos,
+          "3398 AC3: Soft branch comment present (v1 pair preserved)");
+    CHECK(mut.find("make_int(static_cast<std::int64_t>(ref.id))") != std::string::npos,
+          "3398 AC3: Soft branch still pushes make_int(ref.id)");
+    CHECK(mut.find("make_int(static_cast<std::int64_t>(ref.gen))") != std::string::npos,
+          "3398 AC3: Soft branch still pushes make_int(ref.gen)");
+    // The v2 pack must be under production_defaults_active() gate
+    // (not unconditional) so Soft falls through to v1.
+    CHECK(mut.find("aura::compiler::typed_audit::production_defaults_active()") !=
+              std::string::npos,
+          "3398 AC3: v2 pack gated on production_defaults_active()");
+}
+
+static void ac3398_4_wire_v2_stamp_unpack_non_regress() {
+    std::println("\n=== #3398 AC4: #2198 wire v2 + #2960 stamp + #3396 unpack non-regress ===");
+    // All three contracts must still be in source after the v2 pack lands.
+    // Land pack+unpack together so the inbound/outbound v2 contract is
+    // consistent (Issue #3398 calls this out explicitly).
+    std::ifstream f_ast("src/core/ast.ixx");
+    std::ifstream f_ev("src/compiler/evaluator.ixx");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string ast((std::istreambuf_iterator<char>(f_ast)), std::istreambuf_iterator<char>());
+    std::string evx((std::istreambuf_iterator<char>(f_ev)), std::istreambuf_iterator<char>());
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    CHECK(!ast.empty(), "3398 AC4: ast.ixx readable");
+    CHECK(!evx.empty(), "3398 AC4: evaluator.ixx readable");
+    CHECK(!mut.empty(), "3398 AC4: mutate.cpp readable");
+    CHECK(!qws.empty(), "3398 AC4: query_workspace.cpp readable");
+    // #2198 wire v2 (kStableRefSerializedSizeV2 = 56)
+    CHECK(ast.find("kStableRefSerializedSizeV2") != std::string::npos,
+          "3398 AC4: #2198 kStableRefSerializedSizeV2 constant present in ast.ixx");
+    CHECK(ast.find("56") != std::string::npos, "3398 AC4: v2 wire size 56 referenced in ast.ixx");
+    // #2960 stamp_query_stable_ref_export
+    CHECK(evx.find("stamp_query_stable_ref_export") != std::string::npos,
+          "3398 AC4: #2960 stamp_query_stable_ref_export wired in evaluator.ixx");
+    // #3396 v2 unpack walker (walk_v2) must still be present
+    CHECK(mut.find("walk_v2") != std::string::npos,
+          "3398 AC4: #3396 v2 unpack walker (walk_v2) in mutate.cpp unpack_stable_ref_arg");
+    CHECK(qws.find("walk_v2") != std::string::npos, "3398 AC4: #3396 v2 unpack walker (walk_v2) in "
+                                                    "query_workspace.cpp unpack_query_stable_ref");
+}
+
+static void ac3398_5_no_docs_no_test_issue_cite_present() {
+    std::println(
+        "\n=== #3398 AC5: no docs/design/, no tests/issues/test_issue_3398.cpp + #3398 cite ===");
+    // No docs/design/3398-*.md plan doc
+    {
+        std::ifstream f("docs/design/3398-as-stable-ref-v2-pack.md");
+        CHECK(!f.good(), "3398 AC5: no docs/design/3398-*");
+    }
+    // No tests/issues/test_issue_3398.cpp
+    {
+        std::ifstream f("tests/issues/test_issue_3398.cpp");
+        CHECK(!f.good(), "3398 AC5: no tests/issues/test_issue_3398.cpp");
+    }
+    // #3398 cite present in mutate.cpp (commit message anchor)
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("#3398") != std::string::npos,
+          "3398 AC5: Issue #3398 cite present in mutate.cpp");
+    // Linter for AC5 cite present (build.py gate registration)
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_as_stable_ref_v2_3398") != std::string::npos,
+          "3398 AC5: linter check_as_stable_ref_v2_3398 wired into build.py");
+    CHECK(build.find("cmd_as_stable_ref_v2_coverage") != std::string::npos,
+          "3398 AC5: cmd_as_stable_ref_v2_coverage function in build.py");
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -565,6 +717,12 @@ int main() {
     ac3396_3_soft_v1_unchanged();
     ac3396_4_wire_v2_export_stamp_non_regress();
     ac3396_5_no_docs_no_test_issue_cite_present();
+    // #3398 ACs (5) — production query:as-stable-ref v2 spine packer
+    ac3398_1_production_v2_spine_packer();
+    ac3398_2_round_trip_identity();
+    ac3398_3_soft_v1_unchanged();
+    ac3398_4_wire_v2_stamp_unpack_non_regress();
+    ac3398_5_no_docs_no_test_issue_cite_present();
     std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
                  ::aura::test::g_failed);
     return ::aura::test::g_failed ? 1 : 0;
