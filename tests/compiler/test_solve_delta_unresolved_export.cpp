@@ -2599,6 +2599,185 @@ static void ac3237_4_source_linter() {
           "3237 AC4: no docs/design");
 }
 
+// ── Issue #3316: close query:type authority race after densify latch ──
+//
+// Residual of #3237/#3203/#3004 under steal / densify interleave: the
+// residual face can latch AFTER grant_type_export_authority returns true
+// on one fiber while persist still holds a stale grant. Persist residual
+// must clear that grant BEFORE TypeLinearCommitProof; grant/query resample
+// the face under the #3225 persist seqlock. Soft: face never latches.
+
+static void ac3316_1_production_densify_residual_after_drain() {
+    std::println(
+        "\n--- #3316 AC1: Production densify residual after drain → not-authoritative ---");
+    using aura::compiler::typed_audit::bump_occurrence_persist_seq_for_test;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::kTypeExportAuthorityRaceIssue;
+    using aura::compiler::typed_audit::note_pending_full_solve_residual;
+    using aura::compiler::typed_audit::reset_occurrence_persist_seq_for_test;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    using aura::compiler::typed_audit::type_export_residual_faces_stable;
+    CHECK(kTypeExportAuthorityRaceIssue == 3316, "3316 AC1: issue stamp");
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_pending_full_solve_residual_for_test();
+    reset_occurrence_persist_seq_for_test();
+
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3316 AC1: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().copy_infer_type_export_authority(true);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "3316 AC1: SOLVED grant is authoritative before residual");
+    CHECK(type_export_residual_faces_stable(), "3316 AC1: seqlock-stable before densify");
+
+    // Concurrent densify residual latch AFTER drain SOLVED.
+    note_pending_full_solve_residual(1, /*hard=*/true);
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "ac3316_1_production_densify_residual_after_drain: residual refuses");
+    CHECK(!type_export_residual_faces_stable(), "3316 AC1: seqlock-stable sees face");
+    svc.evaluator().grant_type_export_authority();
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "3316 AC1: grant cannot override residual face");
+
+    // Persist residual path must drop the stale grant BEFORE the reject
+    // proof. Simulate that clear, then drop the face (later drain) —
+    // query:type stays not-authoritative until the next outermost green.
+    svc.evaluator().clear_type_export_authority();
+    reset_pending_full_solve_residual_for_test();
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "3316 AC1: stale grant stays dropped after face-clear");
+
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto cite = mb.find("Issue #3237: concurrent densify");
+    CHECK(cite != std::string::npos, "3316 AC1: persist residual cite");
+    const auto block = mb.substr(cite, 2200);
+    const auto cpos = block.find("clear_type_export_authority");
+    const auto bpos = block.find("build_type_linear_commit_proof");
+    CHECK(cpos != std::string::npos && bpos != std::string::npos && cpos < bpos,
+          "3316 AC1: clear stale grant BEFORE TypeLinearCommitProof");
+    CHECK(mb.find("force_reason=*/16") != std::string::npos ||
+              mb.find("/*force_reason=*/16") != std::string::npos,
+          "3316 AC1: reused force_reason 16");
+
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "3316 AC1: next outermost green re-opens authority");
+
+    // Persist-seq write-in-flight (odd) refuses grant even with face clear.
+    svc.evaluator().clear_type_export_authority();
+    bump_occurrence_persist_seq_for_test();
+    svc.evaluator().copy_infer_type_export_authority(true);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "3316 AC1: odd persist seq refuses grant");
+    CHECK(!type_export_residual_faces_stable(), "3316 AC1: odd seq is not stable");
+    reset_occurrence_persist_seq_for_test();
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(), "3316 AC1: even seq + clear face grants");
+
+    auto git = svc.eval("(get-inferred-type 0)");
+    CHECK(git.has_value(), "3316 AC1: get-inferred-type returned");
+    auto qto = svc.eval("(query-type-of \"f\")");
+    CHECK(qto.has_value(), "3316 AC1: query-type-of returned");
+
+    reset_pending_full_solve_residual_for_test();
+    reset_occurrence_persist_seq_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3316_2_soft_unchanged() {
+    std::println("\n--- #3316 AC2: Soft unchanged (face never latches) ---");
+    using aura::compiler::typed_audit::note_pending_full_solve_residual;
+    using aura::compiler::typed_audit::reset_occurrence_persist_seq_for_test;
+    using aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test;
+    using aura::compiler::typed_audit::type_export_residual_faces_clear;
+    using aura::compiler::typed_audit::type_export_residual_faces_stable;
+    apply_dev_audit_defaults();
+    reset_pending_full_solve_residual_for_test();
+    reset_occurrence_persist_seq_for_test();
+    CHECK(type_export_residual_faces_clear(), "3316 AC2: quiet empty face");
+    CHECK(type_export_residual_faces_stable(), "3316 AC2: quiet seqlock-stable");
+    note_pending_full_solve_residual(3, /*hard=*/false);
+    CHECK(type_export_residual_faces_clear(),
+          "ac3316_2_soft_unchanged: Soft observe does not latch face");
+    CHECK(type_export_residual_faces_stable(), "3316 AC2: Soft observe stays stable");
+
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3316 AC2: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().copy_infer_type_export_authority(true);
+    svc.evaluator().grant_type_export_authority();
+    CHECK(svc.evaluator().type_export_is_authoritative(),
+          "3316 AC2: Soft SOLVED grant remains authoritative");
+
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto helper = ev.find("bool type_export_is_authoritative() const noexcept");
+    CHECK(helper != std::string::npos, "3316 AC2: helper present");
+    const auto body_end = ev.find("}", helper);
+    CHECK(body_end != std::string::npos, "3316 AC2: helper body");
+    const auto slice = ev.substr(helper, body_end - helper);
+    CHECK(slice.find("production_defaults_active") == std::string::npos,
+          "3316 AC2: no production_defaults on quiet helper");
+    CHECK(slice.find("if (!last_type_solve_solved_)") != std::string::npos,
+          "3316 AC2: TIMEOUT check first");
+    reset_pending_full_solve_residual_for_test();
+    reset_occurrence_persist_seq_for_test();
+}
+
+static void ac3316_3_no_new_schema() {
+    std::println("\n--- #3316 AC3: no new query key; reuse force_reason 16 ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(q.find("schema-3316") == std::string::npos, "3316 AC3: no schema-3316");
+    CHECK(ev.find("g_3316_") == std::string::npos && aud.find("g_3316_") == std::string::npos,
+          "ac3316_3_no_new_schema: no g_3316_* counter");
+    CHECK(mb.find("force_reason=*/16") != std::string::npos ||
+              mb.find("/*force_reason=*/16") != std::string::npos,
+          "3316 AC3: reused force_reason 16");
+    CHECK(mb.find("grant_type_export_authority") != std::string::npos,
+          "3316 AC3: #3004 persist grant retained");
+    CHECK(mb.find("drain_pending_full_solve_before_commit") != std::string::npos,
+          "3316 AC3: #3031 drain retained");
+    CHECK(ev.find("if (!last_type_solve_solved_") != std::string::npos,
+          "3316 AC3: #3203 TIMEOUT refuse retained");
+    CHECK(aud.find("g_occurrence_persist_seq") != std::string::npos,
+          "3316 AC3: #3225 seqlock retained");
+}
+
+static void ac3316_4_source_linter() {
+    std::println("\n--- #3316 AC4: source-cite + extend #3237 linter + no invent ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_type_export_full_audit_gate_3237.py");
+    const auto build = read_file("build.py");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(!lint.empty() && lint.find("Issue #3316") != std::string::npos,
+          "ac3316_4_source_linter: 3237 linter extended");
+    CHECK(build.find("check_type_export_full_audit_gate_3237") != std::string::npos,
+          "3316 AC4: 3237 linter still wired");
+    CHECK(build.find("Issue #3316") != std::string::npos, "3316 AC4: build.py cites #3316");
+    CHECK(t.find("ac3316_1_production_densify_residual_after_drain") != std::string::npos,
+          "3316 AC4: AC1 in suite");
+    CHECK(ev.find("Issue #3316") != std::string::npos, "3316 AC4: Evaluator cites #3316");
+    CHECK(aud.find("Issue #3316") != std::string::npos, "3316 AC4: audit cites #3316");
+    CHECK(aud.find("kTypeExportAuthorityRaceIssue = 3316") != std::string::npos, "3316 AC4: stamp");
+    CHECK(read_file("tests/compiler/test_issue_3316.cpp").empty(), "3316 AC4: no invent");
+    CHECK(read_file("docs/design/3316-type-export-authority-race.md").empty(),
+          "3316 AC4: no docs/design");
+}
+
 // ── Issue #3294: outermost success face gates durable type export ──
 //
 // Residual of #3203/#3237 under multi-round Agent canary: a Soft
@@ -3247,6 +3426,11 @@ int run_test_solve_delta_unresolved_export() {
     ac3237_2_soft_quiet();
     ac3237_3_lineage();
     ac3237_4_source_linter();
+    std::println("\n=== Issue #3316: query:type authority race after densify residual ===");
+    ac3316_1_production_densify_residual_after_drain();
+    ac3316_2_soft_unchanged();
+    ac3316_3_no_new_schema();
+    ac3316_4_source_linter();
     std::println("\n=== Issue #3294: outermost success face gates durable export ===");
     ac3294_1_soft_recovered_solved_refuses();
     ac3294_2_production_timeout_unchanged();

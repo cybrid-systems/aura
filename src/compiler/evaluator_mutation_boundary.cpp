@@ -316,6 +316,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 // #3031 face_name "pending_full_solve_residual"). Clear the
                 // persist buffer + bump fingerprint mismatch counter (treat as
                 // abort — half-solve not allowed to ship).
+                // Issue #3316: drop any stale query:type grant BEFORE the
+                // reject proof so a later face-clear cannot re-green a
+                // half-solved CS.
+                ev->clear_type_export_authority();
                 (void)aura::compiler::typed_audit::
                     build_type_linear_commit_proof_from_live_with_outcome(
                         mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
@@ -336,11 +340,16 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // pending_full_solve residual AFTER drain SOLVED. Production/Full
     // must not stamp a green TypeLinearCommitProof or grant query:type.
     // Soft: face never latches. Quiet: one relaxed load of 0.
+    // Issue #3316: clear any stale grant BEFORE publishing the reject
+    // proof so a later face-clear cannot re-green a half-solved CS.
+    // Grant/query seqlock-resample the face (#3225); this site must not
+    // treat another fiber's odd persist seq as residual.
     if (aura::compiler::typed_audit::pending_full_solve_residual_face_hit()) {
         const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
                           aura::compiler::typed_audit::get_strategy() ==
                               aura::compiler::typed_audit::AuditStrategy::Full;
         if (hard) {
+            ev->clear_type_export_authority();
             (void)
                 aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                     mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,

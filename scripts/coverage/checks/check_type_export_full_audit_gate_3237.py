@@ -7,11 +7,21 @@ type computed under Soft observation or before the Full residual face
 closed (concurrent densify / nested abort). Production refuses residual;
 Soft unchanged; quiet two loads. Reuses force_reason 16. No new query key.
 
+Issue #3316 extends this linter: grant / query resample the residual
+face under the #3225 persist seqlock (acquire fence); outermost persist
+clears a stale grant BEFORE TypeLinearCommitProof when residual is
+observed mid-stamp. No new query key / g_3316_* counter.
+
 Contract:
   AC1 Production + residual dirty/TIMEOUT → not-authoritative; no green proof
   AC2 Soft unchanged; quiet residual-clear is one face load
   AC3 lineage #3004/#3031/#3203/#3225
   AC4 extend test_solve_delta_unresolved_export; this linter; no invent / docs
+  #3316 AC1 Production + concurrent densify residual after drain SOLVED
+        → not-authoritative until next outermost green
+  #3316 AC2 Soft unchanged (face never latches)
+  #3316 AC3 no new query schema key; reuse force_reason 16
+  #3316 AC4 this linter + test_solve_delta_unresolved_export; no invent / docs
 
 Exit 0 = all rows satisfied.
 """
@@ -90,6 +100,53 @@ def main() -> int:
     if docs.is_dir():
         for f in sorted(docs.glob("3237-*")):
             fails.append(f"AC4: docs/design/{f.name}")
+
+    # ── Issue #3316: seqlock resample + clear stale grant before proof ──
+    must("kTypeExportAuthorityRaceIssue = 3316", "3316 stamp", aud)
+    must("type_export_residual_faces_stable", "3316 helper", aud)
+    must("type_export_residual_faces_stable", "3316 Evaluator grant", ev)
+    must("type_export_residual_faces_stable", "3316 Evaluator query", ev)
+    must("pending_full_solve_residual_face_hit", "3316 grant explicit residual", ev)
+    hs = aud.find("bool type_export_residual_faces_stable()")
+    if hs < 0:
+        fails.append("3316: type_export_residual_faces_stable missing")
+    else:
+        end = aud.find("}", hs)
+        body = aud[hs:end] if end > hs else ""
+        if "g_occurrence_persist_seq" not in body:
+            fails.append("3316: stable helper must sample g_occurrence_persist_seq")
+        if "atomic_thread_fence" not in body:
+            fails.append("3316: stable helper must acquire-fence before resample")
+        if "g_pending_full_solve_residual_face" not in body:
+            fails.append("3316: stable helper must re-sample residual face")
+    must("Issue #3316", "3316 persist cite", mb)
+    must("clear_type_export_authority", "3316 persist clear", mb)
+    cite = mb.find("Issue #3237: concurrent densify")
+    if cite < 0:
+        fails.append("3316: persist residual cite missing")
+    else:
+        block = mb[cite : cite + 2200]
+        cpos = block.find("clear_type_export_authority")
+        bpos = block.find("build_type_linear_commit_proof")
+        if cpos < 0:
+            fails.append("3316: residual persist path must clear_type_export_authority")
+        elif bpos < 0 or cpos > bpos:
+            fails.append("3316: clear stale grant BEFORE TypeLinearCommitProof")
+    must("ac3316_1_production_densify_residual_after_drain", "3316 AC1 test", t)
+    must("ac3316_2_soft_unchanged", "3316 AC2 test", t)
+    must("ac3316_3_no_new_schema", "3316 AC3 test", t)
+    must("ac3316_4_source_linter", "3316 AC4 test", t)
+    if "schema-3316" in q:
+        fails.append("3316 AC3: new schema-3316 query key")
+    if "g_3316_" in ev or "g_3316_" in aud:
+        fails.append("3316 AC3: new g_3316_* counter")
+    if (ROOT / "tests" / "compiler" / "test_issue_3316.cpp").is_file():
+        fails.append("3316 AC4: tests/compiler/test_issue_3316.cpp")
+    if (ROOT / "tests" / "issues" / "test_issue_3316.cpp").is_file():
+        fails.append("3316 AC4: tests/issues/test_issue_3316.cpp")
+    if docs.is_dir():
+        for f in sorted(docs.glob("3316-*")):
+            fails.append(f"3316 AC4: docs/design/{f.name}")
 
     if fails:
         print("FAIL #3237 type_export_full_audit_gate:")
