@@ -1922,6 +1922,22 @@ inline serve::mf_mailbox::PushStatus emit_keepalive(serve::mf_mailbox::MultiFibe
     return st;
 }
 
+// Issue #3364: rollback_spawn_reservation — release any reserved arena
+// for `h` (no-op if zero). Used by BP deny path + Scheduler::spawn nullptr
+// path + future schedule-gate-at-spawn to ensure arena usage returns to
+// pre-spawn on every reject (no leak under storms). Caller is responsible
+// for any leak-detect / no-leak counter bumps — this helper is a pure
+// release of `reserved_memory_bytes` (paired with zeroing the field).
+// Mirrors the spawn-nullptr / fiber-preflight defensive release pattern.
+inline void rollback_spawn_reservation(AgentHandle& h) noexcept {
+    if (h.reserved_memory_bytes == 0)
+        return;
+    aura::core::resource_quota::process_resource_quota().release_agent_arena(
+        h.reserved_memory_bytes, h.reserved_quota_tenant);
+    h.reserved_memory_bytes = 0;
+    h.reserved_quota_tenant = 0;
+}
+
 // Issue #2155: finalize quota-reject accounting. Contract:
 //   !ok ⇒ reserved_memory_bytes == 0 (no permanent arena charge).
 // Defensive release if residual reserved (should never fire). Bumps
@@ -2085,7 +2101,14 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
                 " >= threshold=" + std::to_string(thr_limit) +
                 " override=" + (override_active ? "true" : "false") + " source=" + thr_d.source +
                 ")";
-            h.reserved_memory_bytes = 0;
+            // Issue #3364: release arena BEFORE clearing reserved_memory_bytes.
+            // finalize_spawn_quota_reject only releases when the field is non-zero,
+            // so the legacy `h.reserved_memory_bytes = 0; finalize(...)` order made
+            // finalize take the no_leak_ok arm WITHOUT releasing — process/tenant
+            // Memory quota stayed charged while handle reported clean. rollback_spawn_reservation
+            // (Issue #3364 helper) restores the correct order and is reused by
+            // the Scheduler::spawn nullptr path below.
+            rollback_spawn_reservation(h);
             finalize_spawn_quota_reject(h);
         };
 
@@ -2219,9 +2242,10 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
         // Issue #1600 / #2155: Scheduler::spawn returns nullptr on fiber
         // ResourceQuota after arena was already reserved — must release
         // before return so agent_arena_usage_bytes does not leak under storms.
-        pq.release_agent_arena(mem_cost, orch_tenant);
-        h.reserved_memory_bytes = 0;
-        h.reserved_quota_tenant = 0;
+        // Issue #3364: use the shared rollback helper (replaces the inline
+        // `pq.release_agent_arena + zero fields` sequence so BP / nullptr /
+        // future schedule-gate-at-spawn share one release path).
+        rollback_spawn_reservation(h);
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.resource_quota_rejects_total.fetch_add(1, std::memory_order_relaxed);

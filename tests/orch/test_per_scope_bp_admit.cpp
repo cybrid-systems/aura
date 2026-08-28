@@ -178,6 +178,12 @@ int run_test_per_scope_bp_admit() {
         bump_bp_recent(50);
         const auto override_before = g_orch_module_stats.spawn_bp_admit_reject_override_total.load(
             std::memory_order_relaxed);
+        // Issue #3364: capture arena usage + release gauges BEFORE spawn so
+        // we can assert that the override-reject path actually releases the
+        // consumed arena (rollback_spawn_reservation fires before finalize).
+        const auto& pq_for_gauge = aura::core::resource_quota::process_resource_quota();
+        const auto arena_usage_before = pq_for_gauge.agent_arena_usage_bytes.load();
+        const auto arena_release_before = pq_for_gauge.agent_arena_release_total.load();
 
         auto spec = make_spec("override-strict");
         spec.bp_admit_threshold = std::optional<std::uint64_t>{32};
@@ -191,6 +197,17 @@ int run_test_per_scope_bp_admit() {
               "3251: BP admit deny_class=bp-admit");
         CHECK(h.reserved_memory_bytes == 0,
               "AC4: override reject → reserved_memory_bytes=0 (no-leak #2155)");
+        // Issue #3364: arena usage MUST return to pre-spawn baseline after
+        // override-reject (rollback_spawn_reservation releases before
+        // finalize_spawn_quota_reject zeros reserved_memory_bytes).
+        const auto arena_usage_after =
+            pq_for_gauge.agent_arena_usage_bytes.load(std::memory_order_relaxed);
+        const auto arena_release_after =
+            pq_for_gauge.agent_arena_release_total.load(std::memory_order_relaxed);
+        CHECK(arena_usage_after == arena_usage_before,
+              "3364 AC4: agent_arena_usage_bytes returns to baseline on override reject (no leak)");
+        CHECK(arena_release_after == arena_release_before + 1,
+              "3364 AC4: agent_arena_release_total bumps by 1 (rollback_spawn_reservation fired)");
         // Counter bumped (override_active).
         CHECK(g_orch_module_stats.spawn_bp_admit_reject_override_total.load(
                   std::memory_order_relaxed) == override_before + 1,
