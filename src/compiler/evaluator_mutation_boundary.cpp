@@ -259,6 +259,21 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // Mismatch -> treat as abort: clear persist + bump mismatch counter.
         (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
         ev->bump_occurrence_persist_fingerprint_mismatch();
+        // Issue #3376: half-green fix — the previous green
+        // TypeLinearCommitProof stays eligible for IR Move/Drop elision
+        // (linear_fast_path_ok + ir_typed_entry_commit_readiness_ok at
+        // depth==0) if we just return. Stamp reject proof (force_reason 16
+        // — fingerprint drift is an abort-class face) + clear the
+        // previous green proof + drop any stale query:type grant.
+        const auto fp_mismatch_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+        (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+            fp_mismatch_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+            aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+            /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
+        aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+            aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+        aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+        ev->clear_type_export_authority();
         return; // skip persist + proof + health + grant
     }
     // Issue #3281 AC2: no green stamp on torn state — outermost-success
@@ -282,6 +297,11 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
                 1, std::memory_order_relaxed);
+            // Issue #3376: half-green fix — clear the previous green
+            // TypeLinearCommitProof so IR Move/Drop elision cannot ride
+            // the stale proof after mid-abort authority reject.
+            aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+            ev->clear_type_export_authority();
             return;
         }
     }
@@ -328,6 +348,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                         /*force_reason=*/16);
                 aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                     aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+                // Issue #3376: half-green fix — clear the previous green
+                // TypeLinearCommitProof so IR Move/Drop elision cannot ride
+                // the stale proof after drain non-SOLVED reject.
+                aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
                 (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
                 ev->bump_occurrence_persist_fingerprint_mismatch();
                 return; // skip stamp + health + grant
@@ -358,6 +382,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                     /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            // Issue #3376: half-green fix — clear the previous green
+            // TypeLinearCommitProof so IR Move/Drop elision cannot ride
+            // the stale proof after pending face hit.
+            aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
             return; // skip green stamp + health + grant
@@ -385,6 +413,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                     /*force_reason=*/16);
             aura::compiler::typed_audit::publish_type_linear_proof_outcome(
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            // Issue #3376: half-green fix — clear the previous green
+            // TypeLinearCommitProof so IR Move/Drop elision cannot ride
+            // the stale proof after ADT-exhaust recheck reject.
+            aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
             return; // no green stamp / no grant
@@ -406,7 +438,26 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // post-persist stamp. Does not write persist (sole writer remains
     // this helper — #2938). Soft empty → evaluate only; production
     // faces → existing try_occurrence_hard_face_full_solve_recover.
-    (void)tc->ensure_occurrence_commit_or_recover();
+    // Issue #3376: half-green fix — the previous (void) discarded the
+    // recover return. Failure leaves cone_outside / empty_after_fence /
+    // refined_drift faces, then grant_type_export_authority still runs
+    // and only consults type_export_residual_faces_clear() (which is
+    // pending_full_solve_residual_face, NOT the occurrence recover
+    // faces). Stamp reject + clear previous green proof + drop any
+    // stale query:type grant; reuse force_reason 16 (abort-class) as
+    // the generic stamp — the face code 10/11/15 lives in the
+    // publish_occurrence_commit_health bitmask for Agent observability.
+    if (!tc->ensure_occurrence_commit_or_recover()) {
+        ev->clear_type_export_authority();
+        (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+            mutation_id, /*would_allow_commit=*/false, /*linear_ok=*/false,
+            aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+            /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
+        aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+            aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+        aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+        return; // skip grant; recover face stamps via publish_occurrence_commit_health
+    }
     // Issue #3004: query:type authority only after persist + Full
     // audit success (this helper runs only on outermost && success).
     // Soft: persist is off; grant still marks the post-audit surface

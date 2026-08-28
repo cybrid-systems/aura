@@ -2286,6 +2286,11 @@ add_dependencies(all_test_issue_targets test_macro_clone_target_atomicity)
 aura_add_issue_test(test_occurrence_abort_restore)
 aura_issue_test_link_light(test_occurrence_abort_restore)
 add_dependencies(all_test_issue_targets test_occurrence_abort_restore)
+# Issue #3376: outermost persist fail-closed (no half-green exits on
+# fingerprint mismatch / ensure_occurrence_commit_or_recover return).
+aura_add_issue_test(test_outermost_persist_fail_closed)
+aura_issue_test_link_light(test_outermost_persist_fail_closed)
+add_dependencies(all_test_issue_targets test_outermost_persist_fail_closed)
 # Issue #3159: close residual half-green window where concurrent
 # lookup_define_v2 during dual-topology restore could observe pre-abort
 # IR if abort-force fence is published after topology restore starts

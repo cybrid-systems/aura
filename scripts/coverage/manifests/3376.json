@@ -1,0 +1,56 @@
+{
+  "issue": 3376,
+  "title": "Issue #3376: outermost persist must not stamp green / grant query:type when fingerprint-mismatch or occurrence recover fails.",
+  "ok": "OK: Issue #3376 outermost persist fail-closed (no half-green) \u2014 all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "expected_occurrence_snapshot_fp() != 0",
+        "build_type_linear_commit_proof_from_live_with_outcome(",
+        "kTypeLinearProofOutcomeReject",
+        "clear_type_linear_commit_proof_on_abort()",
+        "ev->clear_type_export_authority()",
+        "#3376"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "if (!tc->ensure_occurrence_commit_or_recover())",
+        "build_type_linear_commit_proof_from_live_with_outcome(",
+        "kTypeLinearProofOutcomeReject",
+        "clear_type_linear_commit_proof_on_abort()"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_mutation_boundary.cpp",
+      "contains": [
+        "clear_type_linear_commit_proof_on_abort()",
+        "mid_abort_authority_mismatch_total",
+        "pending_full_solve_residual",
+        "recheck_all_live_adt_exhaust_before_proof"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "tests/compiler/test_outermost_persist_fail_closed.cpp",
+      "contains": [
+        "3376",
+        "ac1_fingerprint_mismatch",
+        "ac2_ensure_occurrence_check",
+        "ac3_clear_type_linear_commit_proof"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_outermost_persist_fail_closed"
+      ]
+    }
+  ]
+}
