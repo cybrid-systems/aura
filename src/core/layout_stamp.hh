@@ -29,6 +29,7 @@
 #ifndef AURA_CORE_LAYOUT_STAMP_HH
 #define AURA_CORE_LAYOUT_STAMP_HH
 
+#include <cstddef>
 #include <cstdint>
 // Note: do NOT include workspace_epoch.hh here. workspace_epoch.hh
 // defines inline functions (current_mutation_epoch, etc.) that, when
@@ -151,6 +152,23 @@ struct LayoutStamp {
     // directly (see layout_stamp.hh preamble comment). The capture
     // logic lives in evaluator_mutation_boundary.cpp::current_layout_stamp().
 };
+
+// Issue #3314: LayoutStamp is append-only at struct END (#2906 / #3292
+// lineage). Cross-module POD (fiber resume / AOT / FFI). Mid-struct
+// insert (the class that forced a revert once) corrupts neighboring
+// fields. Compile-time only, zero runtime. Last field is
+// ir_soa_generation (#2432 8th field).
+static_assert(offsetof(LayoutStamp, flat_gen) == 16,
+              "Issue #3314: LayoutStamp.flat_gen must stay at offset 16 "
+              "(uint16 + pad before mutation_epoch, #2906/#3292)");
+static_assert(offsetof(LayoutStamp, shape_version) == 48,
+              "Issue #3314: LayoutStamp.shape_version must stay at offset 48 "
+              "(#2255 7th field, #2906/#3292)");
+static_assert(offsetof(LayoutStamp, ir_soa_generation) == 56,
+              "Issue #3314: LayoutStamp.ir_soa_generation must stay at offset 56 "
+              "(last field, append-only at struct END, #2432/#2906/#3292)");
+static_assert(sizeof(LayoutStamp) == 64, "Issue #3314: LayoutStamp size must stay 64 "
+                                         "(append-only at struct END, #2906/#3292)");
 
 // Schema marker — surface for the (query:stable-ref-stats-hash)
 // extension's layout-stamp-schema key. Bumped when the LayoutStamp

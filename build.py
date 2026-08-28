@@ -4613,6 +4613,20 @@ def cmd_lint():
             "Issue #3292 PCV hotpath metrics layout linter failed — run python3 scripts/coverage/checks/check_pcv_hotpath_metrics_layout_3292.py"
         )
         return r
+    # Issue #3314: extend append-only offsetof/sizeof stamps beyond
+    # PcvHotpathMetrics (I3 residual of #2906/#3292) to IR SoA dirty/
+    # column tail + DensifyConsistencyReport + LayoutStamp. Compile-time
+    # only; extends test_ir_soa_layout_stamp (#81967); no docs/design/.
+    aos3314_script = COVERAGE_CHECKS / "check_append_only_layout_stamps_3314.py"
+    if not aos3314_script.exists():
+        fail(f"missing {aos3314_script}")
+        return 1
+    r = run([sys.executable, str(aos3314_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3314 append-only layout stamp linter failed — run python3 scripts/coverage/checks/check_append_only_layout_stamps_3314.py"
+        )
+        return r
     # Issue #3023: leftover linear_roots unpin on abort / reclaim.
     # Extends test_linear_pin_moving_compact (#81967); no docs/design/.
     lrar_script = COVERAGE_CHECKS / "check_linear_root_abort_release_3023.py"

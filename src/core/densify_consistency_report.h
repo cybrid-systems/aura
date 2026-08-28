@@ -38,6 +38,7 @@
 #define AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H
 
 #include <atomic>
+#include <cstddef>
 #include <cstdint>
 #include <cstdlib>
 #include <string>
@@ -100,6 +101,19 @@ struct DensifyConsistencyReport {
         return "none";
     }
 };
+
+// Issue #3314: DensifyConsistencyReport is append-only at struct END
+// (#2906 / #3292 lineage). Agents + Phase-5 read axes by field; a
+// mid-struct insert shifts BMI offsets. Compile-time only, zero runtime.
+static_assert(offsetof(DensifyConsistencyReport, pin_ok) == 0,
+              "Issue #3314: DensifyConsistencyReport.pin_ok must stay at offset 0 "
+              "(#2906/#3292)");
+static_assert(offsetof(DensifyConsistencyReport, envframe_ok) == 7,
+              "Issue #3314: DensifyConsistencyReport.envframe_ok must stay at offset 7 "
+              "(last axis, append-only at struct END, #2906/#3292)");
+static_assert(sizeof(DensifyConsistencyReport) == 8,
+              "Issue #3314: DensifyConsistencyReport size must stay 8 "
+              "(append-only at struct END, #2906/#3292)");
 
 // File-level atomic counter — incremented when a Phase 5 driver
 // computes a DensifyConsistencyReport with !overall_ok(). Exposed via

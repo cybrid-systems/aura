@@ -38,8 +38,8 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
-| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 53 | 53 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 137 | 137 | P2 — often thin schema probes; collapse into obs matrix |
+| `shape_soa` | Shape / SoA / column layout | 0 | 0 | 54 | 54 | P2 — small-medium; soa_batch precedent |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 56 | 56 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1755,13 +1755,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workload_adaptive_relower.cpp` (—) [domain_suite, theme_compiler] — AC1: default base=8 compatible with #2032 (no forced signals)
 - `tests/compiler/test_write_string_escape.cpp` (—) [domain_suite, theme_compiler] — AC1: (write "a\"b") → "a\"b" under default JIT path
 
-### `shape_soa` — Shape / SoA / column layout (53)
+### `shape_soa` — Shape / SoA / column layout (54)
 
 **Target:** tests/core/test_soa_batch.cpp (no move needed)
 
 **Priority:** P2 — small-medium; soa_batch precedent
 
-#### domain/ (53)
+#### domain/ (54)
 
 - `tests/compiler/test_alloc_block_seal_last.cpp` (—) [domain_suite, theme_compiler] — AC1: finalize_last_blocks / finalize_soa_module / #2820 cites
 - `tests/compiler/test_apply_closure_envframe_soa.cpp` (—) [domain_suite, theme_compiler] — Issue #1365/#1475/#1511/#1626/#1632/#1660 (#1978 renamed): issue# moved from filename to header.
@@ -1781,6 +1781,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_hot_contract_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: policy documented in cpp26_contract_stats.h (AURA_HOT_CONTRACT)
 - `tests/compiler/test_ir_soa_dual_emit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — tests/compiler/test_ir_soa_dual_emit_batch.cpp — IR SoA dual-emit family dup-merge (R19 phase
 - `tests/compiler/test_ir_soa_incremental_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #254/#403/#404/#506 (#1978 renamed): issue# moved from filename to header.
+- `tests/compiler/test_ir_soa_layout_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: generation advance after stamp → resume mismatch + fence hit
 - `tests/compiler/test_layout_stamp_equality_8field.cpp` (—) [domain_suite, theme_compiler] — AC1: operator== compares all 8 fields; shape-only / ir-only mismatch
 - `tests/compiler/test_list_vector_soa_hotpath_ai_loops.cpp` (—) [domain_suite, theme_compiler] — test_list_vector_soa_hotpath_ai_loops.cpp — Issue #752:
 - `tests/compiler/test_matcher_stable_captures.cpp` (—) [domain_suite, theme_compiler] — Issue #1695 (#1978 renamed): issue# moved from filename to header.
@@ -1817,13 +1818,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (137)
+### `observability` — Observability / metrics / query:*-stats (136)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (137)
+#### domain/ (136)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1876,7 +1877,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_invalidate_consistency.cpp` (—) [domain_suite, theme_compiler] — Issue #1496/#1607/#1627 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_invalidations_stats_workspace_lock.cpp` (—) [domain_suite, theme_compiler] — Issue #1729/#1851 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_ir_metadata_interpreter_jit_closed_loop.cpp` (—) [domain_suite, theme_compiler] — Issue #403/#506/#570/#598 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_ir_soa_layout_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: generation advance after stamp → resume mismatch + fence hit
 - `tests/compiler/test_isolation_stamp_resolve.cpp` (—) [domain_suite, theme_compiler] — AC1: export_ref / export_ref_safe stamp tenant + fiber (Phase A mandate)
 - `tests/compiler/test_issue_3097.cpp` (#3097) [domain_suite, theme_compiler] — AC1: deferred_hybrid_pending_upper_bound_ counts pending edges
 - `tests/compiler/test_let_poly_solve_delta.cpp` (—) [domain_suite, theme_compiler] — Issue #1617/#745/#798 (#1978 renamed): issue# moved from filename to header.

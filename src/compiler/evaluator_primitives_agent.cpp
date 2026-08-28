@@ -3682,7 +3682,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Body thunk is optional for MVP (empty body = supervised no-op);
     // closure-ID parsing mirrors orch:spawn-agent pattern.
     add("orch:scope-spawn",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key,
+         add_deny_class](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
