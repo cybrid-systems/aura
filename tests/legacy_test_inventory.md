@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 865 | Preferred destination suites |
-| **Total scanned** | **865** | |
+| `tests/core/test_*.cpp` | 866 | Preferred destination suites |
+| **Total scanned** | **866** | |
 
 ### Related artifacts
 
@@ -33,7 +33,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 256 | 256 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 257 | 257 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 107 | 107 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
@@ -824,6 +824,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp`
 - `tests/compiler/test_reemit_production_default_defer.cpp`
 - `tests/compiler/test_reemit_production_default_defer_v2.cpp`
+- `tests/compiler/test_reemit_production_provider_wired.cpp`
 - `tests/compiler/test_refinement_closed_loop.cpp`
 - `tests/compiler/test_reflect_batch.cpp`
 - `tests/reflect/test_reflect_hygiene_agent_diagnostics.cpp`
@@ -1179,13 +1180,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (256)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (257)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (256)
+#### domain/ (257)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1382,6 +1383,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_rebind_parse_failure_no_leak.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind parse-error path cites #2791 + free_orphan_nodes_from
 - `tests/compiler/test_rebind_rollback_nodeid_validity.cpp` (—) [domain_suite, theme_compiler] — AC1: rebind source cites #2795; old_value after parse + live check
 - `tests/compiler/test_reemit_mutation_boundary_handshake.cpp` (—) [domain_suite, theme_compiler] — Handshake policy for Agent / plugin authors (AC5 / #2205):
+- `tests/compiler/test_reemit_production_provider_wired.cpp` (—) [domain_suite, theme_compiler] — loop, not native-replace closed loop). Single-workspace MVP; no
 - `tests/compiler/test_replace_pattern_multi_match_nodeid_stability.cpp` (—) [domain_suite, theme_compiler] — AC1: lockless two-phase make_ref_layout + is_valid_in + reverse parent;
 - `tests/compiler/test_replace_pattern_no_match_no_leak.cpp` (—) [domain_suite, theme_compiler] — AC1: lockless + public cite #2798; free_orphan on skip + replaced_count==0
 - `tests/compiler/test_replace_value_audit_consistency.cpp` (—) [domain_suite, theme_compiler] — AC1: replace-value + rollback_to_size cite #2793; force RolledBack helper

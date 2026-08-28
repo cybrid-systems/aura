@@ -18,6 +18,8 @@
 #include "core/workspace_epoch.hh"            // Issue #2039: dual-write WorkspaceEpoch::Bridge
 #include "compiler/bridge_epoch_zero_stats.h" // Issue #2930: zero-epoch counters
 
+#include <algorithm> // Issue #3373: std::min for ring entry name length
+#include <array>     // Issue #3373: std::array for production dirty ring entries
 #include <atomic>
 #include <cstdarg>
 #include <cstdio>
@@ -1031,6 +1033,104 @@ extern "C" void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void
     g_reemit_candidate_fn = fn;
     g_reemit_candidate_userdata = userdata;
     aura::compiler::hot_update_registry().on_reemit_provider_set(fn != nullptr);
+}
+
+// ── Issue #3373: production CompilerService dirty-name ring ─────────────
+// Filled by CompilerService::notify_hot_update_after_cascade_ +
+// mark_define_dirty / invalidate_function. Popped by the production
+// candidate iterator installed in CompilerService ctor (via
+// aura_install_production_dirty_iterator) so aura_reemit_aot_for_dirty
+// sees the dirty set under production. Soft / Off: not installed →
+// reemit_provider_wired==0 stays zero-cost (#3373 AC3). Bounded cap
+// (256) drops oldest on overflow so the freshest candidates win
+// under mutate storms.
+namespace {
+constexpr std::size_t kProductionDirtyRingCap = 256;
+
+struct ProductionDirtyRingEntry {
+    std::array<char, 128> name{};
+    std::uint64_t region = 0;
+    bool from_closure_capture = false;
+};
+
+std::mutex g_production_dirty_ring_mtx;
+std::array<ProductionDirtyRingEntry, kProductionDirtyRingCap> g_production_dirty_ring{};
+std::size_t g_production_dirty_ring_head = 0;
+std::size_t g_production_dirty_ring_tail = 0;
+std::atomic<std::uint64_t> g_production_dirty_ring_pushed_total{0};
+std::atomic<std::uint64_t> g_production_dirty_ring_dropped_total{0};
+std::atomic<std::uint64_t> g_production_dirty_ring_popped_total{0};
+
+bool production_dirty_candidate_iter(void* /*userdata*/, const char** out_name,
+                                     std::uint64_t* out_region, bool* out_from_closure_capture) {
+    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    if (g_production_dirty_ring_head == g_production_dirty_ring_tail)
+        return false;
+    const auto& e = g_production_dirty_ring[g_production_dirty_ring_head];
+    *out_name = e.name.data();
+    *out_region = e.region;
+    *out_from_closure_capture = e.from_closure_capture;
+    g_production_dirty_ring_head = (g_production_dirty_ring_head + 1) % kProductionDirtyRingCap;
+    g_production_dirty_ring_popped_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
+}
+} // namespace
+
+extern "C" int aura_production_dirty_ring_push(const char* name, std::uint64_t region,
+                                               int from_closure_capture) {
+    if (!name || !*name)
+        return 0;
+    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    const auto next_tail = (g_production_dirty_ring_tail + 1) % kProductionDirtyRingCap;
+    if (next_tail == g_production_dirty_ring_head) {
+        // Full — drop oldest to keep freshest candidates.
+        g_production_dirty_ring_head = (g_production_dirty_ring_head + 1) % kProductionDirtyRingCap;
+        g_production_dirty_ring_dropped_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    auto& e = g_production_dirty_ring[g_production_dirty_ring_tail];
+    const auto len = std::min(std::strlen(name), e.name.size() - 1);
+    std::memcpy(e.name.data(), name, len);
+    e.name[len] = '\0';
+    e.region = region;
+    e.from_closure_capture = (from_closure_capture != 0);
+    g_production_dirty_ring_tail = next_tail;
+    g_production_dirty_ring_pushed_total.fetch_add(1, std::memory_order_relaxed);
+    return 1;
+}
+
+extern "C" void aura_production_dirty_ring_reset_for_test(void) {
+    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    g_production_dirty_ring_head = 0;
+    g_production_dirty_ring_tail = 0;
+    g_production_dirty_ring_pushed_total.store(0, std::memory_order_relaxed);
+    g_production_dirty_ring_dropped_total.store(0, std::memory_order_relaxed);
+    g_production_dirty_ring_popped_total.store(0, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_production_dirty_ring_pushed_total(void) {
+    return g_production_dirty_ring_pushed_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_production_dirty_ring_dropped_total(void) {
+    return g_production_dirty_ring_dropped_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_production_dirty_ring_popped_total(void) {
+    return g_production_dirty_ring_popped_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint64_t aura_production_dirty_ring_depth(void) {
+    std::lock_guard<std::mutex> lock(g_production_dirty_ring_mtx);
+    if (g_production_dirty_ring_tail >= g_production_dirty_ring_head)
+        return g_production_dirty_ring_tail - g_production_dirty_ring_head;
+    return kProductionDirtyRingCap - (g_production_dirty_ring_head - g_production_dirty_ring_tail);
+}
+
+// Install the production candidate iterator (idempotent; gated on
+// production active). Returns 1 on install, 0 if Soft/Off (zero-cost
+// contract). Called from CompilerService ctor (#3373 AC1).
+extern "C" int aura_install_production_dirty_iterator(void) {
+    if (aura_production_defaults_active_probe() == 0)
+        return 0;
+    aura_set_reemit_candidate_fn(&production_dirty_candidate_iter, nullptr);
+    return 1;
 }
 
 // Issue #1952: set the actual LLVM re-emit callback.

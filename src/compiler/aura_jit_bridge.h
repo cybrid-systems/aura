@@ -616,6 +616,20 @@ typedef bool (*aura_reemit_candidate_fn_t)(void* userdata, const char** out_name
                                            bool* out_from_closure_capture);
 void aura_set_reemit_candidate_fn(aura_reemit_candidate_fn_t fn, void* userdata);
 
+// Issue #3373: production CompilerService dirty-name ring + install.
+// The production candidate iterator lives in aura_jit_bridge.cpp and
+// pops from a bounded ring (cap 256) filled by CompilerService cascade
+// + single-name IR dirty paths. Soft / Off: aura_install_production_dirty_iterator
+// is a no-op (returns 0) so reemit_provider_wired==0 stays zero-cost.
+extern "C" int aura_install_production_dirty_iterator(void);
+extern "C" int aura_production_dirty_ring_push(const char* name, std::uint64_t region,
+                                               int from_closure_capture);
+extern "C" void aura_production_dirty_ring_reset_for_test(void);
+extern "C" std::uint64_t aura_production_dirty_ring_pushed_total(void);
+extern "C" std::uint64_t aura_production_dirty_ring_dropped_total(void);
+extern "C" std::uint64_t aura_production_dirty_ring_popped_total(void);
+extern "C" std::uint64_t aura_production_dirty_ring_depth(void);
+
 // Issue #1952 / #1930: actual LLVM re-emit callback. The host
 // (Evaluator / CompilerService) wires a function that takes the dirty
 // FlatFunction name + region, looks up via ir_cache_v2_ or
