@@ -40,6 +40,7 @@
 #include <print>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <vector>
 
@@ -54,6 +55,9 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::macro_exp::FiberHygieneStats;
+using aura::compiler::macro_exp::kHygieneLimitReasonDepthLimit;
+using aura::compiler::macro_exp::kHygieneLimitReasonGensymCeiling;
+using aura::compiler::macro_exp::note_hygiene_last_limit_reason_for_fiber;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
@@ -178,6 +182,7 @@ static void ac2_api_roundtrip() {
     CHECK(s0.depth == 0, "no entry → depth==0");
     CHECK(s0.violations == 0u, "no entry → violations==0");
     CHECK(s0.gensym_map_size == 0u, "no entry → gensym_map_size==0");
+    CHECK(s0.last_limit_reason == 0u, "no entry → last_limit_reason==0");
 
     // Same id returns same (still default) snapshot.
     FiberHygieneStats s1 = aura::compiler::macro_exp::get_fiber_hygiene_metrics(fresh_id);
@@ -487,6 +492,67 @@ static void ac12_self_evo_enforcement_2243() {
     CHECK(gs1 >= gs0, "AC12: gensym_map_size_exceeded_total monotonic");
 }
 
+extern "C" void aura_evaluator_note_steal_abort_mid_expand(void) noexcept;
+
+// Issue #3341: per-fiber last_limit_reason + steal-abort-mid-expand Agent string.
+static void ac3341_per_fiber_last_limit_reason() {
+    std::println("\n--- #3341: per-fiber last_limit_reason + steal-abort-mid-expand ---");
+    using aura::compiler::macro_exp::g_macro_hygiene_last_limit_reason;
+    using aura::compiler::macro_exp::get_fiber_hygiene_metrics;
+    using aura::compiler::macro_exp::hygiene_last_limit_reason_string;
+
+    const std::uint32_t fa = 0x33410001u;
+    const std::uint32_t fb = 0x33410002u;
+    std::thread t1(
+        [&] { note_hygiene_last_limit_reason_for_fiber(fa, kHygieneLimitReasonGensymCeiling); });
+    std::thread t2(
+        [&] { note_hygiene_last_limit_reason_for_fiber(fb, kHygieneLimitReasonDepthLimit); });
+    t1.join();
+    t2.join();
+    const auto sa = get_fiber_hygiene_metrics(fa);
+    const auto sb = get_fiber_hygiene_metrics(fb);
+    CHECK(sa.last_limit_reason == kHygieneLimitReasonGensymCeiling,
+          "3341: fiber A keeps gensym-ceiling (not last-writer-wins)");
+    CHECK(sb.last_limit_reason == kHygieneLimitReasonDepthLimit,
+          "3341: fiber B keeps depth-limit (not last-writer-wins)");
+    const auto glob = g_macro_hygiene_last_limit_reason.load(std::memory_order_relaxed);
+    CHECK(glob == kHygieneLimitReasonGensymCeiling || glob == kHygieneLimitReasonDepthLimit,
+          "3341: global atomic still updates (last-writer-wins)");
+    CHECK(hygiene_last_limit_reason_string() != nullptr, "3341: global string accessor live");
+
+    auto ixx = read_file("src/compiler/macro_expansion.ixx");
+    CHECK(ixx.find("last_limit_reason = 0") != std::string::npos,
+          "3341: FiberHygieneStats.last_limit_reason field");
+    auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("stamp_fiber_last_limit_reason") != std::string::npos,
+          "3341: note_* stamps per-fiber stats");
+    CHECK(me.find("aura_evaluator_note_steal_abort_mid_expand") != std::string::npos,
+          "3341: steal-abort stamps last_mutate_error_");
+    CHECK(me.find("steal-abort-mid-expand") != std::string::npos ||
+              read_file("src/compiler/evaluator.ixx").find("steal-abort-mid-expand") !=
+                  std::string::npos,
+          "3341: steal-abort-mid-expand string present");
+    CHECK(me.find("aura_macro_provenance_repin_on_steal(nullptr") == std::string::npos,
+          "3341: production clone does not pass nullptr to repin");
+    CHECK(me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)") !=
+              std::string::npos,
+          "3341: gensym-ceiling deny routes through note_* (per-fiber stamp)");
+
+    CompilerService cs;
+    aura::compiler::Evaluator::set_query_evaluator(&cs.evaluator());
+    cs.evaluator().clear_last_mutate_error();
+    aura_evaluator_note_steal_abort_mid_expand();
+    CHECK(cs.evaluator().last_mutate_error() == "steal-abort-mid-expand",
+          "3341: last_mutate_error_ is steal-abort-mid-expand");
+    aura::compiler::Evaluator::set_query_evaluator(nullptr);
+
+    auto lint = read_file("scripts/coverage/checks/check_fiber_hygiene_last_limit_reason_3341.py");
+    CHECK(!lint.empty() && lint.find("3341") != std::string::npos, "3341: linter present");
+    auto bp = read_file("build.py");
+    CHECK(bp.find("check_fiber_hygiene_last_limit_reason_3341.py") != std::string::npos,
+          "3341: build.py wires linter");
+}
+
 } // namespace
 
 int main() {
@@ -499,8 +565,10 @@ int main() {
     ac7_runtime_caps_and_per_fiber_2174();
     ac8_concurrent_and_global_counters_2174();
     ac12_self_evo_enforcement_2243();
+    ac3341_per_fiber_last_limit_reason();
     if (g_failed)
         return 1;
-    std::println("macro fiber hygiene (#2097 + #2174 + #2241 + #2243): OK ({} passed)", g_passed);
+    std::println("macro fiber hygiene (#2097 + #2174 + #2241 + #2243 + #3341): OK ({} passed)",
+                 g_passed);
     return 0;
 }

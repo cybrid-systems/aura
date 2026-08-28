@@ -34,6 +34,9 @@ extern "C" int aura_macro_provenance_repin_on_steal(void* ev_ptr, std::uint64_t 
                                                     int was_violation);
 // Issue #2810: resolve active Evaluator* for dual-write (fiber mutation TU).
 extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
+// Issue #3341: stamp Evaluator::last_mutate_error_ with the stable
+// steal-abort-mid-expand Agent reason (same mutate-hygiene reject surface).
+extern "C" void aura_evaluator_note_steal_abort_mid_expand(void) noexcept;
 // Issue #3378: forward-declared Evaluator (full type lives in
 // aura::compiler::Evaluator) so the tenant_for_macro_self_evo_check
 // helper can read capability_tenant_id() on the live Evaluator. The
@@ -364,10 +367,21 @@ void reset_hygiene_runtime_caps_for_test() noexcept {
     g_macro_hygiene_last_limit_reason.store(0, std::memory_order_relaxed);
 }
 
-void note_hygiene_last_limit_reason(std::uint8_t code) noexcept {
-    // Issue #3215: extra store only on reject/detection (callers already
-    // returned on the quiet !is_macro_introduced / rest-already-stamped path).
+static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept;
+
+void note_hygiene_last_limit_reason_for_fiber(std::uint32_t fiber_id, std::uint8_t code) noexcept {
+    // Issue #3215 / #3341: extra store only on reject/detection (callers
+    // already returned on the quiet !is_macro_introduced / rest-already-stamped
+    // path). Global atomic stays for aggregate dashboards (last-writer-wins);
+    // per-fiber FiberHygieneStats.last_limit_reason is the Agent-correlation
+    // surface under concurrent expand / mutate.
     g_macro_hygiene_last_limit_reason.store(code, std::memory_order_relaxed);
+    stamp_fiber_last_limit_reason(fiber_id, code);
+}
+
+void note_hygiene_last_limit_reason(std::uint8_t code) noexcept {
+    note_hygiene_last_limit_reason_for_fiber(static_cast<std::uint32_t>(aura_fiber_current_id()),
+                                             code);
 }
 
 const char* hygiene_last_limit_reason_string() noexcept {
@@ -629,6 +643,13 @@ inline std::atomic<std::uint64_t> g_macro_self_evo_fiber_violation_deny_total{0}
 inline void bump_fiber_hygiene_on_enter(std::uint32_t fiber_id, int depth) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
     g_fiber_hygiene_map[fiber_id].depth = depth;
+}
+// Issue #3341: per-fiber last_limit_reason (same codes as the process
+// atomic). Called from note_hygiene_last_limit_reason* on reject only —
+// no new TLS, no quiet-path walk.
+static void stamp_fiber_last_limit_reason(std::uint32_t fiber_id, std::uint8_t code) noexcept {
+    std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
+    g_fiber_hygiene_map[fiber_id].last_limit_reason = code;
 }
 inline void bump_fiber_hygiene_on_violation(std::uint32_t fiber_id) noexcept {
     std::lock_guard<std::mutex> lock(g_fiber_hygiene_mu);
@@ -1954,7 +1975,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // unmapped binding.
         const auto gensym_cap = effective_max_gensym_map_size();
         if (gensym_cap > 0 && name_map && name_map->size() >= gensym_cap) {
-            g_macro_hygiene_last_limit_reason.store(1, std::memory_order_relaxed);
+            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
             g_hygiene_violation_in_macro_expand_total.fetch_add(1, std::memory_order_relaxed);
@@ -1998,7 +2019,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // same rollback surface as ceiling mid-walk deny in rename_binding_pre.
         const auto gensym_cap_rest = effective_max_gensym_map_size();
         if (gensym_cap_rest > 0 && name_map->size() >= gensym_cap_rest) {
-            g_macro_hygiene_last_limit_reason.store(1, std::memory_order_relaxed);
+            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
@@ -2161,7 +2182,7 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // without this check max_gensym_map_size is only half-enforced.
         const auto gensym_cap = effective_max_gensym_map_size();
         if (gensym_cap > 0 && name_map->size() >= gensym_cap) {
-            g_macro_hygiene_last_limit_reason.store(1, std::memory_order_relaxed);
+            note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling);
             g_macro_self_evo_gensym_map_size_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_clone_walk_gensym_ceiling_exceeded_total.fetch_add(1, std::memory_order_relaxed);
             g_macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
@@ -2386,6 +2407,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
         // even with Evaluator wired via CompilerService::set_query_evaluator.
         // Resolve active Evaluator (yield hook / query TLS / scheduler) so
         // multi-tenant dashboards can attribute clones per-Evaluator.
+        // Issue #3341: never pass nullptr on this production clone path —
+        // resolve first; ev_ptr may still be null only when no Evaluator
+        // is wired (true module-unaware / early boot). Bridge dual-writes
+        // per-Evaluator CompilerMetrics when non-null.
         if (cloned_marker == aura::ast::SyntaxMarker::MacroIntroduced) {
             void* ev_ptr = aura_evaluator_resolve_current_for_macro();
             const int r = aura_macro_provenance_repin_on_steal(
@@ -2521,6 +2546,10 @@ static aura::ast::NodeId clone_macro_body_at_depth(
             // hygiene_last_limit_reason_string() returns "steal-abort"
             // for agent replay (not just the clone-reject reason).
             note_hygiene_last_limit_reason(kHygieneLimitReasonStealAbort);
+            // Issue #3341: durable Agent string on the mutate-hygiene
+            // reject surface (last_mutate_error_). Counter-only steal-abort
+            // left replay with totals but no reason string.
+            aura_evaluator_note_steal_abort_mid_expand();
             // Issue #3157: roll back target FlatAST additions (target.add_*
             // allocations done by the recursive clone walk between steal0
             // and steal1). expand_ckpt.try_restore() is safe at all depths —

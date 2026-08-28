@@ -3782,6 +3782,33 @@ static void ac3215_macro_introduced_reason_string() {
     apply_dev_audit_defaults();
 }
 
+// Issue #3341: per-fiber last_limit_reason + steal-abort-mid-expand
+// last_mutate_error_ (process-global last_limit_reason was last-writer-wins).
+static void ac3341_per_fiber_reason_and_steal_abort_string() {
+    std::println("\n--- #3341: per-fiber last_limit_reason + steal-abort-mid-expand ---");
+    auto ixx = read_file("src/compiler/macro_expansion.ixx");
+    auto me = read_file("src/compiler/macro_expansion.cpp");
+    auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ixx.find("last_limit_reason = 0") != std::string::npos,
+          "3341: FiberHygieneStats.last_limit_reason");
+    CHECK(me.find("stamp_fiber_last_limit_reason") != std::string::npos,
+          "3341: note_* stamps per-fiber");
+    CHECK(me.find("aura_evaluator_note_steal_abort_mid_expand") != std::string::npos,
+          "3341: steal-abort last_mutate_error_ helper");
+    CHECK(ev.find("steal-abort-mid-expand") != std::string::npos,
+          "3341: Evaluator notes steal-abort-mid-expand");
+    CHECK(me.find("aura_macro_provenance_repin_on_steal(nullptr") == std::string::npos,
+          "3341: production clone does not pass nullptr to repin");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_fiber_hygiene_last_limit_reason_3341.py");
+    CHECK(!lint.empty() && lint.find("3341") != std::string::npos, "3341: linter present");
+    const auto bp = read_file("build.py");
+    CHECK(bp.find("check_fiber_hygiene_last_limit_reason_3341.py") != std::string::npos,
+          "3341: build.py wires linter");
+    CHECK(read_file("docs/design/3341-").empty(), "3341: no docs/design per #1655");
+    CHECK(read_file("tests/issues/test_issue_3341.cpp").empty(), "3341: no invent test per #81967");
+}
+
 } // namespace
 
 int main() {
@@ -3791,6 +3818,8 @@ int main() {
     ac2_default_fail_closed();
     std::println("\n=== Issue #3215: Agent-stable hygiene-macro-introduced reason ===");
     ac3215_macro_introduced_reason_string();
+    std::println("\n=== Issue #3341: per-fiber last_limit_reason + steal-abort-mid-expand ===");
+    ac3341_per_fiber_reason_and_steal_abort_string();
     std::println("\n=== Issue #3239: residual EDA/SV mutate surface retired ===");
     ac3239_1_sv_prims_gone();
     ac3239_2_no_kSva_no_sv_mutate_no_closedloop();

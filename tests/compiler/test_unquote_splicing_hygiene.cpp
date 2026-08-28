@@ -131,6 +131,109 @@ static NodeId build_qq_let_unquote(FlatAST& src, StringPool& sp) {
     return src.add_call(qq_var, std::span<const NodeId>{qq_args});
 }
 
+// ── Issue #3183: mid-clone gensym ceiling / depth deny rollback + rest path
+// shares the ceiling. Source-cite (extends src/-aligned suite per #81934).
+// No tests/issues/test_issue_3183.cpp; no docs/design/3183-* per #1655.
+// Hoisted out of run_test_* (C++ forbids nested function definitions).
+
+static void ac3183_1_ceiling_deny_rolls_back_flatast() {
+    std::println("\n--- #3183 AC1: ceiling mid-walk deny → expand_ckpt.try_restore() ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("Issue #3183") != std::string::npos, "AC1: cite #3183 in macro_expansion.cpp");
+    const auto cap_pos_pre = me.find("rename_binding_pre = [&](SymId sid)");
+    const auto cap_pos_binding = me.find("auto rename_binding = [&](SymId sid)");
+    CHECK(cap_pos_pre != std::string::npos, "AC1: rename_binding_pre lambda found");
+    CHECK(cap_pos_binding != std::string::npos, "AC1: rename_binding lambda found");
+    if (cap_pos_pre != std::string::npos && cap_pos_binding != std::string::npos) {
+        for (const auto start : {cap_pos_pre, cap_pos_binding}) {
+            const auto lim_pos =
+                me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)", start);
+            const auto ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos);
+            CHECK(lim_pos != std::string::npos && ret_pos != std::string::npos,
+                  "AC1: ceiling deny branch locatable in this lambda");
+            if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
+                const auto win = me.substr(lim_pos, ret_pos - lim_pos);
+                CHECK(win.find("expand_ckpt.try_restore()") != std::string::npos,
+                      "AC1: ceiling deny must call expand_ckpt.try_restore() before return");
+            }
+        }
+    }
+}
+
+static void ac3183_2_rest_path_shares_ceiling() {
+    std::println("\n--- #3183 AC2: rename_rest_binding_pre — gensym_cap check ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    const auto rest_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)");
+    CHECK(rest_pos != std::string::npos, "AC2: rename_rest_binding_pre lambda found");
+    if (rest_pos != std::string::npos) {
+        const auto lim_pos =
+            me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)", rest_pos);
+        const auto ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos);
+        CHECK(lim_pos != std::string::npos,
+              "AC2: rename_rest_binding_pre must check gensym_cap (Issue #3183)");
+        CHECK(ret_pos != std::string::npos, "AC2: rest ceiling deny must return NULL_NODE");
+        if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
+            // Cap check + #3183 cite sit above the note_* call; include lead-in.
+            const auto win = me.substr(rest_pos, ret_pos - rest_pos);
+            CHECK(win.find("effective_max_gensym_map_size()") != std::string::npos,
+                  "AC2: rest path checks effective_max_gensym_map_size()");
+            CHECK(win.find("name_map->size() >= ") != std::string::npos,
+                  "AC2: rest path checks name_map->size() >= cap");
+            CHECK(win.find("expand_ckpt.try_restore()") != std::string::npos,
+                  "AC2: rest ceiling deny also rolls back target FlatAST");
+            CHECK(win.find("Issue #3183") != std::string::npos,
+                  "AC2: cite #3183 in rest ceiling deny comment");
+        }
+    }
+}
+
+static void ac3183_3_depth_deny_stderr_updated() {
+    std::println("\n--- #3183 AC3: depth deny stale stderr replaced (#3183) ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    CHECK(me.find("falling back to unhygienic substitution") == std::string::npos,
+          "AC3: stale \"falling back to unhygienic substitution\" removed");
+    CHECK(me.find("deny / NULL_NODE") != std::string::npos,
+          "AC3: new \"deny / NULL_NODE\" diagnostic present");
+    CHECK(me.find("[#3183 warning] clone_macro_body depth-limit hit") != std::string::npos,
+          "AC3: #3183-tagged diagnostic in depth-deny path");
+}
+
+static void ac3183_4_no_serial_drift_from_rest() {
+    std::println("\n--- #3183 AC4: rest ceiling deny does NOT advance rest serial ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    const auto rest_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)");
+    if (rest_pos != std::string::npos) {
+        const auto lim_pos =
+            me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)", rest_pos);
+        const auto ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos);
+        if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
+            const auto win = me.substr(lim_pos, ret_pos - lim_pos);
+            CHECK(win.find("g_gensym_serial_drift_total.fetch_add(1,") != std::string::npos,
+                  "AC4: rest ceiling deny bumps serial-drift counter");
+            CHECK(win.find("g_macro_rest_gensym_serial.fetch_add") == std::string::npos,
+                  "AC4: rest ceiling deny must NOT advance rest serial");
+        }
+    }
+}
+
+static void ac3183_5_steal_pass_limit_non_regression() {
+    std::println("\n--- #3183 AC5: steal×expand + pass-limit non-regression ---");
+    const auto me = read_file("src/compiler/macro_expansion.cpp");
+    int try_restore_count = 0;
+    std::size_t pos = 0;
+    while ((pos = me.find("expand_ckpt.try_restore()", pos)) != std::string::npos) {
+        ++try_restore_count;
+        pos += std::string("expand_ckpt.try_restore()").size();
+    }
+    CHECK(try_restore_count >= 6, "AC5: try_restore count ≥ 6 (3 pre + 3 new ceiling-deny sites)");
+}
+
+static void ac3183_6_no_invent() {
+    std::println("\n--- #3183 AC6: no docs/design/, no tests/issues/ (#1655) ---");
+    CHECK(true, "AC6: no docs/design/3183-* per #1655; no tests/issues/test_issue_3183.cpp per "
+                "#81934");
+}
+
 } // namespace
 
 int run_test_unquote_splicing_hygiene() {
@@ -407,12 +510,14 @@ int run_test_unquote_splicing_hygiene() {
             CHECK(win.find("cname == \"quote\"") != std::string::npos,
                   "AC3181.5: Call-head \"quote\" recognized");
             // Recursive children clone: in_quote threaded through.
-            auto pos_recur =
-                me.find("clone_macro_body_at_depth(target, target_pool, source, source_pool, cid,");
+            // Call is wrapped across lines; match the cid argument.
+            auto pos_recur = me.find("source, source_pool, cid");
             CHECK(pos_recur != std::string::npos, "AC3181.5: recursive call site found");
-            auto win_recur = me.substr(pos_recur, 500);
-            CHECK(win_recur.find("local_in_quote") != std::string::npos,
-                  "AC3181.5: local_in_quote threaded into recursive call");
+            if (pos_recur != std::string::npos) {
+                auto win_recur = me.substr(pos_recur, 300);
+                CHECK(win_recur.find("local_in_quote") != std::string::npos,
+                      "AC3181.5: local_in_quote threaded into recursive call");
+            }
         }
 
         // ── AC3181.6: cross-FlatAST — quoted data intern only ──
@@ -437,107 +542,6 @@ int run_test_unquote_splicing_hygiene() {
             CHECK(std::string(tp.resolve(binding_sym)) == "x",
                   "AC3181.6: cross-flat quoted data — no α-rename");
         }
-    }
-
-    // ── Issue #3183: mid-clone gensym ceiling / depth deny rollback + rest path
-    // shares the ceiling. Source-cite (extends src/-aligned suite per #81934).
-    // No tests/issues/test_issue_3183.cpp; no docs/design/3183-* per #1655.
-
-    static void ac3183_1_ceiling_deny_rolls_back_flatast() {
-        std::println("\n--- #3183 AC1: ceiling mid-walk deny → expand_ckpt.try_restore() ---");
-        const auto me = read_file("src/compiler/macro_expansion.cpp");
-        CHECK(me.find("Issue #3183") != std::string::npos,
-              "AC1: cite #3183 in macro_expansion.cpp");
-        const auto cap_pos_pre = me.find("rename_binding_pre = [&](SymId sid)");
-        const auto cap_pos_binding = me.find("auto rename_binding = [&](SymId sid)");
-        CHECK(cap_pos_pre != std::string::npos, "AC1: rename_binding_pre lambda found");
-        CHECK(cap_pos_binding != std::string::npos, "AC1: rename_binding lambda found");
-        if (cap_pos_pre != std::string::npos && cap_pos_binding != std::string::npos) {
-            for (const auto start : {cap_pos_pre, cap_pos_binding}) {
-                const auto lim_pos = me.find("g_macro_hygiene_last_limit_reason.store(1,", start);
-                const auto ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos);
-                CHECK(lim_pos != std::string::npos && ret_pos != std::string::npos,
-                      "AC1: ceiling deny branch locatable in this lambda");
-                if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
-                    const auto win = me.substr(lim_pos, ret_pos - lim_pos);
-                    CHECK(win.find("expand_ckpt.try_restore()") != std::string::npos,
-                          "AC1: ceiling deny must call expand_ckpt.try_restore() before return");
-                }
-            }
-        }
-    }
-
-    static void ac3183_2_rest_path_shares_ceiling() {
-        std::println("\n--- #3183 AC2: rename_rest_binding_pre — gensym_cap check ---");
-        const auto me = read_file("src/compiler/macro_expansion.cpp");
-        const auto rest_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)");
-        CHECK(rest_pos != std::string::npos, "AC2: rename_rest_binding_pre lambda found");
-        if (rest_pos != std::string::npos) {
-            const auto lim_pos = me.find("g_macro_hygiene_last_limit_reason.store(1,", rest_pos);
-            const auto ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos);
-            CHECK(lim_pos != std::string::npos,
-                  "AC2: rename_rest_binding_pre must check gensym_cap (Issue #3183)");
-            CHECK(ret_pos != std::string::npos, "AC2: rest ceiling deny must return NULL_NODE");
-            if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
-                const auto win = me.substr(lim_pos, ret_pos - lim_pos);
-                CHECK(win.find("effective_max_gensym_map_size()") != std::string::npos,
-                      "AC2: rest path checks effective_max_gensym_map_size()");
-                CHECK(win.find("name_map->size() >= ") != std::string::npos,
-                      "AC2: rest path checks name_map->size() >= cap");
-                CHECK(win.find("expand_ckpt.try_restore()") != std::string::npos,
-                      "AC2: rest ceiling deny also rolls back target FlatAST");
-                CHECK(win.find("Issue #3183") != std::string::npos,
-                      "AC2: cite #3183 in rest ceiling deny comment");
-            }
-        }
-    }
-
-    static void ac3183_3_depth_deny_stderr_updated() {
-        std::println("\n--- #3183 AC3: depth deny stale stderr replaced (#3183) ---");
-        const auto me = read_file("src/compiler/macro_expansion.cpp");
-        CHECK(me.find("falling back to unhygienic substitution") == std::string::npos,
-              "AC3: stale \"falling back to unhygienic substitution\" removed");
-        CHECK(me.find("deny / NULL_NODE") != std::string::npos,
-              "AC3: new \"deny / NULL_NODE\" diagnostic present");
-        CHECK(me.find("[#3183 warning] clone_macro_body depth-limit hit") != std::string::npos,
-              "AC3: #3183-tagged diagnostic in depth-deny path");
-    }
-
-    static void ac3183_4_no_serial_drift_from_rest() {
-        std::println("\n--- #3183 AC4: rest ceiling deny does NOT advance rest serial ---");
-        const auto me = read_file("src/compiler/macro_expansion.cpp");
-        const auto rest_pos = me.find("auto rename_rest_binding_pre = [&](SymId sid)");
-        if (rest_pos != std::string::npos) {
-            const auto lim_pos = me.find("g_macro_hygiene_last_limit_reason.store(1,", rest_pos);
-            const auto ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos);
-            if (lim_pos != std::string::npos && ret_pos != std::string::npos) {
-                const auto win = me.substr(lim_pos, ret_pos - lim_pos);
-                CHECK(win.find("g_gensym_serial_drift_total.fetch_add(1,") != std::string::npos,
-                      "AC4: rest ceiling deny bumps serial-drift counter");
-                CHECK(win.find("g_macro_rest_gensym_serial.fetch_add") == std::string::npos,
-                      "AC4: rest ceiling deny must NOT advance rest serial");
-            }
-        }
-    }
-
-    static void ac3183_5_steal_pass_limit_non_regression() {
-        std::println("\n--- #3183 AC5: steal×expand + pass-limit non-regression ---");
-        const auto me = read_file("src/compiler/macro_expansion.cpp");
-        int try_restore_count = 0;
-        std::size_t pos = 0;
-        while ((pos = me.find("expand_ckpt.try_restore()", pos)) != std::string::npos) {
-            ++try_restore_count;
-            pos += std::string("expand_ckpt.try_restore()").size();
-        }
-        CHECK(try_restore_count >= 6,
-              "AC5: try_restore count ≥ 6 (3 pre + 3 new ceiling-deny sites)");
-    }
-
-    static void ac3183_6_no_invent() {
-        std::println("\n--- #3183 AC6: no docs/design/, no tests/issues/ (#1655) ---");
-        CHECK(
-            true,
-            "AC6: no docs/design/3183-* per #1655; no tests/issues/test_issue_3183.cpp per #81934");
     }
 
     std::println("\n=== Issue #3183: gensym ceiling / depth deny rollback + rest path ===");

@@ -422,6 +422,9 @@ extern "C" void aura_test_reset_macro_expand_qq_restamp_totals_for_test(void) no
 // so file-level C-API totals mirror CompilerMetrics. Stub links keep
 // process-wide atomics (not a hard-zero that looks like "no clones").
 extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept;
+// Issue #3341: stamp Evaluator::last_mutate_error_ = "steal-abort-mid-expand"
+// when an Evaluator is resolvable. No-op if none is wired.
+extern "C" void aura_evaluator_note_steal_abort_mid_expand(void) noexcept;
 // Issue #3378 / #3322: Evaluator is incomplete in macro_expansion.cpp
 // (evaluator.ixx imports that module). Tenant id via C ABI.
 extern "C" std::uint64_t aura_evaluator_capability_tenant_id(void* ev) noexcept;

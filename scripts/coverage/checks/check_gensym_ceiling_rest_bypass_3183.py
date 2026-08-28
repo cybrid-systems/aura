@@ -63,17 +63,19 @@ def _read(rel: Path) -> str:
 
 
 def _lambda_ceiling_deny_window(me: str, lambda_marker: str) -> tuple[int, int]:
-    """Find the ceiling-deny branch (g_macro_hygiene_last_limit_reason.store(1, ...)
+    """Find the ceiling-deny branch (note_hygiene_last_limit_reason(GensymCeiling)
     → return aura::ast::NULL_NODE;) inside the lambda starting at lambda_marker.
 
     Returns (lim_pos, ret_pos) or (-1, -1) if not found. The returned window
-    starts 300 chars BEFORE `store(1,` to capture const auto cap declarations
-    and the Issue #3183 cite comment that precede the if-block.
+    starts 300 chars BEFORE the note_* call to capture const auto cap
+    declarations and the Issue #3183 cite comment that precede the if-block.
+    Issue #3341: gensym-ceiling deny now goes through note_* so the
+    per-fiber last_limit_reason is stamped (process atomic is last-writer-wins).
     """
     lam_pos = me.find(lambda_marker)
     if lam_pos == -1:
         return (-1, -1)
-    lim_pos = me.find("g_macro_hygiene_last_limit_reason.store(1,", lam_pos)
+    lim_pos = me.find("note_hygiene_last_limit_reason(kHygieneLimitReasonGensymCeiling)", lam_pos)
     if lim_pos == -1:
         return (-1, -1)
     ret_pos = me.find("return aura::ast::NULL_NODE;", lim_pos)

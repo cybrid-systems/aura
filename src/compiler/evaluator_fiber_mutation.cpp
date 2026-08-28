@@ -2176,6 +2176,17 @@ extern "C" void* aura_evaluator_resolve_current_for_macro(void) noexcept {
     return evaluator_for_scheduler_hooks();
 }
 
+// Issue #3341: steal-abort mid-expand Agent reason on the mutate-hygiene
+// reject surface. clone_macro_body cannot import Evaluator; this C ABI
+// stamps last_mutate_error_ when an Evaluator is wired. No-op when none
+// (module-unaware / early boot). Quiet expand path never calls this.
+extern "C" void aura_evaluator_note_steal_abort_mid_expand(void) noexcept {
+    auto* ev = static_cast<Evaluator*>(aura_evaluator_resolve_current_for_macro());
+    if (!ev)
+        return;
+    ev->note_steal_abort_mid_expand();
+}
+
 extern "C" std::uint64_t aura_evaluator_capability_tenant_id(void* ev) noexcept {
     if (!ev)
         return 0;
