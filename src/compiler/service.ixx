@@ -7088,6 +7088,78 @@ public:
             if (e.dirty || e.dirty_block_count() > 0)
                 dirty_names.push_back(n);
         }
+        // Issue #3381: production facade early-return only dirties the root
+        // (mark_define_dirty / invalidate_function call hard_invalidate_via_
+        // facade → mark_body_only_dirty(root) + invalidate_shape(root) +
+        // return — no BFS, no hybrid drain under production). Without this
+        // union, callers stay clean (dirty=false / dirty_block_count()==0)
+        // and `should_partial_relower_impact_checked` silently skips them
+        // (dirty_count==0 → false early-exit; impact_ub never consulted).
+        // `lookup_define_v2(g)` returns 0 on the pre-mutate IR while the
+        // Call encoding still names the old `f` — miss-compile.
+        //
+        // Reuse existing bricks under the cascade_decision_mtx_ critical
+        // section: dep_graph_[root].called_by walk (shared dep_graph_mtx_),
+        // mark_caller_body_dirty (IRC entry alias for mark_body_only_dirty,
+        // same call shape Soft BFS uses at service_dirty.cpp:1087), and
+        // the #3283 fail-closed take-full shape (mark_all_blocks_dirty +
+        // dirty=true + partial_forced_full_by_impact_total bump). Soft /
+        // Off + clean (armed==0) single-fiber skips this entirely — zero
+        // extra BFS, zero extra dirty marks, zero extra lock work (AC3).
+        // Existing Strict force-dirty of ALL callers (#3165/#3187) at
+        // fail_closed_soft_dual_graph_parity_before_partial_ remains
+        // authoritative under dual-graph failure (AC4).
+        if (aura::compiler::typed_audit::production_defaults_active() || initial_armed) {
+            std::vector<std::string> caller_names;
+            {
+                lock_order::OrderedSharedLock<std::shared_mutex> read(dep_graph_mtx_,
+                                                                      lock_order::Level::DepGraph);
+                for (const auto& root : dirty_names) {
+                    auto dit = dep_graph_.find(root);
+                    if (dit == dep_graph_.end())
+                        continue;
+                    for (const auto& caller : dit->second.called_by) {
+                        // Dedupe against both the existing dirty_names
+                        // snapshot AND the new caller_names batch — the
+                        // caller may already be dirty from a Soft BFS
+                        // pass or a prior production invalidate.
+                        if (std::find(dirty_names.begin(), dirty_names.end(), caller) ==
+                                dirty_names.end() &&
+                            std::find(caller_names.begin(), caller_names.end(), caller) ==
+                                caller_names.end()) {
+                            caller_names.push_back(caller);
+                        }
+                    }
+                }
+            }
+            // Append callers to the peel set + mark their bodies dirty
+            // using the existing helper. The existing per-entry loop below
+            // will then see dirty_count>0 on each caller and consult
+            // impact_ub (or fail-closed at #3310 production gate).
+            for (const auto& caller : caller_names) {
+                auto cit = ir_cache_v2_.find(caller);
+                if (cit != ir_cache_v2_.end()) {
+                    (void)cit->second.mark_caller_body_dirty();
+                }
+                dirty_names.push_back(caller);
+            }
+            // #3381 AC2 + #3283 fail-closed: if deferred_hybrid_gen moved
+            // since gen0 (concurrent stale-reject re-armed edges the entry
+            // drain / size snapshot never saw), force full for the cone —
+            // never silent skip. Reuses the #3283 mark_all_blocks_dirty +
+            // dirty=true + partial_forced_full_by_impact_total shape.
+            if (deferred_hybrid_gen_.load(std::memory_order_acquire) != gen0) {
+                for (const auto& name : dirty_names) {
+                    auto eit = ir_cache_v2_.find(name);
+                    if (eit != ir_cache_v2_.end()) {
+                        eit->second.mark_all_blocks_dirty();
+                        eit->second.dirty = true;
+                    }
+                }
+                metrics_.partial_forced_full_by_impact_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+            }
+        }
         // Issue #3161: snapshot the NodeId mirror-edge counter under the
         // cascade_decision_mtx_ critical section so the mid-loop
         // re-arm observation (re_armed_now OR graph_grew_mid_loop) is
