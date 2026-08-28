@@ -4548,6 +4548,22 @@ def cmd_lint():
             "Issue #3277 pure-anon no-boundary force-leave linter failed — run python3 scripts/coverage/checks/check_pure_anon_no_boundary_force_leave_3277.py"
         )
         return r
+    # Issue #3323: pure-anon overflow dispatch race. Production overflow
+    # already MustDeopt + poisons epoch (#3024); residual is visibility
+    # (release fence + overflow epoch + cache drop + last-look) and
+    # RenderFastExit still draining when pending. Soft / budget=0: helper
+    # never runs. Extends test_anonymous_residual_stable_id_policy
+    # (#81967); no docs/design/; no new query keys.
+    paov3323_script = COVERAGE_CHECKS / "check_pure_anon_overflow_dispatch_race_3323.py"
+    if not paov3323_script.exists():
+        fail(f"missing {paov3323_script}")
+        return 1
+    r = run([sys.executable, str(paov3323_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3323 pure-anon overflow dispatch-race linter failed — run python3 scripts/coverage/checks/check_pure_anon_overflow_dispatch_race_3323.py"
+        )
+        return r
     # Issue #3020: domain query:* hash builders fail-soft on insert miss.
     # Extends test_engine_metrics_facade + engine_metrics.aura (#81967);
     # no docs/design/ (#1655).

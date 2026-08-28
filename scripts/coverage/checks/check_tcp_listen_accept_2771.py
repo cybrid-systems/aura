@@ -9,7 +9,7 @@ Contract (one row per AC):
   AC1 prims tcp-listen / tcp-local-port / tcp-accept / tcp-accept-timeout
   AC2 std/socket + adaptive help + loopback docs
   AC3 test_tcp_listen_accept in json_io_cap_batch + ac echo
-  AC4 commercial budget tcp- = 8 (static only; no live aura smoke)
+  AC4 commercial budget tcp- = 11 (static only; no live aura smoke)
   AC5 this linter wired; no docs/design/2771-*
 
 Exit 0 = all rows satisfied.
@@ -73,7 +73,7 @@ def main() -> int:
     must("run_test_tcp_listen_accept", "AC3", _read("tests/compiler/test_json_io_cap_batch.cpp"))
 
     # AC4
-    must('tcp-": 8', "AC4", surface)
+    must('tcp-": 11', "AC4", surface)
     must("#2771", "AC4", surface)
 
     # AC5

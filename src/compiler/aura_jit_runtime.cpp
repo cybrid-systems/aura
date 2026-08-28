@@ -2453,6 +2453,12 @@ static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_total{0};
 // Issue #3024: production overflow that forced MustDeopt (leave native).
 // Issue #3060: same counter reused for pressure force-leave (no new keys).
 static std::atomic<std::uint64_t> g_pure_anon_bg_overflow_must_deopt_total{0};
+// Issue #3323: process-wide overflow generation. Bumped (release) after
+// MustDeopt + epoch poison so a call prologue that already sampled the
+// pre-poison per-closure epoch can observe leave-native with one extra
+// acquire load. Soft never bumps (helper is production-gated). Not a
+// public query key.
+static std::atomic<std::uint64_t> g_pure_anon_overflow_epoch{0};
 // Issue #3060: consecutive residual budget_skip streak (production only).
 static std::atomic<std::uint32_t> g_residual_budget_skip_streak{0};
 static constexpr std::size_t kPureAnonPressurePendingThresh = 32;
@@ -2491,6 +2497,10 @@ extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
 // + poison bridge_epoch so dual-fresh / call leave native immediately.
 // Residual remount (#2928) restamps on heal — not a second closure table.
 // Caller must NOT hold g_pure_anon_bg_mtx (queue → table is unused elsewhere).
+// Issue #3323: also drop the inline cache, publish a release fence, and
+// bump g_pure_anon_overflow_epoch so a concurrent call that already
+// sampled the pre-poison epoch still observes MustDeopt / dual-fresh
+// fail before native dispatch. Soft never calls this helper.
 static void pure_anon_bg_overflow_force_leave_native(std::int64_t closure_id) noexcept {
     if (closure_id < 0)
         return;
@@ -2506,6 +2516,9 @@ static void pure_anon_bg_overflow_force_leave_native(std::int64_t closure_id) no
     if (g_closure_bridge_epochs.size() <= cid)
         g_closure_bridge_epochs.resize(g_closure_func_ids.size(), 0);
     g_closure_bridge_epochs[cid] = 0;
+    invalidate_closure_cache_for(closure_id);
+    std::atomic_thread_fence(std::memory_order_release);
+    g_pure_anon_overflow_epoch.fetch_add(1, std::memory_order_release);
 }
 
 extern "C" void aura_pure_anon_bg_enqueue(std::int64_t closure_id) noexcept {
@@ -3645,12 +3658,31 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             invalidate_closure_cache_for(closure_id);
             return 0;
         }
-        const std::uint64_t cap_bridge =
-            cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
-        const std::uint64_t cap_defuse =
-            cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
-        // Acquire fence so epoch loads see latest host bumps under steal.
+        // Issue #3323: acquire fence BEFORE sampling per-closure epoch so
+        // overflow's release fence + overflow-epoch bump is visible. Soft
+        // never bumps overflow epoch (ov_samp stays 0).
+        const auto ov_samp = g_pure_anon_overflow_epoch.load(std::memory_order_relaxed);
         aura_jit_epoch_acquire_fence();
+        std::uint64_t cap_bridge =
+            cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+        std::uint64_t cap_defuse =
+            cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+        if (ov_samp != 0 && g_pure_anon_overflow_epoch.load(std::memory_order_acquire) != ov_samp) {
+            // Overflow raced after the local sample — re-read MustDeopt /
+            // poisoned epoch before dual-fresh.
+            if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
+                tlock.unlock();
+                aura_unlock_workspace_read();
+                aura_jit_closure_record_stale_deopt();
+                aura_jit_closure_record_safe_fallback();
+                aura_deopt_inc();
+                invalidate_closure_cache_for(closure_id);
+                return 0;
+            }
+            cap_bridge = cid < g_closure_bridge_epochs.size() ? g_closure_bridge_epochs[cid] : 0;
+            cap_defuse =
+                cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
+        }
         if (!aura_is_jit_closure_fresh(cap_bridge, cap_defuse)) {
             // Drop shared locks before exclusive soft migrate.
             tlock.unlock();
@@ -3701,6 +3733,23 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             aura_jit_closure_record_safe_fallback();
             aura_deopt_inc();
             aura_aot_note_peer_jit_name_soft_stale_deopt();
+            invalidate_closure_cache_for(closure_id);
+            return 0;
+        }
+    }
+
+    // Issue #3323: last-look MustDeopt before any native dispatch. Overflow
+    // publishes MustDeopt + cache invalidate + release fence; this load
+    // is the call-site observe-before-dispatch. Soft never sets the flag
+    // on the overflow path (zero extra beyond the existing column load).
+    {
+        size_t cid = static_cast<size_t>(closure_id);
+        if (cid < g_closure_must_deopt.size() && g_closure_must_deopt[cid] != 0) {
+            tlock.unlock();
+            aura_unlock_workspace_read();
+            aura_jit_closure_record_stale_deopt();
+            aura_jit_closure_record_safe_fallback();
+            aura_deopt_inc();
             invalidate_closure_cache_for(closure_id);
             return 0;
         }

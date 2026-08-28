@@ -5111,8 +5111,11 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (aura_pure_anon_bg_pending() > 0) {
             const auto max_n = aura_sync_remount_pure_anon_budget_base();
             if (max_n > 0)
-                aura_pure_anon_bg_remount_drain(max_n);
+                aura_pure_anon_bg_remount_drain(
+                    max_n); // Issue #3323: RenderFastExit MUST still drain when pending
         }
+        // Issue #3323: drain is not gated on !render_fast.
+        // Soft / budget=0: max_n==0, no drain.
     }
     // Issue #3248 / #3026: residual-force stale watchdog on any
     // outermost exit (success or fail). Failure-dominated mutate must
