@@ -478,12 +478,26 @@ int main() {
         (void)allows;
     }
 
-    // ── allow_cross_tenant bypass ──
+    // ── #3332: allow_cross is scoped to cross_grants, not a full bypass ──
+    // Soft/Off keep the zero-cost short-circuit (AC5). Restricted walks
+    // grant bits even when allow_cross is set (AC2/AC3).
     {
-        reset_all();
-        g_workspace_isolation().set_current_tenant(1, "admin", /*allow_cross=*/true);
+        reset_all(); // Off
         CHECK(check_boundary(1, 99, nullptr, /*allow_cross=*/true),
-              "allow_cross_tenant bypasses boundary");
+              "Soft/Off allow_cross still short-circuits");
+        CHECK(!check_boundary(1, 99, nullptr, /*allow_cross=*/true, kEffectMutate,
+                              /*sandbox_strict=*/false, "3332-no-grant",
+                              /*sandbox_restricted=*/true),
+              "allow_cross without grant denies");
+        g_workspace_isolation().grant_cross_tenant(1, 99, kEffectMutate);
+        CHECK(check_boundary(1, 99, nullptr, /*allow_cross=*/true, kEffectMutate,
+                             /*sandbox_strict=*/false, "3332-grant",
+                             /*sandbox_restricted=*/true),
+              "allow_cross + grant allows");
+        CHECK(!check_boundary(1, 99, nullptr, /*allow_cross=*/true, kEffectWrite,
+                              /*sandbox_strict=*/false, "3332-bits",
+                              /*sandbox_restricted=*/true),
+              "insufficient bits still deny");
     }
 
     // ─── Issue #2659: per-Evaluator principal (multi-Evaluator no cross-talk) ──
@@ -1834,11 +1848,11 @@ int main() {
         const auto deny_after = aura::core::workspace_isolation::g_tenant_isolation_metrics()
                                     .allow_cross_tenant_deny_total.load(std::memory_order_relaxed);
         CHECK(deny_after == deny_before, "AC2: admin path does not bump deny counter");
-        // Isolation bypass is the flag's job; grant-write (#2968) stays gated
-        // independently — a second non-admin Evaluator still cannot widen
-        // the process-global cross_grants table.
-        CHECK(ev.check_workspace_isolation(42, 0, kEffectMutate, "3010-cross"),
-              "AC2: allow_cross bypasses isolation check");
+        // #3332: Restricted allow_cross is not a full isolation bypass —
+        // foreign Mutate without cross_grants[T1→T2] still denies (cap_deny).
+        // Grant-write (#2968) stays independently gated.
+        CHECK(!ev.check_workspace_isolation(42, 0, kEffectMutate, "3010-cross"),
+              "AC2: allow_cross without grant denies foreign Mutate (#3332)");
         {
             // Different principal: TenantAdmin was granted on tenant 7 in the
             // process-global registry; a non-admin tenant must still hit #2968.
@@ -1921,6 +1935,173 @@ int main() {
                 const auto name = entry.path().filename().string();
                 CHECK(name.find("3010-") == std::string::npos,
                       std::string("AC6: no docs/design/") + name + " (forbidden per #1655)");
+            }
+        }
+    }
+
+    // ── #3332: Restricted allow_cross is scoped to cross_grants (not full bypass) ──
+    {
+        std::println("\n--- #3332 AC1: #3010 write gate does not regress ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(!ev.allow_cross_tenant(), "3332 AC1: Restricted without TenantAdmin cannot set flag");
+        grant_tenant_admin_mid(7);
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(ev.allow_cross_tenant(), "3332 AC1: TenantAdmin can still set flag (#3010)");
+    }
+
+    {
+        std::println("\n--- #3332 AC2: Restricted allow_cross without grant denies ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        aura::core::capability::set_effect_fiber_id_override(42);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        grant_tenant_admin_mid(7);
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(ev.allow_cross_tenant(), "3332 AC2: flag set");
+        const auto cap0 = snapshot_tenant_isolation_stats().cross_tenant_capability_deny;
+        const auto& ring = g_security_event_ring();
+        const auto baseline = ring.seq.load(std::memory_order_acquire);
+        CHECK(!ev.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac2-no-grant"),
+              "3332 AC2: foreign Mutate without grant denies");
+        CHECK(snapshot_tenant_isolation_stats().cross_tenant_capability_deny == cap0 + 1,
+              "3332 AC2: cap_deny counted");
+        bool found = false;
+        const auto head = ring.seq.load(std::memory_order_acquire);
+        for (auto s = baseline; s < head; ++s) {
+            const auto& e = ring.ring[s % ring.ring.size()];
+            if (e.kind == SecurityEventKind::IsolationDeny && e.seq == s) {
+                CHECK(e.fiber_id == 42, "3332 AC2: IsolationDeny fiber_id (#3011)");
+                found = true;
+            }
+        }
+        CHECK(found, "3332 AC2: IsolationDeny SE recorded");
+        aura::core::workspace_isolation::IsolationAuditEntry priv{};
+        const auto aseq = g_workspace_isolation().load_audit_seq();
+        CHECK(aseq >= 1 && g_workspace_isolation().try_load_audit_seq(aseq - 1, priv),
+              "3332 AC2: private isolation ring loadable");
+        CHECK(priv.denied && priv.capability_deny, "3332 AC2: capability_deny latched");
+        aura::core::capability::set_effect_fiber_id_override(0);
+    }
+
+    {
+        std::println("\n--- #3332 AC3: allow_cross + grant allows; insufficient bits deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        grant_tenant_admin_mid(7);
+        g_workspace_isolation().grant_cross_tenant(7, 42, kEffectMutate, /*caller=*/7);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(ev.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac3-grant"),
+              "3332 AC3: Mutate grant + allow_cross allows");
+        CHECK(!ev.check_workspace_isolation(42, 0, kEffectWrite, "3332-ac3-bits"),
+              "3332 AC3: insufficient bits still deny");
+    }
+
+    {
+        std::println("\n--- #3332 AC4: stamped foreign ref without grant is prov_deny ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        grant_tenant_admin_mid(7);
+        ev.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        const auto p0 = snapshot_tenant_isolation_stats().cross_tenant_provenance_deny;
+        CHECK(!ev.check_workspace_isolation(7, 99, kEffectMutate, "3332-ac4-prov"),
+              "3332 AC4: foreign ref without current→ref grant denies");
+        CHECK(snapshot_tenant_isolation_stats().cross_tenant_provenance_deny == p0 + 1,
+              "3332 AC4: prov_deny counted");
+        g_workspace_isolation().grant_cross_tenant(7, 99, kEffectMutate, /*caller=*/7);
+        CHECK(ev.check_workspace_isolation(7, 99, kEffectMutate, "3332-ac4-ok"),
+              "3332 AC4: provenance allow after current→ref grant");
+    }
+
+    {
+        std::println("\n--- #3332 AC5: Soft/Off allow_cross short-circuit zero extra ---");
+        reset_all(); // Off
+        const auto cap0 = snapshot_tenant_isolation_stats().cross_tenant_capability_deny;
+        CHECK(check_boundary(1, 99, nullptr, /*allow_cross=*/true),
+              "3332 AC5: Off allow_cross still short-circuits");
+        CHECK(snapshot_tenant_isolation_stats().cross_tenant_capability_deny == cap0,
+              "3332 AC5: Off path does not bump cap_deny");
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(ev.allow_cross_tenant(), "3332 AC5: Off sets flag without TenantAdmin");
+        CHECK(ev.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac5-off"),
+              "3332 AC5: Off Evaluator allow_cross still allows");
+    }
+
+    {
+        std::println("\n--- #3332 AC6: dual Evaluator shares cross_grants ---");
+        reset_all();
+        aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+        grant_tenant_admin_mid(7);
+        CompilerService cs_a;
+        CompilerService cs_b;
+        auto& ev_a = cs_a.evaluator();
+        auto& ev_b = cs_b.evaluator();
+        ev_a.set_effect_sandbox_mode(1);
+        ev_b.set_effect_sandbox_mode(1);
+        ev_a.set_capability_tenant_id(7);
+        ev_b.set_capability_tenant_id(7);
+        ev_a.grant_capability(aura::compiler::security::kCapTenantAdmin);
+        ev_a.set_tenant_principal(7, "t7", /*allow_cross=*/true);
+        CHECK(ev_a.allow_cross_tenant(), "3332 AC6: A has allow_cross");
+        CHECK(!ev_b.allow_cross_tenant(), "3332 AC6: B does not");
+        CHECK(!ev_a.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac6-a-nogrant"),
+              "3332 AC6: A without grant still denies");
+        CHECK(!ev_b.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac6-b-nogrant"),
+              "3332 AC6: B without grant denies");
+        g_workspace_isolation().grant_cross_tenant(7, 42, kEffectMutate, /*caller=*/7);
+        CHECK(ev_a.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac6-a-grant"),
+              "3332 AC6: A allow_cross + shared grant allows");
+        CHECK(ev_b.check_workspace_isolation(42, 0, kEffectMutate, "3332-ac6-b-grant"),
+              "3332 AC6: B uses the same cross_grants table");
+    }
+
+    {
+        std::println("\n--- #3332 AC6: source-cite + linter + no invent ---");
+        const auto iso = read_file("src/core/workspace_isolation.hh");
+        const auto test_self = read_file("tests/core/test_tenant_isolation_enforcement.cpp");
+        const auto build = read_file("build.py");
+        CHECK(iso.find("kAllowCrossScopedGrantIssue = 3332") != std::string::npos,
+              "3332 AC6: issue stamp");
+        CHECK(iso.find("allow_cross_tenant && !(strict || sandbox_restricted)") !=
+                  std::string::npos,
+              "3332 AC6: Soft/Off-only short-circuit");
+        CHECK(test_self.find("allow_cross without grant denies") != std::string::npos,
+              "3332 AC6: original bypass case rewritten");
+        CHECK(build.find("check_allow_cross_scoped_grant_3332") != std::string::npos,
+              "3332 AC6: build.py wires linter after #3010");
+        std::ifstream invent("tests/core/test_issue_3332.cpp");
+        if (!invent.good())
+            invent.open("../tests/core/test_issue_3332.cpp");
+        CHECK(!invent.good(), "3332 AC6: no tests/core/test_issue_3332.cpp");
+        const std::filesystem::path docs_design = "docs/design";
+        std::error_code ec;
+        if (std::filesystem::is_directory(docs_design, ec)) {
+            for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+                const auto name = entry.path().filename().string();
+                CHECK(name.find("3332-") == std::string::npos,
+                      std::string("3332 AC6: no docs/design/") + name);
             }
         }
     }
