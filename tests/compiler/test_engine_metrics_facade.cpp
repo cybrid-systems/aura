@@ -393,6 +393,59 @@ int main() {
         aura_query_hash_reset_overflow_for_test();
     }
 
+    // Issue #3371: evolution-audit-decision forensic-source must follow
+    // #3152 priority order (typed > ring > WAL > 0) in the default path.
+    // The previous unconditional `< 3 → 3` bump overwrote a confirmed
+    // SE-ring hit just because WAL was on, breaking the Agent decision
+    // tree under production force_wal. Pure conditional fallback — no
+    // I/O added, Soft zero-cost preserved, schema-3152/3114 sentinels
+    // unchanged.
+    std::println("\n--- #3371: evolution-audit-decision forensic-source priority ---");
+    {
+        const auto eps = read_file("src/compiler/evaluator_primitives_security.cpp");
+        // AC2/AC3: default-path priority order must be present (typed >
+        // ring > WAL > 0). The unconditional < 3 → 3 bump must be scoped
+        // to the want_durable keyword path (Issue #3205), not the default.
+        CHECK(eps.find("if (typed_hit) {\n                forensic_source = 1;") !=
+                  std::string::npos,
+              "3371 AC2/AC3: default-path typed_hit → 1 first");
+        CHECK(eps.find("} else if (se_ring_has_mid) {\n                forensic_source = 2;") !=
+                  std::string::npos,
+              "3371 AC2: default-path ring hit → 2 (NOT 3)");
+        CHECK(eps.find("} else if (wal_enabled) {\n                forensic_source = 3;") !=
+                  std::string::npos,
+              "3371 AC3: default-path ring miss + WAL on → 3");
+        CHECK(eps.find("// Issue #3371: priority order — typed > ring > WAL > 0.") !=
+                  std::string::npos,
+              "3371 AC1/AC2/AC3 #3371 fix comment block present");
+        // AC4: old sentinels still present (no schema redefinition).
+        CHECK(eps.find("forensic-source-trail") != std::string::npos &&
+                  eps.find("forensic-source-se") != std::string::npos &&
+                  eps.find("forensic-source-wal") != std::string::npos,
+              "3371 AC4: schema-3152 forensic-source-trail|se|wal sentinels unchanged");
+        CHECK(eps.find("schema-3152") != std::string::npos &&
+                  eps.find("schema-3114") != std::string::npos,
+              "3371 AC4: schema-3152 + schema-3114 unchanged");
+        CHECK(eps.find("query:evolution-audit-decision") != std::string::npos,
+              "3371 AC4: query:evolution-audit-decision unchanged (no new query:* keys)");
+        // AC5: build.py wires the linter.
+        const auto build3371 = read_file("build.py");
+        CHECK(build3371.find("check_evolution_audit_decision_forensic_source_3371") !=
+                  std::string::npos,
+              "3371 AC5: build.py wires 3371 linter");
+        // AC5: no test_issue_3371.cpp + no docs/design/3371-*.
+        std::ifstream inv3371("tests/compiler/test_issue_3371.cpp");
+        if (!inv3371.good())
+            inv3371.open("../tests/compiler/test_issue_3371.cpp");
+        CHECK(!inv3371.good(), "3371 AC5: no test_issue_3371.cpp (per #81967)");
+        CHECK(read_file("docs/design/3371-evolution-audit-decision.md").empty(),
+              "3371 AC5: no docs/design/3371-* (per #1655)");
+        // No-invent: extend existing test (this file)
+        const auto t3371_self = read_file("tests/compiler/test_engine_metrics_facade.cpp");
+        CHECK(t3371_self.find("3371 AC") != std::string::npos,
+              "3371 AC5: existing test file cites #3371");
+    }
+
     if (::aura::test::g_failed) {
         std::println(std::cerr, "engine metrics facade #1433: FAIL ({} failed, {} passed)",
                      ::aura::test::g_failed, ::aura::test::g_passed);

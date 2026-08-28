@@ -5319,6 +5319,23 @@ def cmd_lint():
             "Issue #3370 arena auto-arm known-roots single inventory linter failed — run python3 scripts/coverage/checks/check_arena_auto_arm_known_roots_3370.py"
         )
         return r
+    # Issue #3371: query:evolution-audit-decision forensic-source enum
+    # must follow #3152 priority order (typed > ring > WAL > 0) in the
+    # default path. The previous `< 3 → 3` unconditional bump overwrote a
+    # confirmed SE-ring hit just because WAL was on, which broke the Agent
+    # decision tree under production force_wal. Pure conditional fallback
+    # — no I/O added, Soft zero-cost preserved, schema-3152/3114 sentinels
+    # unchanged.
+    ead3371_script = COVERAGE_CHECKS / "check_evolution_audit_decision_forensic_source_3371.py"
+    if not ead3371_script.exists():
+        fail(f"missing {ead3371_script}")
+        return 1
+    r = run([sys.executable, str(ead3371_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3371 evolution-audit-decision forensic-source priority linter failed — run python3 scripts/coverage/checks/check_evolution_audit_decision_forensic_source_3371.py"
+        )
+        return r
     # Issue #3113: typed trail 256 wrap vs SE ring 1024 + WAL. query:security-audit
     # must mark typed-trail-miss (plus window / se-ring-size / wal-replay-hint)
     # so a wrap miss is not read as "never audited". Soft / WAL-off: is_enabled()
