@@ -1906,6 +1906,141 @@ static void ac3214_4_source_cite_no_invent() {
           "AC4: inventory floor unchanged");
 }
 
+// ── Issue #3326: factory-default create<T> / try_allocate cover ──
+// Default create still inventories uncovered under required (fail-closed
+// + sticky). create_with_cover / try_allocate cover args declare slot or
+// EXEMPT at the allocate site so uncovered_under_required does not grow
+// and sticky is not armed solely by that allocate.
+static void ac3326_1_create_without_cover_fail_closed() {
+    std::println("\n--- #3326 AC1: create<T> without cover fail-closes Moving + sticky ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+        0, std::memory_order_relaxed);
+    aura::ast::g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    CHECK(p0 != nullptr, "3326 AC1: create succeeded");
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) >= 1,
+          "3326 AC1: uncovered_under_required grew on default create");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "3326 AC1: no address movement");
+    CHECK(!r.pin_contract_held, "3326 AC1: pin_contract_held=false");
+    CHECK(r.moving_blocked_precondition, "3326 AC1: pre-move block");
+    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "3326 AC1: sticky densify-off");
+    CHECK(p0->a == 1 && p0->b == 2, "3326 AC1: payload intact after blocked densify");
+}
+
+static void ac3326_2_create_with_cover_no_uncovered_sticky() {
+    std::println("\n--- #3326 AC2: create_with_cover slot does not sticky-off ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
+    aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+        0, std::memory_order_relaxed);
+    aura::ast::g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
+    const auto uncovered0 = aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+        std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    void* slot = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&slot, nullptr, 1, 2, 3, 4);
+    CHECK(p0 != nullptr, "3326 AC2: create_with_cover succeeded");
+    CHECK(slot == p0, "3326 AC2: slot rewritten to object");
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) == uncovered0,
+          "3326 AC2: uncovered_under_required did not grow on covered create");
+    CHECK(aura::ast::g_intermediate_create_with_cover_total.load(std::memory_order_relaxed) >= 1,
+          "3326 AC2: with_cover_total grew");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3326 AC2: sticky not armed solely by covered create");
+    CHECK(r.pin_contract_held, "3326 AC2: pin_contract_held");
+    CHECK(!r.moving_blocked_precondition, "3326 AC2: not a pre-move unpinned block");
+    if (r.objects_moved > 0) {
+        CHECK(static_cast<Pod16*>(slot)->a == 1, "3326 AC2: remapped slot payload");
+    } else {
+        CHECK(p0->a == 1, "3326 AC2: no-move payload intact");
+    }
+}
+
+static void ac3326_3_try_allocate_cover_and_soft() {
+    std::println("\n--- #3326 AC3/AC4: try_allocate cover + Soft zero extra pin ---");
+    {
+        MovingFlagGuard on(1);
+        RequiredPinGuard req(1);
+        aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+        aura::core::lifetime::clear_general_object_pin_required_breach();
+        aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+            0, std::memory_order_relaxed);
+        aura::ast::g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
+        const auto uncovered0 =
+            aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+                std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        void* slot = nullptr;
+        void* raw = arena.try_allocate(32, &slot, nullptr);
+        CHECK(raw != nullptr, "3326 AC3: try_allocate with cover succeeded");
+        CHECK(slot == raw, "3326 AC3: slot rewritten");
+        CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+                  std::memory_order_relaxed) == uncovered0,
+              "3326 AC3: uncovered did not grow on covered try_allocate");
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.pin_contract_held, "3326 AC3: pin_contract_held after covered try_allocate");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3326 AC3: sticky not armed by covered try_allocate");
+    }
+    {
+        RequiredPinGuard off(0);
+        aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+            0, std::memory_order_relaxed);
+        aura::ast::g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        void* slot = nullptr;
+        auto* p1 = arena.create_with_cover<Pod16>(&slot, nullptr, 5, 6, 7, 8);
+        CHECK(p0 && p1, "3326 AC4: Soft create ok");
+        CHECK(arena.intermediate_create_auto_wire_count() == 0,
+              "3326 AC4: Soft create does not inventory");
+        CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+                  std::memory_order_relaxed) == 0,
+              "3326 AC4: Soft uncovered stays 0");
+    }
+}
+
+static void ac3326_4_source_cite_no_invent() {
+    std::println("\n--- #3326 AC5/AC6: source-cite + linter + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto cover = read_file("tests/core/test_arena_required_cover_no_value_only.cpp");
+    const auto build = read_file("build.py");
+    CHECK(arena.find("kFactoryDefaultCoverIssue = 3326") != std::string::npos,
+          "3326 AC5: arena stamp");
+    CHECK(lp.find("kFactoryDefaultCoverIssue = 3326") != std::string::npos, "3326 AC5: pin stamp");
+    CHECK(arena.find("create_with_cover") != std::string::npos, "3326 AC1: create_with_cover API");
+    CHECK(arena.find("try_allocate(std::size_t size, void** cover_slot") != std::string::npos,
+          "3326 AC1: try_allocate cover args");
+    CHECK(t.find("ac3326_1_create_without_cover_fail_closed") != std::string::npos,
+          "3326 AC6: AC1 test");
+    CHECK(t.find("ac3326_2_create_with_cover_no_uncovered_sticky") != std::string::npos,
+          "3326 AC6: AC2 test");
+    CHECK(cover.find("ac3326_") != std::string::npos, "3326 AC6: required-cover suite cites #3326");
+    CHECK(build.find("check_factory_default_cover_3326") != std::string::npos,
+          "3326 AC6: build.py wires linter");
+    CHECK(arena.find("g_3326_") == std::string::npos, "3326 AC5: no new g_3326_* counter");
+    CHECK(read_file("docs/design/3326-factory-default-cover.md").empty(),
+          "3326 AC5: no docs/design/3326-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3326.cpp").empty() &&
+              read_file("tests/issues/test_issue_3326.cpp").empty(),
+          "3326 AC6: no test_issue_3326.cpp per #81967");
+}
+
 // ── Issue #3055: post-Moving last_object_remap_ residual ──
 static void ac3055_1_slot_covered_no_canary_holds() {
     std::println("\n--- #3055 AC1: slot-covered move, no residual canary ---");
@@ -2721,6 +2856,11 @@ int run_test_moving_densify_fail_closed() {
     ac3214_2_nonsmall_slot_cover_allows();
     ac3214_3_soft_nonsmall_zero_cost();
     ac3214_4_source_cite_no_invent();
+    // Issue #3326: factory-default create<T> / try_allocate cover.
+    ac3326_1_create_without_cover_fail_closed();
+    ac3326_2_create_with_cover_no_uncovered_sticky();
+    ac3326_3_try_allocate_cover_and_soft();
+    ac3326_4_source_cite_no_invent();
     // Issue #3055: post-Moving last_object_remap_ residual (extends this suite).
     ac3055_1_slot_covered_no_canary_holds();
     ac3055_2_unregistered_canary_fail_closed();

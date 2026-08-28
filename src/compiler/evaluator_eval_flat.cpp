@@ -1552,7 +1552,8 @@ EvalResult Evaluator::eval_data_as_code(const types::EvalValue& data, const Env&
                     return make_void();
                 }
                 auto cl_alloc = target_arena->allocator();
-                auto* cl_flat = target_arena->create<aura::ast::FlatAST>(cl_alloc);
+                auto* cl_flat = target_arena->create_with_cover<aura::ast::FlatAST>(
+                    nullptr, "eval-flat-closure-body-transient", cl_alloc);
                 // Issue #3180: closure body is transient (lives inside temp_arena
                 // or the persistent arena; densify observes the pool+flat as
                 // owned roots via wire_general_object_create_pair_or_required_fail).
@@ -2598,8 +2599,12 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
     // 256 KiB is ample for a pattern AST; heap-backed, not stack.
     aura::ast::ASTArena pat_arena(/*initial_size=*/256 * 1024);
     auto alloc = pat_arena.allocator();
-    auto* pat_pool = pat_arena.create<aura::ast::StringPool>(alloc);
-    auto* pat_flat = pat_arena.create<aura::ast::FlatAST>(alloc);
+    aura::ast::StringPool* pat_pool = nullptr;
+    aura::ast::FlatAST* pat_flat = nullptr;
+    pat_pool = pat_arena.create_with_cover<aura::ast::StringPool>(
+        reinterpret_cast<void**>(&pat_pool), nullptr, alloc);
+    pat_flat = pat_arena.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&pat_flat),
+                                                               nullptr, alloc);
     // Issue #3180: pat_pool/pat_flat are pattern AST — long-lived across the
     // batch :replace-pattern call (live until arena teardown). Provide slot
     // pointers to the stable arena-local fields so densify rewrites them
@@ -4181,8 +4186,10 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Use temp_arena_ so (gc-temp) reclaims the
                                 // parse state for each (require ...) call.
                                 auto alloc = temp_arena_->allocator();
-                                auto* ipool = temp_arena_->create<aura::ast::StringPool>(alloc);
-                                auto* iflat = temp_arena_->create<aura::ast::FlatAST>(alloc);
+                                auto* ipool = temp_arena_->create_with_cover<aura::ast::StringPool>(
+                                    nullptr, "require-import-parse-transient", alloc);
+                                auto* iflat = temp_arena_->create_with_cover<aura::ast::FlatAST>(
+                                    nullptr, "require-import-parse-transient", alloc);
                                 // Issue #3180: require-import parse state is transient (lives
                                 // only inside this call; gc-temp reclaims). Declare EXEMPT
                                 // cover so the implicit intermediate bump does not bump
@@ -4988,7 +4995,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Env and any closures it owns can be freed later
                                 // via gc_module(cache_key).
                                 auto& inst_arena = arena_group_->module_arena(cache_key);
-                                auto* cached_env = inst_arena.create<Env>(mod_env);
+                                auto* cached_env = inst_arena.create_with_cover<Env>(
+                                    nullptr, "inst-env-cache-transient", mod_env);
                                 // Issue #3180: inst cache env is transient (lives in inst_arena
                                 // scoped to the module load; densify observes via pin).
                                 // Declare EXEMPT cover for the transient path.

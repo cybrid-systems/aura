@@ -751,12 +751,11 @@ static void ac3368_1_slot_rewrite_keeps_canary_green() {
     void* old_p = p0;
     Pod16_3123 new_obj(5, 6, 7, 8);
     void* new_p = &new_obj;
-    auto& reg = arena.arena_group();
-    reg.register_external_root_slot_for_densify_all(&p0);
+    arena.register_external_root_slot_for_densify(reinterpret_cast<void**>(&p0));
     // Simulate densify: relocate + slot rewrite (issue #2837 order).
     // (a) relocate p0 → new_p. (b) rewrite *slot = new_p. (c) clear canaries.
     // Here we just hand-craft the remap key + canary to verify the check.
-    arena.live_compact(aura::ast::LiveCompactMode::Moving);
+    const auto r = arena.live_compact(aura::ast::LiveCompactMode::Moving);
     // (manual test: we only need the slot + canary to be co-located at
     // the OLD value; the live_compact above already rewrote *p0 if p0 was
     // tracked. For non-tracked test objects, we set up the post-state
@@ -764,10 +763,9 @@ static void ac3368_1_slot_rewrite_keeps_canary_green() {
     (void)old_p;
     (void)new_p;
     // Verify the canary walk does NOT mark the (rewritten) slot as stale.
-    // The check function returns false (=covered, not stale) when the
-    // canary is in `slot_covered_old` (built from rewritten slots).
-    const auto stale = arena.count_post_moving_stale_known_ptrs();
-    CHECK(stale == 0,
+    // Public LiveCompactResult::post_moving_stale_count is the #3055
+    // canary walk (count_post_moving_stale_known_ptrs_ is private).
+    CHECK(r.post_moving_stale_count == 0,
           "3368 AC1: slot-rewritten root does NOT count as stale (canary is covered by slot)");
 }
 

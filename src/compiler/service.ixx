@@ -2283,11 +2283,16 @@ public:
         // Phase 4: parse directly into FlatAST, evaluator reads FlatAST directly.
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
-        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
-        // Issue #3180: arena-pool/flat are long-lived across the parse /
-        // eval cycle (live until arena teardown). Declare slot cover on
-        // the stack-stable pointer fields so densify rewrites them.
+        aura::ast::StringPool* pool_ptr = nullptr;
+        aura::ast::FlatAST* flat_ptr = nullptr;
+        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
+                                                                nullptr, alloc);
+        // Issue #3180 / #3326: arena-pool/flat are long-lived across the parse /
+        // eval cycle (live until arena teardown). Cover is declared at create
+        // (create_with_cover) so uncovered_under_required does not grow; the
+        // post-note below re-registers the slot once *slot is live.
         if (pool_ptr) {
             arena_.note_intermediate_create_with_cover_(
                 pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);
@@ -4124,11 +4129,15 @@ public:
         mod_arena.reset();
 
         auto alloc = mod_arena.allocator();
-        auto* pool_ptr = mod_arena.create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
-        // Issue #3180: per-module pool/flat are long-lived (live until
-        // arena reset). Declare slot cover on the stack-stable pointer
-        // fields so densify rewrites them.
+        aura::ast::StringPool* pool_ptr = nullptr;
+        aura::ast::FlatAST* flat_ptr = nullptr;
+        pool_ptr = mod_arena.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+        flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(
+            reinterpret_cast<void**>(&flat_ptr), nullptr, alloc);
+        // Issue #3180 / #3326: per-module pool/flat are long-lived (live until
+        // arena reset). Cover is declared at create; post-note re-registers
+        // the slot once *slot is live.
         if (pool_ptr) {
             mod_arena.note_intermediate_create_with_cover_(
                 pool_ptr, reinterpret_cast<void**>(&pool_ptr), nullptr);

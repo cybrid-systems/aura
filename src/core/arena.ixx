@@ -631,6 +631,12 @@ inline constexpr int kIntermediateCreateUncoveredUnderRequiredIssue = 3156;
 // only small-pool owns) must join the same cover triad. Soft is the
 // existing required-active load. Reuses with_cover_ inventory.
 inline constexpr int kDensifyTrackedAllocateCoverIssue = 3214;
+// Issue #3326: factory-default create<T> / try_allocate still note
+// uncovered (both-null) under required. Cover-compliant sites must
+// declare slot / EXEMPT at the allocate call (create_with_cover /
+// try_allocate cover args) so uncovered_under_required does not grow
+// and sticky densify-off is not armed solely by that allocate.
+inline constexpr int kFactoryDefaultCoverIssue = 3326;
 
 [[nodiscard]] inline std::uint64_t intermediate_create_with_cover_total_v_read() noexcept {
     return g_intermediate_create_with_cover_total.load(std::memory_order_relaxed);
@@ -1643,6 +1649,35 @@ public:
             {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
         // Issue #2971 / #3053: auto-wire happens in allocate_raw_impl
         // (create / try_allocate / allocate_checked share that path).
+        // Issue #3326: default cover is both-null (Soft/compat). Production
+        // densify-tracked intermediates should use create_with_cover so
+        // uncovered_under_required does not grow on cover-compliant sites.
+        return result;
+    }
+
+    // Issue #3326: cover-aware create. Pass a real void** slot (rewritten
+    // by densify) or an EXEMPT cover_reason for true non-surviving temps.
+    // Default create<T> stays both-null for Soft/compat and still
+    // fail-closes Moving when uncovered. After construct, *slot is written
+    // so register_external_root_slot_for_densify sees a live pointer
+    // (allocate_raw may have observed *slot == nullptr).
+    template <typename T, typename... Args>
+        requires std::constructible_from<T, Args...>
+    [[nodiscard]] T* create_with_cover(void** cover_slot, const char* cover_reason, Args&&... args)
+        pre(sizeof(T) > 0) pre(alignof(T) > 0 && (alignof(T) & (alignof(T) - 1)) == 0) {
+        void* raw = allocate_raw(sizeof(T), alignof(T), cover_slot, cover_reason);
+        if (!raw)
+            return nullptr;
+        ++stats_.allocation_count;
+        auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
+        dtors_.push_back(
+            {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
+        if (cover_slot != nullptr) {
+            *cover_slot = result;
+            if (aura::core::lifetime::general_object_pin_required_active() &&
+                !aura::core::arena_policy::in_render_hotpath())
+                register_external_root_slot_for_densify(cover_slot);
+        }
         return result;
     }
 
@@ -2622,10 +2657,23 @@ public:
     // (SmallObjectPool path when size <= 64). Used by live-compact
     // stress tests and legacy #1467 harness.
     // Issue #1546/#1554: quota-bound when arena_owner_ is set (via set_arena).
-    [[nodiscard]] void* try_allocate(std::size_t size) noexcept {
+    // Issue #3326: optional cover_slot / cover_reason pass-through (same
+    // triad as allocate_checked / create_with_cover). Default nullptr
+    // preserves legacy uncovered bump under required. When slot is
+    // provided, *slot is written after allocate so densify rewrite
+    // sees a live pointer.
+    [[nodiscard]] void* try_allocate(std::size_t size, void** cover_slot = nullptr,
+                                     const char* cover_reason = nullptr) noexcept {
         if (size == 0)
             return nullptr;
-        return allocate_raw(size, alignof(std::max_align_t));
+        void* ptr = allocate_raw(size, alignof(std::max_align_t), cover_slot, cover_reason);
+        if (ptr && cover_slot != nullptr) {
+            *cover_slot = ptr;
+            if (aura::core::lifetime::general_object_pin_required_active() &&
+                !aura::core::arena_policy::in_render_hotpath())
+                register_external_root_slot_for_densify(cover_slot);
+        }
+        return ptr;
     }
 
     // Issue #1554: typed factory — quota check once, then allocate_raw_impl.
@@ -2887,6 +2935,9 @@ public:
     // Issue #3180: optional slot/reason pass-through so hot-path callers
     // can declare cover at the allocate site. Default nullptr/nullptr
     // preserves legacy behavior (uncovered metric bump under required).
+    // Issue #3326: create_with_cover / try_allocate cover args thread
+    // through this same path so cover-compliant factories skip the
+    // both-null uncovered bump.
     // Issue #3214: small-pool identity (kMaxSmallSize / owns) remains
     // the densify-relocate set, but pmr fallback and size > kMaxSmallSize
     // still note — required + uncovered cannot bypass inventory /

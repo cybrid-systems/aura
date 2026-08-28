@@ -364,8 +364,12 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // matches ASTArena's main arena budget; can be tuned per module later.
     auto& mod_arena = arena_group_->module_arena(resolved);
     auto alloc = mod_arena.allocator();
-    auto* pool_ptr = mod_arena.create<aura::ast::StringPool>(alloc);
-    auto* flat_ptr = mod_arena.create<aura::ast::FlatAST>(alloc);
+    aura::ast::StringPool* pool_ptr = nullptr;
+    aura::ast::FlatAST* flat_ptr = nullptr;
+    pool_ptr = mod_arena.create_with_cover<aura::ast::StringPool>(
+        reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+    flat_ptr = mod_arena.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
+                                                               nullptr, alloc);
     // Issue #3180: per-module pool/flat are long-lived (live until
     // arena reset). Declare slot cover on the stack-stable pointer
     // fields so densify rewrites them.
@@ -395,7 +399,8 @@ types::EvalValue Evaluator::load_module_file(const std::string& path) {
     // 6. Create isolated module env (child of top_ for primitive access)
     // Arena-allocate in the per-module arena so closures captured during
     // module eval stay valid for the module's lifetime.
-    auto* mod_env = mod_arena.create<Env>(&top_);
+    Env* mod_env = nullptr;
+    mod_env = mod_arena.create_with_cover<Env>(reinterpret_cast<void**>(&mod_env), nullptr, &top_);
     // Issue #3180: mod_env is long-lived (live until arena reset).
     // Declare slot cover on the stack-stable pointer field so densify
     // rewrites it.
