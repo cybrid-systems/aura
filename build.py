@@ -5300,6 +5300,23 @@ def cmd_lint():
             "Issue #3369 mailbox held_ref post-steal walk linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3369.py"
         )
         return r
+    # Issue #3370: arena auto-arm production live_compact(Moving) must
+    # fire the owning Evaluator known-roots hook before relocate (single
+    # inventory). No hook → refuse to move (Soft fallback). Hook is the
+    # existing register_known_moving_densify_root_slots walk (workspace_flat_
+    # / workspace_pool_ / mutate-target / current flat+pool / WorkspaceTree /
+    # RootRemap stable+closure-capture / opaque_heap_ aliases). No new
+    # pin registry, no new query:* keys, no second model.
+    aak3370_script = COVERAGE_CHECKS / "check_arena_auto_arm_known_roots_3370.py"
+    if not aak3370_script.exists():
+        fail(f"missing {aak3370_script}")
+        return 1
+    r = run([sys.executable, str(aak3370_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3370 arena auto-arm known-roots single inventory linter failed — run python3 scripts/coverage/checks/check_arena_auto_arm_known_roots_3370.py"
+        )
+        return r
     # Issue #3113: typed trail 256 wrap vs SE ring 1024 + WAL. query:security-audit
     # must mark typed-trail-miss (plus window / se-ring-size / wal-replay-hint)
     # so a wrap miss is not read as "never audited". Soft / WAL-off: is_enabled()

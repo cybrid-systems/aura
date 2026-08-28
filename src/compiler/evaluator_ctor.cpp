@@ -273,6 +273,9 @@ Evaluator::~Evaluator() {
             arena_->clear_arena_owner();
             arena_->set_on_compact_hook(nullptr);
             arena_->set_root_remap_callback(nullptr); // Issue #2294
+            // Issue #3370: drop known-roots hook with the prior arena
+            // (same UAF avoidance as compact + root_remap hooks above).
+            arena_->set_known_roots_hook(nullptr);
             arena_ = nullptr;
         }
         if (temp_arena_) {

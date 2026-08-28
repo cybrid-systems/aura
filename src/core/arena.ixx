@@ -1100,6 +1100,16 @@ export using RootRemapHookFn = void (*)(
     std::unordered_map<void*, void*> const& object_remap, std::size_t& out_stable_ref_total,
     std::size_t& out_stable_ref_fail_total, std::size_t& out_closure_capture_total,
     std::size_t& out_closure_capture_fail_total) noexcept;
+// Issue #3370: known-roots hook (single inventory for live_compact(Moving)).
+// The owning Evaluator binds a function that walks its known-root slot
+// inventory (workspace_flat_ / workspace_pool_ / mutate-target / current
+// flat+pool / WorkspaceTree / RootRemap stable+closure-capture / opaque_heap_
+// aliases) and registers them for the next Moving window. Arena auto-arm
+// refuses to call live_compact(Moving) without this hook (Soft fallback).
+// C-style function pointer (no std::function); ctx is the Evaluator.
+// Reuses the same fn / ctx + mutex pattern as CompactHook / LayoutChangeHook /
+// RootRemapHook so the existing set_arena switch / clear path covers it.
+export using KnownRootsHookFn = void (*)(void* ctx) noexcept;
 
 export struct CompactHook {
     CompactHookFn fn = nullptr;
@@ -1147,6 +1157,27 @@ export struct RootRemapHook {
         return h.fn == nullptr;
     }
     [[nodiscard]] friend bool operator!=(const RootRemapHook& h, std::nullptr_t) noexcept {
+        return h.fn != nullptr;
+    }
+};
+
+// Issue #3370: known-roots hook struct. Same fn / ctx + mutex pattern
+// as CompactHook / LayoutChangeHook / RootRemapHook. Operator() copies
+// the {fn, ctx} under lock then invokes outside the lock (same as
+// invoke_root_remap_callback_ / invoke_layout_change_ pattern) so the
+// lock window stays short.
+export struct KnownRootsHook {
+    KnownRootsHookFn fn = nullptr;
+    void* ctx = nullptr;
+    [[nodiscard]] explicit operator bool() const noexcept { return fn != nullptr; }
+    void operator()() const noexcept {
+        if (fn)
+            fn(ctx);
+    }
+    [[nodiscard]] friend bool operator==(const KnownRootsHook& h, std::nullptr_t) noexcept {
+        return h.fn == nullptr;
+    }
+    [[nodiscard]] friend bool operator!=(const KnownRootsHook& h, std::nullptr_t) noexcept {
         return h.fn != nullptr;
     }
 };
@@ -1370,6 +1401,46 @@ public:
     [[nodiscard]] bool has_root_remap_callback() const noexcept {
         std::lock_guard<std::mutex> lock(root_remap_mtx_);
         return root_remap_.fn != nullptr;
+    }
+
+    // Issue #3370: known-roots hook (single inventory for
+    // live_compact(Moving)). Same {fn, ctx} + mutex + setter pattern as
+    // set_root_remap_callback / set_on_compact_hook. The owning Evaluator
+    // binds this once on set_arena (when the owning relationship is
+    // established) and the hook walks its known-root slot inventory
+    // (workspace_flat_ / workspace_pool_ / mutate-target / current
+    // flat+pool / WorkspaceTree / RootRemap stable+closure-capture /
+    // opaque_heap_ aliases) so the next live_compact(Moving) can
+    // safely relocate. Arena auto-arm refuses to call live_compact(Moving)
+    // when this hook is null (Soft fallback) — see maybe_auto_compact_on_alloc.
+    void set_known_roots_hook(KnownRootsHookFn fn, void* ctx = nullptr) noexcept {
+        std::lock_guard<std::mutex> lock(known_roots_mtx_);
+        known_roots_hook_.fn = fn;
+        known_roots_hook_.ctx = ctx;
+    }
+    [[nodiscard]] KnownRootsHook take_known_roots_hook() noexcept {
+        std::lock_guard<std::mutex> lock(known_roots_mtx_);
+        KnownRootsHook out = known_roots_hook_;
+        known_roots_hook_.fn = nullptr;
+        known_roots_hook_.ctx = nullptr;
+        return out;
+    }
+    [[nodiscard]] bool has_known_roots_hook() const noexcept {
+        std::lock_guard<std::mutex> lock(known_roots_mtx_);
+        return known_roots_hook_.fn != nullptr;
+    }
+    // Issue #3370: copy the hook under lock then invoke outside the lock
+    // (same pattern as invoke_root_remap_callback_ / invoke_layout_change_).
+    // Quiet-path: hook null → no-op, single atomic load + branch.
+    void invoke_known_roots_hook() noexcept {
+        KnownRootsHook copy;
+        {
+            std::lock_guard<std::mutex> lock(known_roots_mtx_);
+            if (!known_roots_hook_.fn)
+                return;
+            copy = known_roots_hook_;
+        }
+        copy();
     }
 
     // Issue #2775: register an external pointer that the caller holds and
@@ -3081,14 +3152,31 @@ public:
                 if (should_production_auto_arm_moving(frag_before)) {
                     aura::core::moving_densify_health::note_production_auto_arm();
                     stamp_last_moving_compact_now();
-                    const auto r = live_compact(LiveCompactMode::Moving);
-                    if (r.moving_blocked_precondition || r.soft_gated) {
+                    // Issue #3370: single known-root inventory. The owning
+                    // Evaluator must bind a known-roots hook before auto-
+                    // arm can call live_compact(Moving). No hook → Soft
+                    // fallback (mark-only) — refuse to relocate objects the
+                    // Evaluator still holds in unregistered void** slots.
+                    if (has_known_roots_hook()) {
+                        invoke_known_roots_hook();
+                        const auto r = live_compact(LiveCompactMode::Moving);
+                        if (r.moving_blocked_precondition || r.soft_gated) {
+                            const auto marked = live_compact(/*force=*/false);
+                            if (marked > 0 || small_pool_.free_slot_count() == 0)
+                                saved = 1;
+                        } else if (r.slots_recycled > 0 || r.objects_moved > 0 ||
+                                   r.bytes_reclaimed > 0) {
+                            saved = 1;
+                        }
+                    } else {
+                        // No inventory bound — do not move. Soft fallback only.
+                        // Issue #3370 AC2: production auto-arm must not call
+                        // live_compact(Moving) when no hook is bound.
+                        aura::core::moving_densify_health::
+                            note_production_auto_arm_no_hook_fallback();
                         const auto marked = live_compact(/*force=*/false);
                         if (marked > 0 || small_pool_.free_slot_count() == 0)
                             saved = 1;
-                    } else if (r.slots_recycled > 0 || r.objects_moved > 0 ||
-                               r.bytes_reclaimed > 0) {
-                        saved = 1;
                     }
                 } else {
                     // Issue #3200: production wanted Moving but pins/guards
@@ -3275,6 +3363,13 @@ public:
     // Issue #2267 / #3124: RootRemapPass callback (StableNodeRef + Closure).
     mutable std::mutex root_remap_mtx_;
     RootRemapHook root_remap_{};
+    // Issue #3370: known-roots hook (single inventory for
+    // live_compact(Moving)). Owned by the binding Evaluator (set on
+    // Evaluator::set_arena, cleared on switch). Arena auto-arm refuses to
+    // call live_compact(Moving) when this is null (Soft fallback) — see
+    // maybe_auto_compact_on_alloc + maybe_try_auto_compact_.
+    mutable std::mutex known_roots_mtx_;
+    KnownRootsHook known_roots_hook_{};
     // Issue #3055: observe-only residual live ptrs (not a remap registry).
     std::vector<void*> post_moving_live_canaries_;
     // Issue #1546: optional Evaluator* (void*) + quota allow callback.

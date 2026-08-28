@@ -1642,6 +1642,9 @@ public:
             // Issue #2294: drop RootRemapPass callback with the prior arena
             // (mirrors compact-hook clear — avoids UAF into dead Evaluator).
             arena_->set_root_remap_callback(nullptr);
+            // Issue #3370: drop known-roots hook with the prior arena
+            // (same UAF avoidance as compact + root_remap hooks above).
+            arena_->set_known_roots_hook(nullptr);
         }
         arena_ = a;
         // Issue #1446 follow-up: register compact hook so GC-driven
@@ -1662,6 +1665,13 @@ public:
                 if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                     set_root_remap_pass_test_metrics(m);
                 arena_->set_root_remap_callback(make_root_remap_arena_callback());
+            }
+            // Issue #3370: install known-roots hook on first claim / switch
+            // so auto-arm has the Evaluator known-root inventory bound before
+            // live_compact(Moving). Idempotent set_arena(same): leave existing
+            // hook if already wired (tests may override).
+            if (switching || !arena_->has_known_roots_hook()) {
+                arena_->set_known_roots_hook(&Evaluator::on_arena_known_roots_hook_thunk, this);
             }
             // Issue #1546 / #1554: thread this Evaluator as arena_owner_ so
             // ASTArena::allocate_raw consults check_arena_quota before
@@ -13911,6 +13921,13 @@ public:
     void on_arena_compact_hook();
     // Issue #3124: non-allocating thunk for ASTArena compact hook slots.
     static void on_arena_compact_hook_thunk(void* ctx) noexcept;
+    // Issue #3370: non-allocating thunk for ASTArena known-roots hook.
+    // Fires before auto-arm live_compact(Moving) so the Evaluator known-
+    // root slot inventory (workspace_flat_ / workspace_pool_ / mutate-
+    // / current flat+pool / WorkspaceTree / RootRemap stable+closure /
+    // opaque_heap_ aliases) is registered before relocate. No module
+    // import from arena.ixx — ctx is the owning Evaluator.
+    static void on_arena_known_roots_hook_thunk(void* ctx) noexcept;
     // Issue #1473: public test accessors for the 3 hook points wired by
     // #1473 (validate_or_refresh sweeps for pinned StableNodeRefs). The
     // production code paths (restore_post_yield_or_rollback,
