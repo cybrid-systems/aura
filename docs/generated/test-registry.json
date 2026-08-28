@@ -1373,7 +1373,7 @@
     {
       "file": "tests/compiler/test_hot_update_relower_success_coverage.cpp",
       "category": "unit",
-      "reason": "Issue #3136 — relower-success-path bitmap coherence. After any",
+      "reason": "Issue #3383 — `note_relower_success_coverage` used two",
       "issue": null
     },
     {

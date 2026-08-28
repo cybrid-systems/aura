@@ -209,14 +209,16 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                 restamp_cache_entry_live_(it->second);
                 metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #3136: success-path bitmap coherence — root restamp
-                // (cascade-reemit path). Cross-TU deterministic hash via
-                // std::hash<std::string_view> (libstdc++ _Hash_bytes is
-                // process-stable). Service.ixx sites use fnv1a_64 — distinct
-                // bit for same name is fine; coverage mask still shrinks
-                // residual_force_mask correctly (union covers it).
+                // (cascade-reemit path). Issue #3383: must use the SAME
+                // hash as `store_define_v2` (fnv1a_64 via
+                // relower_success_region_bit) — std::hash<std::string_view>
+                // split the 64-bit region bit between store + cascade-restamp
+                // so residual_force_mask = force & ~last_success could not
+                // clear the same define across a store + cascade-restamp
+                // pair (half-cover / sticky force-JIT / missed re-promote).
                 if (aura_production_defaults_active_probe() != 0) {
                     hot_update_registry().note_relower_success_coverage(
-                        1ULL << (std::hash<std::string_view>{}(name) & 63));
+                        relower_success_region_bit(name));
                     // Issue #3229: define-id side set (6-bit collision).
                     hot_update_registry().note_relower_success_define(
                         relower_success_define_id(name));
@@ -230,9 +232,11 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                     metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                     // Issue #3136: success-path bitmap coherence — dependent
                     // restamp (cascade-reemit path, see root comment above).
+                    // #3383: same fnv1a_64 bit as store_define_v2 + the root
+                    // restamp above — single bitmap identity for the define.
                     if (aura_production_defaults_active_probe() != 0) {
                         hot_update_registry().note_relower_success_coverage(
-                            1ULL << (std::hash<std::string_view>{}(d) & 63));
+                            relower_success_region_bit(d));
                         // Issue #3229: define-id side set (6-bit collision).
                         hot_update_registry().note_relower_success_define(
                             relower_success_define_id(d));
