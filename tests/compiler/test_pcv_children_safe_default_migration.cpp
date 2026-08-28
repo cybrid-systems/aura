@@ -327,6 +327,95 @@ static void ac3292_3_no_new_runtime() {
           "3292 AC3: no tests/issues/test_issue_3292.cpp per #81967");
 }
 
+// Issue #3392 (I1): production children_stable / children_stable_batch hot
+// path must not construct std::vector<StableNodeRef> per call. The
+// evaluator export face fills a thread-local buffer via the #398
+// for_each_stable_child callback. FlatAST::children_stable(NodeId) keeps
+// its allocating convenience for C++ callers (per AC2). #3328 stale-span
+// / #3167 fingerprint / #3000 restamp-lag empty-batch non-regress.
+void ac3392_1_source_cite_evaluator_face() {
+    std::println(
+        "\n--- #3392 AC1+AC5: evaluator export face uses thread-local buffer + callback ---");
+    const auto efm = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(!efm.empty(), "3392 AC1: evaluator_fiber_mutation.cpp readable");
+    // AC5: the Evaluator::children_stable_batch body must NOT declare
+    // a fresh `std::vector<StableNodeRef> out;` — it must reuse a
+    // thread-local buffer so per-call heap allocation is avoided.
+    auto body_open = efm.find("Evaluator::children_stable_batch");
+    CHECK(body_open != std::string::npos, "3392 AC1: Evaluator::children_stable_batch defined");
+    if (body_open != std::string::npos) {
+        auto brace_open = efm.find('{', body_open);
+        CHECK(brace_open != std::string::npos, "3392 AC1: function body open");
+        if (brace_open != std::string::npos) {
+            std::size_t depth = 1;
+            std::size_t i = brace_open + 1;
+            for (; i < efm.size(); ++i) {
+                if (efm[i] == '{')
+                    ++depth;
+                else if (efm[i] == '}') {
+                    --depth;
+                    if (depth == 0)
+                        break;
+                }
+            }
+            const auto body = efm.substr(brace_open, i - brace_open + 1);
+            // AC5: no fresh std::vector<StableNodeRef> out; — must be
+            // thread_local std::vector<StableNodeRef> out;
+            CHECK(body.find("thread_local std::vector<aura::ast::FlatAST::StableNodeRef>") !=
+                      std::string::npos,
+                  "3392 AC1: thread_local buffer adopted");
+            CHECK(body.find("for_each_stable_child") != std::string::npos,
+                  "3392 AC1: for_each_stable_child callback adopted (per #398)");
+            CHECK(efm.find("Issue #3392") != std::string::npos,
+                  "3392 AC1: Issue #3392 cite in source");
+        }
+    }
+    // AC5: FlatAST::children_stable(NodeId) keeps its allocating
+    // convenience (per AC2) — the fix is scoped to the Evaluator export
+    // face, not FlatAST.
+    const auto astx = read_src("src/core/ast.ixx");
+    CHECK(astx.find("std::vector<StableNodeRef> children_stable(NodeId id) const") !=
+              std::string::npos,
+          "3392 AC2: FlatAST::children_stable keeps allocating convenience");
+    CHECK(astx.find("template <typename Fn> void for_each_stable_child") != std::string::npos,
+          "3392 AC1: for_each_stable_child callback (per #398) still available");
+}
+
+void ac3392_2_no_regress_3328_3167_3000() {
+    std::println("\n--- #3392 AC3: #3328 / #3167 / #3000 non-regress ---");
+    const auto efm = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(efm.find("pcv_span_for_agent_export") != std::string::npos,
+          "3392 AC3: #3328 pcv_span_for_agent_export still called");
+    CHECK(efm.find("force_refresh_pcv_span") != std::string::npos,
+          "3392 AC3: #3328 force_refresh_pcv_span still called");
+    CHECK(efm.find("is_stale") != std::string::npos, "3392 AC3: #3328 stale check still present");
+    CHECK(efm.find("allow_query_stable_ref_export") != std::string::npos,
+          "3392 AC3: #3000 restamp-lag gate still present");
+    CHECK(efm.find("stamp_query_stable_ref_export") != std::string::npos,
+          "3392 AC3: #3167 fingerprint stamp still wired");
+    CHECK(efm.find("pin_for_cow") != std::string::npos, "3392 AC3: #2960 COW pin still applied");
+    // The stale fail-closed empty-batch contract is preserved: if any
+    // child fails allow_query_stable_ref_export, the batch returns out
+    // (empty). Pre-fill, not post-fill.
+    CHECK(efm.find("if (!allow_query_stable_ref_export(cid))\n            return out;") !=
+                  std::string::npos ||
+              efm.find("if (!allow_query_stable_ref_export(cid))\n                return out;") !=
+                  std::string::npos,
+          "3392 AC3: empty-batch fail-closed before fill (per #3000)");
+}
+
+void ac3392_3_no_invent() {
+    std::println("\n--- #3392 AC4: no docs/design/3392-*; no tests/issues/test_issue_3392.cpp ---");
+    {
+        std::ifstream f("docs/design/3392-children-stable-no-heap-temp.md");
+        CHECK(!f.good(), "3392 AC4: no docs/design/3392-*");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3392.cpp");
+        CHECK(!f.good(), "3392 AC4: no tests/issues/test_issue_3392.cpp");
+    }
+}
+
 } // namespace
 
 int main() {
@@ -346,6 +435,10 @@ int main() {
     ac3292_1_layout_stamps_present();
     ac3292_2_offsets_pinned();
     ac3292_3_no_new_runtime();
+    std::println("\n=== #3392: children_stable_batch zero-heap-temp ===");
+    ac3392_1_source_cite_evaluator_face();
+    ac3392_2_no_regress_3328_3167_3000();
+    ac3392_3_no_invent();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
