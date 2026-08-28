@@ -14,6 +14,16 @@
 #include "core/resource_quota.hh"     // process_resource_quota_manager (#2493 mid resolve)
 #include "core/security_event_wal.hh" // #3054 emit_security_event_durable on refuse
 #include "core/workspace_epoch.hh"    // current_mutation_epoch (#2493 mid resolve)
+// Issue #3375: force_wal block in apply_production_audit_defaults needs the
+// sandbox + capability + mutation_audit_wal + wal_slo facades. The same
+// headers are already pulled in by security_defaults.hh (which calls
+// apply_production_audit_defaults from its step 3). Pulling them here too
+// keeps the inline helper self-contained without circular include on
+// security_defaults.hh.
+#include "core/capability_model.hh"
+#include "core/mutation_audit_wal.hh"
+#include "core/sandbox.hh"
+#include "core/wal_append_fail_slo.h"
 // Issue #2836: resolve-time mid-fallback hard face is absolute zero-tolerance
 // (no SLO rate check). Schedule-gate (#2630/#2594) still uses
 // audit_mid_fallback_slo.h; include removed from this header after #2836.
@@ -935,6 +945,13 @@ inline void clear_mid_fallback_refuse_se_tls() noexcept {
 // via apply_dev_audit_defaults / reset_for_test.
 // Issue #3075: production also arms QueryEpoch strict so Agents cannot
 // re-query green after mutate/restamp-lag without query-epoch-stale.
+// Issue #3375: Restricted/Strict commercial sandbox + production audit
+// defaults → force_wal. Same block as apply_production_security_defaults
+// step 4 (#2150/#2492); keep in sync. Soft / AURA_SANDBOX=off never
+// reaches this block (zero-cost contract per #3302). Embed/serve
+// processes that only link typed_audit and never call
+// apply_production_security_defaults now get the same durable audit
+// trail as the security-defaults path.
 inline void apply_production_audit_defaults() noexcept {
     set_strategy(AuditStrategy::Full);
     set_sample_ratio(1);
@@ -943,6 +960,65 @@ inline void apply_production_audit_defaults() noexcept {
     aura::core::set_query_epoch_strict(true);
     clear_mid_fallback_refuse_se_tls();
     aura_pcv_set_stale_span_exclusive(1);
+    // Issue #3375: force_wal when in Restricted/Strict commercial sandbox.
+    // Mirrors apply_production_security_defaults step 4 (lines 252-315 of
+    // security_defaults.hh). multi_tenant read from AURA_MULTI_TENANT env
+    // directly so callers that invoke only this function (without first
+    // calling apply_production_security_defaults) still get the correct
+    // force_wal decision.
+    {
+        using namespace ::aura::core::sandbox;
+        using namespace ::aura::core::capability;
+        using namespace ::aura::core::audit_wal;
+        const char* sandbox_e = std::getenv("AURA_SANDBOX");
+        const bool dev_off = sandbox_e && *sandbox_e && std::string_view(sandbox_e) == "off";
+        if (!dev_off) {
+            const char* mt = std::getenv("AURA_MULTI_TENANT");
+            bool multi_tenant = false;
+            if (mt && *mt) {
+                std::string_view mv(mt);
+                if (mv == "1" || mv == "true" || mv == "yes" || mv == "on")
+                    multi_tenant = true;
+            }
+            const bool strict = g_sandbox_state().mode == SandboxMode::Strict ||
+                                g_capability_registry().sandbox_mode == EffectSandboxMode::Strict;
+            const bool restricted =
+                g_sandbox_state().mode == SandboxMode::Restricted ||
+                g_capability_registry().sandbox_mode == EffectSandboxMode::Restricted;
+            const bool force_wal = multi_tenant || strict || restricted;
+            const char* explicit_wal = std::getenv("AURA_MUTATION_AUDIT_WAL");
+            if (!explicit_wal || !*explicit_wal)
+                explicit_wal = std::getenv("AURA_PERSIST_DIR");
+            const bool has_explicit = explicit_wal && *explicit_wal;
+            if (has_explicit || force_wal) {
+                bool used_default = false;
+                const auto dir = has_explicit ? std::string(explicit_wal)
+                                              : resolve_mutation_audit_wal_dir(&used_default);
+                if (g_mutation_audit_wal().enable(std::string_view(dir), nullptr, 0)) {
+                    if (force_wal)
+                        ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(true);
+                    if (force_wal && !has_explicit) {
+                        g_audit_wal_metrics().audit_wal_forced_by_multi_tenant_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        if (restricted && !multi_tenant && !strict) {
+                            g_audit_wal_metrics().audit_wal_forced_by_restricted_total.fetch_add(
+                                1, std::memory_order_relaxed);
+                        }
+                    }
+                    if (used_default || (force_wal && !has_explicit)) {
+                        g_audit_wal_metrics().audit_wal_using_default_dir.store(
+                            1, std::memory_order_relaxed);
+                    }
+                } else if (force_wal) {
+                    ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+                }
+            } else {
+                ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+            }
+        } else {
+            ::aura::core::wal_slo::set_wal_fail_closed_defaulted_by_force_wal(false);
+        }
+    }
 }
 
 // Issue #2053: restore fast-iteration Sampled defaults (tests / AURA_SANDBOX=off).

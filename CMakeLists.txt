@@ -3015,6 +3015,7 @@ add_executable(test_security_capability_batch
     tests/compiler/test_security_audit_unify.cpp
     tests/compiler/test_security_audit_wal_force_restricted.cpp
     tests/compiler/test_security_event_wal_replay.cpp
+    tests/compiler/test_audit_durable_gap_force_wal.cpp
     tests/compiler/test_security_health.cpp
     tests/compiler/test_security_posture_trail.cpp
     tests/compiler/test_security_schedule_mutate_admit.cpp
