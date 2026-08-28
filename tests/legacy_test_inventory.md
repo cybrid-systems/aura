@@ -32,9 +32,9 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
-| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 89 | 89 | P0 — well-contained, batch drivers already exist |
+| `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
 | `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 256 | 256 | P0 — high volume; strong domain suite foothold |
-| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 106 | 106 | P1 — domain suite already collapses many obs gates |
+| `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 107 | 107 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 23 | 23 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
@@ -1082,17 +1082,16 @@ Suggested order starts with well-contained groups (per #1957) and leverages exis
 
 Files listed as ``location/name`` with issue id and one-line summary.
 
-### `arena_compaction` — Arena / compaction / GC (89)
+### `arena_compaction` — Arena / compaction / GC (88)
 
 **Target:** tests/core/ (extend compact/gc family; see test_arena_batch / test_hotpath_matrix_batch)
 
 **Priority:** P0 — well-contained, batch drivers already exist
 
-#### domain/ (89)
+#### domain/ (88)
 
 - `tests/compiler/test_adt_match_exhaust_post_mutate_reliability.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaust_post_mutate_reliability.cpp — Issue #612:
 - `tests/orch/test_agent_name_table_isolation.cpp` (—) [domain_suite, theme_orch] — AC1: source cites #2078; no process-static OrchAgentNameTable;
-- `tests/orch/test_agent_scope.cpp` (—) [large, domain_suite, theme_orch] — test_agent_scope.cpp — Issue #2083 AgentScope + #2161 watch_all
 - `tests/core/test_arena_adaptive_compact.cpp` (—) [domain_suite, theme_core] — AC1: compute_adaptive_headroom varies with mutation vs deopt storm
 - `tests/core/test_arena_auto_compact_fiber_defag_shape_dirty_closedloop.cpp` (—) [domain_suite, theme_core] — (aura_issue_arena_auto_compact_fiber_defag_shape_dirty_closedloop_run). Stays at tests/core/ per
 - `tests/core/test_arena_auto_compact_intelligent.cpp` (—) [domain_suite, theme_core] — Issue #1242/#1621/#187/#1919/#300 (#1978 renamed): issue# moved from filename to header.
@@ -1146,7 +1145,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_grant_macro_self_evo_stamp.cpp` (—) [domain_suite, theme_compiler] — AC1: After grant_macro_self_evo, grant_epoch non-zero (= Mutation epoch)
 - `tests/core/test_has_on_compact_hook_lock.cpp` (—) [domain_suite, theme_core] — AC1: All three has_* methods take their respective mutexes (source)
 - `tests/core/test_highperf_full_hotpath_matrix.cpp` (—) [domain_suite, theme_core] — test_task4_highperf_full_hotpath_matrix.cpp — Issue #607:
-- `tests/compiler/test_hot_contract_placement.cpp` (—) [domain_suite, theme_compiler] — AC1: Production default: hot-loop contracts OFF (or observe)
+- `tests/compiler/test_hot_contract_placement.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Production default: hot-loop contracts OFF (or observe)
 - `tests/compiler/test_ir.cpp` (—) [large, domain_suite, theme_compiler] — 
 - `tests/serve/test_issue_1990.cpp` (#1990) [small, domain_suite, theme_serve] — test_issue_1990.cpp — Issue #1990 / B-009: (gc-temp) and (gc-stats)
 - `tests/serve/test_issue_1991.cpp` (#1991) [small, domain_suite, theme_serve] — test_issue_1991.cpp — Issue #1991 / B-010: (gc) primitive clears
@@ -1203,7 +1202,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_atomic_batch_rollback_metric_noise.cpp` (—) [batch_driver, domain_suite, theme_compiler] — AC1: abort_batch_workspace cites #2796; no enforce_all on abort paths
 - `tests/compiler/test_atomic_batch_snapshot_stable_ref_ai_loops.cpp` (—) [batch_driver, domain_suite, theme_compiler] — - AC1: workspace:snapshot + workspace:rollback-to primitives
 - `tests/compiler/test_audit_mid_fallback_slo.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_audit_mid_fallback_slo.cpp
-- `tests/compiler/test_audit_mutation_id_unify.cpp` (—) [domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
+- `tests/compiler/test_audit_mutation_id_unify.cpp` (—) [large, domain_suite, theme_compiler] — AC1: require_effect deny under Restricted → SE.mutation_id matches
 - `tests/core/test_audit_replay_join.cpp` (—) [domain_suite, theme_core] — AC1: require_effect mid stamp order: TypedMid
 - `tests/compiler/test_audit_ring_publish.cpp` (—) [domain_suite, theme_compiler] — AC1: both kAuditRing == 1024
 - `tests/compiler/test_audit_wal_force_multi_tenant.cpp` (—) [domain_suite, theme_compiler] — AC1: AURA_MULTI_TENANT=1 without WAL env → enabled + forced metric > 0
@@ -1445,18 +1444,19 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_workspace_rollback_latest.cpp` (—) [domain_suite, theme_compiler] — AC1: source has no second all_mutations() ID walk inside rollback-latest
 - `tests/core/test_workspace_state_lock.cpp` (—) [domain_suite, theme_core] — tests/core/test_workspace_state_lock.cpp — Issue #1994 (F-004):` (workspace-state)` and
 
-### `fiber_orch` — Fiber / orchestration / steal / Guard (106)
+### `fiber_orch` — Fiber / orchestration / steal / Guard (107)
 
 **Target:** tests/core/test_fiber_resume_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P1 — domain suite already collapses many obs gates
 
-#### domain/ (106)
+#### domain/ (107)
 
 - `tests/orch/test_agent_apply_mutex.cpp` (—) [domain_suite, theme_orch] — AC1: No process-static mutex on orch spawn apply path (grep clean).
 - `tests/orch/test_agent_ask_typed_corr.cpp` (—) [domain_suite, theme_orch] — AC1: corr_id match without payload text parse (MailKind + correlation_id)
 - `tests/orch/test_agent_failure_policy.cpp` (—) [large, domain_suite, theme_orch] — AC1: AgentFailurePolicy available under aura::orch; StallPolicy
 - `tests/orch/test_agent_max_no_yield.cpp` (—) [domain_suite, theme_orch] — Issue #2585 — production default + opt-out (AURA_AGENT_MAX_NO_YIELD_MS=0).
+- `tests/orch/test_agent_scope.cpp` (—) [large, domain_suite, theme_orch] — test_agent_scope.cpp — Issue #2083 AgentScope + #2161 watch_all
 - `tests/orch/test_agent_scope_hierarchy.cpp` (—) [domain_suite, theme_orch] — AC1: parent / children links via spawn_child (unique_ptr, not static table)
 - `tests/compiler/test_aot_bridge_checkpoint_version_steal.cpp` (—) [domain_suite, theme_compiler] — test_aot_bridge_checkpoint_version_steal.cpp — Issue #653:
 - `tests/serve/test_boundary_yield_steal_metrics.cpp` (—) [domain_suite, theme_serve] — AC1: high-frequency MB yield → yield_mutation_boundary_total + hold_ns

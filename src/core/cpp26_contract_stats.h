@@ -6,7 +6,11 @@
 // arena.ixx, and pass_manager can all bump counters without crossing
 // module boundaries.
 
-#include "compiler/typed_mutation_audit.h" // Issue #3139 AC4: production_defaults_active() probe for hot_contract_harden_armed()
+// Issue #3139 / #3313: production_defaults via C ABI so this header does
+// not pull typed_mutation_audit.h (and its incomplete Evaluator) into
+// every hot TU (value/arena/ast/ir_soa). Strong def in
+// typed_mutation_audit_hooks.cpp; weak stub in light-link.
+extern "C" int aura_production_defaults_active_probe() noexcept;
 //
 // ── Issue #2142 / #2435: unified hot-path contract policy ────────────────
 //
@@ -47,7 +51,11 @@
 //         (fail-closed trap). Sample period still applies (AC3); happy
 //         path remains a branch + sampled atomic (no per-call RMW, AC2).
 //   * Off — -DAURA_CONTRACTS_HOT_MODE_OFF or production (NDEBUG) default:
-//         RECORD + CHECK → no-op  (zero cost on happy path)
+//         compile-time OFF (Soft / unit / AURA_SANDBOX=off: armed()==0,
+//         expr not evaluated). Issue #3313: when
+//         production_defaults_active() arms, the same binary runs
+//         Soft-observe + Harden (sampled RECORD + fail-closed abort)
+//         without -DAURA_HOT_SOFT_OBSERVE_HARDEN.
 //
 // Env AURA_CONTRACTS_HOT_MODE=soft|observe|off|enforce is Agent-visible
 // intent on query:cpp26-contracts-stats (hot-contracts-mode-env). It does
@@ -113,6 +121,9 @@ inline constexpr int kHotContractSoftObserveIssue = 3043;
 // closed trap on false CHECK). Closes the Soft-only window of #3043 under
 // AI multi-round mutate (Value as_*, SoA view_at, dirty mark/cascade).
 inline constexpr int kHotContractHardenIssue = 3106;
+// Issue #3313: production_defaults arms Soft-observe+Harden for the
+// NDEBUG OFF expansion (I1 residual of #2435/#3043/#3106).
+inline constexpr int kHotContractProductionHardenIssue = 3313;
 // Soft-observe RECORD sample period (power of two). Acceptable upper
 // bound vs OFF: one relaxed atomic per this many RECORD sites. Applies to
 // both plain Soft-observe (#3043) and Harden-armed Soft-observe (#3106
@@ -197,6 +208,7 @@ inline std::atomic<std::uint64_t> contract_violation_hotpath_count{0};
 inline std::atomic<std::uint64_t> hot_contract_harden_wired{1};
 inline std::atomic<std::uint64_t> hotpath_contracts_3106_active{1};
 inline std::atomic<std::uint64_t> hotpath_contract_harden_trap_total{0};
+inline std::atomic<std::uint64_t> hotpath_contracts_3313_active{1};
 // Issue #1466: hot-path consteval invariant hits — bumped each time a
 // new consteval invariant is added. Mirrors kConstevalChecksTotal but
 // observable at runtime via (query:cpp26-contracts-stats).
@@ -262,6 +274,12 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 #if defined(AURA_HOT_MODE_HARDEN)
     return true;
 #else
+    // Issue #3313: production_defaults is live (not cached) so OFF macros
+    // fail-close after apply_production_audit_defaults() without
+    // -DAURA_HOT_SOFT_OBSERVE_HARDEN. Soft / unit / AURA_SANDBOX=off keep
+    // production_defaults_active()==0 (AC2 — expr not evaluated).
+    if (aura_production_defaults_active_probe() != 0)
+        return true;
     static std::atomic<int> cached{-1};
     int v = cached.load(std::memory_order_relaxed);
     if (v >= 0)
@@ -279,7 +297,7 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
     // (single observation; safe on hot path; per #3076 the policy is
     // production-or-Full hard-face). Soft / unit / sandbox=off paths
     // keep production_defaults_active() == 0 and stay disarmed (AC2).
-    if (parsed == 0 && aura::compiler::typed_audit::production_defaults_active()) {
+    if (parsed == 0 && aura_production_defaults_active_probe() != 0) {
         parsed = 1;
     }
     int expected = -1;
@@ -316,7 +334,13 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
 // Hot RECORD — elided under production OFF (#2435). Soft-observe (#3043)
 // samples so the happy path is not a per-call atomic RMW.
 #if defined(AURA_HOT_MODE_OFF)
-#define AURA_HOT_RECORD() ((void)0)
+// Issue #3313: Soft/unit armed()==0 → no-op (expr/RECORD skipped). Production
+// defaults arm Soft-observe+Harden sampled RECORD.
+#define AURA_HOT_RECORD()                                                                          \
+    do {                                                                                           \
+        if (::aura::core::cpp26::hot_contract_harden_armed())                                      \
+            ::aura::core::cpp26::record_hotpath_invariant_hit_sampled();                           \
+    } while (0)
 #elif defined(AURA_HOT_MODE_SOFT_OBSERVE) || defined(AURA_HOT_MODE_OBSERVE)
 #define AURA_HOT_RECORD() ::aura::core::cpp26::record_hotpath_invariant_hit_sampled()
 #else
@@ -348,8 +372,19 @@ inline void record_hotpath_invariant_hit_sampled() noexcept {
             ::aura::core::cpp26::observe_hot_contract_false();                                     \
     } while (0)
 #else
-// Production OFF: zero cost.
-#define AURA_HOT_CHECK(expr) ((void)0)
+// Production OFF: zero cost when !hot_contract_harden_armed() (Soft/unit;
+// expr not evaluated). Issue #3313: production_defaults arms
+// Soft-observe+Harden (observe + trap + abort) without a compile flag.
+#define AURA_HOT_CHECK(expr)                                                                       \
+    do {                                                                                           \
+        if (::aura::core::cpp26::hot_contract_harden_armed()) {                                    \
+            if (!(expr)) {                                                                         \
+                ::aura::core::cpp26::observe_hot_contract_false();                                 \
+                ::aura::core::cpp26::record_hotpath_contract_harden_trap();                        \
+                std::abort();                                                                      \
+            }                                                                                      \
+        }                                                                                          \
+    } while (0)
 #endif
 
 // Preferred one-liner: record + check (both respect hot mode).

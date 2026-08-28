@@ -17,6 +17,7 @@ module;
 #include <vector>
 #include "core/gc_hooks.h"
 #include "core/cpp26_contract_stats.h"
+#include "core/workspace_epoch.hh" // current_mutation_epoch (was transitive via audit header)
 #include "core/arena_auto_policy_stats.h"
 #include "core/densify_consistency_report.h" // Issue #2973 pre-densify counters
 #include "core/lifetime_consistency_proof.hh" // Issue #3308: stamp LCP BEFORE post_moving_live_canaries_.clear()

@@ -835,6 +835,19 @@ def cmd_lint():
             "Issue #3106 harden-armed hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_3106.py"
         )
         return r
+    # Issue #3313: production_defaults arms Soft-observe+Harden for NDEBUG
+    # OFF macros (I1 residual of #2435/#3043/#3106). Soft/unit stay no-op.
+    # Extends test_hot_contract_placement; no docs/design / invent.
+    hc3313_script = COVERAGE_CHECKS / "check_hot_contract_production_harden_3313.py"
+    if not hc3313_script.exists():
+        fail(f"missing {hc3313_script}")
+        return 1
+    r = run([sys.executable, str(hc3313_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3313 production-defaults hot-contract harden linter failed — run python3 scripts/coverage/checks/check_hot_contract_production_harden_3313.py"
+        )
+        return r
     # Issue #3140: Phase C — CastOp typed-meta JIT deopt on missing/aging
     # meta under Production only. Source-cite castop_typed_meta.h +
     # castop_density_policy.hh + lowering_impl.cpp; extends
