@@ -46,7 +46,11 @@ def main() -> int:
     obs = _read("src/compiler/observability_metrics.h")
 
     rel_pos = svc.find("std::size_t relower_dirty_defines_from_workspace()")
-    rel_win = svc[rel_pos : rel_pos + 16000] if rel_pos >= 0 else ""
+    # Window expanded from 16000 after #3381 grew the function body
+    # (added caller-union block before the attribution loop — pushed
+    # the #3257 last-look / fail-closed / attribution patterns past
+    # the original 16000-char window).
+    rel_win = svc[rel_pos : rel_pos + 24000] if rel_pos >= 0 else ""
 
     must("Issue #3257", "AC1 cite", rel_win)
     must("attr_seen_size", "AC1 snapshot", rel_win)
