@@ -47,7 +47,7 @@ def main() -> int:
     must("g_residual_budget_skip_streak", "AC1 streak atom", rt)
     must("ac3060_1_prod_skip_streak_must_deopt", "AC1 test", test)
 
-    skip = rt.find('extern "C" void aura_residual_live_closure_remount_tick')
+    skip = rt.find('extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {')
     if skip < 0:
         fails.append("AC1: residual tick missing")
     else:

@@ -211,6 +211,14 @@ extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) no
     return freeze_proof_goal_truth_from_type_checker(tc_handle).goal_fingerprint;
 }
 
+// Issue #3346: re-read live CS fingerprint + live_goal_count for the
+// stamp last-look. SSOT is freeze_proof_goal_truth_from_type_checker.
+extern "C" int aura_stamp_last_look_cs_matches(void* tc_handle, std::uint64_t expected_goals,
+                                               std::uint64_t expected_fp) noexcept {
+    const auto t = freeze_proof_goal_truth_from_type_checker(tc_handle);
+    return (t.live_goal_count == expected_goals && t.goal_fingerprint == expected_fp) ? 1 : 0;
+}
+
 extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept {
     if (!tc_handle)
         return 0;
@@ -555,9 +563,24 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Soft + empty goals: freeze returns 0/0; stamp still records defuse
     // epoch (additive, no new writes to persist buffer). Call site always
     // passes defuse_version as mutation_id.
+    // Issue #3346: note commit TC for last-look (do not note inside freeze —
+    // fingerprint_tc tests use stack TypeCheckers).
+    aura::compiler::typed_audit::note_stamp_last_look_tc(tc);
     const auto truth = freeze_proof_goal_truth_from_type_checker(tc);
     (void)aura::compiler::typed_audit::build_type_linear_commit_proof_from_live(
         mutation_id, truth.live_goal_count, truth.goal_fingerprint, truth.from_cs);
+    // Issue #3346 AC1: last-look inside the builder can still reject if
+    // fingerprint / live_goal_count / linear_root_count drifted or
+    // mid_abort_authority is outstanding. Do not grant query:type on a
+    // torn green — clear persist already happened in the reject helper.
+    // Live-policy would_allow_commit=false is NOT last-look: recover
+    // (#3376 ensure_occurrence_commit_or_recover) must still run.
+    if (aura::compiler::typed_audit::stamp_last_look_rejected()) {
+        ev->clear_type_export_authority();
+        aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+            aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+        return; // skip health + grant
+    }
     // Issue #2995: single-shot OccurrenceCommitHealth after persist +
     // post-persist stamp. Does not write persist (sole writer remains
     // this helper — #2938). Soft empty → evaluate only; production
@@ -1631,8 +1654,9 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                     // query surfaces. #2758/#2842: freeze live_goal_count
                     // + goal_fingerprint from commit TypeChecker CS (0 quiet).
                     {
-                        const auto truth =
-                            freeze_proof_goal_truth_from_type_checker(commit_type_checker_handle());
+                        void* tc_handle = commit_type_checker_handle();
+                        typed_audit::note_stamp_last_look_tc(tc_handle);
+                        const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
                         (void)typed_audit::build_type_linear_commit_proof_from_live(
                             cp.version, truth.live_goal_count, truth.goal_fingerprint,
                             truth.from_cs);
@@ -1756,7 +1780,10 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
                             // pinned-stable pairing) instead of adjacent
                             // direct calls — abort-partial-recovery shares
                             // the same restamp family as outermost abort.
-                            (void)unified_restamp_after_boundary(UnifiedRestampSite::AbortRestore);
+                            // clang-format off
+                            (void)unified_restamp_after_boundary(
+                                UnifiedRestampSite::AbortRestore);
+                            // clang-format on
                             (void)post_mutation_reflect_validate();
                         }
                         // Issue #2223: ADT renarrow / revalidate before re-audit.
@@ -4803,6 +4830,17 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             const bool prod_lock_eff_2854 = prod_lock_2854 && !dev_off_2854;
             const bool reject_path_2854 =
                 rebind_fail_2854 || (densify_scan_mismatch && prod_lock_eff_2854);
+            // Issue #3346 AC2: refuse densify Phase-5 green stamp if
+            // mid_abort_authority is outstanding for this mid (abort-restore
+            // still in the rehydrate → rebind → stamp window). Soft: helper
+            // returns false (slot never armed). Not folded into
+            // reject_path_2854 — outstanding is not a densify scan mismatch
+            // (no force_linear_rollback).
+            const bool densify_abort_outstanding_3346 =
+                typed_audit::mid_abort_authority_outstanding(typed_audit::join_audit_and_se_mid(0));
+            if (densify_abort_outstanding_3346)
+                typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(
+                    1, std::memory_order_relaxed);
             // Issue #2910 / #2842: fence (prune + rehydrate) BEFORE freezing
             // goal truth for TypeLinearCommitProof so green densify stamps
             // see restored OccurrenceGoals when a prior outermost success
@@ -4818,15 +4856,19 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
             }
             // Issue #2842 / #2910: freeze CS truth after rehydrate (prefer
             // non-empty live_goal_count + fingerprint on green path).
+            // Issue #3346 AC2: note commit TC for last-look (stack-TC
+            // fingerprint consults must not leak into this TLS).
+            void* tc_handle = ev_->commit_type_checker_handle();
+            typed_audit::note_stamp_last_look_tc(tc_handle);
             const auto densify_goal_truth_2842 =
-                freeze_proof_goal_truth_from_type_checker(ev_->commit_type_checker_handle());
+                freeze_proof_goal_truth_from_type_checker(tc_handle);
             // Issue #2981: same-txn bind — rehydrate miss + empty CS goals
             // under production/Full must stamp would_allow_commit=false
             // (force_reason 11) so trail Success cannot hold a green proof.
             // Prefer CS truth (#2842). Soft: helper false.
             const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
                 densify_goal_truth_2842.live_goal_count);
-            if (reject_path_2854 || empty_fence_2981) {
+            if (reject_path_2854 || empty_fence_2981 || densify_abort_outstanding_3346) {
                 // Mismatch detected → force_linear_rollback bumps
                 // linear_densify_scan_mismatch_total and sets
                 // deny_kind=linear-densify-root-mismatch. Do NOT advance
@@ -4841,7 +4883,9 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     /*would_allow_commit=*/false, /*linear_ok=*/false,
                     densify_goal_truth_2842.live_goal_count,
                     densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs,
-                    empty_fence_2981 ? 11u : static_cast<std::uint32_t>(-1));
+                    empty_fence_2981                 ? 11u
+                    : densify_abort_outstanding_3346 ? 16u
+                                                     : static_cast<std::uint32_t>(-1));
                 if (empty_fence_2981)
                     typed_audit::g_type_linear_proof_reject_empty_after_fence_total.fetch_add(
                         1, std::memory_order_relaxed);
@@ -4873,20 +4917,35 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                     typed_audit::note_rehydrate_success_bind(
                         densify_goal_truth_2842.live_goal_count,
                         densify_goal_truth_2842.goal_fingerprint);
-                (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    ev_->defuse_version_.load(std::memory_order_acquire),
-                    /*would_allow_commit=*/true, /*linear_ok=*/true,
-                    densify_goal_truth_2842.live_goal_count,
-                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
-                typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeStamped);
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    m->outermost_exit_phase5_unlock_total.fetch_add(1, std::memory_order_relaxed);
-                    m->outermost_exit_order_complete_total.fetch_add(1, std::memory_order_relaxed);
-                    m->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                const auto densify_proof_3346 =
+                    typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                        ev_->defuse_version_.load(std::memory_order_acquire),
+                        /*would_allow_commit=*/true, /*linear_ok=*/true,
+                        densify_goal_truth_2842.live_goal_count,
+                        densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
+                // Issue #3346 AC1: last-look inside the builder can still
+                // reject (fingerprint / goals / linear_root / outstanding).
+                if (!densify_proof_3346.would_allow_commit) {
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                    if (typed_audit::invalidate_fast_path_on_rehydrate_miss()) {
+                        const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+                        (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+                        aura_aot_record_deopt_on_steal();
+                    }
+                } else {
+                    typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
                         1, std::memory_order_relaxed);
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeStamped);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        m->outermost_exit_phase5_unlock_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        m->outermost_exit_order_complete_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                        m->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
             } else {
                 // Soft scan mismatch (no production lock) → observe only
@@ -4897,18 +4956,24 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
                 // documented in the g_ownership_rebind_last_had_mismatch
                 // atomic from #2708, not in the proof). Bump success
                 // counter so dashboards see the ordered stamp.
-                (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                    ev_->defuse_version_.load(std::memory_order_acquire),
-                    /*would_allow_commit=*/true, /*linear_ok=*/true,
-                    densify_goal_truth_2842.live_goal_count,
-                    densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
-                typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
-                    1, std::memory_order_relaxed);
-                typed_audit::publish_type_linear_proof_outcome(
-                    typed_audit::kTypeLinearProofOutcomeStamped);
-                if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
-                    m->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                const auto densify_soft_proof_3346 =
+                    typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                        ev_->defuse_version_.load(std::memory_order_acquire),
+                        /*would_allow_commit=*/true, /*linear_ok=*/true,
+                        densify_goal_truth_2842.live_goal_count,
+                        densify_goal_truth_2842.goal_fingerprint, densify_goal_truth_2842.from_cs);
+                if (!densify_soft_proof_3346.would_allow_commit) {
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeReject);
+                } else {
+                    typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
                         1, std::memory_order_relaxed);
+                    typed_audit::publish_type_linear_proof_outcome(
+                        typed_audit::kTypeLinearProofOutcomeStamped);
+                    if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_)) {
+                        m->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    }
                 }
             }
             // Issue #2888: stamp unified LifetimeConsistencyProof once on
@@ -5233,7 +5298,7 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     // still age toward #3096 auto-heal. Remount / drain stay
     // success-only above except #3342 starved heal. Soft / Off is one
     // production_defaults load. Playbook stays observe-only.
-    if (outermost)
+    if (outermost) // Issue #3248
         aura_hot_update_observe_residual_force_stale();
     // Issue #2727: clear the durable per-Fiber evaluator_id so stale
     // steals cannot observe a previous evaluator. Only outermost
@@ -5561,8 +5626,9 @@ Evaluator::HygieneCheckpoint Evaluator::save_hygiene_checkpoint() noexcept {
     {
         const auto prior_outcome_2854 = typed_audit::last_type_linear_proof_outcome_v_read();
         if (prior_outcome_2854 == typed_audit::kTypeLinearProofOutcomeQuiet) {
-            const auto truth =
-                freeze_proof_goal_truth_from_type_checker(commit_type_checker_handle());
+            void* tc_handle = commit_type_checker_handle();
+            typed_audit::note_stamp_last_look_tc(tc_handle);
+            const auto truth = freeze_proof_goal_truth_from_type_checker(tc_handle);
             (void)typed_audit::build_type_linear_commit_proof_from_live(
                 cp.saved_defuse_version, truth.live_goal_count, truth.goal_fingerprint,
                 truth.from_cs);

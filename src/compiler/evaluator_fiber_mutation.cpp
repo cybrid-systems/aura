@@ -2659,7 +2659,10 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         typed_audit::ProofGoalTruth steal_goal_truth_2910{};
         std::size_t steal_reh_n = 0;
         bool steal_persist_on = false;
+        typed_audit::clear_stamp_last_look_tc();
         if (void* h = commit_type_checker_handle()) {
+            // Issue #3346: last-look CS fingerprint / live_goal_count at stamp.
+            typed_audit::note_stamp_last_look_tc(h);
             auto* tc = static_cast<TypeChecker*>(h);
             steal_persist_on = tc->constraint_system().occurrence_persist_enabled();
             if (tc->constraint_system().occurrence_goals_size() == 0 && steal_persist_on) {
@@ -2702,13 +2705,22 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
         const bool empty_fence_2981 = typed_audit::occurrence_empty_after_fence_blocks_proof(
                                           steal_goal_truth_2910.live_goal_count) ||
                                       (steal_reh_miss && hard_3032);
-        if (steal_rebind_fail_2854 || empty_fence_2981) {
+        // Issue #3346 AC2: refuse steal success stamp if mid_abort_authority
+        // is outstanding for this mid across rehydrate → rebind → stamp.
+        const bool steal_abort_outstanding_3346 =
+            typed_audit::mid_abort_authority_outstanding(typed_audit::join_audit_and_se_mid(0));
+        if (steal_abort_outstanding_3346)
+            typed_audit::g_mid_abort_authority_mismatch_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        if (steal_rebind_fail_2854 || empty_fence_2981 || steal_abort_outstanding_3346) {
             (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
                 defuse_version_.load(std::memory_order_acquire),
                 /*would_allow_commit=*/false, /*linear_ok=*/false,
                 steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
                 steal_goal_truth_2910.from_cs,
-                empty_fence_2981 ? 11u : static_cast<std::uint32_t>(-1));
+                empty_fence_2981               ? 11u
+                : steal_abort_outstanding_3346 ? 16u
+                                               : static_cast<std::uint32_t>(-1));
             if (empty_fence_2981)
                 typed_audit::g_type_linear_proof_reject_empty_after_fence_total.fetch_add(
                     1, std::memory_order_relaxed);
@@ -2728,18 +2740,30 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
                 aura_aot_record_deopt_on_steal();
             }
         } else {
-            (void)typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
-                defuse_version_.load(std::memory_order_acquire),
-                /*would_allow_commit=*/true, /*linear_ok=*/true,
-                steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
-                steal_goal_truth_2910.from_cs);
-            typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
-                1, std::memory_order_relaxed);
-            typed_audit::publish_type_linear_proof_outcome(
-                typed_audit::kTypeLinearProofOutcomeStamped);
-            if (auto* sm = static_cast<CompilerMetrics*>(compiler_metrics()))
-                sm->type_linear_proof_stamped_after_rebind_total.fetch_add(
+            const auto steal_proof_3346 =
+                typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    defuse_version_.load(std::memory_order_acquire),
+                    /*would_allow_commit=*/true, /*linear_ok=*/true,
+                    steal_goal_truth_2910.live_goal_count, steal_goal_truth_2910.goal_fingerprint,
+                    steal_goal_truth_2910.from_cs);
+            // Issue #3346 AC1: last-look inside the builder can still reject.
+            if (!steal_proof_3346.would_allow_commit) {
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeReject);
+                if (typed_audit::invalidate_fast_path_on_rehydrate_miss()) {
+                    const auto gen = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+                    (void)aura_jit_walk_active_closures(gen == 0 ? 1 : gen);
+                    aura_aot_record_deopt_on_steal();
+                }
+            } else {
+                typed_audit::g_type_linear_proof_stamped_after_rebind_total.fetch_add(
                     1, std::memory_order_relaxed);
+                typed_audit::publish_type_linear_proof_outcome(
+                    typed_audit::kTypeLinearProofOutcomeStamped);
+                if (auto* sm = static_cast<CompilerMetrics*>(compiler_metrics()))
+                    sm->type_linear_proof_stamped_after_rebind_total.fetch_add(
+                        1, std::memory_order_relaxed);
+            }
         }
     }
 

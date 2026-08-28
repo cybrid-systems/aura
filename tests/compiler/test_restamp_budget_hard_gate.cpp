@@ -28,6 +28,7 @@
 #include <cstdint>
 #include <fstream>
 #include <print>
+#include <sstream>
 #include <string>
 #include <string_view>
 
@@ -60,6 +61,20 @@ using aura::compiler::types::EvalValue;
 using aura::compiler::types::make_int;
 
 constexpr std::uint64_t kRestampBudgetHardGateIssue = 3104;
+
+// CTest cwd is the build dir; source-cite ACs must resolve from the repo root.
+std::string read_repo_source(std::string_view rel) {
+#ifdef AURA_SOURCE_DIR
+    std::ifstream in{std::string(AURA_SOURCE_DIR) + "/" + std::string{rel}};
+#else
+    std::ifstream in{std::string{rel}};
+#endif
+    if (!in)
+        return {};
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
 
 std::int64_t counter_v_read(std::atomic<std::uint64_t>& a) {
     return static_cast<std::int64_t>(a.load(std::memory_order_relaxed));
@@ -201,14 +216,7 @@ void test_ac10_recovery_hint_in_restamp_lag() {
         "query:children-stable", "query:parent-stable", "query:stable-ref",
         "query:ensure-ref",      "query:as-stable-ref",
     };
-    auto read_source = [](std::string_view rel) -> std::string {
-        std::ifstream in{std::string{rel}};
-        if (!in)
-            return {};
-        std::stringstream ss;
-        ss << in.rdbuf();
-        return ss.str();
-    };
+    auto read_source = [](std::string_view rel) -> std::string { return read_repo_source(rel); };
     for (std::size_t i = 0; i < kSites.size(); ++i) {
         const auto text = read_source(kSites[i]);
         expect_true(std::string{kSites[i]} + ": source read", !text.empty());
@@ -250,14 +258,7 @@ void test_ac11_status_surface_exposes_budget_fields() {
         {"src/compiler/evaluator_primitives_obs_eval.cpp",
          "restamp-budget-query-epoch-stale-total"},
     }};
-    auto read_source = [](std::string_view rel) -> std::string {
-        std::ifstream in{std::string{rel}};
-        if (!in)
-            return {};
-        std::stringstream ss;
-        ss << in.rdbuf();
-        return ss.str();
-    };
+    auto read_source = [](std::string_view rel) -> std::string { return read_repo_source(rel); };
     for (const auto& [rel, key] : kFields) {
         const auto text = read_source(rel);
         expect_true(std::string{rel} + ": source read", !text.empty());
@@ -275,14 +276,7 @@ namespace {
 // the shared unified_restamp_after_boundary must own every triad pairing
 // (mirrors scripts/check_unified_restamp_single_entry_3309.py).
 void test_3309_unified_restamp_single_entry() {
-    auto read_source = [](std::string_view rel) -> std::string {
-        std::ifstream in{std::string{rel}};
-        if (!in)
-            return {};
-        std::stringstream ss;
-        ss << in.rdbuf();
-        return ss.str();
-    };
+    auto read_source = [](std::string_view rel) -> std::string { return read_repo_source(rel); };
     const auto mb = read_source("src/compiler/evaluator_mutation_boundary.cpp");
     expect_true("#3309: boundary source read", !mb.empty());
     if (!mb.empty()) {
@@ -333,14 +327,7 @@ void test_3309_unified_restamp_single_entry() {
 //        no docs/design/3386-* (#1655). Existing #3100/#3138/#3230/#3287
 //        suites green (regression-guard ACs above).
 void test_3386_query_stable_hard_reject_torn_latch() {
-    auto read_source = [](std::string_view rel) -> std::string {
-        std::ifstream in{std::string{rel}};
-        if (!in)
-            return {};
-        std::stringstream ss;
-        ss << in.rdbuf();
-        return ss.str();
-    };
+    auto read_source = [](std::string_view rel) -> std::string { return read_repo_source(rel); };
     const auto sec = read_source("src/compiler/evaluator_security.cpp");
     expect_true("#3386: evaluator_security.cpp read", !sec.empty());
     if (!sec.empty()) {
