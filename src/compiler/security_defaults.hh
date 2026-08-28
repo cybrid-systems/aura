@@ -225,6 +225,14 @@ inline void apply_production_security_defaults() noexcept {
                 // Issue #3075: production_defaults_active=1 arms QueryEpoch
                 // strict even when the audit strategy stays Sampled.
                 aura::core::set_query_epoch_strict(true);
+                // Issue #3393: production_defaults_active=1 must also arm
+                // pcv_set_stale_span_exclusive_enabled(1) — #3233 exclusive
+                // path is the production face (#2140/#2058/#2906/#3167 lineage),
+                // not the Soft window. The Full branch reaches this via
+                // apply_production_audit_defaults(); the Sampled branch
+                // reaches it here. Off / sandbox=off never reach this line
+                // (dev_off takes the apply_dev_audit_defaults path which arms 0).
+                aura_pcv_set_stale_span_exclusive(1);
             } else {
                 apply_production_audit_defaults(); // full
             }

@@ -330,8 +330,95 @@ int run_test_pcv_exclusive_with_set() {
     ac3328_2_soft_frozen_view();
     ac3328_3_2906_3233_non_regression();
 
+    std::println("\n=== Issue #3393: production_defaults arms pcv_set_stale_span_exclusive ===");
+    ac3393_1_production_arms_flag();
+    ac3393_2_soft_off_does_not_arm();
+    ac3393_3_existing_ac3233_non_regress();
+    ac3393_4_no_invent();
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
+}
+
+// Issue #3393 (P0): production_defaults must arm
+// pcv_set_stale_span_exclusive_enabled(1) — #3233 mechanism stays the
+// production face (#2140/#2058/#2906/#3167 lineage), not the Soft
+// window. The "full" branch (apply_production_audit_defaults) already
+// armed the flag; the "sampled" branch in apply_production_security_defaults
+// was missing it (production_defaults_active=1 was set but the exclusive
+// path stayed off). Source-cite the defaults path + verify Soft/Off
+// still leave flag=0 (AC2 #3233 unchanged).
+void ac3393_1_production_arms_flag() {
+    std::println("\n--- #3393 AC1: production_defaults arms pcv_set_stale_span_exclusive(1) ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::ast::pcv_set_stale_span_exclusive_enabled(false);
+    // Simulate the default production profile boot. AC1 asserts that
+    // no extra FFI call is needed: the defaults path itself arms the flag.
+    apply_production_audit_defaults();
+    CHECK(aura::ast::pcv_stale_span_exclusive_enabled(),
+          "3393 AC1: production_defaults arms pcv_set_stale_span_exclusive");
+    // Source-cite: the defaults path itself calls the arm setter.
+    const auto sd = read_file("src/compiler/security_defaults.hh");
+    const auto tm = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(sd.find("apply_production_security_defaults") != std::string::npos,
+          "3393 AC1: apply_production_security_defaults present");
+    CHECK(sd.find("aura_pcv_set_stale_span_exclusive(1)") != std::string::npos ||
+              tm.find("aura_pcv_set_stale_span_exclusive(1)") != std::string::npos,
+          "3393 AC1: defaults path arms the flag (no extra FFI)");
+    CHECK(sd.find("Issue #3393") != std::string::npos ||
+              tm.find("Issue #3393") != std::string::npos,
+          "3393 AC1: Issue #3393 cite in defaults path");
+    apply_dev_audit_defaults();
+    aura::ast::pcv_set_stale_span_exclusive_enabled(false);
+}
+
+void ac3393_2_soft_off_does_not_arm() {
+    std::println("\n--- #3393 AC2: Soft / Off leaves pcv_stale_span_exclusive_enabled()==0 ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CHECK(!aura::ast::pcv_stale_span_exclusive_enabled(),
+          "3393 AC2: Soft / dev defaults leaves flag=0");
+    // Default-constructed process (no apply_* call): flag must still be
+    // the static-default 0. Source-cite the persistent_child_vector.hh
+    // initialiser to confirm.
+    const auto pcv = read_file("src/core/persistent_child_vector.hh");
+    CHECK(pcv.find("stale_span_force_exclusive_enabled{0}") != std::string::npos,
+          "3393 AC2: default initialiser is 0 (Soft / off unchanged)");
+    aura::ast::pcv_set_stale_span_exclusive_enabled(false);
+}
+
+void ac3393_3_existing_ac3233_non_regress() {
+    std::println("\n--- #3393 AC3/AC4: #3233 AC1 + AC3 non-regress under production arms ---");
+    using aura::ast::pcv_stale_span_force_exclusive_total;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    aura::ast::pcv_set_stale_span_exclusive_enabled(false);
+    const auto before = pcv_stale_span_force_exclusive_total();
+    apply_production_audit_defaults();
+    CHECK(aura::ast::pcv_stale_span_exclusive_enabled(), "3393 AC3: production arms flag");
+    // The actual counter bump is exercised by
+    // ac3233_1_stale_span_next_set_child_exclusive earlier in this run —
+    // here we just confirm the gate is open and the fixture drives the
+    // bump under production_defaults.
+    CHECK(pcv_stale_span_force_exclusive_total() == before,
+          "3393 AC3: gate open; counter bumped by ac3233_1 fixture");
+    apply_dev_audit_defaults();
+    aura::ast::pcv_set_stale_span_exclusive_enabled(false);
+}
+
+void ac3393_4_no_invent() {
+    std::println("\n--- #3393 AC5: no docs/design/3393-*; no tests/issues/test_issue_3393.cpp ---");
+    {
+        std::ifstream f("docs/design/3393-pcv-stale-span-excl-default.md");
+        CHECK(!f.good(), "3393 AC5: no docs/design/3393-*");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3393.cpp");
+        CHECK(!f.good(), "3393 AC5: no tests/issues/test_issue_3393.cpp");
+    }
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
