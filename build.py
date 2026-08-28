@@ -2574,6 +2574,20 @@ def cmd_lint():
             "Issue #3312 nested-return-not-triad linter failed — run python3 scripts/coverage/checks/check_nested_return_not_triad_3312.py"
         )
         return r
+    # Issue #3322: nested / render-fast observation window close before
+    # TypeLinearCommitProof. Production/Full invalidate defuse_index_;
+    # Soft/Off zero extra. Extends hygiene nested Guards + mutation_boundary
+    # batch; no schema-3322 / docs/design.
+    now3322_script = COVERAGE_CHECKS / "check_nested_observation_window_3322.py"
+    if not now3322_script.exists():
+        fail(f"missing {now3322_script}")
+        return 1
+    r = run([sys.executable, str(now3322_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3322 nested observation-window linter failed — run python3 scripts/coverage/checks/check_nested_observation_window_3322.py"
+        )
+        return r
     # Issue #3032: densify/steal rehydrate-miss invalidates linear_fast_path + deopt.
     # Extends test_occurrence_goal_persist_rehydrate + test_escape_move_elision_gate
     # (#81967); no docs/design.

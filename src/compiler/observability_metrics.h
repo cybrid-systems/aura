@@ -9525,6 +9525,12 @@ struct CompilerMetrics {
     std::atomic<std::uint64_t> nested_authority_gap_last_window_ns{0};
     std::atomic<std::uint64_t> nested_authority_gap_windows_total{0};
     std::atomic<std::uint64_t> nested_return_not_triad_complete{0};
+    // Issue #3322: nested / render-fast observation window closed under
+    // production/Full (defuse_index_ dropped so query rebuilds before
+    // outermost TypeLinearCommitProof). Soft / Off: never bumped.
+    // Not a public query key.
+    static constexpr int kNestedObservationWindowIssue = 3322;
+    std::atomic<std::uint64_t> nested_observation_window_closed_total{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header

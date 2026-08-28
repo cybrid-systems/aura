@@ -233,6 +233,14 @@ extern "C" __attribute__((weak)) std::uint64_t reemit_owner_missing_reject_total
     return 0;
 }
 extern "C" __attribute__((weak)) void aura_aot_mark_peer_slots_soft_stale(void* /*owner*/) {}
+// Issue #3377: production impl is in aura_jit_bridge.cpp. Light JIT
+// binaries (libaura_jit_light_test_objects.so) must still satisfy
+// --no-allow-shlib-undefined for hot_update_registry.cpp's call from
+// hard_invalidate_via_facade. Weak so the production definition wins
+// when both are linked (test_owner_scoped_hard_invalidate_slot_clear).
+extern "C" __attribute__((weak)) void
+aura_aot_invalidate_owner_slot_for_func_id(std::int64_t /*func_id*/,
+                                           void* /*owner_eval*/) noexcept {}
 extern "C" __attribute__((weak)) int aura_aot_slot_is_soft_stale(std::int64_t /*func_id*/) {
     return 0;
 }
@@ -1350,6 +1358,10 @@ aura_hygiene_violation_prevented_on_boundary_total(void) {
 // Strong definitions in evaluator_fiber_mutation.cpp override these.
 extern "C" __attribute__((weak)) void* aura_evaluator_resolve_current_for_macro(void) noexcept {
     return nullptr;
+}
+extern "C" __attribute__((weak)) std::uint64_t
+aura_evaluator_capability_tenant_id(void* /*ev*/) noexcept {
+    return 0;
 }
 extern "C" __attribute__((weak)) int
 aura_evaluator_bump_macro_provenance_repin_on_steal(void* /*ev_ptr*/) noexcept {

@@ -2649,7 +2649,7 @@ add_dependencies(all_test_issue_targets test_aot_incremental_reemit)
 # Issue #3377: owner-scoped hard invalidate physically clears owner AOT
 # slot (generation-behind predicate is vacuous when table epoch is not
 # bumped). Full link so the production aura_aot_invalidate_owner_slot
-// helper is the strong definition, not the light stub.
+# helper is the strong definition, not the light stub.
 aura_add_issue_test(test_owner_scoped_hard_invalidate_slot_clear)
 aura_issue_test_link_llvm_jit(test_owner_scoped_hard_invalidate_slot_clear)
 add_dependencies(all_test_issue_targets test_owner_scoped_hard_invalidate_slot_clear)
