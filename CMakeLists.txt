@@ -2712,6 +2712,21 @@ add_dependencies(all_test_issue_targets test_aot_reload_primitive)
 aura_add_issue_test(test_aot_incremental_reemit)
 aura_issue_test_link_llvm_jit(test_aot_incremental_reemit)
 add_dependencies(all_test_issue_targets test_aot_incremental_reemit)
+# Issue #3383: shared fnv1a_64 region-bit helper for note_relower_success_
+# coverage. The cascade restamp path (service_dirty.cpp::
+# notify_hot_update_after_cascade_) used std::hash<std::string_view>
+# while the store path (service.ixx::store_define_v2) used fnv1a_64 —
+# the same define stamped two different bits, so residual_force_mask =
+# force_mask & ~last_success could not clear the same define across a
+# store + cascade-restamp pair (half-cover / sticky force-JIT /
+# missed re-promote). Fix: one shared helper
+# `relower_success_region_bit(string_view)` in hot_update_registry.hh
+# inlining fnv1a_64 (same constants as CompilerService::fnv1a_64);
+# both call sites now stamp the same bit. #3229 define-id side set
+# kept (collision insurance, not hash unification). No new query key;
+# no new proof schema. AC1-AC5 source-cite in the test.
+aura_add_issue_test(test_hot_update_relower_success_coverage)
+aura_issue_test_link_light(test_hot_update_relower_success_coverage)
 # Issue #3377: owner-scoped hard invalidate physically clears owner AOT
 # slot (generation-behind predicate is vacuous when table epoch is not
 # bumped). Full link so the production aura_aot_invalidate_owner_slot

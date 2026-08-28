@@ -99,6 +99,30 @@ inline constexpr std::size_t kRelowerSuccessDefineCap = 64;
     return h == 0 ? 1u : h;
 }
 
+// Issue #3383: shared region-bit helper. Must use the SAME fnv1a_64 hash as
+// CompilerService::fnv1a_64 (service.ixx) — both call sites (store_define_v2
+// + cascade restamp in service_dirty.cpp::notify_hot_update_after_cascade_)
+// stamp the same bit for the same define, so residual_force_mask =
+// force_mask & ~last_success clears correctly across a store + cascade-
+// restamp pair (no half-cover / sticky force-JIT / missed re-promote).
+//
+// Inlines fnv1a_64 here rather than threading CompilerService::* into this
+// header (service.ixx is heavy; hot_update_registry.hh is a leaf header).
+// Algorithm is the standard FNV-1a 64-bit (offset basis 0xcbf29ce484222325,
+// prime 0x100000001b3) — must match CompilerService::fnv1a_64 exactly. A
+// unit test (test_hot_update_relower_success_coverage) asserts identity
+// on a fixed name corpus.
+[[nodiscard]] inline std::uint64_t relower_success_region_bit(std::string_view name) noexcept {
+    constexpr std::uint64_t kFnv1aOffset = 0xcbf29ce484222325ULL;
+    constexpr std::uint64_t kFnv1aPrime = 0x100000001b3ULL;
+    std::uint64_t h = kFnv1aOffset;
+    for (char c : name) {
+        h ^= static_cast<std::uint8_t>(c);
+        h *= kFnv1aPrime;
+    }
+    return 1ULL << (h & 63);
+}
+
 class HotUpdateRegistry {
 public:
     using EpochListener = std::function<void(std::uint64_t epoch)>;
