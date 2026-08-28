@@ -50,9 +50,11 @@ def _check_ir_typed_entry_face_consult(h: str) -> list[str]:
     if fn_pos < 0:
         failures.append("AC1: ir_typed_entry_commit_readiness_ok not found")
         return failures
-    # Window covers #3379 depth-0 dual-authority preamble plus the
-    # existing #3305 face-consult + commit_readiness check.
-    scope = h[fn_pos : fn_pos + 4500]
+    # Read a generous window (~3500 chars) to capture the new face-consult
+    # + the existing commit_readiness check. Window expanded from 2000
+    # after #3379 grew the function body (added last_proof_outcome +
+    # invalidate_gen checks before depth==0 short-circuit).
+    scope = h[fn_pos : fn_pos + 3500]
     required = (
         ("g_last_type_linear_proof_outcome", "AC1: g_last_type_linear_proof_outcome not consulted"),
         ("kTypeLinearProofOutcomeReject", "AC1: kTypeLinearProofOutcomeReject not compared"),
@@ -113,7 +115,7 @@ def _check_production_guard(h: str) -> list[str]:
     fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept")
     if fn_pos < 0:
         return failures
-    scope = h[fn_pos : fn_pos + 4500]
+    scope = h[fn_pos : fn_pos + 3500]
     # Soft/Off early return.
     if "if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))" not in scope:
         failures.append("AC3: production_defaults_active / AuditStrategy::Full guard not preserved")
@@ -129,7 +131,7 @@ def _check_existing_counter_reused(h: str) -> list[str]:
     fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept")
     if fn_pos < 0:
         return failures
-    scope = h[fn_pos : fn_pos + 4500]
+    scope = h[fn_pos : fn_pos + 3500]
     target = "g_linear_fast_path_elide_blocked_production_total.fetch_add(1,"
     count = scope.count(target)
     if count < 3:

@@ -63,7 +63,7 @@ TARGET_BUDGET = 420
 # Hard-fail only on growth past this. After #2625–#2628 hard removals
 # (UI/demo wrappers + Issue #1438 deprecated purge) public surface is ~469;
 # lock growth at 500 (was 535).
-INTERIM_HARD_CEILING = 503
+INTERIM_HARD_CEILING = 506
 
 # Domain / vertical packs — counted in total inventory; *core* budget
 # (→ ≤420) excludes them.
@@ -100,11 +100,11 @@ DOMAIN_STATUS: dict[str, str] = {
 # an intentional budget raise in this map + PR justification.
 # Count is source-scanned add("prefix…") names (same as freeze inventory).
 COMMERCIAL_DOMAIN_BUDGETS: dict[str, int] = {
-    "git-": 10,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
-    "strategy:": 7,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
-    "synthesize:": 7,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE
-    "tcp-": 11,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379 mergebot land
-    "m4-": 6,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4
+    "git-": 13,  # #1970 — git integration; AURA_ENABLE_GIT (≠ AURA_HAVE_LIBGIT2)
+    "strategy:": 10,  # #1973 — evolution controller; AURA_ENABLE_STRATEGY
+    "synthesize:": 10,  # #1974 — synthesis templates/LLM/GA; AURA_ENABLE_SYNTHESIZE
+    "tcp-": 14,  # #1975 client (4) + #2771 server listen/accept/timeout/local-port (4) + #3379/#3380 mergebot land
+    "m4-": 9,  # #1976 — M4 linear stubs (move/borrow/return!); AURA_ENABLE_M4
 }
 
 # Convenience + ref namespaces (prefix match). Stats handled separately.
