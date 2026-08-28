@@ -45,6 +45,8 @@ inline std::atomic<std::uint64_t> g_coercion_provenance_miss_reject_total{0};
 
 // Issue #2221: composite commit hard-require complete DeltaBlameChain.
 // Default off (observe-only); production defaults flip on.
+// Issue #3318: epoch-stale CoercionEntry mids are incomplete until
+// restamped (coercion_entry_epoch_stale / dual_complete).
 inline std::atomic<std::uint32_t> g_require_blame_complete_on_commit{0};
 inline std::atomic<std::uint64_t> g_blame_commit_reject_total{0};
 inline std::atomic<std::uint64_t> g_blame_commit_incomplete_observe_total{0};

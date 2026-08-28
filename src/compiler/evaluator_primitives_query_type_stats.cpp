@@ -2553,6 +2553,7 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
             insert_kv("coercion-blame-missing-total",
                       static_cast<std::int64_t>(aura::compiler::g_coercion_blame_missing_total.load(
                           std::memory_order_relaxed)));
+            // Issue #3318: reuse epoch-restamp-total (no new schema key).
             insert_kv(
                 "coercion-blame-epoch-restamp-total",
                 static_cast<std::int64_t>(aura::compiler::g_coercion_blame_epoch_restamp_total.load(

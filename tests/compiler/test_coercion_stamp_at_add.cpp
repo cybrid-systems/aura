@@ -32,9 +32,12 @@ using aura::ast::FlatAST;
 using aura::ast::StringPool;
 using aura::compiler::apply_coercion_map;
 using aura::compiler::clear_coercion_active_mutation_context;
+using aura::compiler::coercion_entry_dual_complete;
+using aura::compiler::coercion_entry_epoch_stale;
 using aura::compiler::CoercionEntry;
 using aura::compiler::CoercionMap;
 using aura::compiler::CompilerService;
+using aura::compiler::current_mutation_epoch_mid;
 using aura::compiler::DeferredCoercionProvenanceIn;
 using aura::compiler::g_coercion_blame_chain_complete_total;
 using aura::compiler::g_coercion_blame_epoch_restamp_total;
@@ -45,11 +48,13 @@ using aura::compiler::g_coercion_provenance_complete_total;
 using aura::compiler::g_coercion_provenance_fast_path_total;
 using aura::compiler::g_coercion_provenance_miss_total;
 using aura::compiler::g_coercion_stamp_at_add_total;
+using aura::compiler::kCoercionBlameEpochRestampIssue;
 using aura::compiler::kCoercionBlameHfLagIssue;
 using aura::compiler::kCoercionBlameHfMutateIssue;
 using aura::compiler::reject_apply_on_provenance_miss;
 using aura::compiler::reset_coercion_provenance_miss_policy_for_test;
 using aura::compiler::resolve_deferred_coercion_provenance;
+using aura::compiler::restamp_coercion_entry_epoch_blame;
 using aura::compiler::set_coercion_active_mutation_context;
 using aura::compiler::set_reject_apply_on_provenance_miss;
 using aura::compiler::stamp_coercion_entry_from_active_context;
@@ -407,6 +412,92 @@ static void ac3046_5_source_cites() {
           "3046 AC5: no test_issue_3046.cpp");
 }
 
+// ── Issue #3318: restamp blame on mutation-epoch advance ──
+static void ac3318_1_epoch_advance_restamp() {
+    std::println("\n--- #3318 AC1: after epoch advance live mid >= epoch mid ---");
+    CHECK(kCoercionBlameEpochRestampIssue == 3318, "3318 AC1: issue stamp");
+    clear_coercion_active_mutation_context();
+    set_coercion_active_mutation_context(100, 7);
+    CoercionEntry e{};
+    e.source_mutation_id = 50; // finished mutate
+    e.predicate_cond_node = 3;
+    const auto r0 = g_coercion_blame_epoch_restamp_total.load();
+    CHECK(coercion_entry_epoch_stale(e), "3318 AC1: leftover mid is epoch-stale");
+    CHECK(restamp_coercion_entry_epoch_blame(e), "3318 AC1: restamp rewrites");
+    CHECK(e.source_mutation_id == 100, "ac3318_1_epoch_advance_restamp: mid = session");
+    CHECK(e.source_mutation_id >= current_mutation_epoch_mid(), "3318 AC1: live mid >= epoch mid");
+    CHECK(e.predicate_cond_node == 3, "3318 AC1: existing pred kept");
+    CHECK(g_coercion_blame_epoch_restamp_total.load() > r0, "3318 AC1: restamp counter");
+    CHECK(!coercion_entry_epoch_stale(e), "3318 AC1: not stale after restamp");
+    CoercionEntry z{};
+    z.source_mutation_id = 0;
+    CHECK(!restamp_coercion_entry_epoch_blame(z), "3318 AC1: never invent zero");
+    CHECK(z.source_mutation_id == 0, "3318 AC1: zero stays zero");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cm.find("restamp_coercion_entry_epoch_blame") != std::string::npos,
+          "3318 AC1: apply/add helper");
+    CHECK(cm.find("current_mutation_epoch_mid") != std::string::npos, "3318 AC1: epoch mid");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("restamp_coercion_epoch_blame") != std::string::npos,
+          "3318 AC1: outermost persist restamp");
+    clear_coercion_active_mutation_context();
+}
+
+static void ac3318_2_soft_observe_production_incomplete() {
+    std::println("\n--- #3318 AC2: Soft restamp observe; Production stale incomplete ---");
+    clear_coercion_active_mutation_context();
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    set_coercion_active_mutation_context(40, 9);
+    CoercionEntry e{};
+    e.source_mutation_id = 11;
+    e.predicate_cond_node = 2;
+    CHECK(!coercion_entry_dual_complete(e),
+          "ac3318_2_soft_observe_production_incomplete: stale is incomplete");
+    const auto r0 = g_coercion_blame_epoch_restamp_total.load();
+    CHECK(restamp_coercion_entry_epoch_blame(e), "3318 AC2: Soft restamp");
+    CHECK(g_coercion_blame_epoch_restamp_total.load() > r0, "3318 AC2: observe counter");
+    CHECK(coercion_entry_dual_complete(e), "3318 AC2: complete after restamp");
+    CHECK(e.predicate_cond_node == 2, "3318 AC2: pred kept");
+    const auto pol = read_file("src/compiler/coercion_provenance_policy.hh");
+    CHECK(pol.find("Issue #3318") != std::string::npos, "3318 AC2: require-complete cite");
+    CHECK(read_file("src/compiler/coercion_map.ixx").find("coercion_entry_epoch_stale") !=
+              std::string::npos,
+          "3318 AC2: dual_complete consults stale");
+    clear_coercion_active_mutation_context();
+}
+
+static void ac3318_3_elision_unchanged() {
+    std::println("\n--- #3318 AC3: identity elision / density policy unchanged ---");
+    const auto cm = read_file("src/compiler/coercion_map.ixx");
+    CHECK(cm.find("identity coercion") != std::string::npos, "3318 AC3: identity elision kept");
+    CHECK(cm.find("g_dead_coercion_ast_elided_total") != std::string::npos,
+          "3318 AC3: AST elide counter");
+    CHECK(cm.find("restamp_coercion_entry_epoch_blame(e)") != std::string::npos,
+          "ac3318_3_elision_unchanged: restamp before elide/insert");
+    CHECK(read_file("src/compiler/castop_density_policy.hh").find("#3046") != std::string::npos,
+          "3318 AC3: density policy retained");
+}
+
+static void ac3318_4_no_new_schema() {
+    std::println("\n--- #3318 AC4: extend stamp-at-add; no new schema ---");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    CHECK(q.find("schema-3318") == std::string::npos, "3318 AC4: no schema-3318");
+    CHECK(q.find("coercion-blame-epoch-restamp-total") != std::string::npos,
+          "3318 AC4: reuse restamp key");
+    CHECK(q.find("Issue #3318") != std::string::npos, "3318 AC4: query cite");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_coercion_blame_epoch_restamp_3318.py");
+    const auto build = read_file("build.py");
+    CHECK(!lint.empty() && lint.find("Issue #3318") != std::string::npos,
+          "ac3318_4_no_new_schema: linter");
+    CHECK(build.find("check_coercion_blame_epoch_restamp_3318") != std::string::npos,
+          "3318 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3318.cpp").empty(), "3318 AC4: no invent");
+    CHECK(read_file("docs/design/3318-coercion-blame-epoch-restamp.md").empty(),
+          "3318 AC4: no docs/design");
+}
+
 } // namespace
 
 int run_test_coercion_stamp_at_add() {
@@ -426,6 +517,10 @@ int run_test_coercion_stamp_at_add() {
     ac3046_3_quiet_no_session();
     ac3046_4_schema();
     ac3046_5_source_cites();
+    ac3318_1_epoch_advance_restamp();
+    ac3318_2_soft_observe_production_incomplete();
+    ac3318_3_elision_unchanged();
+    ac3318_4_no_new_schema();
     if (g_failed)
         return 1;
     std::println("coercion stamp-at-add #2512: OK ({} passed)", g_passed);

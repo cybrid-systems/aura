@@ -178,6 +178,11 @@ export inline constexpr int kCoercionBlameHfMutateIssue = 2991;
 // (including over weak leftover / prior-epoch NarrowingRecords). CastOp
 // hot residual is the density-policy face in castop_density_policy.hh.
 export inline constexpr int kCoercionBlameHfLagIssue = 3046;
+// Issue #3318: restamp CoercionEntry blame when source_mutation_id is
+// older than the live session / mutation-epoch mid (Agent blame
+// fracture after nested mutate + epoch advance). Reuses
+// g_coercion_blame_epoch_restamp_total. No new query schema key.
+export inline constexpr int kCoercionBlameEpochRestampIssue = 3318;
 export inline std::atomic<std::uint64_t> g_coercion_blame_session_force_total{0};
 export inline std::atomic<std::uint64_t> g_coercion_blame_stale_narrowing_drop_total{0};
 export inline std::atomic<std::uint32_t> g_coercion_blame_hf_lag_wired{1};
@@ -362,6 +367,16 @@ export [[nodiscard]] inline std::uint32_t coercion_active_predicate() noexcept {
     return s_coercion_active_predicate;
 }
 
+// Issue #3318: blame floor for the live mutate session. TLS session mid
+// is the Agent-visible epoch mid; quiet (no TLS) falls back to process
+// mutation epoch (same join key as resolve_audit_mutation_id). 0 = no
+// floor (never restamp, never invent zero).
+export [[nodiscard]] inline std::uint64_t current_mutation_epoch_mid() noexcept {
+    if (s_coercion_active_mutation_id != 0)
+        return s_coercion_active_mutation_id;
+    return ::aura::core::current_mutation_epoch();
+}
+
 export [[nodiscard]] inline std::uint64_t coercion_provenance_completeness_bp() noexcept {
     const auto c = g_coercion_provenance_complete_total.load(std::memory_order_relaxed);
     const auto m = g_coercion_provenance_miss_total.load(std::memory_order_relaxed);
@@ -464,6 +479,8 @@ export struct CoercionEntry {
     std::uint32_t narrow_evidence = 0;
 };
 
+export inline bool restamp_coercion_entry_epoch_blame(CoercionEntry& e) noexcept;
+
 // Issue #2512: stamp TLS active mutation/predicate into a CoercionEntry at
 // deferred-add. Never overwrites non-zero caller stamps (occurrence / explicit
 // mid). Zero cost when both fields already set or TLS is empty (AC3/AC5).
@@ -480,7 +497,39 @@ export inline bool stamp_coercion_entry_from_active_context(CoercionEntry& e) no
     }
     if (stamped)
         g_coercion_stamp_at_add_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3318: leftover non-zero mid from a prior epoch is restamped
+    // (never invent zero). Counts on g_coercion_blame_epoch_restamp_total.
+    if (restamp_coercion_entry_epoch_blame(e))
+        stamped = true;
     return stamped;
+}
+
+// Issue #3318: true when a non-zero mid is older than the live TLS
+// session (epoch-stale). Quiet / no TLS: never stale (mutation_id and
+// process mutation epoch are different numbering spaces). Production
+// require-complete treats unrepaired stale as incomplete.
+export [[nodiscard]] inline bool coercion_entry_epoch_stale(const CoercionEntry& e) noexcept {
+    if (e.source_mutation_id == 0)
+        return false;
+    if (s_coercion_active_mutation_id == 0)
+        return false;
+    return e.source_mutation_id < s_coercion_active_mutation_id;
+}
+
+// Issue #3318: restamp stale mid from active session / epoch floor.
+// Never writes zero. Returns true when a field was rewritten.
+export inline bool restamp_coercion_entry_epoch_blame(CoercionEntry& e) noexcept {
+    // Live TLS session is the restamp dest (never invent zero). Quiet /
+    // no TLS: no-op — mutation_id and process mutation epoch are not
+    // the same numbering space, so epoch is not a mid floor here.
+    const auto dest = s_coercion_active_mutation_id;
+    if (dest == 0 || e.source_mutation_id == 0 || e.source_mutation_id >= dest)
+        return false;
+    e.source_mutation_id = dest;
+    if (e.predicate_cond_node == 0 && s_coercion_active_predicate != 0)
+        e.predicate_cond_node = s_coercion_active_predicate;
+    g_coercion_blame_epoch_restamp_total.fetch_add(1, std::memory_order_relaxed);
+    return true;
 }
 
 // Issue #2147: weak forensic mutation id = original_child placeholder
@@ -570,7 +619,7 @@ export inline void resolve_deferred_coercion_provenance(CoercionEntry& e,
 // gate under dual-require. Zero cost when both fields already set.
 export [[nodiscard]] inline bool coercion_entry_dual_complete(const CoercionEntry& e) noexcept {
     return e.predicate_cond_node != 0 && e.source_mutation_id != 0 &&
-           !is_weak_coercion_mutation_id(e);
+           !is_weak_coercion_mutation_id(e) && !coercion_entry_epoch_stale(e);
 }
 
 // Issue #2562: dual-require active? Env / process flag + production defaults
@@ -618,9 +667,14 @@ fill_coercion_provenance_chain(aura::ast::FlatAST& flat, CoercionEntry& e,
     using aura::ast::NULL_NODE;
     const bool strict = coercion_provenance_strict_honest();
 
+    // Issue #3318: epoch-stale mid is not complete (no silent weak-id).
+    // Restamp from the live session before the fast path; unrepaired
+    // stale falls through to the slow fill + require-complete gate.
+    (void)restamp_coercion_entry_epoch_blame(e);
+
     // ── Issue #2147 Phase A: fast path — caller-stamped true provenance ──
     if (e.predicate_cond_node != 0 && e.source_mutation_id != 0 &&
-        !is_weak_coercion_mutation_id(e)) {
+        !is_weak_coercion_mutation_id(e) && !coercion_entry_epoch_stale(e)) {
         g_coercion_provenance_fast_path_total.fetch_add(1, std::memory_order_relaxed);
         g_coercion_provenance_complete_total.fetch_add(1, std::memory_order_relaxed);
         return true; // no chain_walk bump
@@ -971,6 +1025,13 @@ public:
     [[nodiscard]] std::size_t eliminated_count() const noexcept { return eliminated_count_; }
     void mark_eliminated(std::size_t n = 1) noexcept { eliminated_count_ += n; }
 
+    // Issue #3318: restamp every live entry whose mid is older than the
+    // current epoch/session floor. Quiet empty map: zero extra.
+    void restamp_epoch_blame() noexcept {
+        for (auto& e : entries_)
+            (void)restamp_coercion_entry_epoch_blame(e);
+    }
+
 private:
     std::vector<CoercionEntry> entries_;
     std::size_t eliminated_count_ = 0;
@@ -1051,6 +1112,10 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
 
     for (const auto& e_in : map.entries()) {
         CoercionEntry e = e_in;
+        // Issue #3318: restamp epoch-stale blame before elide / insert so
+        // DeadCoercion deopt meta and CoercionNode provenance join the live
+        // session (never invent zero).
+        (void)restamp_coercion_entry_epoch_blame(e);
 
         // Issue #1425 / #1925: identity coercion — child already has the
         // target type stamped (post-infer). Do not insert a
