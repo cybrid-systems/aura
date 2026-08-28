@@ -1732,7 +1732,14 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
     {
         std::lock_guard<std::mutex> lock(reg.mtx);
         const auto hard0 = met.capability_fiber_hard_deny_total.load(std::memory_order_relaxed);
-        if (need_grant && required != Effect::None && !wildcard_ok) {
+        // Issue #3363: unify the need_grant path — `wildcard_ok` no longer
+        // skips the #3144 effects_for_locked strip. Wildcard-only TA/MSE
+        // bits are stripped by effects_for_locked (per #3144), so a `*`
+        // grant alone cannot satisfy require_effect(TenantAdmin |
+        // MacroSelfEvo). Provenance fence stays. Soft/Off (`need_grant
+        // ==false`): zero-cost short-circuit. `wildcard_ok` parameter
+        // retained for backward compat (unused for allow).
+        if (need_grant && required != Effect::None) {
             // Issue #3126: locked variant (caller already holds mtx).
             const Effect held = reg.effects_for_locked(tenant);
             // Require full coverage of required bits (not just any overlap).
@@ -1744,18 +1751,14 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
                 allowed = false;
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }
-        } else if (wildcard_ok) {
-            // Issue #2055: wildcard must still honor epoch fence / provenance
-            // binding — otherwise privilege-sticky grants pass under "*".
-            // Issue #3126: locked variant (caller already holds mtx).
-            if (!reg.provenance_ok_locked(tenant, prov)) {
-                allowed = false;
-                met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
-            }
         }
         const auto hard1 = met.capability_fiber_hard_deny_total.load(std::memory_order_relaxed);
         // Issue #2151 / #2388: Agent-stable reason when hard fiber isolation denies.
-        const char* reason_hint = (!allowed && hard1 > hard0) ? "fiber-grant-mismatch" : nullptr;
+        // Issue #3363: stamp "via-wildcard" when caller passed wildcard_ok
+        // but the bit check denied — observability only (no allow effect).
+        const char* reason_hint = (!allowed && hard1 > hard0)               ? "fiber-grant-mismatch"
+                                  : (wildcard_ok && need_grant && !allowed) ? "via-wildcard-denied"
+                                                                            : nullptr;
         reg.record_audit(required, actual, tenant, prov, !allowed, op, reason_hint);
 
         // Issue #2586: single-use grant auto-revoke on successful allow.
