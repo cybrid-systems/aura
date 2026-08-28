@@ -412,6 +412,126 @@ static void ac3066_4_linter_no_design() {
           "3066 AC4: no test_issue_3066.cpp");
 }
 
+// Issue #3367: pin_composite_batch_join_mid under hard mode (production /
+// Full) must NOT mint a process-origin mid when caller / boundary /
+// epoch / TypedMid are all zero. Same hard face as resolve_audit_mutation_id
+// which already refuses (return 0 + SE mid-fallback-refused). Two mid
+// policies on the same hard face were the I6 residual — pin was
+// bypassing the #2836 refuse contract. Soft quiet no-op preserved
+// per #3066 AC3.
+static void ac3367_pin_matrix_no_process_origin_mid_in_hard() {
+    std::println(
+        "\n--- #3367: pin_composite_batch_join_mid matrix (no process-origin mid in hard) ---");
+    using namespace aura::compiler::typed_audit;
+    // Use a fresh process for each sub-case so the audit_mutation_id_gen
+    // / audit_mid_fallback_refused_total / pin_total counters don't leak
+    // across sub-cases (counters are process-global atomics).
+    auto read_gen = []() { return g_typed_mutation_audit_counters.audit_mutation_id_gen.load(); };
+    auto read_pin_total = []() { return g_composite_batch_join_pin_total.load(); };
+    auto read_se_total = []() { return g_composite_batch_se_join_total.load(); };
+    auto read_refused_total = []() {
+        return g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.load();
+    };
+
+    auto reset_state = []() {
+        reset_for_test();
+        reset_all();
+    };
+
+    // ── AC1: Soft + mid==0 → 0, no mint, no SE, no refused bump ──
+    {
+        reset_state();
+        apply_dev_audit_defaults(); // Soft/Sampled
+        g_typed_mutation_audit_counters.production_defaults_active.store(0);
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        const auto gen0 = read_gen();
+        const auto pin0 = read_pin_total();
+        const auto se0 = read_se_total();
+        const auto ref0 = read_refused_total();
+        const auto mid = pin_composite_batch_join_mid();
+        CHECK(mid == 0, "3367 AC1: Soft + mid==0 returns 0 (no mint, quiet)");
+        CHECK(read_gen() == gen0, "3367 AC1: Soft does not bump audit_mutation_id_gen");
+        CHECK(read_pin_total() == pin0,
+              "3367 AC1: Soft does not bump composite_batch_join_pin_total");
+        CHECK(read_se_total() == se0, "3367 AC1: Soft does not emit SE join");
+        CHECK(read_refused_total() == ref0,
+              "3367 AC1: Soft does not bump refuse (refuse is hard-only)");
+    }
+
+    // ── AC2: production/Full + mid==0 → 0, no mint, no SE (refuse path) ──
+    {
+        reset_state();
+        apply_production_audit_defaults(); // Full / production
+        g_typed_mutation_audit_counters.production_defaults_active.store(1);
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        const auto gen0 = read_gen();
+        const auto pin0 = read_pin_total();
+        const auto se0 = read_se_total();
+        const auto ref0 = read_refused_total();
+        const auto mid = pin_composite_batch_join_mid();
+        CHECK(mid == 0, "3367 AC2: hard + mid==0 returns 0 (no mint, refuse path in resolve)");
+        CHECK(read_gen() == gen0, "3367 AC2: hard empty-upstream does NOT bump "
+                                  "audit_mutation_id_gen (no process-origin mid)");
+        CHECK(read_pin_total() == pin0,
+              "3367 AC2: hard empty-upstream does NOT bump pin_total (no join SE)");
+        CHECK(read_se_total() == se0,
+              "3367 AC2: hard empty-upstream does NOT emit SE join (refuse via resolve)");
+        CHECK(read_refused_total() == ref0, "3367 AC2: pin does NOT bump refuse_total (resolve's "
+                                            "caller does that; pin is silent here)");
+    }
+
+    // ── AC3: hard + epoch != 0 → return epoch (legitimate join path) ──
+    {
+        reset_state();
+        apply_production_audit_defaults();
+        g_typed_mutation_audit_counters.production_defaults_active.store(1);
+        // Seed a non-zero epoch.
+        aura::core::bump_mutation_epoch();
+        const auto epoch_val = aura::core::current_mutation_epoch();
+        CHECK(epoch_val != 0, "3367 AC3 setup: epoch seeded non-zero");
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        const auto mid = pin_composite_batch_join_mid();
+        CHECK(mid == epoch_val, "3367 AC3: hard + epoch != 0 returns epoch (legitimate join path)");
+    }
+
+    // ── AC4: hard + caller_mid != 0 → return caller_mid ──
+    {
+        reset_state();
+        apply_production_audit_defaults();
+        g_typed_mutation_audit_counters.production_defaults_active.store(1);
+        aura::core::store_workspace_epoch(aura::core::WorkspaceEpochKind::Mutation, 0);
+        process_resource_quota_manager().provenance_mutation_id = 0;
+        constexpr std::uint64_t caller_mid = 42;
+        const auto mid = pin_composite_batch_join_mid(caller_mid);
+        CHECK(mid == caller_mid,
+              "3367 AC4: hard + caller_mid != 0 returns caller_mid (legacy contract)");
+    }
+}
+
+// Issue #3367 source-cite + linter pass.
+static void ac3367_source_cite_and_no_invent() {
+    std::println("\n--- #3367: source-cite + no docs/design/ ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("Issue #3367") != std::string::npos,
+          "3367 AC: typed_mutation_audit.h cites #3367 (pin_composite_batch_join_mid "
+          "refuse-aligned)");
+    const auto t = read_file("tests/compiler/test_audit_mutation_id_unify.cpp");
+    CHECK(t.find("ac3367_pin_matrix_no_process_origin_mid_in_hard") != std::string::npos,
+          "3367 AC: pin matrix AC1 present");
+    const std::filesystem::path docs_design =
+        std::filesystem::path(AURA_SOURCE_DIR) / "docs" / "design";
+    std::error_code ec;
+    if (std::filesystem::exists(docs_design, ec)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design, ec)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3367-") == std::string::npos,
+                  std::string("3367 AC: no docs/design/") + name + " (forbidden per #1655)");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_audit_mutation_id_unify() {
@@ -427,6 +547,8 @@ int run_test_audit_mutation_id_unify() {
     ac3066_2_sampled_force_joinable();
     ac3066_3_soft_zero_extra();
     ac3066_4_linter_no_design();
+    ac3367_pin_matrix_no_process_origin_mid_in_hard();
+    ac3367_source_cite_and_no_invent();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
