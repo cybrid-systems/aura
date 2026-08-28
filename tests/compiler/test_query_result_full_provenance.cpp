@@ -458,6 +458,128 @@ void test_ac3286_soft_bare_list_unchanged() {
     expect_true("Soft bare list is NOT a hash (layout-only path preserved)", !is_hash(*qr));
 }
 
+// Issue #3389 (I6): QueryResult::push_match_full silently returns false
+// past kMaxInlineMatches=64. Pre-#3389 production returned a green
+// schema-2 hash of the first 64 matches and Agent memory silently lost
+// the tail. Post-#3389 the production make_query_result_hash lambda
+// fail-closes with structured query-result-overflow (never a green
+// schema-2 of a prefix). Soft / Off bare list unchanged — historical
+// prefix contract preserved. Cap itself stays 64.
+void test_ac3389_production_overflow_fail_closed() {
+    std::print("AC3389 -- production 65+ matches → query-result-overflow (I6)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::is_hash;
+    using aura::core::query_result_overflow_total;
+    using aura::core::reset_query_result_overflow_total_for_test;
+    apply_production_audit_defaults();
+    reset_query_result_overflow_total_for_test();
+    CompilerService cs;
+    // Define 65 functions in a (begin ...) so the root has 65+ children.
+    // query:children-stable on root (0) returns all 65 child bindings,
+    // which the production make_query_result_hash lambda then funnels
+    // into push_match_full — overflow at the 65th hit.
+    std::string src = "(begin ";
+    for (int i = 0; i < 65; ++i) {
+        src += "(define (f3389" + std::to_string(i) + " x) x) ";
+    }
+    src += ")";
+    expect_true("3389 AC1: set-code 65 defs",
+                cs.eval(std::string("(set-code \"") + src + "\")").has_value());
+    expect_true("3389 AC1: eval-current", cs.eval("(eval-current)").has_value());
+    const auto overflow_before = query_result_overflow_total();
+    auto qr = cs.eval("(query :children-stable 0 :as-query-result)");
+    // AC1: production + 65+ matches → structured error, NOT a green
+    // schema-2 hash of a prefix (the pre-#3389 silent-drop bug).
+    expect_true("3389 AC1: overflow returns merr, not green hash", qr.has_value() && !is_hash(*qr));
+    const auto overflow_after = query_result_overflow_total();
+    expect_true("3389 AC1: overflow counter bumped on overflow", overflow_after > overflow_before);
+    apply_dev_audit_defaults();
+}
+
+void test_ac3389_under_cap_unchanged() {
+    std::print("AC3389 -- production ≤64 matches → schema-2 hash unchanged (AC2)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::is_hash;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    // 10 functions — well under kMaxInlineMatches=64.
+    std::string src = "(begin ";
+    for (int i = 0; i < 10; ++i) {
+        src += "(define (g3389" + std::to_string(i) + " x) x) ";
+    }
+    src += ")";
+    expect_true("3389 AC2: set-code 10 defs",
+                cs.eval(std::string("(set-code \"") + src + "\")").has_value());
+    expect_true("3389 AC2: eval-current", cs.eval("(eval-current)").has_value());
+    // query:children-stable 0 returns 10 children — under cap, must hash.
+    auto qr = cs.eval("(query :children-stable 0 :as-query-result)");
+    expect_true("3389 AC2: ≤64 matches returns schema-2 hash (not overflow merr)",
+                qr.has_value() && is_hash(*qr));
+    apply_dev_audit_defaults();
+}
+
+void test_ac3389_soft_bare_list_no_overflow_atomic() {
+    std::print("AC3389 -- Soft / Off bare find: no overflow atomic on happy path (AC3)\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::is_hash;
+    using aura::core::query_result_overflow_total;
+    using aura::core::reset_query_result_overflow_total_for_test;
+    apply_dev_audit_defaults();
+    reset_query_result_overflow_total_for_test();
+    CompilerService cs;
+    expect_true("3389 AC3: set-code",
+                cs.eval("(set-code \"(define h3389 (lambda (x) 1))\")").has_value());
+    expect_true("3389 AC3: eval", cs.eval("(eval-current)").has_value());
+    const auto overflow_before = query_result_overflow_total();
+    auto qr = cs.eval("(query :find \"h3389\")");
+    expect_true("3389 AC3: Soft bare find returns", qr.has_value());
+    expect_true("3389 AC3: Soft bare list is NOT a hash (layout-only)", !is_hash(*qr));
+    // Soft happy path must not bump the overflow counter — historical
+    // prefix contract preserved, no new atomic on the happy path.
+    expect_true("3389 AC3: Soft happy path bumps no overflow atomic",
+                query_result_overflow_total() == overflow_before);
+}
+
+void test_ac3389_source_cite() {
+    std::print("AC3389 -- source-cite push_match cap + fail-closed branch (AC4)\n");
+    std::ifstream f_epoch("src/core/workspace_epoch.hh");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string wepoch((std::istreambuf_iterator<char>(f_epoch)), std::istreambuf_iterator<char>());
+    std::string qwsp((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("3389 AC4: workspace_epoch.hh readable", !wepoch.empty());
+    expect_true("3389 AC4: query_workspace.cpp readable", !qwsp.empty());
+    // Push_match cap (the silent-drop site).
+    expect_true("3389 AC4: kMaxInlineMatches = 64",
+                wepoch.find("kMaxInlineMatches = 64") != std::string::npos);
+    expect_true("3389 AC4: push_match returns false on cap",
+                wepoch.find("if (match_count >= kMaxInlineMatches)") != std::string::npos &&
+                    wepoch.find("return false;") != std::string::npos);
+    // Fail-closed branch in make_query_result_hash.
+    expect_true("3389 AC4: query-result-overflow error kind used",
+                qwsp.find("\"query-result-overflow\"") != std::string::npos);
+    expect_true("3389 AC4: fail-closed on push_match_full == false",
+                qwsp.find("!qr.push_match_full(") != std::string::npos);
+    expect_true("3389 AC4: Issue #3389 cite in source",
+                qwsp.find("Issue #3389") != std::string::npos);
+    // Additive counter wired (per issue: optional, additive on existing
+    // query-result stats hash; no new Agent-facing query name).
+    expect_true("3389 AC4: note_query_result_overflow_total wired (qws)",
+                qwsp.find("note_query_result_overflow_total") != std::string::npos);
+    expect_true("3389 AC4: note_query_result_overflow_total wired (epoch)",
+                wepoch.find("note_query_result_overflow_total") != std::string::npos);
+    // AC5: no docs/design/, no tests/issues/test_issue_3389.cpp.
+    {
+        std::ifstream f("docs/design/3389-query-result-overflow.md");
+        expect_true("3389 AC5: no docs/design/3389-*", !f.good());
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3389.cpp");
+        expect_true("3389 AC5: no tests/issues/test_issue_3389.cpp", !f.good());
+    }
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -475,6 +597,10 @@ int main() {
     test_ac3311_live_soft_canary_then_prod_requery();
     test_ac3286_production_bare_list_auto_upgraded();
     test_ac3286_soft_bare_list_unchanged();
-    std::print("All #3103 + #3137 + #3231 + #3286 + #3311 AC tests PASSED\n");
+    test_ac3389_production_overflow_fail_closed();
+    test_ac3389_under_cap_unchanged();
+    test_ac3389_soft_bare_list_no_overflow_atomic();
+    test_ac3389_source_cite();
+    std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 AC tests PASSED\n");
     return 0;
 }

@@ -590,6 +590,7 @@ inline void reset_query_result_full_provenance_for_test() noexcept {
     g_query_result_full_provenance_tenant_mismatch_total().store(0, std::memory_order_relaxed);
     g_query_result_full_provenance_fiber_mismatch_total().store(0, std::memory_order_relaxed);
     g_query_result_full_provenance_cow_mismatch_total().store(0, std::memory_order_relaxed);
+    reset_query_result_overflow_total_for_test();
 }
 
 inline void note_query_result_created() noexcept {
@@ -600,6 +601,25 @@ inline void note_query_result_fresh_hit() noexcept {
 }
 inline void note_query_result_stale() noexcept {
     g_query_result_stale_total().fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #3389 (I6): additive counter on the existing query-result
+// stats surface — bumped once per production path that hits
+// kMaxInlineMatches=64 cap and fail-closes via query-result-overflow.
+// Reused for the Agent-visible observability under the
+// `query:query-epoch-stats` / engine:metrics hash; no new query key.
+inline std::atomic<std::uint32_t>& g_query_result_overflow_total_storage() noexcept {
+    static std::atomic<std::uint32_t> v{0};
+    return v;
+}
+inline void note_query_result_overflow_total() noexcept {
+    g_query_result_overflow_total_storage().fetch_add(1, std::memory_order_relaxed);
+}
+inline std::uint32_t query_result_overflow_total() noexcept {
+    return g_query_result_overflow_total_storage().load(std::memory_order_relaxed);
+}
+inline void reset_query_result_overflow_total_for_test() noexcept {
+    g_query_result_overflow_total_storage().store(0, std::memory_order_relaxed);
 }
 
 // Issue #3103: full-provenance freshness validator. Returns the reason
