@@ -998,6 +998,140 @@ static void ac3279_5_source_cite_and_linter() {
           "AC5: no invent test per #81967");
 }
 
+// ── Issue #3333: provenance_ok mid join is per contributing grant ──
+static void ac3333_1_unrelated_grant_does_not_poison() {
+    std::println("\n--- #3333 AC1: Render@mid=5 does not poison Mutate@mid=9 ---");
+    reset_all();
+    set_mode(SandboxMode::Strict);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    constexpr std::uint64_t tenant = 81;
+    EffectProvenance render{};
+    render.mutation_id = 5;
+    render.epoch = 5;
+    g_capability_registry().grant(tenant, "render-3333", Effect::Render, render);
+    EffectProvenance mutate{};
+    mutate.mutation_id = 9;
+    mutate.epoch = 9;
+    g_capability_registry().grant(tenant, "mut-3333", Effect::Mutate, mutate);
+    CHECK(g_capability_registry().provenance_ok(tenant, mutate, Effect::Mutate),
+          "3333 AC1: provenance_ok Mutate@9 ignores Render@5");
+    CHECK(!g_capability_registry().provenance_ok(tenant, mutate),
+          "3333 AC1: query path (required=None) still sees all grants");
+    CHECK(check_and_record_effect(Effect::Mutate, Effect::Mutate, mutate, tenant, "3333-ac1"),
+          "3333 AC1: check Mutate@9 allows despite live Render@5");
+}
+
+static void ac3333_2_true_mismatch_still_denies() {
+    std::println("\n--- #3333 AC2: Mutate bound_mid=5 vs check mid=9 denies ---");
+    reset_all();
+    set_mode(SandboxMode::Strict);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Strict);
+    constexpr std::uint64_t tenant = 82;
+    EffectProvenance grant_p{};
+    grant_p.mutation_id = 5;
+    grant_p.epoch = 5;
+    g_capability_registry().grant(tenant, "mut-3333-mm", Effect::Mutate, grant_p);
+    EffectProvenance call{};
+    call.mutation_id = 9;
+    call.epoch = 9;
+    CHECK(!g_capability_registry().provenance_ok(tenant, call, Effect::Mutate),
+          "3333 AC2: contributing Mutate mid mismatch denies");
+    const auto mm0 = snapshot_capability_effect_stats().provenance_mismatch;
+    const auto& ring = g_security_event_ring();
+    const auto baseline = ring.seq.load(std::memory_order_acquire);
+    CHECK(!check_and_record_effect(Effect::Mutate, Effect::Mutate, call, tenant, "3333-ac2"),
+          "3333 AC2: check Mutate@9 denies");
+    CHECK(snapshot_capability_effect_stats().provenance_mismatch > mm0,
+          "3333 AC2: provenance_mismatch metric bumps");
+    bool found = false;
+    const auto head = ring.seq.load(std::memory_order_acquire);
+    for (auto s = baseline; s < head; ++s) {
+        const auto& e = ring.ring[s % kSecurityEventRingSize];
+        if (e.kind == aura::core::security_event::SecurityEventKind::EffectDeny) {
+            CHECK(e.mutation_id == 9, "3333 AC2: SE.mutation_id is the check mid");
+            found = true;
+        }
+    }
+    CHECK(found, "3333 AC2: EffectDeny recorded");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(tenant, "mut-3333-mm", g), "3333 AC2: grant live");
+    CHECK(g.bound_mutation_id == 5, "3333 AC2: grant.bound_mid remains 5 (explainable vs SE)");
+}
+
+static void ac3333_3_zero_mid_fail_closed() {
+    std::println("\n--- #3333 AC3: Restricted/Strict prov.mid=0 still denies (#2707) ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    constexpr std::uint64_t tenant = 83;
+    EffectProvenance grant_p{};
+    grant_p.mutation_id = 5;
+    grant_p.epoch = 5;
+    g_capability_registry().grant(tenant, "mut-3333-z", Effect::Mutate, grant_p);
+    EffectProvenance call{};
+    call.mutation_id = 0;
+    const auto z0 = g_capability_effect_metrics().capability_mid_join_zero_deny_total.load();
+    CHECK(!g_capability_registry().provenance_ok(tenant, call, Effect::Mutate),
+          "3333 AC3: fail-closed zero mid denies");
+    CHECK(g_capability_effect_metrics().capability_mid_join_zero_deny_total.load() > z0,
+          "3333 AC3: mid_join_zero_deny bumps");
+}
+
+static void ac3333_4_soft_zero_skip() {
+    std::println("\n--- #3333 AC4: Soft/Off zero mid still skips join ---");
+    reset_all();
+    constexpr std::uint64_t tenant = 84;
+    EffectProvenance grant_p{};
+    grant_p.mutation_id = 42;
+    grant_p.epoch = 42;
+    g_capability_registry().grant(tenant, "mut-3333-soft", Effect::Mutate, grant_p);
+    EffectProvenance call{};
+    call.mutation_id = 0;
+    const auto z0 = g_capability_effect_metrics().capability_mid_join_zero_deny_total.load();
+    CHECK(g_capability_registry().provenance_ok(tenant, call, Effect::Mutate),
+          "3333 AC4: Soft/Off + prov mid=0 skips join");
+    CHECK(g_capability_effect_metrics().capability_mid_join_zero_deny_total.load() == z0,
+          "3333 AC4: no mid_join_zero_deny under Off");
+}
+
+static void ac3333_5_stolen_skip_and_source() {
+    std::println("\n--- #3333 AC5: stolen skip + session/steal lineage ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    CHECK(cap.find("g.revoked || g.stolen") != std::string::npos,
+          "3333 AC5: provenance_ok skips stolen grants");
+    CHECK(cap.find("Issue #3142") != std::string::npos, "3333 AC5: #3142 stolen lineage");
+    CHECK(cap.find("kProvenanceContributingMidIssue = 3333") != std::string::npos,
+          "3333 AC5: issue stamp");
+}
+
+static void ac3333_6_source_and_linter() {
+    std::println("\n--- #3333 AC6: source-cite + linter + no invent ---");
+    const auto cap = read_file("src/core/capability_model.hh");
+    const auto test_self = read_file("tests/core/test_capability_single_use_consume.cpp");
+    const auto lint2707 = read_file("scripts/coverage/checks/check_mid_join_fail_closed_2707.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_provenance_contributing_mid_3333.py");
+    const auto build = read_file("build.py");
+    CHECK(cap.find("Issue #3333") != std::string::npos, "3333 AC6: capability_model cites #3333");
+    CHECK(cap.find("required != Effect::None && !has_effect(g.effects, required)") !=
+              std::string::npos,
+          "3333 AC6: contributing filter");
+    CHECK(cap.find("provenance_ok_locked(tenant, prov, required)") != std::string::npos,
+          "3333 AC6: check_and_record_effect passes required");
+    CHECK(cap.find("fail_closed_mid") != std::string::npos, "3333 AC6: #2707 fail_closed_mid kept");
+    CHECK(!lint2707.empty() && lint2707.find("#2707") != std::string::npos,
+          "3333 AC6: #2707 linter retained");
+    CHECK(!lint.empty() && lint.find("Issue #3333") != std::string::npos, "3333 AC6: linter");
+    CHECK(build.find("check_provenance_contributing_mid_3333") != std::string::npos,
+          "3333 AC6: build.py after #2707");
+    CHECK(test_self.find("ac3333_1_unrelated_grant_does_not_poison") != std::string::npos,
+          "3333 AC6: AC1 in suite");
+    CHECK(!std::filesystem::exists("tests/core/test_issue_3333.cpp"),
+          "3333 AC6: no invent test_issue_3333");
+    CHECK(!std::filesystem::exists("docs/design/3333-contributing-mid.md"),
+          "3333 AC6: no docs/design");
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -1886,6 +2020,12 @@ int run_test_capability_single_use_consume() {
         ac3279_3_live_grant_not_swept();
         ac3279_4_peer_fiber_skip();
         ac3279_5_source_cite_and_linter();
+        ac3333_1_unrelated_grant_does_not_poison();
+        ac3333_2_true_mismatch_still_denies();
+        ac3333_3_zero_mid_fail_closed();
+        ac3333_4_soft_zero_skip();
+        ac3333_5_stolen_skip_and_source();
+        ac3333_6_source_and_linter();
 
         std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;

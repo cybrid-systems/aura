@@ -384,6 +384,9 @@ struct CapabilityEffectMetrics {
 inline constexpr int kEffectEpochUnifyIssue = 2149;
 // Issue #2151: optional hard-deny on grant_fiber_id mismatch.
 inline constexpr int kHardFiberIsolationIssue = 2151;
+// Issue #3333: provenance_ok mid/epoch/fiber join is per contributing grant
+// (has_effect ∩ required), not every live grant on the tenant.
+inline constexpr int kProvenanceContributingMidIssue = 3333;
 
 // Test/production optional override for EffectProvenance fiber stamping.
 // Non-zero → use this id instead of aura_fiber_current_id() (0 = use TLS fiber).
@@ -1212,7 +1215,8 @@ struct CapabilityRegistry {
     // fence paths must take the registry mtx and call `provenance_ok_locked`
     // instead. `check_and_record_effect` (free function) already holds mtx
     // and uses `provenance_ok_locked`.
-    [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov) const {
+    [[nodiscard]] bool provenance_ok(TenantId tenant, const EffectProvenance& prov,
+                                     Effect required = Effect::None) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return true; // no grants → not a mismatch (denied separately)
@@ -1227,7 +1231,12 @@ struct CapabilityRegistry {
             return false;
         }
         for (const auto& g : it->second) {
-            if (g.revoked)
+            if (g.revoked || g.stolen)
+                continue;
+            // Issue #3333: only grants that contribute `required` bits join
+            // mid / epoch / fiber. Unrelated live grants must not poison the
+            // tenant. required==None → check all live grants (query path).
+            if (required != Effect::None && !has_effect(g.effects, required))
                 continue;
             if (fail_closed_mid) {
                 // Production: zero bound mid is not a silent skip — refuse.
@@ -1275,7 +1284,8 @@ struct CapabilityRegistry {
     // fence / fiber-mismatch checks are atomic w.r.t. concurrent
     // grant/revoke. Used by `check_and_record_effect` (which already holds
     // `mtx`) and by security fence paths.
-    [[nodiscard]] bool provenance_ok_locked(TenantId tenant, const EffectProvenance& prov) const {
+    [[nodiscard]] bool provenance_ok_locked(TenantId tenant, const EffectProvenance& prov,
+                                            Effect required = Effect::None) const {
         auto it = by_tenant.find(tenant);
         if (it == by_tenant.end())
             return true; // no grants → not a mismatch (denied separately)
@@ -1289,7 +1299,10 @@ struct CapabilityRegistry {
             return false;
         }
         for (const auto& g : it->second) {
-            if (g.revoked)
+            if (g.revoked || g.stolen)
+                continue;
+            // Issue #3333: contributing-grant mid join (see provenance_ok).
+            if (required != Effect::None && !has_effect(g.effects, required))
                 continue;
             if (fail_closed_mid) {
                 if (g.bound_mutation_id == 0) {
@@ -1747,7 +1760,7 @@ inline bool check_and_record_effect(Effect required, Effect actual, const Effect
             const auto held_u = static_cast<std::uint16_t>(held);
             if ((held_u & req_u) != req_u)
                 allowed = false;
-            if (allowed && !reg.provenance_ok_locked(tenant, prov)) {
+            if (allowed && !reg.provenance_ok_locked(tenant, prov, required)) {
                 allowed = false;
                 met.capability_provenance_mismatch_total.fetch_add(1, std::memory_order_relaxed);
             }
@@ -2151,7 +2164,7 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
     }
 
     // Issue #2386: epoch fence / hard fiber isolation / bound mid (parity grant()).
-    if (!reg.provenance_ok(tenant, call_prov)) {
+    if (!reg.provenance_ok(tenant, call_prov, Effect::MacroSelfEvo)) {
         out.allowed = false;
         out.deny_reason = "MacroSelfEvo provenance fence (epoch/fiber/mid)";
         met.macro_self_evo_denied_total.fetch_add(1, std::memory_order_relaxed);
