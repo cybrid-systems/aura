@@ -2679,6 +2679,7 @@ EvalResult Evaluator::eval_flat_apply_mutate_replace_pattern(std::span<const typ
             !(get_allow_macro_mutate() || parse_allow_macro_opt_out(a))) {
             if (match_sub(id, pat_pr.root)) {
                 flat.note_replace_pattern_hygiene_reject();
+                record_hygiene_violation_attempt();
                 note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
             }
             continue;

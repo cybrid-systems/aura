@@ -1920,14 +1920,105 @@ static void ac3191_6_source_and_linter() {
     // Linter wired into build.py.
     CHECK(build.find("check_macro_hygiene_default_deny_3191") != std::string::npos,
           "3191 AC6: build.py wires linter");
-    // No docs/design/* (per #1655).
     CHECK(read_file("docs/design/3191-macro-hygiene-default-deny.md").empty(),
           "3191 AC6: no docs/design/");
-    // No tests/issues/test_issue_3191.cpp (per #81967).
     CHECK(read_file("tests/issues/test_issue_3191.cpp").empty(),
           "3191 AC6: no tests/issues/test_issue_3191");
     CHECK(read_file("tests/compiler/test_issue_3191.cpp").empty(),
           "3191 AC6: no tests/compiler/test_issue_3191");
+}
+
+// ── Issue #3344: continuous hygiene gate on mutate:* / lockless helpers.
+// Discover every add_mutate / eval_flat_apply_mutate_*; require
+// reject_structural_macro_hygiene (or documented HYGIENE_EXEMPT /
+// GUARD_EXEMPT). Golden list stays this suite. No second hygiene model.
+
+static void ac3344_1_discovers_mutate_entries() {
+    std::println("\n--- 3344 AC1: linter discovers add_mutate + lockless helpers ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mutate_hygiene_continuous_gate_3344.py");
+    CHECK(!lint.empty(), "3344 AC1: linter present");
+    CHECK(lint.find("ADD_MUTATE_RE") != std::string::npos, "3344 AC1: discovers add_mutate");
+    CHECK(lint.find("eval_flat_apply_mutate_") != std::string::npos,
+          "3344 AC1: discovers lockless helpers");
+    CHECK(lint.find("HYGIENE_EXEMPT") != std::string::npos, "3344 AC1: documented exemption");
+    CHECK(lint.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3344 AC1: requires reject_structural_macro_hygiene");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("Issue #3344") != std::string::npos, "3344 AC1: mutate cites #3344");
+    CHECK(mut.find("\"refactor/extract\"") != std::string::npos &&
+              mut.find("reject_structural_macro_hygiene") != std::string::npos,
+          "3344 AC1: refactor/extract gated");
+}
+
+static void ac3344_2_existing_closed_loop_prims() {
+    std::println("\n--- 3344 AC2: existing structural prims remain on the golden list ---");
+    const auto t = read_file("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    CHECK(t.find("mutate:rename-symbol") != std::string::npos, "3344 AC2: rename-symbol");
+    CHECK(t.find("mutate:replace-pattern") != std::string::npos, "3344 AC2: replace-pattern");
+    CHECK(t.find("mutate:move-node") != std::string::npos, "3344 AC2: move-node");
+    CHECK(t.find("mutate:replace-subtree") != std::string::npos, "3344 AC2: replace-subtree");
+    CHECK(t.find("mutate:insert-child") != std::string::npos, "3344 AC2: insert-child");
+    CHECK(t.find("mutate:splice") != std::string::npos, "3344 AC2: splice");
+    CHECK(t.find("mutate:wrap") != std::string::npos, "3344 AC2: wrap");
+    CHECK(t.find("mutate:set-body") != std::string::npos, "3344 AC2: set-body");
+    CHECK(t.find("mutate:remove-node") != std::string::npos, "3344 AC2: remove-node");
+    CHECK(t.find("mutate:rebind") != std::string::npos, "3344 AC2: rebind");
+    CHECK(t.find("mutate:extract-function") != std::string::npos, "3344 AC2: extract-function");
+    CHECK(t.find("mutate:inline-call") != std::string::npos, "3344 AC2: inline-call");
+    CHECK(t.find("mutate:query-and-replace") != std::string::npos, "3344 AC2: query-and-replace");
+    CHECK(t.find("mutate:tweak-literal") != std::string::npos, "3344 AC2: tweak-literal");
+    CHECK(t.find("mutate:atomic-batch") != std::string::npos, "3344 AC2: atomic-batch");
+    CHECK(t.find("mutate:record-patch") != std::string::npos, "3344 AC2: record-patch");
+    CHECK(t.find("mutate:refactor/extract") != std::string::npos, "3344 AC2: refactor/extract");
+}
+
+static void ac3344_3_missing_gate_fails() {
+    std::println("\n--- 3344 AC3: new prim without hygiene call fails the coverage check ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mutate_hygiene_continuous_gate_3344.py");
+    CHECK(lint.find("missing hygiene helper") != std::string::npos,
+          "3344 AC3: fail message for missing helper");
+    CHECK(lint.find("ADD_MUTATE_RE") != std::string::npos, "3344 AC3: discovery not a stale list");
+}
+
+static void ac3344_4_soft_non_macro_unchanged() {
+    std::println("\n--- 3344 AC4: Soft / non-macro target zero extra cost ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define base 10)\")").has_value(), "3344 AC4: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3344 AC4: eval");
+    auto* ws = cs.evaluator().workspace_flat();
+    CHECK(ws != nullptr, "3344 AC4: workspace");
+    auto lit = first_lit_int(ws);
+    CHECK(lit != aura::ast::NULL_NODE, "3344 AC4: LiteralInt");
+    CHECK(!ws->is_macro_introduced(lit), "3344 AC4: not MacroIntroduced");
+    auto rv = cs.eval(std::format("(mutate:replace-value {} 7 \"3344-soft\")", lit));
+    CHECK(rv.has_value(), "3344 AC4: non-macro replace-value commits");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("!flat.is_macro_introduced(id)") != std::string::npos,
+          "3344 AC4: helper short-circuits on non-macro");
+}
+
+static void ac3344_5_source_and_linter() {
+    std::println("\n--- 3344 AC5: linter AFTER #3191; no invent / docs / schema ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_mutate_hygiene_continuous_gate_3344.py");
+    CHECK(build.find("check_mutate_hygiene_continuous_gate_3344") != std::string::npos,
+          "3344 AC5: build.py");
+    const auto p3191 = build.find("check_macro_hygiene_default_deny_3191");
+    const auto p3344 = build.find("check_mutate_hygiene_continuous_gate_3344");
+    CHECK(p3191 != std::string::npos && p3344 != std::string::npos && p3344 > p3191,
+          "3344 AC5: wired after #3191");
+    CHECK(!lint.empty() && lint.find("3344") != std::string::npos, "3344 AC5: linter");
+    CHECK(read_file("docs/design/3344-mutate-hygiene-continuous-gate.md").empty(),
+          "3344 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3344.cpp").empty(), "3344 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3344.cpp").empty(),
+          "3344 AC5: no tests/issues invent");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("schema-3344") == std::string::npos, "3344 AC5: no schema-3344");
+    CHECK(mut.find("g_3344_") == std::string::npos, "3344 AC5: no g_3344_*");
 }
 
 // ── Issue #3213: lockless atomic-batch dual-track :allow-macro? ──
@@ -3901,6 +3992,12 @@ int main() {
     ac3191_4_soft_non_macro_zero_cost();
     ac3191_5_existing_surfaces_preserved();
     ac3191_6_source_and_linter();
+    std::println("\n=== Issue #3344: continuous mutate hygiene gate ===");
+    ac3344_1_discovers_mutate_entries();
+    ac3344_2_existing_closed_loop_prims();
+    ac3344_3_missing_gate_fails();
+    ac3344_4_soft_non_macro_unchanged();
+    ac3344_5_source_and_linter();
     std::println("\n=== Issue #3213: lockless atomic-batch dual-track :allow-macro? ===");
     ac3213_1_source_all_gates_parse();
     ac3213_2_per_op_opt_in_no_global();

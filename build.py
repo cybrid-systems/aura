@@ -2210,6 +2210,21 @@ def cmd_lint():
             "Issue #3191 macro hygiene default-deny linter failed — run python3 scripts/coverage/checks/check_macro_hygiene_default_deny_3191.py"
         )
         return r
+    # Issue #3344: continuous hygiene gate — every new add_mutate /
+    # eval_flat_apply_mutate_* must hit reject_structural_macro_hygiene
+    # (or documented HYGIENE_EXEMPT / GUARD_EXEMPT). Extends
+    # test_hygiene_mutate_closed_loop (#81967); no docs/design/; no
+    # new query keys. Does not rewrite mutate dispatch.
+    mhyg3344_script = COVERAGE_CHECKS / "check_mutate_hygiene_continuous_gate_3344.py"
+    if not mhyg3344_script.exists():
+        fail(f"missing {mhyg3344_script}")
+        return 1
+    r = run([sys.executable, str(mhyg3344_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3344 mutate hygiene continuous-gate linter failed — run python3 scripts/coverage/checks/check_mutate_hygiene_continuous_gate_3344.py"
+        )
+        return r
     # Issue #3213: lockless atomic-batch dual-track :allow-macro? (parity
     # with public mutate prims). Every eval_flat_apply_mutate_* MacroIntroduced
     # gate honors get_allow_macro_mutate() || parse_allow_macro_opt_out.
