@@ -1300,6 +1300,16 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
     // query:macro-provenance-stats cross-flat-violation-total) + audit;
     // strict mode force-clears. Soft/Off: gate short-circuits before any
     // walk (zero-cost contract preserved).
+    //
+    // Issue #3340 residual: provenance is a per-FlatAST MarkerProvenanceTable
+    // index (raw uint32). clone_macro_body stamps origin via source.provenance
+    // else weak-link body_id. Cross-pool that leftover is orphan/wrong in the
+    // TARGET table (densify/steal can recycle slots). Same production /
+    // force-hygienic + cross-pool gate, same walk: if provenance != 0 then
+    // set_provenance(cur, 0). Prefer zero (force re-stamp / no provenance)
+    // over inventing a table transplant. Same-pool / Soft/Off: no walk,
+    // provenance copy preserved. One extra store per node in the existing
+    // production walk — no extra Soft walk, no new metric, no new query key.
     const bool schema_homology_prod =
         aura::compiler::typed_audit::production_defaults_active() ||
         g_macro_expand_sandbox_strict.load(std::memory_order_relaxed) != 0;
@@ -1319,6 +1329,9 @@ static void ensure_cross_flat_expand_consistency(aura::ast::FlatAST& target,
                     ++drift;                     // non-homologous / OOB → fail-closed signal
                 target.set_schema_cache(cur, 0); // re-stamp against target env
             }
+            // Issue #3340: zero leftover provenance table indices. 0 = none.
+            if (target.provenance(cur) != 0)
+                target.set_provenance(cur, 0);
             const auto cv = target.get(cur);
             for (auto child : cv.children) {
                 if (child != aura::ast::NULL_NODE)

@@ -320,11 +320,18 @@ static void ac_source_cite() {
 // g_hygiene_violation_in_macro_expand_total (fail-closed). Same-pool
 // clones keep the #390 copy (homologous — shared registry). Soft/Off
 // never walks (zero-cost contract preserved).
+//
+// Issue #3340 residual: provenance is a per-FlatAST MarkerProvenanceTable
+// index. clone_macro_body stamps origin via source.provenance else
+// weak-link body_id. Cross-pool leftover is orphan/wrong in the target
+// table. Same gate / same walk zeros non-zero provenance (prefer 0 over
+// table transplant). Same-pool / Soft keep the copy.
 
 // AC8: cross-pool clone under force-hygienic re-stamps schema_cache
 // against the target env (cleared to 0) while the source keeps its own.
+// #3340: cloned-node provenance is also zeroed (source preserved).
 static void ac3278_cross_pool_schema_restamp() {
-    std::println("\n--- AC8: #3278 cross-pool schema_cache re-stamp (force-hygienic) ---");
+    std::println("\n--- AC8: #3278/#3340 cross-pool schema_cache + provenance re-stamp ---");
     SandboxStrictGuard guard;
     aura_test_set_macro_expand_sandbox_strict(1); // force-hygienic gate
 
@@ -336,6 +343,7 @@ static void ac3278_cross_pool_schema_restamp() {
     auto body = src.add_variable(x);
     auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
     src.set_schema_cache(lam, /*tid=*/42); // #390 pre-cached schema
+    src.set_provenance(lam, /*prov=*/91);  // #3340 leftover table index
     std::unordered_map<std::string, std::string, aura::core::TransparentStringHash, std::equal_to<>>
         nm;
     auto cloned = clone_macro_body(target, target_pool, src, src_pool, lam, nullptr, &nm,
@@ -347,6 +355,11 @@ static void ac3278_cross_pool_schema_restamp() {
     CHECK(target.schema_cache(cloned) == 0u,
           "AC8: cross-pool cloned node schema_cache re-stamped to 0");
     CHECK(src.schema_cache(lam) == 42u, "AC8: source schema_cache preserved");
+    // #3340: leftover MarkerProvenanceTable index is zeroed in the
+    // target (0 = no provenance). Source table is never mutated.
+    CHECK(target.provenance(cloned) == 0u,
+          "AC8: cross-pool cloned node provenance re-stamped to 0");
+    CHECK(src.provenance(lam) == 91u, "AC8: source provenance preserved");
     const auto post = aura_test_cross_flat_expand_consistency(
         static_cast<void*>(&target), static_cast<void*>(&target_pool), static_cast<void*>(&src),
         static_cast<void*>(&src_pool), static_cast<std::uint32_t>(cloned));
@@ -356,8 +369,9 @@ static void ac3278_cross_pool_schema_restamp() {
 // AC9: same-pool cross-flat clone keeps the #390 schema_cache copy
 // (homologous — shared registry, no re-stamp). Also Soft (!production,
 // strict=0) keeps the copy: zero-cost contract unchanged.
+// #3340: same-pool / Soft also keep the provenance stamp (no walk).
 static void ac3278_same_pool_and_soft_keep_copy() {
-    std::println("\n--- AC9: #3278 same-pool + Soft keep schema_cache copy ---");
+    std::println("\n--- AC9: #3278/#3340 same-pool + Soft keep schema_cache + provenance copy ---");
     SandboxStrictGuard guard;
     aura_test_set_macro_expand_sandbox_strict(1); // force-hygienic ON
     {
@@ -369,6 +383,7 @@ static void ac3278_same_pool_and_soft_keep_copy() {
         auto body = src.add_variable(x);
         auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
         src.set_schema_cache(lam, /*tid=*/77);
+        src.set_provenance(lam, /*prov=*/88);
         std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                            std::equal_to<>>
             nm;
@@ -377,6 +392,7 @@ static void ac3278_same_pool_and_soft_keep_copy() {
         CHECK(cloned != NULL_NODE, "AC9: same-pool clone ok");
         CHECK(target.schema_cache(cloned) == 77u,
               "AC9: same-pool keeps #390 schema_cache copy (homologous, no re-stamp)");
+        CHECK(target.provenance(cloned) == 88u, "AC9: same-pool keeps provenance copy (no walk)");
     }
     aura_test_set_macro_expand_sandbox_strict(0); // Soft / relaxed
     {
@@ -389,6 +405,7 @@ static void ac3278_same_pool_and_soft_keep_copy() {
         auto body = src.add_variable(x);
         auto lam = src.add_lambda(std::vector<aura::ast::SymId>{x}, body);
         src.set_schema_cache(lam, /*tid=*/55);
+        src.set_provenance(lam, /*prov=*/66);
         std::unordered_map<std::string, std::string, aura::core::TransparentStringHash,
                            std::equal_to<>>
             nm;
@@ -397,6 +414,8 @@ static void ac3278_same_pool_and_soft_keep_copy() {
         CHECK(cloned != NULL_NODE, "AC9: Soft cross-flat clone ok");
         CHECK(target.schema_cache(cloned) == 55u,
               "AC9: Soft keeps copy (zero-cost contract unchanged)");
+        CHECK(target.provenance(cloned) == 66u,
+              "AC9: Soft keeps provenance copy (zero-cost, no walk)");
     }
 }
 
@@ -404,8 +423,11 @@ static void ac3278_same_pool_and_soft_keep_copy() {
 // cloned subtree (simulating a concurrent densify/steal race after the
 // re-stamp) is detected by the homology check: bump the existing
 // violation counter + clear it (0 = re-infer in target env).
+// #3340: leftover provenance planted after clone is zeroed on re-run
+// (prefer 0 over table transplant; no new counter).
 static void ac3278_drift_fail_closed() {
-    std::println("\n--- AC10: #3278 drift fail-closed (OOB schema id cleared + counted) ---");
+    std::println(
+        "\n--- AC10: #3278/#3340 drift fail-closed (OOB schema + leftover provenance) ---");
     SandboxStrictGuard guard;
     aura_test_set_macro_expand_sandbox_strict(1);
 
@@ -422,11 +444,14 @@ static void ac3278_drift_fail_closed() {
                                    SyntaxMarker::MacroIntroduced);
     CHECK(cloned != NULL_NODE, "AC10: cross-flat clone ok");
     CHECK(target.schema_cache(cloned) == 0u, "AC10: re-stamped to 0 post-clone");
+    CHECK(target.provenance(cloned) == 0u, "AC10: provenance zeroed post-clone (#3340)");
 
     // Simulate a concurrent densify/steal interleave: a non-homologous
-    // OOB schema id lands on the cloned node after the re-stamp.
+    // OOB schema id + leftover provenance index land on the cloned
+    // node after the re-stamp.
     constexpr std::uint32_t kSchemaIdMax3278 = 1u << 24; // #2859 bound
     target.set_schema_cache(cloned, kSchemaIdMax3278 + 7u);
+    target.set_provenance(cloned, 999u);
     const auto v0 = g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
     const auto post = aura_test_cross_flat_expand_consistency(
         static_cast<void*>(&target), static_cast<void*>(&target_pool), static_cast<void*>(&src),
@@ -434,12 +459,14 @@ static void ac3278_drift_fail_closed() {
     const auto v1 = g_hygiene_violation_in_macro_expand_total.load(std::memory_order_relaxed);
     CHECK(v1 > v0, "AC10: OOB schema id drift bumps violation counter (fail-closed)");
     CHECK(target.schema_cache(cloned) == 0u, "AC10: drift id cleared (0 = re-infer in target env)");
+    CHECK(target.provenance(cloned) == 0u,
+          "AC10: leftover provenance zeroed (prefer 0 over table transplant)");
     CHECK(post == 0, "AC10: post-call validate == 0");
 }
 
 // AC11: source-cite + linter + no invent.
 static void ac3278_source_cite() {
-    std::println("\n--- AC11: #3278 source-cite + linter ---");
+    std::println("\n--- AC11: #3278/#3340 source-cite + linter ---");
     auto src = read_file("src/compiler/macro_expansion.cpp");
     CHECK(src.find("Issue #3278") != std::string::npos, "AC11: runtime cites #3278");
     CHECK(src.find("schema_homology_prod") != std::string::npos,
@@ -447,14 +474,26 @@ static void ac3278_source_cite() {
     CHECK(src.find("kSchemaIdMax") != std::string::npos, "AC11: OOB bound (#2859) present");
     CHECK(src.find("g_hygiene_violation_in_macro_expand_total") != std::string::npos,
           "AC11: reuses existing violation counter (no new metric)");
+    CHECK(src.find("Issue #3340") != std::string::npos, "AC11: runtime cites #3340");
+    CHECK(src.find("target.set_provenance(cur, 0)") != std::string::npos,
+          "AC11: cross-pool provenance zero (prefer 0 over table transplant)");
     auto lint = read_file("scripts/coverage/checks/check_cross_flat_schema_homology_3278.py");
     CHECK(!lint.empty(), "AC11: linter present");
     CHECK(lint.find("3278") != std::string::npos, "AC11: linter cites #3278");
+    auto lint3340 =
+        read_file("scripts/coverage/checks/check_cross_flat_provenance_homology_3340.py");
+    CHECK(!lint3340.empty(), "AC11: #3340 linter present");
+    CHECK(lint3340.find("3340") != std::string::npos, "AC11: linter cites #3340");
     auto bp = read_file("build.py");
     CHECK(bp.find("check_cross_flat_schema_homology_3278.py") != std::string::npos,
-          "AC11: build.py wires linter");
+          "AC11: build.py wires #3278 linter");
+    CHECK(bp.find("check_cross_flat_provenance_homology_3340.py") != std::string::npos,
+          "AC11: build.py wires #3340 linter");
     CHECK(read_file("docs/design/3278-").empty(), "AC11: no docs/design per #1655");
     CHECK(read_file("tests/issues/test_issue_3278.cpp").empty(), "AC11: no invent test per #81967");
+    CHECK(read_file("docs/design/3340-").empty(), "AC11: no docs/design/3340-* per #1655");
+    CHECK(read_file("tests/issues/test_issue_3340.cpp").empty(),
+          "AC11: no invent test_issue_3340.cpp per #81967");
 }
 
 } // namespace
@@ -469,6 +508,7 @@ int run_test_macro_cross_flat_hygiene() {
     ac_query();
     ac_source_cite();
     // Issue #3278: cross-FlatAST schema_cache / StringPool homology.
+    // Issue #3340: same hook zeros leftover provenance table indices.
     ac3278_cross_pool_schema_restamp();
     ac3278_same_pool_and_soft_keep_copy();
     ac3278_drift_fail_closed();

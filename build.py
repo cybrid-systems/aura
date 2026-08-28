@@ -2126,6 +2126,20 @@ def cmd_lint():
             "Issue #3278 cross-flat schema homology linter failed — run python3 scripts/coverage/checks/check_cross_flat_schema_homology_3278.py"
         )
         return r
+    # Issue #3340: cross-FlatAST provenance table-index homology (#3278 residual).
+    # Same post-clone hook / same production × cross-pool gate zeros leftover
+    # MarkerProvenanceTable indices (prefer 0 over table transplant). Extends
+    # test_macro_cross_flat_hygiene.cpp AC8–AC11; no docs/design; no new metric.
+    cfph_script = COVERAGE_CHECKS / "check_cross_flat_provenance_homology_3340.py"
+    if not cfph_script.exists():
+        fail(f"missing {cfph_script}")
+        return 1
+    r = run([sys.executable, str(cfph_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3340 cross-flat provenance homology linter failed — run python3 scripts/coverage/checks/check_cross_flat_provenance_homology_3340.py"
+        )
+        return r
     # Issue #3030: abort/restore clears TypeLinearCommitProof + linear_fast_path
     # face. Extends test_escape_move_elision_gate + test_type_linear_commit_health
     # (#81967); no docs/design.
