@@ -12113,6 +12113,23 @@ void ObservabilityPrims::register_eval_p65(PrimRegistrar add, Evaluator& ev) {
                 insert_kv("wal-append-fail-slo-wired", 1);
                 insert_kv("schema-3056", kWalAppendFailSloIssue);
                 insert_kv("issue-3056", kWalAppendFailSloIssue);
+                // Issue #3375: additive audit-durable-gap. Strategy==Full
+                // but mutation_audit_wal not enabled (and not Soft) means the
+                // process audits fully in memory but writes nothing to disk
+                // — Agent must not mistake this for a durable trail. The
+                // Soft / AURA_SANDBOX=off path is explicitly excluded so
+                // tests + dev stays zero-cost (AC1). Non-duplicative to
+                // schema-2534 / schema-2225 — additive key, planned_keys +1.
+                insert_kv("audit-durable-gap",
+                          static_cast<std::int64_t>(
+                              (prod && !sandbox_off &&
+                               ::aura::compiler::typed_audit::get_strategy() ==
+                                   ::aura::compiler::typed_audit::AuditStrategy::Full &&
+                               !::aura::core::audit_wal::g_mutation_audit_wal().is_enabled())
+                                  ? 1
+                                  : 0));
+                insert_kv("schema-3375", 3375);
+                insert_kv("issue-3375", 3375);
             }
             return query_hash_finish(ht, ev.string_heap_, overflowed);
         });

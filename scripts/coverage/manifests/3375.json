@@ -1,0 +1,70 @@
+{
+  "issue": 3375,
+  "title": "Issue #3375: audit-durable-gap + apply_production_audit_defaults force_wal \u2014 embed/serve Restricted/Strict Full \u2192 durable.",
+  "ok": "OK: Issue #3375 audit-durable-gap + force_wal \u2014 all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "apply_dev_audit_defaults",
+        "const bool dev_off = sandbox_e &&",
+        "set_wal_fail_closed_defaulted_by_force_wal(false)"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/typed_mutation_audit.h",
+      "contains": [
+        "inline void apply_production_audit_defaults()",
+        "AURA_MULTI_TENANT",
+        "g_sandbox_state().mode == SandboxMode::Strict",
+        "g_sandbox_state().mode == SandboxMode::Restricted",
+        "audit_wal_forced_by_multi_tenant_total",
+        "audit_wal_forced_by_restricted_total",
+        "audit_wal_using_default_dir",
+        "g_mutation_audit_wal().enable",
+        "#3375"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_primitives_obs_eval.cpp",
+      "contains": [
+        "audit-durable-gap",
+        "schema-3375",
+        "issue-3375",
+        "AuditStrategy::Full",
+        "g_mutation_audit_wal().is_enabled()"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/security_defaults.hh",
+      "contains": [
+        "force_wal = multi_tenant || strict || restricted",
+        "audit_wal_forced_by_multi_tenant_total",
+        "audit_wal_forced_by_restricted_total",
+        "if (force_wal)"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_audit_durable_gap_force_wal.cpp",
+      "contains": [
+        "3375",
+        "ac1_soft_off",
+        "ac2_force_wal_block",
+        "ac3_additive_key",
+        "ac4_security_defaults_unchanged"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_audit_durable_gap_force_wal"
+      ]
+    }
+  ]
+}
