@@ -1,0 +1,90 @@
+{
+  "issue": 3377,
+  "title": "Issue #3377: owner-scoped hard invalidate physically clears owner AOT slot \u2014 generation-behind predicate is vacuous when table epoch is not bumped.",
+  "ok": "OK: Issue #3377 owner-scoped hard invalidate slot clear \u2014 all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_aot_invalidate_owner_slot_for_func_id",
+        "g_aot_owner_scoped_slot_invalidate_total",
+        "slot.fn_ptr.store(0, std::memory_order_release)",
+        "slot.soft_stale.store(1, std::memory_order_release)",
+        "slot_owner != want_owner",
+        "#3377"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/aura_jit_bridge.h",
+      "contains": [
+        "aura_aot_invalidate_owner_slot_for_func_id",
+        "#3377"
+      ]
+    },
+    {
+      "ac": "AC1",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_aot_invalidate_owner_slot_for_func_id",
+        "aura_get_or_preserve_stable_func_id",
+        "aura_aot_get_reemit_owner_eval",
+        "aura_aot_func_table_epoch() == epoch_before",
+        "aura_aot_state_map_size() > 1"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aura_aot_bump_func_table_epoch(void)",
+        "aura_aot_mark_peer_slots_soft_stale(owner)",
+        "g_aot_table_epoch.fetch_add"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_aot_mark_peer_jit_name_soft_stale"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/hot_update_registry.cpp",
+      "contains": [
+        "aura_production_defaults_active_probe() == 0",
+        "Soft / Off / non-production",
+        "aura_aot_state_map_size() > 1"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "src/compiler/aura_jit_bridge.cpp",
+      "contains": [
+        "aot_invalidate_all_stale_slots_for_eval_impl",
+        "slot_gen == cur_epoch",
+        "if (slot_gen == cur_epoch) continue;"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_owner_scoped_hard_invalidate_slot_clear.cpp",
+      "contains": [
+        "3377",
+        "ac1_new_helper_facade_call",
+        "ac2_epoch_not_bumped_peer_marks_preserved",
+        "ac3_soft_off_single_eval_gate",
+        "ac4_generation_behind_predicate_unchanged"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_owner_scoped_hard_invalidate_slot_clear"
+      ]
+    }
+  ]
+}

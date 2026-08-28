@@ -1950,6 +1950,11 @@ static std::atomic<void*> g_last_cross_eval_epoch_bump_owner{nullptr};
 static std::atomic<std::uint64_t> g_cross_eval_epoch_action_throttled_total{0};
 // Issue #2951: hard invalidate chose owner-scoped (no global epoch advance).
 static std::atomic<std::uint64_t> g_cross_eval_hard_owner_scoped_total{0};
+// Issue #3377: owner-scoped slot invalidate counter (physical clear
+// via aura_aot_invalidate_owner_slot_for_func_id). Distinct from
+// aot_reload_fall_back_slot_invalidate_total which counts the
+// generation-behind path.
+static std::atomic<std::uint64_t> g_aot_owner_scoped_slot_invalidate_total{0};
 // Issue #2951: hard / force path advanced process-global table epoch under multi.
 static std::atomic<std::uint64_t> g_cross_eval_hard_global_bump_total{0};
 // Issue #3025: production multi-eval C-ABI reemit rejected (no owner TLS).
@@ -2366,6 +2371,62 @@ static std::size_t aot_invalidate_all_stale_slots_for_eval_impl(void* eval_ptr) 
                 1, std::memory_order_relaxed);
     }
     return invalidated;
+}
+
+// Issue #3377: owner-scoped hard invalidate must physically clear the
+// owner AOT slot for the mutated define, not just rely on the
+// generation-behind predicate. The owner-scoped branch of
+// aura_aot_bump_func_table_epoch does NOT advance g_aot_table_epoch
+// (preserve #2841/#2951 peer-scope), so aot_invalidate_all_stale_slots_for_eval
+// skips every owner slot with table_generation == cur_epoch and the
+// invalidate count stays 0. Without this helper, pre-mutate native can
+// ride the same table epoch on the owner eval and dual-fresh / AOT
+// probes return the stale fn_ptr. Fix: for the mutated define's
+// stable func_id, zero fn_ptr + set soft_stale=1 on the OWNER slot
+// (do not touch foreign / unowned / un-stamped slots) in the same
+// mutate_mtx_ window as the facade. Reuses existing slot-invalidate
+// counters so Agent dashboards reflect the physical clear.
+extern "C" void aura_aot_invalidate_owner_slot_for_func_id(std::int64_t func_id,
+                                                           void* owner_eval) noexcept {
+    if (func_id < 0)
+        return;
+    const auto idx = static_cast<unsigned>(func_id);
+    if (idx >= kMaxAotFuncs)
+        return;
+    auto& slot = g_aot_func_slots[idx];
+    const auto prev_fn = slot.fn_ptr.load(std::memory_order_acquire);
+    if (prev_fn == 0)
+        return; // already empty
+    // Owner filter: only clear the slot if it belongs to the requesting
+    // eval. Foreign / unowned (owner_eval == 0) slots are skipped so
+    // we do not accidentally clear a peer's pre-mutate native via a
+    // name-collision. Unowned slots are addressed by the
+    // aot_invalidate_all_stale_slots_for_eval(eval) path on a real
+    // table-epoch bump (#2271/#2299).
+    if (owner_eval != nullptr) {
+        const auto want_owner = reinterpret_cast<std::uintptr_t>(owner_eval);
+        const auto slot_owner = slot.owner_eval.load(std::memory_order_acquire);
+        if (slot_owner != 0 && slot_owner != want_owner)
+            return;
+    }
+    // Physical clear: zero fn_ptr first (release) so a concurrent
+    // aura_aot_probe_fn_ptr observes null before the soft_stale / gen
+    // transition (#2299 AC3 ordering invariant). soft_stale=1 forces
+    // the probe to keep returning 0 even if a future table-epoch
+    // re-stamp races in.
+    slot.fn_ptr.store(0, std::memory_order_release);
+    slot.soft_stale.store(1, std::memory_order_release);
+    // Bump existing slot-invalidate counters so the clear is observable
+    // to Agents (the previous generation-behind path bumped them
+    // automatically; this owner-scoped path was silent). Reuse the
+    // aot_reload_fall_back_slot_invalidate_total + _calls_total surfaces
+    // plus a new aot_owner_scoped_slot_invalidate_total so dashboards
+    // can distinguish the two paths.
+    if (auto* m = aot_metrics()) {
+        m->aot_reload_fall_back_slot_invalidate_total.fetch_add(1, std::memory_order_relaxed);
+        m->aot_reload_fall_back_slot_invalidate_calls_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_aot_owner_scoped_slot_invalidate_total.fetch_add(1, std::memory_order_relaxed);
 }
 
 // Issue #1905: bridge hook for live closure refresh on mutated define.
