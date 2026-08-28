@@ -137,6 +137,12 @@ inline constexpr int kQueryStableRestampLagHardRejectIssue = 3230;
 // AURA_RESTAMP_HOT_CONE_FRAC percent in [1,100], default 50 (budget/2).
 inline constexpr int kRestampHotConeBudgetIssue = 3259;
 inline constexpr std::uint32_t kRestampHotConeFracPercentDefault = 50;
+// Issue #3327: over-budget hot-cone also includes the Agent-held
+// QueryResult / last-export StableNodeRef set (union with dirty+parent,
+// still capped by restamp_hot_cone_budget). Soft never consults this
+// buffer (restamp_hot_cone_after_budget is production-only).
+inline constexpr int kRestampHotConeAgentHeldIssue = 3327;
+inline constexpr std::uint16_t kRestampHotConeHeldCap = 64;
 [[nodiscard]] inline bool restamp_over_budget_torn(bool last_budget_exceeded,
                                                    bool generation_torn) noexcept {
     return last_budget_exceeded || generation_torn;
@@ -217,6 +223,41 @@ inline void set_restamp_budget_nodes_for_process(std::uint32_t n) noexcept {
     const auto pct = resolve_restamp_hot_cone_frac_percent();
     const auto n = static_cast<std::uint32_t>((static_cast<std::uint64_t>(budget) * pct) / 100ull);
     return n == 0 ? 1u : n;
+}
+
+// Process-visible last Agent-held node ids (QueryResult matches + last
+// successful query:*-stable / stamp export + pinned StableNodeRef dump).
+// Deduped, capped; excess is fail-closed by the hot-cone budget (AC2).
+inline std::uint32_t g_restamp_hot_cone_held_ids[kRestampHotConeHeldCap]{};
+inline std::atomic<std::uint16_t> g_restamp_hot_cone_held_count{0};
+
+inline void note_restamp_hot_cone_held_node(std::uint32_t node_id) noexcept {
+    if (node_id == 0)
+        return;
+    const auto n = g_restamp_hot_cone_held_count.load(std::memory_order_relaxed);
+    const auto lim = n > kRestampHotConeHeldCap ? kRestampHotConeHeldCap : n;
+    for (std::uint16_t i = 0; i < lim; ++i) {
+        if (g_restamp_hot_cone_held_ids[i] == node_id)
+            return;
+    }
+    if (n >= kRestampHotConeHeldCap)
+        return;
+    g_restamp_hot_cone_held_ids[n] = node_id;
+    g_restamp_hot_cone_held_count.store(static_cast<std::uint16_t>(n + 1),
+                                        std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint16_t restamp_hot_cone_held_count() noexcept {
+    auto n = g_restamp_hot_cone_held_count.load(std::memory_order_relaxed);
+    return n > kRestampHotConeHeldCap ? kRestampHotConeHeldCap : n;
+}
+
+[[nodiscard]] inline std::uint32_t restamp_hot_cone_held_id_at(std::uint16_t i) noexcept {
+    return i < kRestampHotConeHeldCap ? g_restamp_hot_cone_held_ids[i] : 0u;
+}
+
+inline void clear_restamp_hot_cone_held_for_test() noexcept {
+    g_restamp_hot_cone_held_count.store(0, std::memory_order_relaxed);
 }
 
 inline void clear_restamp_budget_nodes_override_for_test() noexcept {

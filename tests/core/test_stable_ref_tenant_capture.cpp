@@ -69,6 +69,7 @@ std::int64_t href_prov(CompilerService& cs, std::string_view key) {
 void reset_all() {
     reset_tenant_isolation_for_test();
     reset_provenance_enforcement_for_test();
+    aura::ast::clear_restamp_hot_cone_held_for_test();
     // Soft capture tests need global maybe_stamp path (#2125 AC2); hard-close
     // may be left armed by co-batch members (#2705 / #2759).
     aura::core::provenance::set_hard_capture_tenant(false);
@@ -385,6 +386,158 @@ void ac3287_1_residual_lag_deny_surface() {
     reset_all();
 }
 
+void ac3327_1_held_set_export() {
+    std::println("\n--- #3327 AC1: held QueryResult/export node in hot-cone stays exportable ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::kRestampHotConeAgentHeldIssue;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    CHECK(kRestampHotConeAgentHeldIssue == 3327, "3327 AC1: issue constant");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (h3327a x) x) (define (h3327b y) y) "
+                  "(define (h3327c z) z) (define (h3327d w) w)\")")
+              .has_value(),
+          "3327 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3327 AC1: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3327 AC1: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    const auto held = first_live(*ws);
+    CHECK(held != NULL_NODE, "3327 AC1: live held node");
+    note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(held));
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(ws->restamp_over_budget_torn(), "3327 AC1: torn after over-budget");
+    const auto cap = restamp_hot_cone_budget(4);
+    CHECK(cap > 0, "3327 AC1: hot-cone cap");
+    (void)ws->restamp_hot_cone_after_budget(cap);
+    CHECK(ws->node_eagerly_restamped(held), "3327 AC1: held node eagerly restamped");
+    CHECK(ev.allow_query_stable_ref_export(held), "3327 AC1: allow export of held set");
+    FlatAST::StableNodeRef stamped{};
+    stamped.id = held;
+    ev.stamp_query_stable_ref_export(stamped);
+    CHECK(stamped.id == held, "3327 AC1: re-export held ref (no restamp-lag)");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    clear_restamp_hot_cone_held_for_test();
+    reset_all();
+}
+
+void ac3327_2_held_set_larger_than_cap() {
+    std::println("\n--- #3327 AC2: held set larger than hot-cone frac still fail-closed ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (x3327a x) x) (define (x3327b y) y) "
+                  "(define (x3327c z) z) (define (x3327d w) w)\")")
+              .has_value(),
+          "3327 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3327 AC2: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3327 AC2: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    std::size_t noted = 0;
+    for (NodeId id = 1; id < ws->size(); ++id) {
+        if (ws->is_live_node(id) && !ws->is_free_slot(id)) {
+            note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(id));
+            ++noted;
+        }
+    }
+    CHECK(noted > restamp_hot_cone_budget(4), "3327 AC2: held set larger than cap");
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    CHECK(ws->restamp_over_budget_torn(), "3327 AC2: remainder still torn");
+    const auto lag = first_non_eager(*ws);
+    CHECK(lag != NULL_NODE, "3327 AC2: excess held node outside cone");
+    CHECK(!ev.allow_query_stable_ref_export(lag), "3327 AC2: production rejects excess");
+    FlatAST::StableNodeRef brace{};
+    brace.id = lag;
+    brace.gen = 1;
+    ev.stamp_query_stable_ref_export(brace);
+    CHECK(brace.id == NULL_NODE, "3327 AC2: never green pre-mutate gen");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    clear_restamp_hot_cone_held_for_test();
+    reset_all();
+}
+
+void ac3327_3_soft_no_held_walk() {
+    std::println("\n--- #3327 AC3: Soft / budget==0 does not consult Agent-held set ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    reset_all();
+    CHECK(restamp_hot_cone_budget(0) == 0, "3327 AC3: budget==0 cap is 0");
+    const auto impl = read_src("src/core/ast_impl.cpp");
+    auto pos = impl.find("std::size_t FlatAST::restamp_hot_cone_after_budget");
+    CHECK(pos != std::string::npos, "3327 AC3: hot-cone impl");
+    auto win = pos == std::string::npos ? std::string{} : impl.substr(pos, 4500);
+    CHECK(win.find("restamp_hot_cone_held_count") != std::string::npos,
+          "3327 AC3: outermost path consults held set");
+    CHECK(win.find("mutation_log_from != ~std::size_t{0}") != std::string::npos,
+          "3327 AC3: nested log-from still distinct");
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    auto upos = fiber.find("if (r.budget_exceeded)");
+    auto uwin = upos == std::string::npos ? std::string{} : fiber.substr(upos, 2800);
+    CHECK(uwin.find("if (production)") != std::string::npos, "3327 AC3: production gate");
+    CHECK(uwin.find("restamp_hot_cone_after_budget") != std::string::npos,
+          "3327 AC3: hot-cone only under production");
+}
+
+void ac3327_4_source_and_linter() {
+    std::println("\n--- #3327 AC4/AC5: source-cite + linter + no invent ---");
+    const auto restamp = read_src("src/core/flatast_restamp.hh");
+    const auto impl = read_src("src/core/ast_impl.cpp");
+    const auto fiber = read_src("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto sec = read_src("src/compiler/evaluator_security.cpp");
+    const auto t = read_src("tests/core/test_stable_ref_tenant_capture.cpp");
+    const auto hyg = read_src("tests/compiler/test_hygiene_mutate_closed_loop.cpp");
+    const auto build = read_src("build.py");
+    const auto lint = read_src("scripts/coverage/checks/check_restamp_hot_cone_agent_held_3327.py");
+    CHECK(restamp.find("kRestampHotConeAgentHeldIssue = 3327") != std::string::npos,
+          "3327 AC5: issue stamp");
+    CHECK(restamp.find("note_restamp_hot_cone_held_node") != std::string::npos,
+          "3327 AC5: note helper");
+    CHECK(impl.find("Issue #3327") != std::string::npos, "3327 AC5: cone union cite");
+    CHECK(fiber.find("Issue #3327") != std::string::npos, "3327 AC5: pin dump cite");
+    CHECK(sec.find("note_restamp_hot_cone_held_node") != std::string::npos,
+          "3327 AC5: last-export notes held");
+    CHECK(t.find("ac3327_1_held_set_export") != std::string::npos, "3327 AC4: AC1 test");
+    CHECK(hyg.find("ac3327_") != std::string::npos || hyg.find("Issue #3327") != std::string::npos,
+          "3327 AC4: hygiene suite cites #3327");
+    CHECK(!lint.empty() && lint.find("3327") != std::string::npos, "3327 AC5: linter");
+    CHECK(build.find("check_restamp_hot_cone_agent_held_3327") != std::string::npos,
+          "3327 AC5: build.py");
+    CHECK(restamp.find("g_3327_") == std::string::npos, "3327 AC5: no new g_3327_* counter");
+    {
+        std::ifstream f("tests/compiler/test_issue_3327.cpp");
+        CHECK(!f.good(), "3327 AC5: no test_issue_3327.cpp");
+    }
+    {
+        std::ifstream f("docs/design/3327-restamp-hot-cone-agent-held.md");
+        CHECK(!f.good(), "3327 AC5: no docs/design");
+    }
+}
+
 int run_test_stable_ref_tenant_capture() {
     std::println("=== Issue #2125: stamp_ref_tenant on all StableNodeRef capture paths ===");
     CHECK(kStableRefTenantCaptureIssue == 2125, "AC1: issue stamp constant");
@@ -667,6 +820,11 @@ int run_test_stable_ref_tenant_capture() {
     ac3259_4_torn_counters_accurate();
     ac3259_5_source_and_linter();
     ac3287_1_residual_lag_deny_surface();
+    std::println("\n=== Issue #3327: hot-cone includes Agent-held QueryResult / export set ===");
+    ac3327_1_held_set_export();
+    ac3327_2_held_set_larger_than_cap();
+    ac3327_3_soft_no_held_walk();
+    ac3327_4_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

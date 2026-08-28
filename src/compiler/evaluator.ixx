@@ -8089,6 +8089,9 @@ public:
     // and cow_boundary_pinned_refs_. Called from fiber steal / Guard
     // dtor / re_pin_cow_children_from_snapshot. Returns # refreshed.
     std::size_t restamp_pinned_stable_refs() noexcept;
+    // Issue #3327: dump pinned StableNodeRef ids into the Agent-held
+    // hot-cone set before restamp_hot_cone_after_budget (production).
+    void note_restamp_hot_cone_held_from_pins_() noexcept;
     // Issue #1912: public batch APIs for AI multi-round COW/sub-workspace
     // StableNodeRef hygiene. refresh_stable_refs_batch validates/refreshes
     // every ref in the span (optionally registry-pins for COW survival).

@@ -1504,6 +1504,9 @@ void Evaluator::stamp_query_stable_ref_export(ast::FlatAST::StableNodeRef& ref) 
         return;
     stamp_stable_ref(ref);
     ::aura::core::provenance::record_query_stable_ref_stamped();
+    // Issue #3327: last-export StableNodeRef is Agent-held memory for the
+    // next over-budget hot-cone (production restamp consults this set).
+    aura::ast::note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(ref.id));
 }
 
 ast::FlatAST::StableNodeRef Evaluator::make_stamped_ref(ast::NodeId id) const noexcept {
