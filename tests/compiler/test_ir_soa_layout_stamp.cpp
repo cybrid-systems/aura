@@ -7,13 +7,19 @@
 //   AC3: mark_block_dirty advances process-global fence
 //   AC4: additive metric / schema-2432 query keys
 //   AC5: should_relower still honors soa_generation (#2111 intact)
+//   #3314 AC1–AC4: append-only offsetof/sizeof stamps on IR SoA dirty/
+//                  column tail + DensifyConsistencyReport + LayoutStamp
 
 #include "test_harness.hpp"
 #include "compiler/observability_metrics.h"
+#include "core/densify_consistency_report.h"
 #include "core/layout_stamp.hh"
 #include "serve/fiber.h"
 
+#include <cstddef>
 #include <cstdint>
+#include <fstream>
+#include <iterator>
 #include <print>
 #include <string>
 
@@ -32,17 +38,31 @@ using aura::compiler::CompilerService;
 using aura::compiler::current_ir_soa_generation_fence;
 using aura::compiler::g_ir_soa_generation_fence;
 using aura::compiler::IRFunctionSoA;
+using aura::compiler::IRInstructionView;
 using aura::compiler::IRModuleV2;
+using aura::compiler::kAppendOnlyLayoutStampIssue;
 using aura::compiler::kRelowerSoaGeneration;
 using aura::compiler::should_relower;
 using aura::core::kLayoutStampSchema;
 using aura::core::LayoutStamp;
+using aura::core::densify_consistency::DensifyConsistencyReport;
 using aura::serve::Fiber;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
 static CompilerMetrics* metrics_of(CompilerService& cs) {
     return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+}
+
+static std::string read_file(const char* path) {
+    for (const auto& p :
+         {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        return std::string((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    }
+    return {};
 }
 
 static std::int64_t href(CompilerService& cs, std::string_view key) {
@@ -166,6 +186,57 @@ int run_test_ir_soa_layout_stamp() {
               "AC4: schema bumped to 2432");
         // Shape fence still present
         CHECK(href(cs, "shape-version-fence-wired") == 1, "AC4: shape fence intact");
+    }
+
+    // ── #3314: append-only offsetof/sizeof stamps (#2906/#3292) ──
+    {
+        std::println("\n--- #3314 AC1: IR SoA dirty/column + additional hot structs ---");
+        CHECK(kAppendOnlyLayoutStampIssue == 3314, "3314 AC1: issue constant");
+        const auto soa = read_file("src/compiler/ir_soa.ixx");
+        const auto dens = read_file("src/core/densify_consistency_report.h");
+        const auto ls = read_file("src/core/layout_stamp.hh");
+        CHECK(soa.find("Issue #3314") != std::string::npos, "3314 AC1: ir_soa cites #3314");
+        CHECK(soa.find("offsetof(IRFunctionSoA, generation_) == 440") != std::string::npos,
+              "3314 AC1: IRFunctionSoA last-member offsetof");
+        CHECK(soa.find("offsetof(IRFunctionSoA, instruction_dirty_) == 408") != std::string::npos,
+              "3314 AC1: instruction_dirty_ offsetof");
+        CHECK(soa.find("offsetof(IRFunctionSoA, block_dirty_) == 376") != std::string::npos,
+              "3314 AC1: block_dirty_ offsetof");
+        CHECK(soa.find("sizeof(IRFunctionSoA) == 448") != std::string::npos,
+              "3314 AC1: IRFunctionSoA sizeof");
+        CHECK(sizeof(IRInstructionView) == 16, "3314 AC1: IRInstructionView sizeof live");
+        CHECK(offsetof(IRInstructionView, idx) == 8, "3314 AC1: IRInstructionView.idx live");
+        CHECK(sizeof(DensifyConsistencyReport) == 8,
+              "3314 AC1: DensifyConsistencyReport sizeof live");
+        CHECK(offsetof(DensifyConsistencyReport, envframe_ok) == 7,
+              "3314 AC1: envframe_ok last axis live");
+        CHECK(sizeof(LayoutStamp) == 64, "3314 AC1: LayoutStamp sizeof live");
+        CHECK(offsetof(LayoutStamp, ir_soa_generation) == 56,
+              "3314 AC1: LayoutStamp last field live");
+        CHECK(dens.find("Issue #3314") != std::string::npos, "3314 AC1: densify cites #3314");
+        CHECK(ls.find("Issue #3314") != std::string::npos, "3314 AC1: LayoutStamp cites #3314");
+
+        std::println("\n--- #3314 AC2: stamps present, no new runtime ---");
+        CHECK(soa.find("g_3314_") == std::string::npos, "3314 AC2: no g_3314_* in ir_soa");
+        CHECK(dens.find("g_3314_") == std::string::npos, "3314 AC2: no g_3314_* in densify");
+        CHECK(ls.find("g_3314_") == std::string::npos, "3314 AC2: no g_3314_* in layout_stamp");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_append_only_layout_stamps_3314") != std::string::npos,
+              "3314 AC2: build.py wires linter");
+
+        std::println("\n--- #3314 AC3: compile-time only ---");
+        CHECK(soa.find("Compile-time only") != std::string::npos ||
+                  soa.find("compile-time only") != std::string::npos,
+              "3314 AC3: ir_soa compile-time only");
+        CHECK(dens.find("Compile-time only") != std::string::npos,
+              "3314 AC3: densify compile-time only");
+
+        std::println("\n--- #3314 AC4: existing suite, no invent / docs ---");
+        CHECK(read_file("tests/compiler/test_issue_3314.cpp").empty(), "3314 AC4: no invent");
+        CHECK(read_file("docs/design/3314-append-only-layout-stamps.md").empty(),
+              "3314 AC4: no docs/design");
+        CHECK(build.find("check_pcv_hotpath_metrics_layout_3292") != std::string::npos,
+              "3314 AC4: 3292 linter still wired");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);

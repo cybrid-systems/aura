@@ -587,6 +587,32 @@ export struct BasicBlockSoA {
     std::vector<std::uint32_t> successors; // block indices in same function
 };
 
+// Issue #3314: IRFunctionSoA dirty/column tail is append-only at struct
+// END (#2906 / #3292 lineage). Mid-struct column insertion shifts stale
+// module BMI offsets (IR cache string keys → double-free). Pin last
+// data members (block_dirty_ / instruction_dirty_ / generation_) +
+// sizeof. IRFunctionSoA is not standard-layout (vectors); offsetof is
+// a GNU extension here — ignored under -Wpedantic. Compile-time only.
+export inline constexpr int kAppendOnlyLayoutStampIssue = 3314;
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+#endif
+static_assert(offsetof(IRFunctionSoA, block_dirty_) == 376,
+              "Issue #3314: IRFunctionSoA.block_dirty_ must stay at offset 376 "
+              "(append-only dirty/column tail, #2906/#3292)");
+static_assert(offsetof(IRFunctionSoA, instruction_dirty_) == 408,
+              "Issue #3314: IRFunctionSoA.instruction_dirty_ must stay at offset 408 "
+              "(no mid-struct insert before last dirty column, #2906/#3292)");
+static_assert(offsetof(IRFunctionSoA, generation_) == 440,
+              "Issue #3314: IRFunctionSoA.generation_ must stay at offset 440 "
+              "(last data member, append-only at struct END, #2906/#3292)");
+static_assert(sizeof(IRFunctionSoA) == 448, "Issue #3314: IRFunctionSoA size must stay 448 "
+                                            "(append-only at struct END, #2906/#3292)");
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+
 // Issue #380 / #2522: define IRFunctionSoA dirty cascade here (after
 // BasicBlockSoA is complete) so the cascade can read
 // `block.start_idx` and `block.end_idx`. Marked `inline` so
@@ -1105,6 +1131,13 @@ export struct IRModuleV2 {
 // Compile-time sanity: the view must be cheap to copy.
 static_assert(sizeof(IRInstructionView) <= 16,
               "IRInstructionView should be a small POD (pointer + uint32)");
+// Issue #3314: pin exact offsetof/sizeof so a mid-struct field on the
+// hot view fails the build (append-only, #2906/#3292 lineage).
+static_assert(sizeof(IRInstructionView) == 16, "Issue #3314: IRInstructionView size must stay 16 "
+                                               "(pointer + uint32 + pad, #2906/#3292)");
+static_assert(offsetof(IRInstructionView, idx) == 8,
+              "Issue #3314: IRInstructionView.idx must stay at offset 8 "
+              "(append-only hot view, #2906/#3292)");
 
 // ── Issue #463 / #2520: SoA → AoS view conversion (TEST SEAM only) ─
 //
