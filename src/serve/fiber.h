@@ -92,6 +92,15 @@ namespace aura::serve {
 // Forward declare (full type in scheduler.h) — used by Fiber owner back-pointer.
 struct Scheduler;
 
+// Issue #3369: forward declare (full type in multi_fiber_mailbox.h) —
+// used by Fiber::mailbox_ back-pointer so the steal-complete strong def
+// can walk pending held_ref messages under the mailbox mutex without
+// inventing a process-global AgentRegistry. MultiFiberMailbox::attach
+// sets the pointer when the fiber is bound; detach clears it on detach.
+namespace mf_mailbox {
+    class MultiFiberMailbox;
+} // namespace mf_mailbox
+
 // ── Yield reason — why a fiber yielded (Issue #31) ────
 // Used by the scheduler to determine if a fiber is at a safe
 // point to steal. Only fibers that yielded for Explicit or
@@ -867,6 +876,13 @@ public:
     // hard-reclaim orphan path when this is null.
     [[nodiscard]] Scheduler* owner_sched() const noexcept { return owner_sched_; }
     void set_owner_sched(Scheduler* s) noexcept { owner_sched_ = s; }
+    // Issue #3369: primary mailbox back-pointer accessors. Set by
+    // MultiFiberMailbox::attach (when the fiber is bound to a mailbox
+    // for the first time), cleared by detach. The steal-complete strong
+    // def reads this to find the mailbox without to a process-global
+    // registry. nullptr for fibers that have never attached to a mailbox.
+    [[nodiscard]] mf_mailbox::MultiFiberMailbox* mailbox() const noexcept { return mailbox_; }
+    void set_mailbox(mf_mailbox::MultiFiberMailbox* m) noexcept { mailbox_ = m; }
     // Issue #2227: hard-reclaim flag. Set by Scheduler::reap_orphans_now
     // when the fiber's hard_deadline has passed and !is_done(). Once
     // set, is_done() still returns the body-truth state, but the
@@ -1308,6 +1324,14 @@ private:
     // a global lookup. Set by Scheduler::spawn; nullptr for
     // out-of-scheduler fibers (test / host-thread / etc.).
     Scheduler* owner_sched_ = nullptr;
+    // Issue #3369: back-pointer to the primary MultiFiberMailbox this
+    // fiber is attached to (single primary mailbox; one fiber ↔ N
+    // attachers on the mailbox side). Maintained by
+    // MultiFiberMailbox::attach / detach so the steal-complete strong
+    // def (aura_evaluator_on_steal_complete) can walk pending held_ref
+    // messages under the mailbox mutex without inventing a process-
+    // global AgentRegistry. nullptr for fibers with no mailbox.
+    mf_mailbox::MultiFiberMailbox* mailbox_ = nullptr;
     // Issue #2227: reclaimed flag — set by Scheduler::reap_orphans_now
     // when the fiber's hard_deadline has passed and !is_done(). The
     // body may still be running (non-yielding tight loop); the flag

@@ -2217,6 +2217,71 @@ int run_test_steal_complete_restamp_txn() {
               "3111 AC6: existing test file cites #3111");
     }
 
+    std::println("\n--- #3369: mailbox held_ref post-steal walk (production) ---");
+    {
+        // AC1: post-steal walk wired (was counter-only under #3111).
+        // for_each_pending_held_ref_for_fiber on MultiFiberMailbox walks
+        // queue_ under mu_, applies callback to each pending message with
+        // held_ref_token addressed to this fiber (or broadcast).
+        const auto mfbh = read_file("src/serve/multi_fiber_mailbox.h");
+        CHECK(mfbh.find("for_each_pending_held_ref_for_fiber") != std::string::npos,
+              "3369 AC1: walk function added to MultiFiberMailbox");
+        CHECK(mfbh.find("held_ref_stale_after_steal_total") != std::string::npos,
+              "3369 AC1: stale counter exists (pre-existing #3111)");
+        CHECK(mfbh.find("bump_held_ref_stale_after_steal()") != std::string::npos,
+              "3369 AC1: bump helper exists (pre-existing #3111)");
+        const auto ev_fiber_mut = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        CHECK(ev_fiber_mut.find("for_each_pending_held_ref_for_fiber") != std::string::npos,
+              "3369 AC1: walk invoked from steal-complete strong def");
+        CHECK(ev_fiber_mut.find("bump_held_ref_stale_after_steal()") != std::string::npos,
+              "3369 AC1: bump helper called from walk callback");
+        // AC2: walk gated on production + fiber_ptr (matches #3111 AC2).
+        CHECK(
+            ev_fiber_mut.find(
+                "if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr) {") !=
+                std::string::npos,
+            "3369 AC2: walk gated on production + fiber_ptr (Soft/Off zero-cost)");
+        // AC3: handoff_completed cleared per stale message (push-time gate
+        // unchanged — #2663/#3013 still rejects on push).
+        CHECK(ev_fiber_mut.find("m.handoff_completed = false") != std::string::npos,
+              "3369 AC3: handoff_completed cleared per stale held_ref message");
+        CHECK(mfbh.find("if (msg.held_ref_token.has_value() && !msg.handoff_completed)") !=
+                  std::string::npos,
+              "3369 AC3: push-time held_ref gate unchanged");
+        // AC4: additive counters only (no new query key).
+        CHECK(mfbh.find("held_ref_post_steal_check_total") != std::string::npos &&
+                  mfbh.find("held_ref_stale_after_steal_total") != std::string::npos,
+              "3369 AC4: additive counters only");
+        // AC5: fiber→mailbox back-pointer (Fiber::mailbox_ / set_mailbox) —
+        // no new process-global AgentRegistry, just a fiber-side pointer.
+        const auto fiberh = read_file("src/serve/fiber.h");
+        CHECK(fiberh.find("mailbox_") != std::string::npos &&
+                  fiberh.find("set_mailbox") != std::string::npos &&
+                  fiberh.find("mf_mailbox::MultiFiberMailbox* mailbox") != std::string::npos,
+              "3369 AC5: Fiber::mailbox_ + set_mailbox added (no new registry)");
+        CHECK(mfbh.find("f->set_mailbox(this)") != std::string::npos &&
+                  mfbh.find("f->set_mailbox(nullptr)") != std::string::npos,
+              "3369 AC5: MultiFiberMailbox::attach / detach maintain back-pointer");
+        // AC6: linter wired in build.py + no docs/design/.
+        const auto build3369 = read_file("build.py");
+        CHECK(build3369.find("check_mailbox_held_ref_steal_3369") != std::string::npos,
+              "3369 AC6: build.py wires 3369 linter");
+        const auto lint3369 =
+            read_file("scripts/coverage/checks/check_mailbox_held_ref_steal_3369.py");
+        CHECK(!lint3369.empty() && lint3369.find("Issue #3369") != std::string::npos,
+              "3369 AC6: 3369 linter exists");
+        CHECK(read_file("docs/design/3369-mailbox-held-ref-walk.md").empty(),
+              "3369 AC6: no docs/design/ (per #1655)");
+        std::ifstream inv3369("tests/serve/test_issue_3369.cpp");
+        if (!inv3369.good())
+            inv3369.open("../tests/serve/test_issue_3369.cpp");
+        CHECK(!inv3369.good(), "3369 AC6: no test_issue_3369.cpp (per #81967)");
+        // No-invent: extend existing test (this file)
+        const auto t3369_self = read_file("tests/serve/test_steal_complete_restamp_txn.cpp");
+        CHECK(t3369_self.find("3369 AC1") != std::string::npos,
+              "3369 AC6: existing test file cites #3369");
+    }
+
     std::println(
         "steal-complete restamp txn #2510 + #2699 + #2721 + #2745 + #2752 + #2844 + "
         "#3072 + #2727 + #2901 + #2929 + #2954 + #2957 + #3001 + #3038 + #3111: OK ({} passed)",

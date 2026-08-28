@@ -5268,6 +5268,25 @@ def cmd_lint():
             "Issue #3111 mailbox held_ref post-steal revalidate linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3111.py"
         )
         return r
+    # Issue #3369: wire the production post-steal held_ref walk (residual
+    # of #3111). #3111 shipped the counters + counter-only helper +
+    # production-gated call site; #3369 wires the actual walk that
+    # clears handoff_completed per stale held_ref message and bumps
+    # held_ref_stale_after_steal_total (the helper that previously had
+    # zero call sites). Walk runs under the mailbox mutex via
+    # MultiFiberMailbox::for_each_pending_held_ref_for_fiber. Fiber →
+    # mailbox direction is a back-pointer on Fiber (no new process-
+    # global AgentRegistry). Push-time gate (#2663/#3013/#3212) unchanged.
+    mh3369_script = COVERAGE_CHECKS / "check_mailbox_held_ref_steal_3369.py"
+    if not mh3369_script.exists():
+        fail(f"missing {mh3369_script}")
+        return 1
+    r = run([sys.executable, str(mh3369_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3369 mailbox held_ref post-steal walk linter failed — run python3 scripts/coverage/checks/check_mailbox_held_ref_steal_3369.py"
+        )
+        return r
     # Issue #3113: typed trail 256 wrap vs SE ring 1024 + WAL. query:security-audit
     # must mark typed-trail-miss (plus window / se-ring-size / wal-replay-hint)
     # so a wrap miss is not read as "never audited". Soft / WAL-off: is_enabled()

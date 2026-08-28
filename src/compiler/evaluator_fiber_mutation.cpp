@@ -3865,6 +3865,24 @@ extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Quiet path: zero new cost (single atomic load on
     // held_ref_post_steal_check_total).
     if (aura::compiler::typed_audit::production_defaults_active() && fiber_ptr) {
+        // Issue #3369: actual walk now wired (was counter-only). Walks the
+        // fiber's primary mailbox under mu_, clears handoff_completed per
+        // pending held_ref message, and bumps held_ref_stale_after_steal_total
+        // (one per cleared message). The post-steal state may have moved
+        // the fiber's execution context (new worker / new Evaluator), so
+        // any pre-steal held_ref token is potentially stale. Forcing the
+        // message back through the HandoffRequired gate lets the consumer
+        // re-export via handoff_ref instead of silently consuming a stale
+        // StableNodeRef (residual of #3111). Quiet path: mailbox() null or
+        // empty queue → walk is a single lock + range-for with no body.
+        if (auto* mb = fiber->mailbox()) {
+            mb->for_each_pending_held_ref_for_fiber(fiber, [](auto& m) {
+                if (m.handoff_completed) {
+                    m.handoff_completed = false;
+                    ::aura::serve::mf_mailbox::bump_held_ref_stale_after_steal();
+                }
+            });
+        }
         ::aura::serve::mf_mailbox::revalidate_held_ref_after_steal();
     }
 }
