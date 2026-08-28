@@ -2140,6 +2140,31 @@ EvalResult Evaluator::eval_flat_apply_mutate_rebind(std::span<const types::EvalV
     }
     std::string summary = (a.size() > 2 && is_string(a[2])) ? string_heap_[as_string_idx(a[2])]
                                                             : "batch rebind " + name;
+    // Issue #3374: new-body subtree walk (#2792 twin for the lockless
+    // path). The pre-parse gate above only probes old_define (destination);
+    // a macro-introduced body can still be rebound onto a normal Define,
+    // defeating #373. Same :allow-macro? / global opt-out as the destination
+    // gate. Pre-install fail-fast: a deny must not even reach
+    // add_mutation_with_rollback + set_child + mark_dirty_upward_fast.
+    {
+        const bool allow_macro_body = get_allow_macro_mutate() || parse_allow_macro_opt_out(a);
+        if (!allow_macro_body) {
+            aura::ast::NodeId hit = aura::ast::NULL_NODE;
+            flat.walk_subtree(new_value, [&](aura::ast::NodeId id) {
+                if (hit == aura::ast::NULL_NODE && flat.is_macro_introduced(id))
+                    hit = id;
+            });
+            if (hit != aura::ast::NULL_NODE) {
+                flat.note_rebind_hygiene_reject();
+                record_hygiene_violation_attempt();
+                note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced);
+                return std::unexpected(aura::diag::Diagnostic{
+                    aura::diag::ErrorKind::InternalError,
+                    "batch :rebind: cannot install MacroIntroduced body without "
+                    ":allow-macro? #t"});
+            }
+        }
+    }
     // Issue #2795: capture body NodeId only after parse + resolve_define_after_parse
     // (never before parse_to_flat — stale free-list / SoA risk on Guard rollback).
     auto old_v = flat.get(old_define);

@@ -1,0 +1,71 @@
+{
+  "issue": 3374,
+  "title": "Issue #3374: lockless eval_flat_apply_mutate_rebind new-body MacroIntroduced hygiene \u2014 #2792 twin for atomic-batch.",
+  "ok": "OK: Issue #3374 lockless rebind new-body hygiene \u2014 all AC rows satisfied",
+  "checks": [
+    {
+      "ac": "AC1",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "walk_subtree(new_value",
+        "flat.is_macro_introduced(id)",
+        "note_rebind_hygiene_reject",
+        "#3374"
+      ]
+    },
+    {
+      "ac": "AC2",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "get_allow_macro_mutate() || parse_allow_macro_opt_out(a)",
+        "allow_macro_body"
+      ]
+    },
+    {
+      "ac": "AC3",
+      "path": "src/compiler/evaluator_eval_flat.cpp",
+      "contains": [
+        "batch :rebind: cannot install MacroIntroduced body",
+        "kHygieneLimitReasonMacroIntroduced",
+        "note_hygiene_last_limit_reason(kHygieneLimitReasonMacroIntroduced)"
+      ]
+    },
+    {
+      "ac": "AC4",
+      "path": "scripts/coverage/checks/check_atomic_batch_macro_audit_3301.py",
+      "contains": [
+        "AC7",
+        "walk_subtree(new_value",
+        "cannot install MacroIntroduced body"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_rebind_new_body_hygiene.cpp",
+      "contains": [
+        "2792"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_hygiene_mutate_closed_loop.cpp",
+      "contains": [
+        "3301 AC5"
+      ]
+    },
+    {
+      "ac": "AC5",
+      "path": "tests/compiler/test_atomic_batch_rebind_hygiene_lockless.cpp",
+      "contains": [
+        "3374"
+      ]
+    },
+    {
+      "ac": "AC6",
+      "path": "CMakeLists.txt",
+      "contains": [
+        "test_atomic_batch_rebind_hygiene_lockless"
+      ]
+    }
+  ]
+}
