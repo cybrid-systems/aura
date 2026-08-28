@@ -5753,21 +5753,19 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
     if (!known_slots.empty()) {
         for (void** slot : known_slots)
             arena_group_->register_external_root_slot_for_densify_all(slot);
-        // Issue #3092: parallel canary injection for the canary axis of #3055's
-        // post-Moving stale gate. For each production slot that already walks for
-        // slot rewrite above (workspace_flat_ / pools / WorkspaceTree layers /
-        // RootRemap snapshot / opaque_heap_ aliases), inject the dereferenced
-        // pointer as an observe-only canary on every arena in the group. After
-        // densify, `count_post_moving_stale_known_ptrs_()` flags residual EnvFrame
-        // / Closure / FFI / JIT live pointers still holding a last_object_remap_ key
-        // → `pin_contract_held = false` (subsumes canary axis into existing pin
-        // contract per LifetimeConsistencyProof densify/steal arm — AC6). Observe
-        // only (no rewrite, not cover #3017). Quiet path: empty slots / null
-        // *slot / Soft → early return on the canary helper.
-        for (void** slot : known_slots) {
-            if (slot && *slot)
-                arena_group_->note_post_moving_live_ptr_canary_all(*slot);
-        }
+        // Issue #3368: do NOT note_post_moving_live_ptr_canary_all(`*slot`) as a
+        // post-Moving canary here (do NOT dual-note).
+        // The slot itself is the cover (note_ffi_opaque_alias_densify_cover
+        // contract: slot XOR canary exclusive). After a successful rewrite,
+        // `*slot` is the new address; a co-located canary would still hold
+        // the OLD address, which is a `last_object_remap_` key — and the
+        // `count_post_moving_stale_known_ptrs_` walk would then mark it stale
+        // and set `pin_contract_held=false` / `moving_incomplete_remap` /
+        // sticky densify-off, even when the rewrite succeeded. That was a
+        // fail-closed over-conservatism, not a second registry gap. The
+        // #3210 TemporaryMovingLivePtrCanary (note_temporary_moving_live_canaries_all
+        // below) still covers the non-slot live pointers (stack Closure copies,
+        // map rehash, etc.) where no lasting void** exists.
         aura::core::densify_consistency::g_moving_known_roots_auto_registered_total.fetch_add(
             static_cast<std::uint64_t>(known_slots.size()), std::memory_order_relaxed);
     }
