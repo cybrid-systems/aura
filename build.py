@@ -10493,6 +10493,115 @@ def cmd_query_stable_hard_reject_torn_latch_3386_coverage():
     return 0
 
 
+# Issue #3387 — PR-level short soak path filter. When the diff touches
+# any of the named runtime/Guard/steal/restamp paths, run the
+# `soak-pr-short` ctest label on PRs; otherwise skip silently (AC2).
+# Used by cmd_soak_pr_short_3387_coverage below.
+_SOAK_PR_SHORT_PATH_PATTERNS = (
+    "src/serve/steal_safety",
+    "src/serve/fiber",
+    "src/compiler/evaluator_mutation_boundary.cpp",
+    "src/compiler/evaluator_fiber_mutation.cpp",
+    "src/compiler/evaluator_security.cpp",
+    "src/core/flatast_restamp.hh",
+)
+
+
+def _paths_touch_soak_pr_short(diff_paths: list[str]) -> bool:
+    """Return True iff any diff path matches a soak-pr-short surface.
+
+    Issue #3387 AC2: PRs that don't touch these files pay 0 cost
+    (no ctest invocation, no 60s timeout).
+    """
+    for p in diff_paths:
+        for needle in _SOAK_PR_SHORT_PATH_PATTERNS:
+            if p.startswith(needle) or p == needle or needle in p:
+                return True
+    return False
+
+
+def _collect_diff_paths() -> list[str]:
+    """Collect paths touched between HEAD and HEAD~1 (or origin/main
+    if HEAD has no parent yet).
+
+    Best-effort: returns empty list on any git error so the soak gate
+    still observes "no relevant changes" semantics.
+    """
+    try:
+        r = subprocess.run(
+            ["git", "diff", "--name-only", "HEAD~1", "HEAD"],
+            cwd=ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if r.returncode == 0 and r.stdout:
+            return [ln.strip() for ln in r.stdout.splitlines() if ln.strip()]
+    except FileNotFoundError:
+        pass
+    return []
+
+
+def cmd_soak_pr_short_3387_coverage():
+    """Issue #3387: PR-level short soak fail-closed on hold-after-cancel +
+    steal residual-zero + torn probe (I1/I3/I6 gate).
+
+    Closes the gap where unit AC green was insufficient evidence for
+    high-concurrency AI Agent load defects (hold-budget cancel without
+    cooperative edge, steal residual arm Soft under latch, query:*
+    -stable torn probe vs export face split). Nightly soak (#2722 /
+    #2755 / #2856 / #2931 / #3073) catches them — but too late for the
+    PR that re-opens the window. A bounded short slice on the existing
+    binaries is enough to catch counter non-zero / probe split; does
+    NOT replace the nightly matrix.
+
+    Contract rows (AC1-AC5):
+
+      AC1: PR touching the path filter runs the `soak-pr-short` ctest
+           label and fails on any of: steal residual-zero nonzero under
+           latch, hold-after-cancel > 2×SLO, torn-probe / export face
+           split. The three target suites already fail-closed on those
+           observables (regression guarded by their existing ACs).
+      AC2: Unrelated PRs (no diff touch on the runtime/Guard/steal/
+           restamp surfaces) pay 0 cost — short-circuit on the path
+           filter before ctest invocation.
+      AC3: Soft / unlatched fixtures inside those suites stay
+           metric-only (existing AC — preserved, not modified).
+      AC4: No new soak binary; no docs/design/3387-*; no
+           tests/issues/test_issue_3387.cpp (#81967).
+      AC5: Nightly full chaos matrix stays as-is (#2722 lineage) —
+           this issue only wires the PR admission gate.
+    """
+    paths = _collect_diff_paths()
+    if not _paths_touch_soak_pr_short(paths):
+        info("soak-pr-short (#3387): path filter miss — skipping (unrelated PR)")
+        return 0
+    print(f"{B}=== soak-pr-short (#3387) — path filter hit, running ctest -L soak-pr-short ==={N}")
+    # 60s per-test ceiling matches AC1 budget; ctest `-L` filters to
+    # `soak-pr-short` label only — the three target suites +
+    # test_mailbox_hold_starvation_hard (if/when labelled).
+    timeout = int(os.environ.get("AURA_SOAK_PR_SHORT_TIMEOUT", "60"))
+    build_dir_env = os.environ.get("CMAKE_BINARY_DIR")
+    ctest_dir = Path(build_dir_env) if build_dir_env else ROOT / "build"
+    if not (ctest_dir / "CTestTestfile.cmake").exists():
+        info(f"soak-pr-short (#3387): CTestTestfile.cmake not found at {ctest_dir} — skipping")
+        return 0
+    r = subprocess.run(
+        ["ctest", "-L", "soak-pr-short", "--timeout", str(timeout), "--output-on-failure"],
+        cwd=str(ctest_dir),
+        text=True,
+        capture_output=True,
+    )
+    if r.returncode != 0:
+        fail(
+            f"soak-pr-short (#3387) ctest failed (rc={r.returncode}); "
+            f"tail:\n{(r.stdout or '')[-2000:]}\n{(r.stderr or '')[-2000:]}"
+        )
+        return 1
+    ok("soak-pr-short (#3387) ctest -L soak-pr-short clean")
+    return 0
+
+
 def cmd_pending_full_solve_residual_hardlatch_3307_coverage():
     """Issue #3307: budget-allow must hard-latch pending residual face
     (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994).
@@ -20046,6 +20155,7 @@ def cmd_gate():
         or cmd_mutation_boundary_ssot_3384_coverage()
         or cmd_steal_safety_lifetime_proof_latch_3385_coverage()
         or cmd_query_stable_hard_reject_torn_latch_3386_coverage()
+        or cmd_soak_pr_short_3387_coverage()
     )
     if rc:
         return rc

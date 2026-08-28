@@ -1714,6 +1714,8 @@ aura_issue_test_link_light(test_query_result_full_provenance)
 # (metrics only).
 aura_add_issue_test(test_restamp_budget_hard_gate)
 aura_issue_test_link_light(test_restamp_budget_hard_gate)
+# Issue #3387 — PR-level short soak label (covers torn-probe / export face split).
+set_tests_properties(test_restamp_budget_hard_gate_verification PROPERTIES LABELS "issue;soak-pr-short")
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_refinement_closed_loop)
 aura_issue_test_link_light(test_refinement_closed_loop)
@@ -2520,6 +2522,8 @@ add_dependencies(all_test_issue_targets test_macro_self_evo_reexpand_chokepoint)
 aura_add_issue_test(test_hold_budget_synthetic_yield_injection)
 aura_issue_test_link_light(test_hold_budget_synthetic_yield_injection)
 add_dependencies(all_test_issue_targets test_hold_budget_synthetic_yield_injection)
+# Issue #3387 — PR-level short soak label (covers hold-after-cancel > 2×SLO).
+set_tests_properties(test_hold_budget_synthetic_yield_injection_verification PROPERTIES LABELS "issue;soak-pr-short")
 
 # Issue #3134: production-readiness residual-zero check fail-closed under
 # production multi-worker (chaos soak gate). steal_safety_production_
@@ -2531,6 +2535,8 @@ add_dependencies(all_test_issue_targets test_hold_budget_synthetic_yield_injecti
 aura_add_issue_test(test_steal_safety_production_residual_zero)
 aura_issue_test_link_light(test_steal_safety_production_residual_zero)
 add_dependencies(all_test_issue_targets test_steal_safety_production_residual_zero)
+# Issue #3387 — PR-level short soak label (covers steal residual-zero + sticky-fail).
+set_tests_properties(test_steal_safety_production_residual_zero_verification PROPERTIES LABELS "issue;soak-pr-short")
 
 # Issue #3135: cascade-decision residual atomic — relower_dirty_defines
 # drain + impact_ub + partial peel atomic vs concurrent record_dependency
