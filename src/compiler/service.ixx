@@ -11425,6 +11425,11 @@ private:
     std::size_t hybrid_node_cascade_(const std::string& root_name,
                                      const std::vector<std::string>& string_dependents);
 
+    // Issue #3345: production hybrid depth-1 IR dirty of direct called_by
+    // after facade early-return. Soft owns full BFS. Empty IR cache
+    // (never-lowered / pure-AOT with no interpreter entries) is a no-op.
+    void mark_direct_hybrid_dependents_body_dirty_(const std::string& name);
+
     void record_dependency(const std::string& caller, const std::string& callee) {
         // Issue #687: idempotent — skip if (caller, callee) is
         // already recorded. Without this, dep edges double

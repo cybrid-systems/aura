@@ -366,6 +366,9 @@ void CompilerService::mark_define_dirty(const std::string& name) {
                     std::memory_order_relaxed);
             }
             invalidate_shape(name);
+            // Issue #3345: hybrid depth-1 called_by body-only dirty.
+            // Not Soft BFS. Empty IR cache → no dep_graph lock.
+            mark_direct_hybrid_dependents_body_dirty_(name);
             return;
         }
     }
@@ -885,6 +888,8 @@ void CompilerService::invalidate_function(const std::string& name) {
                     std::memory_order_relaxed);
             }
             invalidate_shape(name);
+            // Issue #3345: hybrid depth-1 called_by body-only dirty.
+            mark_direct_hybrid_dependents_body_dirty_(name);
             return;
         }
     }
@@ -1801,6 +1806,45 @@ CompilerService::hybrid_node_cascade_(const std::string& root_name,
     }
 
     return marked;
+}
+
+void CompilerService::mark_direct_hybrid_dependents_body_dirty_(const std::string& name) {
+    // Issue #3345: production hybrid residual after facade early-return.
+    // Soft owns full dep_graph BFS. Production stays AOT-authoritative
+    // (no recursive cascade, no per-dependent epoch bump). Direct
+    // called_by with an IR cache entry get body-only dirty so
+    // interpreter/hybrid cannot exec unmarked stale IR. Empty IR cache
+    // → no dep_graph lock (pure-AOT never-lowered).
+    if (ir_cache_v2_.empty())
+        return;
+    std::vector<std::string> direct;
+    {
+        using aura::compiler::lock_order::Level;
+        using aura::compiler::lock_order::OrderedSharedLock;
+        OrderedSharedLock<std::shared_mutex> dep_read(dep_graph_mtx_, Level::DepGraph);
+        auto dit = dep_graph_.find(name);
+        if (dit == dep_graph_.end() || dit->second.called_by.empty())
+            return;
+        direct = dit->second.called_by;
+    }
+    for (const auto& dependent : direct) {
+        if (dependent == name)
+            continue;
+        auto cit = ir_cache_v2_.find(dependent);
+        if (cit == ir_cache_v2_.end())
+            continue;
+        cit->second.dirty = true;
+        const auto n = cit->second.mark_body_only_dirty();
+        if (n > 0) {
+            finish_cascade_soa_dirty_sync_(cit->second);
+            metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+            metrics_.dirty_propagation_block_marks.fetch_add(n, std::memory_order_relaxed);
+        } else {
+            cit->second.mark_all_blocks_dirty();
+            finish_cascade_soa_dirty_sync_(cit->second);
+            metrics_.cascade_body_only_count.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
 }
 
 } // namespace aura::compiler
