@@ -7353,25 +7353,25 @@ public:
             node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }
+        // Issue #3388 (I2): is_valid(NodeId) is now an observe-only oracle.
+        // Pre-#3388 it mutated node_gen_[id] = generation_ on gen mismatch
+        // and returned true (the lazy-align from #2122). An Agent holding an
+        // expired bare NodeId got a "live" verdict on a different generation
+        // of the same index, then get() / mutate:* hit that other generation
+        // with no stale-ref signal. Refresh moves to make_ref_layout — the
+        // only Agent / eval / export face permitted to advance the slot's
+        // gen. Eval / export that need a current layout go through
+        // make_ref_layout + Evaluator::stamp_query_stable_ref_export.
+        // Related: #2122 (introduced the write-up — kept off the oracle),
+        // #2421, #2125, #2759, #368, #1500, #3000, #3037, #3287, #3327, #3386.
         if (node_gen_[id] != generation_) {
-            // Issue #2122: lazy gen-align after incremental wrap for live
-            // (non-free) slots. Free slots keep node_gen_==0 and stay invalid
-            // when generation_ != 0 (the common post-wrap case).
-            // Issue #2421: acquire load pairs with wrap-path release store.
-            if (restamp_lazy_align_enabled_.load(std::memory_order_acquire) && node_gen_[id] != 0 &&
-                !is_free_slot(id)) {
-                // node_gen_ is not declared mutable; cast is intentional for
-                // lazy-align after wrap (const is_valid is the hot path).
-                const_cast<FlatAST*>(this)->node_gen_[id] = generation_;
+            // Observe-only: bump the lazy-align metric for live slots so the
+            // existing observability surface (restamp_lazy_align_total_)
+            // still tracks the would-have-aligned cases; bump the stale
+            // counter so the post-#2122 wire-up stays identical for Soft /
+            // align-flag-off paths. Do not mutate node_gen_ — see above.
+            if (node_gen_[id] != 0 && !is_free_slot(id))
                 restamp_lazy_align_total_.fetch_add(1, std::memory_order_relaxed);
-                return true;
-            }
-            // Issue #457: stale access (gen mismatch) —
-            // same path as out-of-range. The caller
-            // should have used a StableNodeRef which
-            // would have caught this; raw NodeId
-            // access is dangerous in long-running
-            // mutates.
             node_gen_stale_access_count_.fetch_add(1, std::memory_order_relaxed);
             return false;
         }

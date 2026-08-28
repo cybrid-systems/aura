@@ -538,6 +538,177 @@ void ac3327_4_source_and_linter() {
     }
 }
 
+// ─── #3388: FlatAST::is_valid(NodeId) observe-only oracle (no write-up) ───
+void ac3388_1_ac1_nodeid_lagging_gen_returns_false_no_writeup() {
+    std::println(
+        "\n--- #3388 AC1: is_valid(NodeId) on lagging live slot returns false, no write-up ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (h3388a x) x) (define (h3388b y) y) "
+                  "(define (h3388c z) z) (define (h3388d w) w) "
+                  "(define (h3388e v) v) (define (h3388f u) u)\")")
+              .has_value(),
+          "3388 AC1: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3388 AC1: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3388 AC1: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(*ws);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    CHECK(ws->restamp_over_budget_torn(), "3388 AC1: over-budget still torn");
+    const auto lag = first_non_eager(*ws);
+    CHECK(lag != NULL_NODE, "3388 AC1: lag slot exists outside hot cone");
+    CHECK(ws->is_live_node(lag), "3388 AC1: lag is still live (non-free)");
+    // #3388 invariant: is_valid(NodeId) on a lagging live slot returns
+    // false and does NOT mutate node_gen_[id]. Pre-fix, the lazy-align
+    // from #2122 wrote generation_ into node_gen_[id] and returned true.
+    const auto gen_before = ws->node_gen_for(lag);
+    const auto stale_before = ws->node_gen_stale_access_count();
+    CHECK(gen_before != ws->generation(), "3388 AC1: lag has pre-mutate gen");
+    const bool ok = ws->is_valid(lag);
+    const auto gen_after = ws->node_gen_for(lag);
+    const auto stale_after = ws->node_gen_stale_access_count();
+    CHECK(!ok, "3388 AC1: is_valid(NodeId) false on lagging live slot");
+    CHECK(gen_after == gen_before, "3388 AC1: node_gen_[id] unchanged after is_valid call");
+    CHECK(stale_after > stale_before, "3388 AC1: stale-access counter bumped");
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3388_2_ac2_production_stable_export_via_layout_stamp() {
+    std::println(
+        "\n--- #3388 AC2: production stable export either restamps via layout or denies ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (p3388a x) x) (define (p3388b y) y) "
+                  "(define (p3388c z) z) (define (p3388d w) w) "
+                  "(define (p3388e v) v) (define (p3388f u) u)\")")
+              .has_value(),
+          "3388 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3388 AC2: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3388 AC2: workspace");
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    seed_over_budget_dirty(*ws);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    const auto lag = first_non_eager(*ws);
+    CHECK(lag != NULL_NODE, "3388 AC2: lag slot exists");
+    CHECK(!ev.allow_query_stable_ref_export(lag),
+          "3388 AC2: production rejects raw lag on bare NodeId path");
+    // Path A — make_ref_layout refreshes the slot's gen so subsequent
+    // export gets a post-mutate id (the #2122 lazy-align still lives here).
+    (void)ws->make_ref_layout(lag);
+    CHECK(ws->node_generation_is_post_mutate(lag),
+          "3388 AC2: make_ref_layout advanced lag to current gen");
+    CHECK(ws->node_gen_for(lag) == ws->generation(),
+          "3388 AC2: slot gen now == generation_ after make_ref_layout");
+    // Path B — stamping a ref with a stale gen under production returns
+    // a NULL_NODE-id ref (never green pre-mutate gen).
+    const auto lag2 = first_non_eager(*ws);
+    if (lag2 != NULL_NODE) {
+        FlatAST::StableNodeRef brace{};
+        brace.id = lag2;
+        brace.gen = 1; // pre-mutate
+        ev.stamp_query_stable_ref_export(brace);
+        CHECK(brace.id == NULL_NODE, "3388 AC2: production stamp does not green pre-mutate gen");
+    }
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    reset_all();
+}
+
+void ac3388_3_ac3_soft_no_change() {
+    std::println("\n--- #3388 AC3: Soft / align-flag off / is_valid(StableNodeRef) unchanged ---");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    reset_all();
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.grant_capability(kCapWildcard);
+    CHECK(cs.eval("(set-code \"(define (s3388 x) x)\")").has_value(), "3388 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3388 AC3: eval");
+    auto* ws = ev.workspace_flat();
+    CHECK(ws != nullptr, "3388 AC3: workspace");
+    clear_restamp_budget_nodes_override_for_test();
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(!ws->restamp_over_budget_torn(), "3388 AC3: Soft/unlimited not torn");
+    const auto live = first_live(*ws);
+    CHECK(live != NULL_NODE, "3388 AC3: live");
+    CHECK(ev.allow_query_stable_ref_export(live), "3388 AC3: Soft allow export");
+    // is_valid(StableNodeRef) is unchanged — fail-closed on gen/wrap/cow.
+    auto ref = ws->make_ref(live);
+    CHECK(ws->is_valid(ref), "3388 AC3: is_valid(StableNodeRef) on fresh ref");
+    // Bumping generation_ must invalidate the StableNodeRef.
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    CHECK(!ws->is_valid(ref), "3388 AC3: StableNodeRef invalidated after bump");
+    apply_dev_audit_defaults();
+    reset_all();
+}
+
+void ac3388_4_ac4_source_cite() {
+    std::println("\n--- #3388 AC4: source-cite — is_valid(NodeId) body has no node_gen_[id] = "
+                 "generation_ ---");
+    const auto astx = read_src("src/core/ast.ixx");
+    CHECK(!astx.empty(), "3388 AC4: ast.ixx readable");
+    const std::string sig = "bool is_valid(const NodeId id) const";
+    const auto pos = astx.find(sig);
+    CHECK(pos != std::string::npos, "3388 AC4: is_valid(NodeId) signature present");
+    if (pos != std::string::npos) {
+        const auto brace_open = astx.find('{', pos);
+        CHECK(brace_open != std::string::npos, "3388 AC4: open brace after sig");
+        if (brace_open != std::string::npos) {
+            std::size_t depth = 1;
+            std::size_t i = brace_open + 1;
+            for (; i < astx.size(); ++i) {
+                if (astx[i] == '{')
+                    ++depth;
+                else if (astx[i] == '}') {
+                    --depth;
+                    if (depth == 0)
+                        break;
+                }
+            }
+            CHECK(i < astx.size(), "3388 AC4: matched close brace");
+            const auto body = astx.substr(brace_open, i - brace_open + 1);
+            CHECK(body.find("node_gen_[id] = generation_") == std::string::npos,
+                  "3388 AC4: no node_gen_[id] = generation_ in is_valid(NodeId) body");
+        }
+    }
+    // AC5: no docs/design/, no tests/issues/test_issue_3388.cpp, no new query keys.
+    {
+        std::ifstream f("docs/design/3388-is-valid-no-writeup.md");
+        CHECK(!f.good(), "3388 AC4: no docs/design/3388-*");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3388.cpp");
+        CHECK(!f.good(), "3388 AC4: no tests/issues/test_issue_3388.cpp");
+    }
+}
+
 int run_test_stable_ref_tenant_capture() {
     std::println("=== Issue #2125: stamp_ref_tenant on all StableNodeRef capture paths ===");
     CHECK(kStableRefTenantCaptureIssue == 2125, "AC1: issue stamp constant");
@@ -825,6 +996,12 @@ int run_test_stable_ref_tenant_capture() {
     ac3327_2_held_set_larger_than_cap();
     ac3327_3_soft_no_held_walk();
     ac3327_4_source_and_linter();
+    std::println(
+        "\n=== Issue #3388: is_valid(NodeId) observe-only oracle (no node_gen_ write-up) ===");
+    ac3388_1_ac1_nodeid_lagging_gen_returns_false_no_writeup();
+    ac3388_2_ac2_production_stable_export_via_layout_stamp();
+    ac3388_3_ac3_soft_no_change();
+    ac3388_4_ac4_source_cite();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
