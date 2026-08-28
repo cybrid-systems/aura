@@ -637,6 +637,11 @@ namespace {
     // Same deny face as rename-symbol (#2961): kind "hygiene",
     // "cannot <prim> MacroIntroduced without :allow-macro? #t".
     // Soft / non-macro: one is_macro_introduced load.
+    // Issue #3344: continuous coverage check
+    // (check_mutate_hygiene_continuous_gate_3344.py) requires every
+    // add_mutate / eval_flat_apply_mutate_* to hit this helper,
+    // enforce_macro_hygiene_mutate_hotpath, hygiene_protected_error,
+    // or a documented HYGIENE_EXEMPT / GUARD_EXEMPT reason.
     // Issue #3076: this is the Hard sibling (hygiene-protected) — no
     // Soft-observe increment on the reject path.
     static std::optional<EvalValue> reject_structural_macro_hygiene(Evaluator& ev,
@@ -2104,6 +2109,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     //   - query_replace_batch_hygiene_preserved_total: bumped per match
     //     kept with MacroIntroduced marker under :hygiene-keep default
     //     (:macro-introduced-only per #2525)
+    // Issue #3344 HYGIENE_EXEMPT: #2525/#2527 :hygiene-keep default
+    // :macro-introduced-only preserves the marker on replace (not a
+    // structural default-deny rewrite). New AST-write prims must still
+    // call reject_structural_macro_hygiene / enforce_macro_hygiene_mutate_hotpath.
     add_mutate(
         "mutate:query-and-replace-batch",
         [&ev, mev, destroy_defuse_index, safe_str](std::span<const EvalValue> a) -> EvalValue {
@@ -2608,6 +2617,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // first, then call this, then restore_metadata_columns to undo a
     // bad step. Pairs with restamp_macro_introduced_subtree(root) for the
     // inverse direction (re-stamp after a fresh macro expansion).
+    // Issue #3344 HYGIENE_EXEMPT: this prim IS the MacroIntroduced
+    // unstamp / rollback surface (not a structural rewrite of live
+    // expansion output). Default-deny would make rollback unreachable.
     add_mutate(
         "mutate:rollback-macro-introduced", [&ev, mev, safe_str](const auto& a) -> EvalValue {
             bool ok = true;
@@ -5962,6 +5974,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                                         std::to_string(flat.size()));
             }
 
+            // Issue #3344 / #3027: same MacroIntroduced default-deny as
+            // extract-function. Soft / non-macro: one is_macro_introduced load.
+            const bool allow_macro_rx =
+                ev.get_allow_macro_mutate() || parse_allow_macro_opt_out(ev, a);
+            {
+                const MakeErrorVal rx_mev = [&ev](const std::string& k, const std::string& m) {
+                    return ev.make_merr(k, m);
+                };
+                if (auto err = reject_structural_macro_hygiene(ev, flat, node, allow_macro_rx,
+                                                               "refactor/extract", rx_mev)) {
+                    ok = false;
+                    return *err;
+                }
+            }
+
             auto new_name = ev.string_heap_[name_idx];
             std::string summary =
                 (a.size() > 2 && is_string(a[2])) ? safe_str(a[2]) : "extract " + new_name;
@@ -7059,6 +7086,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_int(static_cast<std::int64_t>(ev.save_hygiene_checkpoint_handle()));
         },
         /*guard_exempt=*/true);
+    // Issue #3344 HYGIENE_EXEMPT: restores checkpointed marker /
+    // provenance columns (save/restore pair). Not a structural rewrite
+    // of live MacroIntroduced expansion output.
     add_mutate("mutate:restore-hygiene-checkpoint", [&ev, mev](const auto& a) -> EvalValue {
         if (a.empty() || !is_int(a[0])) {
             return mev("bad-arg",
