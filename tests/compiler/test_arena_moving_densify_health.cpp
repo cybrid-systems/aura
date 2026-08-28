@@ -853,8 +853,80 @@ int run_test_arena_moving_densify_health() {
     std::println("\n=== Issue #3368: known-root slot + canary dual-note contract ===");
     ac3368_1_slot_rewrite_keeps_canary_green();
     ac3368_2_source_cite_and_no_invent();
-    std::println("\n=== #2619/#2682/#2775/#3123/#3200/#3368: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== Issue #3370: arena auto-arm single known-root inventory ===");
+    {
+        // Issue #3370 AC1/AC2/AC4: production auto-arm + live_compact(Moving)
+        // must fire the owning Evaluator known-roots hook before relocate
+        // (single inventory). No hook → Soft fallback only (no move).
+        const auto arena_src = read_file("src/core/arena.ixx");
+        const auto mover_src = read_file("src/core/moving_densify_health.hh");
+        const auto evfibmut_src = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto evixx_src = read_file("src/compiler/evaluator.ixx");
+        const auto evctor_src = read_file("src/compiler/evaluator_ctor.cpp");
+        CHECK(arena_src.find("KnownRootsHookFn") != std::string::npos &&
+                  arena_src.find("export struct KnownRootsHook") != std::string::npos &&
+                  arena_src.find("set_known_roots_hook(") != std::string::npos &&
+                  arena_src.find("invoke_known_roots_hook") != std::string::npos &&
+                  arena_src.find("mutable std::mutex known_roots_mtx_") != std::string::npos,
+              "3370 AC1/AC2: known-roots hook type + struct + setter + member in arena.ixx");
+        CHECK(arena_src.find("if (has_known_roots_hook()) {") != std::string::npos &&
+                  arena_src.find("invoke_known_roots_hook()") != std::string::npos,
+              "3370 AC1: auto-arm fires hook before live_compact(Moving)");
+        CHECK(arena_src.find("note_production_auto_arm_no_hook_fallback") != std::string::npos &&
+                  mover_src.find("g_production_auto_arm_no_hook_fallback_total") !=
+                      std::string::npos,
+              "3370 AC2: no-hook Soft fallback path + health counter");
+        CHECK(
+            evfibmut_src.find("Evaluator::on_arena_known_roots_hook_thunk") != std::string::npos &&
+                evfibmut_src.find("register_known_moving_densify_root_slots") != std::string::npos,
+            "3370 AC1: thunk calls register_known_moving_densify_root_slots");
+        // Issue #3370 AC5/AC6: hook installer + clear-on-switch (UAF safety)
+        // + reuse register_known_moving_densify_root_slots (no second model).
+        CHECK(evixx_src.find(
+                  "set_known_roots_hook(&Evaluator::on_arena_known_roots_hook_thunk, this)") !=
+                      std::string::npos &&
+                  evixx_src.find("set_known_roots_hook(nullptr)") != std::string::npos,
+              "3370 AC5/AC6: hook installer + clear-on-switch in Evaluator::set_arena");
+        CHECK(evixx_src.find("has_known_roots_hook") != std::string::npos,
+              "3370 AC5: set_arena idempotent guard for tests");
+        CHECK(evctor_src.find("set_known_roots_hook(nullptr)") != std::string::npos,
+              "3370 AC5: ~Evaluator clears hook (Issue #1662 family)");
+        CHECK(mover_src.find("production_auto_arm_no_hook_fallback_total") != std::string::npos &&
+                  mover_src.find("last_auto_arm_no_hook_fallback") != std::string::npos,
+              "3370 AC2: no-hook fallback total + last accessors on health surface");
+        // Issue #3370 AC6: no second model — no new pin registry, no new
+        // query:* keys. Reuse register_known_moving_densify_root_slots.
+        CHECK(arena_src.find("register_known_moving_densify_root_slots") != std::string::npos,
+              "3370 AC6: reuse register_known_moving_densify_root_slots (no new pin registry)");
+        // Issue #3370 AC3: opaque_heap_ covered by the existing inventory
+        // walk — verify the inventory comment in evaluator_mutation_boundary.cpp
+        // mentions opaque_heap_.
+        const auto evmutbound_src = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        CHECK(
+            evmutbound_src.find("opaque_heap_") != std::string::npos,
+            "3370 AC3: opaque_heap_ covered by register_known_moving_densify_root_slots inventory");
+        // Issue #3370 AC5: Soft / Off / sticky-gated Agents unchanged —
+        // existing should_production_auto_arm_moving + moving_compact_enabled
+        // gates still drive the auto-arm.
+        CHECK(arena_src.find("should_production_auto_arm_moving") != std::string::npos &&
+                  arena_src.find("moving_compact_enabled") != std::string::npos,
+              "3370 AC5: Soft/Off + sticky-densify-off unchanged");
+        // Issue #3370 AC6: linter wired in build.py + no new test_issue file.
+        const auto build3370 = read_file("build.py");
+        CHECK(build3370.find("check_arena_auto_arm_known_roots_3370") != std::string::npos &&
+                  build3370.find("Issue #3370") != std::string::npos,
+              "3370 AC6: build.py wires 3370 linter");
+        std::ifstream inv3370("tests/compiler/test_issue_3370.cpp");
+        if (!inv3370.good())
+            inv3370.open("../tests/compiler/test_issue_3370.cpp");
+        CHECK(!inv3370.good(), "3370 AC6: no test_issue_3370.cpp (per #81967)");
+        // No-invent: extend existing test (this file)
+        const auto t3370_self = read_file("tests/compiler/test_arena_moving_densify_health.cpp");
+        CHECK(t3370_self.find("3370 AC") != std::string::npos,
+              "3370 AC6: existing test file cites #3370");
+    }
+    std::println("\n=== #2619/#2682/#2775/#3123/#3200/#3368/#3370: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

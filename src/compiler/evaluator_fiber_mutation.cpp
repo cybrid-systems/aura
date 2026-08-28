@@ -937,6 +937,20 @@ void aura::compiler::Evaluator::on_arena_compact_hook_thunk(void* ctx) noexcept 
         static_cast<Evaluator*>(ctx)->on_arena_compact_hook();
 }
 
+// Issue #3370: arena auto-arm known-roots hook thunk. Fires before
+// live_compact(Moving) (when the owning Evaluator has bound the hook)
+// so the Evaluator known-root slot inventory (workspace_flat_ /
+// workspace_pool_ / mutate-target / current flat+pool / WorkspaceTree /
+// RootRemap stable+closure-capture / opaque_heap_ aliases) is
+// registered for the next Moving window. No-op when ctx is null
+// (defensive — set_arena wiring is idempotent + ownership-checked).
+// Same single-bump cost as the existing on_arena_compact_hook_thunk
+// above (one indirect call + one atomic counter tick in the body).
+void aura::compiler::Evaluator::on_arena_known_roots_hook_thunk(void* ctx) noexcept {
+    if (ctx)
+        static_cast<Evaluator*>(ctx)->register_known_moving_densify_root_slots();
+}
+
 void aura::compiler::Evaluator::on_arena_compact_hook() {
     re_pin_cow_children_from_snapshot();
     // Issue #1612: GC compact path — MacroIntroduced marker/provenance repin.

@@ -62,10 +62,34 @@ inline std::atomic<std::uint8_t> g_sticky_last_clear_reason{0};
 // Issue #3200: production pack + pins/EnvFrame blocked Moving.
 inline std::atomic<std::uint64_t> g_production_pin_guard_soft_gate_total{0};
 inline std::atomic<std::uint8_t> g_last_pin_guard_soft_gate{0};
+// Issue #3370: production auto-arm attempted live_compact(Moving) but
+// no Evaluator known-roots hook was bound. Single-inventory policy —
+// refuse to relocate objects the Evaluator still holds in unregistered
+// void** slots. Soft fallback path (mark-only) instead of Moving.
+inline std::atomic<std::uint64_t> g_production_auto_arm_no_hook_fallback_total{0};
+inline std::atomic<std::uint8_t> g_last_auto_arm_no_hook_fallback{0};
 
 inline void note_production_auto_arm() noexcept {
     g_production_auto_arm_moving_total.fetch_add(1, std::memory_order_relaxed);
     g_last_auto_arm_fired.store(1, std::memory_order_relaxed);
+}
+
+// Issue #3370: separate counter for the Soft-fallback path when the
+// owning Evaluator hasn't bound a known-roots hook yet (e.g. before
+// Phase-5 recover runs, or in test/host-thread paths). Agent dashboards
+// distinguish this from the pin/guard sticky path (#3200) and the
+// successful auto-arm path.
+inline void note_production_auto_arm_no_hook_fallback() noexcept {
+    g_production_auto_arm_no_hook_fallback_total.fetch_add(1, std::memory_order_relaxed);
+    g_last_auto_arm_no_hook_fallback.store(1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t production_auto_arm_no_hook_fallback_total() noexcept {
+    return g_production_auto_arm_no_hook_fallback_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool last_auto_arm_no_hook_fallback() noexcept {
+    return g_last_auto_arm_no_hook_fallback.load(std::memory_order_relaxed) != 0;
 }
 
 inline void note_sticky_last_clear_reason(std::uint8_t reason) noexcept {
