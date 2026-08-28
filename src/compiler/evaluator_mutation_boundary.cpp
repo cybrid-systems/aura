@@ -390,6 +390,10 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             return; // no green stamp / no grant
         }
     }
+    // Issue #3318: restamp leftover CoercionMap blame onto the live
+    // TLS session mid so Agent query:type cannot join a finished mutate.
+    // Quiet empty map / no TLS: zero extra.
+    tc->restamp_coercion_epoch_blame();
     // (3) Stamp TypeLinearCommitProof from post-persist CS truth so Agents
     // holding the proof across densify/steal match the durable snapshot.
     // Soft + empty goals: freeze returns 0/0; stamp still records defuse

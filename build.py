@@ -4997,6 +4997,19 @@ def cmd_lint():
             "Issue #2991 coercion provenance hf-mutate linter failed — run python3 scripts/coverage/checks/check_coercion_provenance_hf_mutate_2991.py"
         )
         return r
+    # Issue #3318: restamp CoercionEntry blame on mutation-epoch advance.
+    # Soft observe restamp counter; Production stale is incomplete.
+    # Extends test_coercion_stamp_at_add; no new schema key / invent.
+    cber3318 = COVERAGE_CHECKS / "check_coercion_blame_epoch_restamp_3318.py"
+    if not cber3318.exists():
+        fail(f"missing {cber3318}")
+        return 1
+    r = run([sys.executable, str(cber3318)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3318 coercion blame epoch-restamp linter failed — run python3 scripts/coverage/checks/check_coercion_blame_epoch_restamp_3318.py"
+        )
+        return r
     # Issue #3046: session-mid always-stamp + residual non-identity CastOp
     # density keep. Extends test_coercion_stamp_at_add + DeadCoercion
     # (#81967); no docs/design/.

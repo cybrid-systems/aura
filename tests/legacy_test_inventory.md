@@ -1238,7 +1238,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_provenance_fast_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: both fields set at add → chain_walk_total does not increase (fast path)
 - `tests/compiler/test_coercion_provenance_miss_force_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit
 - `tests/compiler/test_coercion_reject_production_defaults.cpp` (—) [domain_suite, theme_compiler] — AC1: Production defaults + incomplete chain → no CoercionNode;
-- `tests/compiler/test_coercion_stamp_at_add.cpp` (—) [domain_suite, theme_compiler] — AC1: active mid set → entry mid non-zero before apply; fast_path advances
+- `tests/compiler/test_coercion_stamp_at_add.cpp` (—) [large, domain_suite, theme_compiler] — AC1: active mid set → entry mid non-zero before apply; fast_path advances
 - `tests/compiler/test_coercion_unify_incomplete_skip.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → applied==0, no CoercionNode
 - `tests/compiler/test_command_line_cap_io_read.cpp` (—) [domain_suite, theme_compiler] — AC1: sandbox + no io-read → capability denied error
 - `tests/compiler/test_commercial_tenant_profile.cpp` (—) [domain_suite, theme_compiler] — AC1: No AURA_COMMERCIAL_TENANT — Restricted default soft (#2536 regression)

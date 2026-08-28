@@ -2963,6 +2963,9 @@ export struct TypeChecker {
     // so subsequent infer_flat calls start from an empty map.
     const CoercionMap& last_coercions() const { return last_coercions_; }
     CoercionMap take_coercions() { return std::move(last_coercions_); }
+    // Issue #3318: restamp leftover CoercionMap blame onto the live
+    // session / mutation-epoch mid (outermost success). Empty map: 0.
+    void restamp_coercion_epoch_blame() noexcept { last_coercions_.restamp_epoch_blame(); }
 
     // Convenience: infer_flat + apply deferred coercions to
     // the FlatAST in one call. Use this when the caller is
