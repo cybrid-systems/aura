@@ -16,10 +16,12 @@
 #include "compiler/runtime_shared.h"
 #include "compiler/typed_mutation_audit.h"
 
+#include <atomic>
 #include <cstdint>
 #include <fstream>
 #include <print>
 #include <string>
+#include <thread>
 #include <vector>
 
 import std;
@@ -30,6 +32,10 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
                                                                std::size_t n,
                                                                std::uint64_t new_bridge_epoch);
 extern "C" int aura_get_closure_must_deopt_before_next_call(std::int64_t closure_id);
+extern "C" void aura_register_fn(std::int64_t func_id,
+                                 std::int64_t (*fn)(std::int64_t*, std::uint32_t),
+                                 std::int32_t local_count, std::int32_t arg_count,
+                                 std::int32_t env_count);
 
 namespace {
 
@@ -1281,6 +1287,173 @@ static void ac3277_5_source_and_linter() {
           "3277 AC5: no invent test per #81967");
 }
 
+// ── Issue #3323: overflow → native dispatch race (MustDeopt + poison
+//    already exist; residual is visibility / last-look + drain on
+//    RenderFastExit). No new query key. Soft zero extra.
+// AC1: production overflow → MustDeopt + epoch==0 + subsequent call deopts
+// AC2: concurrent fiber calling while overflow fires → no stale native
+// AC3: BoundaryExit drain after overflow still runs (incl. render-fast)
+// AC4: Soft / budget=0 → no fence / no overflow-epoch / no drain extra
+// AC5: named/captured + storm-clear unchanged; source-cite + linter
+
+extern "C" std::uint64_t aura_pure_anon_bg_drain_fail_total_v_read() noexcept;
+
+static std::atomic<std::uint64_t> g_3323_native_hits{0};
+static std::int64_t dummy_3323_native(std::int64_t* /*locals*/, std::uint32_t /*argc*/) {
+    g_3323_native_hits.fetch_add(1, std::memory_order_relaxed);
+    return 42;
+}
+
+static void ac3323_1_overflow_no_subsequent_native() {
+    std::println("\n--- #3323 AC1: production overflow → no subsequent native ---");
+    fill_pure_anon_bg_queue_to_cap();
+    g_3323_native_hits.store(0, std::memory_order_relaxed);
+    aura_register_fn(/*func_id=*/400, dummy_3323_native, /*local_count=*/16, /*arg_count=*/0,
+                     /*env_count=*/0);
+    const auto cid = aura_alloc_closure(/*func_id=*/400);
+    CHECK(cid >= 0, "3323 AC1: alloc pure-anon");
+    aura_closure_set_must_deopt(cid, 0);
+    (void)aura_closure_call(cid, nullptr, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    aura_pure_anon_bg_enqueue(cid);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() > md0,
+          "3323 AC1: overflow-must-deopt advanced");
+    CHECK(aura_closure_get_must_deopt(cid) != 0, "3323 AC1: MustDeopt set");
+    CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3323 AC1: epoch poisoned");
+    const auto hits_after_overflow = g_3323_native_hits.load(std::memory_order_relaxed);
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3323 AC1: subsequent call leaves native");
+    CHECK(g_3323_native_hits.load(std::memory_order_relaxed) == hits_after_overflow,
+          "3323 AC1: no native after overflow");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3323_2_concurrent_call_no_stale_native() {
+    std::println("\n--- #3323 AC2: concurrent call during overflow → no stale native ---");
+    fill_pure_anon_bg_queue_to_cap();
+    g_3323_native_hits.store(0, std::memory_order_relaxed);
+    aura_register_fn(/*func_id=*/401, dummy_3323_native, /*local_count=*/16, /*arg_count=*/0,
+                     /*env_count=*/0);
+    const auto cid = aura_alloc_closure(/*func_id=*/401);
+    CHECK(cid >= 0, "3323 AC2: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    std::atomic<int> running{1};
+    std::thread caller([&] {
+        while (running.load(std::memory_order_relaxed) != 0)
+            (void)aura_closure_call(cid, nullptr, 0);
+    });
+    aura_pure_anon_bg_enqueue(cid);
+    CHECK(aura_closure_get_must_deopt(cid) != 0, "3323 AC2: MustDeopt after overflow");
+    running.store(0, std::memory_order_relaxed);
+    caller.join();
+    prod.store(prev, std::memory_order_relaxed);
+    const auto hits_after_join = g_3323_native_hits.load(std::memory_order_relaxed);
+    CHECK(aura_closure_call(cid, nullptr, 0) == 0, "3323 AC2: post-join call leaves native");
+    CHECK(g_3323_native_hits.load(std::memory_order_relaxed) == hits_after_join,
+          "3323 AC2: no native after overflow returned");
+    CHECK(aura_get_closure_bridge_epoch(cid) == 0, "3323 AC2: epoch stays poisoned");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3323_3_boundary_drain_after_overflow() {
+    std::println("\n--- #3323 AC3: BoundaryExit drain after overflow still runs ---");
+    fill_pure_anon_bg_queue_to_cap();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3323 AC3: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    aura_pure_anon_bg_enqueue(cid);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_pure_anon_bg_pending() >= 256, "3323 AC3: queue still full (overflow not enqueued)");
+    const auto pending0 = aura_pure_anon_bg_pending();
+    const auto ok0 = aura_pure_anon_bg_drain_ok_total_v_read();
+    const auto fail0 = aura_pure_anon_bg_drain_fail_total_v_read();
+    aura_pure_anon_bg_remount_drain(/*max_n=*/32);
+    CHECK(aura_pure_anon_bg_pending() < pending0 ||
+              aura_pure_anon_bg_drain_ok_total_v_read() > ok0 ||
+              aura_pure_anon_bg_drain_fail_total_v_read() > fail0,
+          "3323 AC3: drain moved residual counters / pending");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Issue #3323") != std::string::npos, "3323 AC3: dtor cites #3323");
+    CHECK(mb.find("MUST still drain when pending") != std::string::npos ||
+              mb.find("RenderFastExit MUST still drain") != std::string::npos,
+          "3323 AC3: render-fast still drains");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3323_4_soft_zero_extra() {
+    std::println("\n--- #3323 AC4: Soft / budget=0 → no fence / epoch / drain extra ---");
+    fill_pure_anon_bg_queue_to_cap();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3323 AC4: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    const auto md0 = aura_pure_anon_bg_overflow_must_deopt_total_v_read();
+    aura_pure_anon_bg_enqueue(cid);
+    prod.store(prev, std::memory_order_relaxed);
+    CHECK(aura_pure_anon_bg_overflow_must_deopt_total_v_read() == md0,
+          "3323 AC4: Soft no must-deopt bump");
+    CHECK(aura_closure_get_must_deopt(cid) == 0, "3323 AC4: Soft no MustDeopt");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("Soft never calls this helper") != std::string::npos,
+          "3323 AC4: Soft never calls overflow helper");
+    CHECK(rt.find("ov_samp stays 0") != std::string::npos, "3323 AC4: Soft overflow epoch stays 0");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("Soft / budget=0: max_n==0, no drain") != std::string::npos,
+          "3323 AC4: Soft drain gated");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3323_5_source_and_linter() {
+    std::println("\n--- #3323 AC5: source-cite + named/captured unchanged + linter ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_pure_anon_overflow_dispatch_race_3323.py");
+    CHECK(rt.find("Issue #3323") != std::string::npos, "3323 AC5: runtime cites #3323");
+    CHECK(rt.find("g_pure_anon_overflow_epoch") != std::string::npos, "3323 AC5: overflow epoch");
+    CHECK(rt.find("invalidate_closure_cache_for(closure_id)") != std::string::npos,
+          "3323 AC5: cache invalidate on overflow");
+    CHECK(rt.find("std::atomic_thread_fence(std::memory_order_release)") != std::string::npos,
+          "3323 AC5: release fence");
+    CHECK(rt.find("last-look MustDeopt before any native dispatch") != std::string::npos,
+          "3323 AC5: last-look");
+    CHECK(mb.find("Issue #3323") != std::string::npos, "3323 AC5: boundary dtor cites");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "3323 AC5: named remount preserved");
+    CHECK(rt.find("aura_sync_remount_anon_captured_live_closures") != std::string::npos,
+          "3323 AC5: captured remount preserved");
+    CHECK(hur.find("maybe_storm_clear_health_pass") != std::string::npos,
+          "3323 AC5: storm-clear preserved");
+    const auto pos = steal.find("aura_evaluator_on_steal_complete");
+    CHECK(pos != std::string::npos, "3323 AC5: steal-complete site");
+    const auto win = steal.substr(pos, 8000);
+    CHECK(win.find("aura_pure_anon_bg_remount_drain") == std::string::npos,
+          "3323 AC5: steal does not drain (#2715)");
+    CHECK(!lint.empty() && lint.find("Issue #3323") != std::string::npos, "3323 AC5: linter");
+    CHECK(build.find("check_pure_anon_overflow_dispatch_race_3323") != std::string::npos,
+          "3323 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3323-pure-anon-overflow-dispatch.md").empty(),
+          "3323 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3323.cpp").empty(),
+          "3323 AC5: no invent test per #81967");
+    CHECK(rt.find("schema-3323") == std::string::npos, "3323 AC5: no schema-3323");
+    CHECK(rt.find("g_3323_") == std::string::npos, "3323 AC5: no g_3323_*");
+}
+
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
 // Outside reemit-success; clears residual MustDeopt under bounded budget.
 
@@ -2275,6 +2448,12 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3277_3_budget_zero_no_force();
     ac3277_4_storm_shrink_and_no_steal_drain();
     ac3277_5_source_and_linter();
+    std::println("\n=== Issue #3323: pure-anon overflow dispatch race ===");
+    ac3323_1_overflow_no_subsequent_native();
+    ac3323_2_concurrent_call_no_stale_native();
+    ac3323_3_boundary_drain_after_overflow();
+    ac3323_4_soft_zero_extra();
+    ac3323_5_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
     ac2928_2_storm_skip();
@@ -2304,11 +2483,12 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac2980_5_query_keys();
     ac2980_6_source_and_linter();
 
-    std::println(
-        "\n=== "
-        "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#3060: {} "
-        "passed, {} failed ===",
-        g_passed, g_failed);
+    std::println("\n=== "
+                 "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"
+                 "3060+#3323: "
+                 "{} "
+                 "passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

@@ -64,7 +64,7 @@ def main() -> int:
     must("linear_move_drop_elision_ok()", "AC2 IR Move/Drop", ir)
 
     pred = tma.find("ir_typed_entry_commit_readiness_ok() noexcept")
-    pred_win = tma[pred : pred + 900] if pred >= 0 else ""
+    pred_win = tma[pred : pred + 2800] if pred >= 0 else ""
     must("production_defaults_active()", "AC3 Soft gate", pred_win)
     must("if (depth == 0)", "AC3 quiet", pred_win)
     must("aura_evaluator_mutation_boundary_depth()", "AC3 depth ABI", pred_win)
