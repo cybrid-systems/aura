@@ -1537,7 +1537,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_orchestration_steal_boost.cpp` (—) [domain_suite, theme_serve] — tests/test_orchestration_steal_boost.cpp — Issue #1445 / #1492
 - `tests/serve/test_orphan_reap_stress.cpp` (—) [domain_suite, theme_serve] — AC1: orphan_mutex_ held for minimal time (just iterate + decide
 - `tests/serve/test_panic_checkpoint_fiber_resume_safety.cpp` (—) [domain_suite, theme_serve] — test_panic_checkpoint_fiber_resume_safety.cpp — Issue #592:
-- `tests/compiler/test_pcv_children_safe_default_migration.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2036; children_ is PersistentChildVector; children_default
+- `tests/compiler/test_pcv_children_safe_default_migration.cpp` (—) [large, domain_suite, theme_compiler] — AC1: source cites #2036; children_ is PersistentChildVector; children_default
 - `tests/core/test_pcv_tls_default_on.cpp` (—) [domain_suite, theme_core] — AC1: Production default enables TLS; AURA_PCV_TLS=0 / test override off
 - `tests/core/test_pcv_tls_scratch.cpp` (—) [domain_suite, theme_core] — AC1: Soft / default: behavior identical (TLS off → same cow_alloc path)
 - `tests/compiler/test_per_defuse_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_per_defuse_batch.cpp — batch driver for per_defuse_index family.

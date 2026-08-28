@@ -9364,6 +9364,8 @@ public:
     // cannot free the NodeId array mid-iteration. Returned vector
     // owns StableNodeRefs (safe across mutation boundaries). Caller that
     // hands refs to Agent must Evaluator-stamp (#2759 / #2960).
+    // Issue #3397: production Agent query export must not return children_stable_span_view
+    // (TLS pin valid only until next same-thread call — UAF across Guard).
     // Issue #3328: this pin is always a fresh children_safe_view.
     // Production re-use of a *held* SafePCVSpan must go through
     // pcv_span_for_agent_export / Evaluator::children_stable_batch

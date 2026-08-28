@@ -14366,6 +14366,33 @@ def cmd_query_default_stamped_coverage():
     return 0
 
 
+def cmd_query_children_stable_no_tls_coverage():
+    """Issue #3397: production query:children-stable must not return the TLS
+    span view.
+
+    children_stable_span_view is a TLS-pinned buffer valid only until the
+    next same-thread call. An Agent that treats it as multi-round memory
+    holds a dangling pin across Guard (UAF or wrong-generation child ids
+    on read). The current query:children-stable EDSL primitive routes
+    through pin_query_children (SafePCVSpan) + pcv_span_for_agent_export
+    fingerprint gate (#3328) + force_refresh_pcv_span fallback (#3167) +
+    structured stale-span error on recovery failure. Non-regress for #3167
+    fingerprint + #3393 force-exclusive + #3328 refresh. No
+    docs/design/, no tests/issues/test_issue_3397.cpp.
+    """
+    print(f"{B}=== query-children-stable no-TLS-span coverage (#3397) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_children_stable_no_tls_3397.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-children-stable no-TLS-span (#3397) coverage contract rows failed")
+        return 1
+    ok("query-children-stable no-TLS-span (#3397) coverage clean")
+    return 0
+
+
 def cmd_query_result_soft_prod_transition_coverage():
     """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
 
@@ -21623,6 +21650,7 @@ def main():
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
         "query-default-stamped": cmd_query_default_stamped_coverage,
+        "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,
