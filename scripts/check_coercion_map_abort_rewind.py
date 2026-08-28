@@ -49,8 +49,14 @@ REQUIRED_CALLS: tuple[str, ...] = (
 # anchor but BEFORE the next major boundary / return. We use a window
 # of up to N lines after each anchor to bound the search.
 ABORT_SITE_ANCHORS: tuple[str, ...] = (
-    # Site 1: post topology restore (failure path)
-    "typed_audit::clear_type_linear_commit_proof_on_abort()",
+    # Site 1: post topology restore (failure path).
+    # Issue #3376: anchor on the unique #3102 rewind-block comment
+    # rather than the bare clear_type_linear_commit_proof_on_abort()
+    # call — the latter is also called from non-abort sites
+    # (aura_outermost_success_persist_occurrence reject paths clear the
+    # previous green TypeLinearCommitProof but are not abort rewind
+    # sites and do not need the CoercionMap rewind machinery).
+    "// Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind",
     # Site 2: invariant force-rollback
     "invariant force-rollback clears proof face",
     # Site 3: Strict reflect-validate rollback
@@ -136,7 +142,7 @@ def check_file(path: Path, *, strict: bool) -> list[str]:
 def _self_test() -> int:
     """Validate the linter regex / anchor logic against fixture text."""
     fixture = """
-    // Site 1 (post topology restore, failure path)
+    // Issue #3102: AC1+AC2+AC3+AC4 — CoercionMap abort rewind.
     typed_audit::clear_type_linear_commit_proof_on_abort();
     if (typed_audit::production_defaults_active() ||
         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full) {
