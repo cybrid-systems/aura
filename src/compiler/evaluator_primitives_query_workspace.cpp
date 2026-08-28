@@ -355,7 +355,18 @@ void register_workspace_query_primitives(
                         return mev("restamp-lag",
                                    "budget-exceeded: :as-query-result: restamp budget exceeded; "
                                    "generation torn for export (Issue #3198 / #3121)");
-                    qr.push_match_full(node_id, gen, 0, 0, 0, 0, 0, 0);
+                    // Issue #3389 (I6): QueryResult::push_match_full silently
+                    // returns false past kMaxInlineMatches=64. Pre-#3389 the
+                    // green schema-2 hash of the first 64 was returned and
+                    // the tail was silently lost. Fail-closed under production
+                    // — never return a green schema-2 hash of a prefix. Soft /
+                    // Off bare list never enters this block (see the guard
+                    // above) so the historical prefix contract is unchanged.
+                    if (!qr.push_match_full(node_id, gen, 0, 0, 0, 0, 0, 0)) {
+                        aura::core::note_query_result_overflow_total();
+                        return mev("query-result-overflow",
+                                   "QueryResult cap 64 exceeded; narrow :limit / pattern (I6)");
+                    }
                     pushed = true;
                 }
                 cur = ws.pairs[outer].cdr;
