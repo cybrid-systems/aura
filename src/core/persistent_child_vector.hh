@@ -194,6 +194,11 @@ inline constexpr int kPcvSpanStaleAcrossGuardIssue = 3167;
 // Issue #3233: next locked set_child after fingerprint mismatch forces
 // exclusive in-place even if a stale SafePCVSpan still holds a ref.
 inline constexpr int kPcvStaleSpanExclusiveIssue = 3233;
+// Issue #3328: production children_stable / query re-use of a held
+// SafePCVSpan must force_refresh_pcv_span or surface structured
+// stale-span (across-guard). Soft keeps is_stale + #3167 counter only.
+// Reuses pcv_span_stale_across_guard_total — no new metric / query key.
+inline constexpr int kPcvSpanQueryRefreshIssue = 3328;
 
 [[nodiscard]] inline bool pcv_stale_span_exclusive_enabled() noexcept {
     return g_pcv_hotpath_metrics().stale_span_force_exclusive_enabled.load(

@@ -526,6 +526,9 @@ void aura::compiler::Evaluator::pin_stable_refs_for_cow_boundary(
 // children_stable is layout-only (#2960); stamp fills tenant+fiber.
 // Issue #3000: gate *before* children_stable (make_ref_layout lazy-aligns);
 // production restamp-lag → empty batch (do not export pre-mutate gens).
+// Issue #3328: production re-use of the pin force_refresh_pcv_span on
+// fingerprint mismatch (or empty fail-closed — never silent pre-mutate
+// walk). Soft: pcv_span_for_agent_export is identity.
 std::vector<aura::ast::FlatAST::StableNodeRef>
 aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept {
     std::vector<aura::ast::FlatAST::StableNodeRef> out;
@@ -534,6 +537,15 @@ aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept 
         return out;
     {
         auto kids = ws->children_columnar(id);
+        const bool production = typed_audit::production_defaults_active();
+        kids = ws->pcv_span_for_agent_export(kids, id, production);
+        if (production && kids.has_fingerprint() &&
+            kids.is_stale(static_cast<std::uint64_t>(ws->generation()), ws->wrap_epoch(),
+                          ws->node_gen_for(id))) {
+            kids = ws->force_refresh_pcv_span(kids, id);
+            if (!kids.has_fingerprint())
+                return out; // stale-span fail-closed (do not export pre-mutate)
+        }
         for (std::size_t i = 0; i < kids.size(); ++i) {
             const auto cid = kids[i];
             if (cid == aura::ast::NULL_NODE)

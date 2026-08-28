@@ -4585,6 +4585,12 @@ public:
         return children_safe_view(id);
     }
 
+    // Issue #3167: current node_gen_ slot for is_stale / force_refresh.
+    // 0 if id is out of range (same sentinel children_safe_view uses).
+    [[nodiscard]] std::uint16_t node_gen_for(NodeId id) const noexcept {
+        return (id < node_gen_.size()) ? node_gen_[id] : std::uint16_t{0};
+    }
+
     // Issue #3167: re-pin a SafePCVSpan against the current FlatAST state
     // after a successful structural Guard mutates the owner node. If the
     // captured fingerprint (node_id + generation + wrap_epoch + node_gen)
@@ -4606,13 +4612,34 @@ public:
         }
         const auto cur_gen = static_cast<std::uint64_t>(generation_);
         const auto cur_wrap = wrap_epoch_.load(std::memory_order_relaxed);
-        const auto cur_node_gen = (id < node_gen_.size()) ? node_gen_[id] : std::uint16_t{0};
+        const auto cur_node_gen = node_gen_for(id);
         if (safe.is_stale(cur_gen, cur_wrap, cur_node_gen)) {
             g_pcv_hotpath_metrics().pcv_span_stale_across_guard_total.fetch_add(
                 1, std::memory_order_relaxed);
             return children_safe_view(id); // re-pin to current children
         }
         return safe; // AC2 happy path
+    }
+
+    // Issue #3328: production Agent export / re-use of a SafePCVSpan
+    // (children_stable / query:children-stable). Soft (production=false):
+    // return `safe` unchanged — frozen COW view is the Soft contract
+    // (AC2; zero extra, no counter bump). Production: fingerprint
+    // mismatch → force_refresh_pcv_span (live children, #3167 counter).
+    // If the owner is gone, returns a default span (no fingerprint);
+    // the query path surfaces structured stale-span / across-guard.
+    // Happy path (not stale): original span, no re-pin.
+    [[nodiscard]] SafePCVSpan<NodeId> pcv_span_for_agent_export(const SafePCVSpan<NodeId>& safe,
+                                                                NodeId id, bool production) const {
+        if (!production)
+            return safe; // AC2 Soft / Off: frozen view, zero extra
+        if (!safe.has_fingerprint())
+            return safe;
+        const auto cur_gen = static_cast<std::uint64_t>(generation_);
+        const auto cur_wrap = wrap_epoch_.load(std::memory_order_relaxed);
+        if (!safe.is_stale(cur_gen, cur_wrap, node_gen_for(id)))
+            return safe; // happy path — no force_refresh
+        return force_refresh_pcv_span(safe, id);
     }
 
     // Issue #3167: stale-across-guard fingerprint mismatch total (auto-
@@ -9337,6 +9364,10 @@ public:
     // cannot free the NodeId array mid-iteration. Returned vector
     // owns StableNodeRefs (safe across mutation boundaries). Caller that
     // hands refs to Agent must Evaluator-stamp (#2759 / #2960).
+    // Issue #3328: this pin is always a fresh children_safe_view.
+    // Production re-use of a *held* SafePCVSpan must go through
+    // pcv_span_for_agent_export / Evaluator::children_stable_batch
+    // (force_refresh or structured stale-span). Soft may walk the frozen view.
     [[nodiscard]] std::vector<StableNodeRef> children_stable(NodeId id) const {
         std::vector<StableNodeRef> out;
         auto safe = children_safe_view(id); // Issue #2036: default SafePCVSpan pin

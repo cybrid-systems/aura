@@ -8097,7 +8097,9 @@ public:
     // every ref in the span (optionally registry-pins for COW survival).
     // pin_stable_refs_for_cow_boundary is pin-only (no refresh).
     // children_stable_batch returns children as pinned StableNodeRefs.
-    // Metrics: stable_ref_batch_refresh_total, cow_pinned_across_layers_total,
+    // Issue #3328: production force_refresh_pcv_span on a stale pin
+    // (or empty fail-closed); Soft identity. Metrics:
+    // stable_ref_batch_refresh_total, cow_pinned_across_layers_total,
     // stale_ref_prevented_total, batch_refresh_latency_us_max (p99 proxy).
     std::size_t refresh_stable_refs_batch(std::span<aura::ast::FlatAST::StableNodeRef> refs,
                                           bool auto_pin = true) noexcept;
