@@ -2975,16 +2975,32 @@ inline std::atomic<std::uint32_t> g_type_export_soft_refuse_wired{1};
 inline void reset_type_export_soft_refuse_for_test() noexcept {
     g_type_export_soft_refuse_observe_total.store(0, std::memory_order_relaxed);
 }
-// Optional full-solve recover hook (wired by TypeChecker / Evaluator).
-// Returns true when SOLVED + occurrence roots restored. nullptr = no recover.
-using OccurrenceFullSolveRecoverFn = bool (*)(void* ctx) noexcept;
-inline OccurrenceFullSolveRecoverFn g_occurrence_full_solve_recover_fn = nullptr;
-inline void* g_occurrence_full_solve_recover_ctx = nullptr;
-inline void install_occurrence_full_solve_recover(OccurrenceFullSolveRecoverFn fn,
-                                                  void* ctx) noexcept {
-    g_occurrence_full_solve_recover_fn = fn;
-    g_occurrence_full_solve_recover_ctx = ctx;
-}
+// Issue #3380: occurrence full-solve recover is bound to the commit
+// TypeChecker used by persist (no process-global fn/ctx slot — that
+// was last-TC-wins: a stack TypeChecker built in
+// run_post_mutate_typecheck_no_lock / steal × dual-Evaluator would
+// overwrite the slot and a vacuous SOLVED on the wrong CS would clear
+// the victim's faces — half-green close of #2962).
+//
+// Recover call sites in commit_readiness() now invoke a C ABI that
+// looks up the live commit TC via the Evaluator TLS handle
+// (g_tls_audit_commit_readiness_evaluator — set at outermost
+// enter_mutation_boundary, cleared at outermost exit; same shape as
+// #3379's live_policy fill bridge). nullptr / no TLS → treat as
+// recover fail (AC2: hard-reject face, never silent green).
+//
+// Header stays TypeChecker-free (C ABI in evaluator_mutation_boundary.cpp
+// owns the cast + recover fn call — same separation as #3170/#3379).
+extern "C" void* aura_typed_audit_current_commit_type_checker() noexcept;
+extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept;
+// Test-only override: lets hermetic unit tests (which previously called
+// install_occurrence_full_solve_recover(fn, ctx)) drive "recover true"
+// / "recover null" without constructing a real Evaluator + TC. When
+// set, the override fn is consulted BEFORE the live TC lookup; when
+// null, production path is used. Production code never sets this.
+extern "C" void aura_typed_audit_test_install_recover_override(bool (*fn)(void* ctx) noexcept,
+                                                               void* ctx) noexcept;
+extern "C" void aura_typed_audit_test_clear_recover_override() noexcept;
 // Forward decls — defined later with face counter clear helpers (#2703/#2704/#2847).
 inline void clear_cone_outside_goal_drop_for_test() noexcept;
 inline void clear_partial_cone_truncate_for_test() noexcept;
@@ -3046,21 +3062,17 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         const bool outside_drop =
             in.cone_outside_goal_drop_face || (hard && cone_outside_goal_drop_total_v_read() > 0);
         if (hard && outside_drop) {
-            // Force-closure recover path (#2909) + SOLVED gate (#2962).
+            // Force-closure recover path (#2909) + SOLVED gate (#2962) +
+            // #3380 (live commit TC binding — no process-global fn/ctx).
             g_cone_truncate_force_closure_attempt_total.fetch_add(1, std::memory_order_relaxed);
-            bool recovered = false;
-            if (g_occurrence_full_solve_recover_fn != nullptr)
-                recovered = g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx);
-            // Issue #2962: recover must leave SOLVED (solve_status==0). A
-            // hook that returns true under CONFLICT/TIMEOUT is half-green.
-            // Issue #3108: bump occurrence_recover_not_solved_total when the
-            // re-gate flips recovered->false (additive counter, AC4; no new
-            // dirty bits on Quiet path because the bump is inside the cold
-            // `recovered && solve_status != 0` branch).
-            if (recovered && in.solve_status != 0) {
-                recovered = false;
-                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
-            }
+            // Recover is invoked on the commit TC bound to the current
+            // Evaluator TLS handle (set at outermost enter, cleared at
+            // outermost exit per #3379). nullptr / no TLS → recover fail
+            // (AC2: hard-reject face, never silent green). #2962 SOLVED
+            // gate: try_occurrence_hard_face_full_solve_recover() returns
+            // true only when its solve() returned SOLVED — no need to
+            // re-sample a possibly-stale in.solve_status here.
+            const bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
             if (recovered) {
                 g_cone_truncate_force_closure_total.fetch_add(1, std::memory_order_relaxed);
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
@@ -3115,17 +3127,12 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         const bool empty_face =
             in.occurrence_empty_after_fence_face && occurrence_empty_after_fence_total_v_read() > 0;
         if (cone_face || empty_face) {
-            // Issue #2750: Option A recover half — one full solve via hook.
-            // Quiet path (no face) never reaches here → zero extra solve cost.
-            bool recovered = false;
-            if (g_occurrence_full_solve_recover_fn != nullptr)
-                recovered = g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx);
-            // Issue #2962: SOLVED-only (solve_status==0) after recover.
-            // Issue #3108: same re-gate + counter bump as block 1.
-            if (recovered && in.solve_status != 0) {
-                recovered = false;
-                g_occurrence_recover_not_solved_total.fetch_add(1, std::memory_order_relaxed);
-            }
+            // Issue #2750: Option A recover half — one full solve on the
+            // commit TC bound to the current Evaluator TLS (#3380 — no
+            // process-global fn/ctx slot; last-TC-wins was a half-green
+            // close of #2962 under steal × dual-Evaluator). Quiet path
+            // (no face) never reaches here → zero extra solve cost.
+            const bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
             if (recovered) {
                 g_occurrence_hard_face_recover_success_total.fetch_add(1,
                                                                        std::memory_order_relaxed);
@@ -3162,8 +3169,11 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     // only (would_allow_commit stays true when refined_consistency_hard
     // is false). Quiet: face clear → zero cost (no recover attempt).
     if (in.refined_consistency_hard && in.refined_consistency_drift) {
-        if (g_occurrence_full_solve_recover_fn != nullptr &&
-            g_occurrence_full_solve_recover_fn(g_occurrence_full_solve_recover_ctx)) {
+        // #3380: recover is bound to the live commit TC (C ABI looks up
+        // the Evaluator TLS handle + commit_type_checker_handle). AC2:
+        // nullptr / no TLS → recover fn returns false → hard reject with
+        // force_reason refined_drift (code 15).
+        if (aura_typed_audit_try_occurrence_hard_face_full_solve_recover()) {
             g_refined_consistency_recover_total.fetch_add(1, std::memory_order_relaxed);
             g_occurrence_hard_face_recover_success_total.fetch_add(1, std::memory_order_relaxed);
             g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);

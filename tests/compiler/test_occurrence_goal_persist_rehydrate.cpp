@@ -2251,8 +2251,7 @@ static void ac3224_ir_typed_entry_commit_readiness() {
         apply_production_audit_defaults();
         clear_occurrence_empty_after_fence_for_test();
         typed_audit::reset_linear_ir_fastpath_counters_for_test();
-        typed_audit::g_occurrence_full_solve_recover_fn = nullptr;
-        typed_audit::g_occurrence_full_solve_recover_ctx = nullptr;
+        aura_typed_audit_test_clear_recover_override();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(), "3224 AC3: quiet depth==0 allows");
         typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);

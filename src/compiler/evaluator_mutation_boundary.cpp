@@ -221,6 +221,14 @@ extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_hand
 // aura_occurrence_goal_fingerprint_tc above); this TU owns the cast
 // + the field-by-field copy. Quiet when the live TC handle is null
 // (today's face-only fill stays; no extra CS walk).
+
+// Issue #3380: static TLS for the test-only recover override (see
+// aura_typed_audit_test_install_recover_override / _clear_recover_override
+// below). Production code paths never set these — only hermetic unit tests
+// that previously called install_occurrence_full_solve_recover(fn, ctx).
+static thread_local bool (*g_tls_test_recover_fn)(void* ctx) noexcept = nullptr;
+static thread_local void* g_tls_test_recover_ctx = nullptr;
+
 extern "C" void aura_typed_audit_note_readiness_evaluator(void* ev) noexcept {
     // Variable lives at global scope in typed_mutation_audit.h
     // (above the namespace aura::compiler::typed_audit block).
@@ -274,6 +282,60 @@ extern "C" void aura_typed_audit_fill_from_live_tc(
     // The issue's "from existing CS flags" maps cleanly onto
     // truncated_reverify alone for the live_policy path; the recover
     // bit is a per-commit decision owned by the caller's hook.
+}
+
+// Issue #3380: live commit TypeChecker lookup + full-solve recover.
+// Replaces the previous process-global g_occurrence_full_solve_recover_fn /
+// _ctx slot, which was last-TC-wins: a stack TypeChecker built in
+// run_post_mutate_typecheck_no_lock / steal × dual-Evaluator would overwrite
+// the slot and a vacuous SOLVED on the wrong CS would clear the victim's
+// faces — half-green close of #2962. Recover is now bound to the commit
+// TypeChecker used by persist (the same handle #3379 reads for live_policy
+// fill). Quiet path: no TLS or no live TC handle → returns null / false
+// (AC2: treat as recover fail, never silent green).
+//
+// Header stays TypeChecker-free (C ABI owns the cast + recover fn call —
+// same separation as aura_occurrence_goal_fingerprint_tc /
+// aura_typed_audit_fill_from_live_tc above).
+extern "C" void* aura_typed_audit_current_commit_type_checker() noexcept {
+    void* ev = ::g_tls_audit_commit_readiness_evaluator;
+    if (ev == nullptr)
+        return nullptr;
+    auto* evaluator = static_cast<aura::compiler::Evaluator*>(ev);
+    return evaluator->commit_type_checker_handle();
+}
+
+extern "C" bool aura_typed_audit_try_occurrence_hard_face_full_solve_recover() noexcept {
+    // Test override takes precedence so hermetic unit tests (which previously
+    // called install_occurrence_full_solve_recover(fn, ctx)) can drive
+    // "recover true" / "recover null" without constructing a real Evaluator
+    // + commit TC. Production path: live commit TC. When the test override is
+    // null, the live TC lookup runs — no production change in observable
+    // behavior beyond the (intentional) loss of the process-global fn/ctx
+    // slot.
+    if (g_tls_test_recover_fn != nullptr)
+        return g_tls_test_recover_fn(g_tls_test_recover_ctx);
+    void* tc_handle = aura_typed_audit_current_commit_type_checker();
+    if (tc_handle == nullptr)
+        return false;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    return tc->try_occurrence_hard_face_full_solve_recover();
+}
+
+// Test-only: install / clear a recover fn override. Production code paths
+// never call these — only test suites (test_typed_audit_commit_readiness_*,
+// test_partial_cone_commit_gate, test_type_linear_commit_health) that
+// previously called install_occurrence_full_solve_recover. Override is
+// process-wide TLS, scoped per-test (clear on teardown).
+extern "C" void aura_typed_audit_test_install_recover_override(bool (*fn)(void* ctx) noexcept,
+                                                               void* ctx) noexcept {
+    g_tls_test_recover_fn = fn;
+    g_tls_test_recover_ctx = ctx;
+}
+
+extern "C" void aura_typed_audit_test_clear_recover_override() noexcept {
+    g_tls_test_recover_fn = nullptr;
+    g_tls_test_recover_ctx = nullptr;
 }
 
 // Issue #3361 / #3313: densify-entry revalidate without a complete Evaluator

@@ -1975,6 +1975,16 @@ aura_issue_test_link_light(test_ir_typed_entry_proof_authority)
 # #3130 / #3224). Quiet (no live TC) keeps today's face-only fill.
 aura_add_issue_test(test_typed_audit_commit_readiness_live_policy)
 aura_issue_test_link_light(test_typed_audit_commit_readiness_live_policy)
+# Issue #3380: occurrence full-solve recover bound to live commit TypeChecker
+# (no process-global last-TC-wins slot — half-green close of #2962 under
+# steal × dual-Evaluator). C ABI in evaluator_mutation_boundary.cpp walks
+# g_tls_audit_commit_readiness_evaluator → commit_type_checker_handle →
+# TypeChecker::try_occurrence_hard_face_full_solve_recover. Ctor no longer
+# installs a process-global recover hook; nullptr / no TLS → recover fail.
+# Test-only override (aura_typed_audit_test_install_recover_override) lets
+# hermetic tests drive recover scenarios without a real Evaluator.
+aura_add_issue_test(test_typed_audit_commit_readiness_recover_acl)
+aura_issue_test_link_light(test_typed_audit_commit_readiness_recover_acl)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)
