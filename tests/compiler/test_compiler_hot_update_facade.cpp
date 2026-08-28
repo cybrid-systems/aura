@@ -709,6 +709,111 @@ static void ac3221_cascade_reason_not_residual_force_heal() {
     apply_dev_audit_defaults();
 }
 
+// ── Issue #3345: production hybrid depth-1 called_by IR dirty after
+// facade early-return. Soft keeps full BFS. Pure-AOT empty IR cache
+// is a no-op (no dep_graph lock). No new query keys.
+//   AC1: helper + both production facade-success call sites
+//   AC2: hybrid production — direct dependent body-only dirty
+//   AC3: Soft BFS unchanged (hybrid_node_cascade_ + drain)
+//   AC4: no new query:*; #3112/#3150/#3188/#3219 preserved
+//   AC5: this suite + linter AFTER #3219; no invent / docs/design
+
+static void ac3345_production_hybrid_depth1_fanout() {
+    std::println("\n--- #3345: production hybrid depth-1 called_by IR dirty ---");
+
+    const auto svc = read_file("src/compiler/service_dirty.cpp");
+    const auto ixx = read_file("src/compiler/service.ixx");
+    const auto build = read_file("build.py");
+
+    CHECK(ixx.find("mark_direct_hybrid_dependents_body_dirty_") != std::string::npos,
+          "3345 AC1: helper declared");
+    CHECK(svc.find("void CompilerService::mark_direct_hybrid_dependents_body_dirty_") !=
+              std::string::npos,
+          "3345 AC1: helper defined");
+    {
+        const auto hpos =
+            svc.find("void CompilerService::mark_direct_hybrid_dependents_body_dirty_");
+        CHECK(hpos != std::string::npos, "3345 AC1: helper body");
+        const auto hwin = svc.substr(hpos, 2200);
+        CHECK(hwin.find("called_by") != std::string::npos, "3345 AC1: depth-1 called_by");
+        CHECK(hwin.find("std::queue") == std::string::npos, "3345 AC1: not Soft BFS queue");
+        CHECK(hwin.find("ir_cache_v2_.empty()") != std::string::npos,
+              "3345 AC1: empty IR cache no-op");
+        CHECK(hwin.find("mark_body_only_dirty") != std::string::npos, "3345 AC1: body-only dirty");
+        CHECK(hwin.find("cascade_body_only_count") != std::string::npos,
+              "3345 AC1: reuses cascade_body_only_count");
+    }
+    {
+        const auto md_pos = svc.find("void CompilerService::mark_define_dirty");
+        const auto md_end = svc.find("\nvoid CompilerService::", md_pos + 1);
+        const auto md_win =
+            svc.substr(md_pos, (md_end == std::string::npos ? 8000 : md_end - md_pos));
+        const auto facade = md_win.find("hard_invalidate_via_facade(");
+        const auto fanout = md_win.find("mark_direct_hybrid_dependents_body_dirty_(name)");
+        const auto soft = md_win.find("gc_coord::Scope gc_coord_scope");
+        CHECK(facade != std::string::npos && fanout != std::string::npos && fanout > facade,
+              "3345 AC1: mark_define_dirty calls helper after facade");
+        CHECK(soft != std::string::npos && fanout < soft, "3345 AC3: helper before Soft BFS body");
+    }
+    {
+        const auto if_pos = svc.find("void CompilerService::invalidate_function");
+        const auto if_end = svc.find("\nvoid CompilerService::", if_pos + 1);
+        const auto if_win =
+            svc.substr(if_pos, (if_end == std::string::npos ? 12000 : if_end - if_pos));
+        CHECK(if_win.find("mark_direct_hybrid_dependents_body_dirty_(name)") != std::string::npos,
+              "3345 AC1: invalidate_function calls helper after facade");
+    }
+
+    {
+        apply_production_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda () (B)))
+")")
+                  .has_value(),
+              "3345 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3345 AC2: eval");
+        cs.public_record_dependency("A", "B");
+        CHECK(cs.public_dep_graph_has_edge("A", "B"), "3345 AC2: A calls B");
+        cs.public_mark_define_dirty("B");
+        const auto a_dirty = cs.ir_cache_v2_dirty_block_count("A");
+        if (a_dirty.has_value()) {
+            CHECK(*a_dirty > 0, "3345 AC2: direct dependent A body-only dirty");
+        } else {
+            CHECK(true, "3345 AC2: no IR cache for A (helper no-op without interpreter entries)");
+        }
+        apply_dev_audit_defaults();
+    }
+
+    CHECK(svc.find("hybrid_node_cascade_") != std::string::npos, "3345 AC3: Soft hybrid cascade");
+    CHECK(svc.find("drain_deferred_hybrid_cascade_") != std::string::npos,
+          "3345 AC3: Soft deferred drain");
+    CHECK(svc.find("std::queue<std::string> bfs") != std::string::npos, "3345 AC3: Soft BFS queue");
+
+    CHECK(svc.find("query:hybrid-depth1") == std::string::npos, "3345 AC4: no new query:*");
+    CHECK(svc.find("hard_invalidate_via_facade(") != std::string::npos,
+          "3345 AC4: #3112 facade preserved");
+    CHECK(svc.find("stamp_eval_core_joint_after_production_facade_(name)") != std::string::npos,
+          "3345 AC4: #3219 helper preserved");
+    CHECK(svc.find("Issue #3188 AC1: residual of #3150") != std::string::npos,
+          "3345 AC4: #3188 IR/shape preserved");
+
+    CHECK(build.find("check_production_hybrid_depth1_fanout_3345") != std::string::npos,
+          "3345 AC5: build.py");
+    const auto p3219 = build.find("check_eval_core_joint_after_production_facade_3219");
+    const auto p3345 = build.find("check_production_hybrid_depth1_fanout_3345");
+    CHECK(p3219 != std::string::npos && p3345 != std::string::npos && p3345 > p3219,
+          "3345 AC5: wired after #3219");
+    CHECK(read_file("docs/design/3345-hybrid-depth1-fanout.md").empty(),
+          "3345 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3345.cpp").empty(), "3345 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3345.cpp").empty(), "3345 AC5: no tests/issues");
+    CHECK(svc.find("g_3345_") == std::string::npos && ixx.find("g_3345_") == std::string::npos,
+          "3345 AC5: no g_3345_*");
+}
+
 } // namespace
 
 int run_test_issue_3112() {
@@ -747,6 +852,10 @@ int run_test_issue_3112() {
     // Issue #3221: production dirty / invalidate pass Cascade, not
     // ResidualForceHeal. Age-gated auto-heal keeps ResidualForceHeal.
     ac3221_cascade_reason_not_residual_force_heal();
+
+    // Issue #3345: production hybrid depth-1 called_by IR dirty after
+    // facade early-return. Soft BFS unchanged. Empty IR cache no-op.
+    ac3345_production_hybrid_depth1_fanout();
 
     // Issue #3227: remount ok path rebinds linear proof (densify/steal gen).
     {

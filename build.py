@@ -4519,6 +4519,20 @@ def cmd_lint():
             "Issue #3219 Evaluator/core joint after production facade linter failed — run python3 scripts/coverage/checks/check_eval_core_joint_after_production_facade_3219.py"
         )
         return r
+    # Issue #3345: production hybrid depth-1 called_by IR dirty after
+    # facade early-return. Soft BFS unchanged. Empty IR cache → no
+    # dep_graph lock. Extends test_compiler_hot_update_facade (#81967);
+    # no docs/design/; no new query keys.
+    hyb3345_script = COVERAGE_CHECKS / "check_production_hybrid_depth1_fanout_3345.py"
+    if not hyb3345_script.exists():
+        fail(f"missing {hyb3345_script}")
+        return 1
+    r = run([sys.executable, str(hyb3345_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3345 production hybrid depth-1 fanout linter failed — run python3 scripts/coverage/checks/check_production_hybrid_depth1_fanout_3345.py"
+        )
+        return r
     # Issue #3221: production mark_define_dirty / invalidate_function
     # pass Cascade into the facade, not ResidualForceHeal. Age-gated
     # auto-heal (#3096) keeps ResidualForceHeal; coverage-verify keeps
