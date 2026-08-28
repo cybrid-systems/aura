@@ -455,7 +455,18 @@ struct WorkspaceIsolationPolicy {
             // Issue #2056 / resolve_stamped AC4: under Strict with a non-zero
             // principal, an unstamped (tenant 0) ref is denied — the ref
             // carries no provenance to validate against the principal.
-            if (strict && ref_tenant == 0 && cur != 0) {
+            // Issue #3365: extended from Strict-only to Strict OR
+            // (Restricted + multi-tenant). `multi = hard_capture_tenant_active()
+            // || multi_tenant_env_active()` covers #2835 commercial MT default
+            // (Restricted + AURA_MULTI_TENANT) + TenantScope-driven multi-eval
+            // scenarios. Layout-only refs (make_ref_layout default tenant=0)
+            // must not cross tenant boundaries under production MT — closes
+            // the I6 isolation residual where such refs pass through
+            // check_boundary_ex unchanged. Single-tenant Restricted (no MT)
+            // and Soft / Off stay permissive (legacy contract).
+            const bool multi_active = ::aura::core::provenance::hard_capture_tenant_active() ||
+                                      ::aura::core::provenance::multi_tenant_env_active();
+            if ((strict || (sandbox_restricted && multi_active)) && ref_tenant == 0 && cur != 0) {
                 allowed = false;
             }
             // Same tenant or unscoped target → ok (still check ref provenance).
