@@ -546,8 +546,71 @@ int run_test_orch_obs_facade() {
         CHECK(!sch_s || !is_int(*sch_s), "3251: Soft send no deny-class intern");
     }
 
-    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251: {}/{} checks passed ===", g_passed,
-                 g_passed + g_failed);
+    // ── #3336: production C++ agent_send preference ──
+    {
+        using aura::orch::agent_send;
+        using aura::orch::AgentHandle;
+        using aura::serve::mf_mailbox::MailMessage;
+        using aura::serve::mf_mailbox::MultiFiberMailbox;
+        using aura::serve::mf_mailbox::PushStatus;
+        std::println("\n--- #3336 AC1: production sites safe or annotated ---");
+        CHECK(read_file("src/compiler/evaluator_primitives_agent.cpp").find("orch-raw-send-ok") !=
+                  std::string::npos,
+              "ac3336_1_production_sites_safe_or_annotated");
+        CHECK(read_file("src/orch/agent_spawn.h").find("kAgentSendSafePreferenceIssue = 3336") !=
+                  std::string::npos,
+              "3336 AC1: issue stamp");
+
+        std::println("\n--- #3336 AC2: zero-cost plain / stamped unchanged ---");
+        AgentHandle h;
+        h.ok = true;
+        h.mailbox = std::make_shared<MultiFiberMailbox>(/*high_water=*/64);
+        const auto raw0 =
+            g_orch_module_stats.agent_send_raw_held_ref_total.load(std::memory_order_relaxed);
+        CHECK(agent_send(h, MailMessage{.payload = "plain-3336"}) == PushStatus::Ok,
+              "ac3336_2_zero_cost_plain_unchanged");
+        MailMessage stamped;
+        stamped.payload = "stamped-3336";
+        aura::orch::stamp_mail_message_handoff_completed(stamped, 77);
+        CHECK(agent_send(h, std::move(stamped)) == PushStatus::Ok, "3336 AC2: already-stamped Ok");
+        CHECK(g_orch_module_stats.agent_send_raw_held_ref_total.load(std::memory_order_relaxed) ==
+                  raw0,
+              "ac3336_3_soft_quiet_no_raw_counter");
+
+        std::println("\n--- #3336 AC4: unstamped still HandoffRequired ---");
+        MailMessage raw;
+        raw.payload = "unstamped-3336";
+        raw.held_ref_token = 88;
+        raw.handoff_completed = false;
+        CHECK(agent_send(h, std::move(raw)) == PushStatus::HandoffRequired,
+              "ac3336_4_unstamped_still_handoff_required");
+        CHECK(g_orch_module_stats.agent_send_raw_held_ref_total.load(std::memory_order_relaxed) >=
+                  raw0 + 1,
+              "3336 AC4: raw_held_ref counter bumped on unstamped");
+
+        std::println("\n--- #3336 AC5: schema + linter ---");
+        CHECK(href(cs, "schema-3336") == aura::orch::kAgentSendSafePreferenceIssue,
+              "3336 AC5: schema-3336");
+        CHECK(href(cs, "agent-send-safe-preference-wired") == 1, "3336 AC5: wired");
+        CHECK(href(cs, "agent-send-raw-held-ref-total") >= 0, "3336 AC5: raw-held-ref key");
+        CHECK(href(cs, "schema-3013") == 3013, "3336 AC5: schema-3013 preserved");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_agent_send_safe_preference_3336.py");
+        CHECK(!lint.empty() && lint.find("Issue #3336") != std::string::npos,
+              "ac3336_5_source_and_linter");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_agent_send_safe_preference_3336") != std::string::npos,
+              "3336 AC5: build.py");
+        CHECK(build.find("check_agent_send_handoff_required_3013") != std::string::npos,
+              "3336 AC5: #3013 linter retained");
+        CHECK(read_file("tests/orch/test_issue_3336.cpp").empty(),
+              "3336 AC5: no test_issue_3336.cpp (#81967)");
+        CHECK(read_file("docs/design/3336-agent-send-safe-preference.md").empty(),
+              "3336 AC5: no docs/design/3336-* (#1655)");
+    }
+
+    std::println("\n=== #2589+#2636+2884+#3013+#3212+#3251+#3336: {}/{} checks passed ===",
+                 g_passed, g_passed + g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

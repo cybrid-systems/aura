@@ -4700,7 +4700,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 msg.payload = "payload";
             }
 
-            auto st = aura::orch::agent_send(*hp, std::move(msg));
+            auto st = aura::orch::agent_send(*hp, std::move(msg)); // orch-raw-send-ok
             const char* st_s = "ok";
             aura::orch::AgentDenyClass send_deny = aura::orch::AgentDenyClass::None;
             if (st == aura::serve::mf_mailbox::PushStatus::Backpressure)
@@ -5688,6 +5688,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 insert_kv("schema-3212", 3212);
                 insert_kv("issue-3212", 3212);
                 insert_kv("mailbox-handoff-required-wired", 1);
+            }
+            // Issue #3336: production C++ send preference — agent_send_safe
+            // or `// orch-raw-send-ok`. Additive; schema-3013/3212 unchanged.
+            {
+                insert_kv("schema-3336", aura::orch::kAgentSendSafePreferenceIssue);
+                insert_kv("issue-3336", aura::orch::kAgentSendSafePreferenceIssue);
+                insert_kv("agent-send-safe-preference-wired", 1);
+                insert_kv("agent-send-raw-held-ref-total",
+                          static_cast<std::int64_t>(
+                              os.agent_send_raw_held_ref_total.load(std::memory_order_relaxed)));
             }
             insert_kv("recv-empty", static_cast<std::int64_t>(
                                         os.recv_empty_total.load(std::memory_order_relaxed)));

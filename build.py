@@ -4158,6 +4158,19 @@ def cmd_lint():
             "Issue #3212 mailbox handoff dual-track linter failed — run python3 scripts/coverage/checks/check_mailbox_handoff_dual_track_3212.py"
         )
         return r
+    # Issue #3336: production C++ agent_send preference — agent_send_safe
+    # or explicit // orch-raw-send-ok. Raw path HandoffRequired unchanged.
+    # Extends test_orch_obs_facade.cpp (#81967); no docs/design/ (#1655).
+    asp3336_script = COVERAGE_CHECKS / "check_agent_send_safe_preference_3336.py"
+    if not asp3336_script.exists():
+        fail(f"missing {asp3336_script}")
+        return 1
+    r = run([sys.executable, str(asp3336_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3336 agent_send_safe preference linter failed — run python3 scripts/coverage/checks/check_agent_send_safe_preference_3336.py"
+        )
+        return r
     # Issue #3014: surface agent body try_acquire reject on AgentHandle /
     # orch:agent-join hash (residual of #1880/#2006). Keys only on the
     # reject path. Extends test_fiber_orch_parallel_quota_batch.cpp
