@@ -106,6 +106,10 @@ inline constexpr int kTypedSummaryWalIssue = 3242;
 // Pure fold of already-loaded commit / posture / densify / playbook /
 // schedule flags. Does not execute playbook / reemit / drain / reload.
 inline constexpr int kEvolutionAuditSuggestedNextIssue = 3246;
+// Issue #3319: production_defaults_active (any strategy, including Sampled)
+// always emits a joinable SecurityEvent on deny. Sampled may skip the
+// Typed trail; SE ring + WAL is the durable mid evidence chain.
+inline constexpr int kSampledDenySeEmitIssue = 3319;
 
 enum class EvolutionSuggestedNext : std::uint8_t {
     None = 0,                // production + mid=0 (do not invent Success)
@@ -3398,18 +3402,20 @@ inline void clear_boundary_audit_mid() noexcept {
     return resolve_audit_mutation_id(0);
 }
 
-// Issue #3280: dual-write SecurityEvent(InvariantFail) for invariant /
-// boundary denies that today only stamp the Typed trail. Production / Full
-// only (Soft/Off/Sampled zero-cost — no extra SE when strategy would skip
-// audit). Reuses format_invariant_deny_reason shape
-// ("invariant-denied: <kind> tenant=<id> op=<op>") + join_audit_and_se_mid
-// (#3066 composite/batch pin). One SE per deny: TLS mid-keyed guard so
-// record_invariant_audit_result + record_boundary_deny_after_restore never
-// double-emit for the same deny. #3217 order: call AFTER structural
-// restore + coercion/occurrence/proof clear (boundary deny sites already
-// satisfy this). mid=0 under production refuse → no invented SE (the
-// mid-fallback-refused SE from resolve_audit_mutation_id is the joinable
-// evidence, AC4).
+// Issue #3280 / #3319: dual-write SecurityEvent(InvariantFail) for
+// invariant / boundary / hygiene / hard-gate denies. Production defaults
+// (any strategy, including Sampled) OR Full always emit mid + stable
+// reason so Agent query:security-audit can join by mid even when
+// should_audit() skipped the Typed trail. Soft/Off zero-cost. Sampled
+// without production stays zero-cost (dev). Reuses
+// format_invariant_deny_reason shape ("invariant-denied: <kind> tenant=<id>
+// op=<op>") + join_audit_and_se_mid (#3066 composite/batch pin). One SE
+// per deny: TLS mid-keyed guard so record_invariant_audit_result +
+// record_boundary_deny_after_restore + hygiene/hard-gate never double-emit
+// for the same deny. #3217 order: call AFTER structural restore +
+// coercion/occurrence/proof clear. mid=0 under production refuse → no
+// invented SE (the mid-fallback-refused SE from resolve_audit_mutation_id
+// is the joinable evidence, AC4).
 inline thread_local std::uint64_t g_tls_invariant_deny_se_mid = 0;
 
 inline void clear_invariant_deny_se_tls() noexcept {
@@ -3421,8 +3427,10 @@ inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
                                    std::string_view deny_kind) noexcept {
     if (mid == 0)
         return; // production refuse path already emitted mid-fallback-refused (#3054)
+    // Issue #3319: production_defaults_active (any strategy) always emits.
+    // Soft/Off and Sampled-without-production stay zero-cost.
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
-        return; // Soft/Sampled zero-cost
+        return;
     if (g_tls_invariant_deny_se_mid == mid)
         return; // one SE per deny (both helpers may run for the same deny)
     g_tls_invariant_deny_se_mid = mid;
@@ -3633,7 +3641,7 @@ inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name
                                 std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
                                 std::uint32_t affected_ref_count = 0) noexcept {
     if (!should_audit(mutation_id))
-        return;
+        return; // Issue #3319: trail Sampled-skip; deny callers emit SE
     // Issue #1589 / #3016: capture_audit_event_forced drops mid=0 (never
     // stamp a refuse-zero into the ring). Callers that passed the
     // Sampled/Full gate still need a trail row — empty-Guard rollback
@@ -3711,6 +3719,11 @@ inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch
     capture_audit_event(mid, reason, MutationKind::AotHotUpdate, before_epoch, after_epoch,
                         AuditOutcome::Error);
     set_strategy(prev);
+    // Issue #3319: production/Full always emit joinable SE on AOT deny.
+    // Soft/Off: emit_invariant_deny_se no-ops. TLS one-SE-per-mid.
+    if (mid != 0)
+        emit_invariant_deny_se(mid, /*tenant_id=*/0, /*fiber_id=*/0, after_epoch, reason,
+                               "aot-hotupdate");
 }
 
 // Issue #1882: lightweight JIT L2 / apply hotpath sample (never forces Full).
@@ -3744,12 +3757,20 @@ inline void capture_macro_hygiene_audit(std::string_view name, AuditOutcome outc
         g_typed_mutation_audit_counters.macro_hygiene_allowed.fetch_add(1,
                                                                         std::memory_order_relaxed);
     }
+    // Issue #3319: join mid so trail + SE share one key. Production refuse
+    // of mid=0 leaves join_mid=0 (mid-fallback-refused is the evidence).
+    const auto join_mid = join_audit_and_se_mid(mutation_id);
+    const auto trail_mid = join_mid != 0 ? join_mid : mutation_id;
     const auto prev = get_strategy();
     set_strategy(AuditStrategy::Full);
-    capture_audit_event(mutation_id, name, MutationKind::MacroHygiene,
+    capture_audit_event(trail_mid, name, MutationKind::MacroHygiene,
                         /*before_epoch=*/0, /*after_epoch=*/0, outcome, target_node,
                         /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
     set_strategy(prev);
+    // Production (any strategy, including Sampled) / Full: always emit SE
+    // on hygiene deny. Soft/Off: no-op. TLS one-SE-per-mid.
+    if ((outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) && join_mid != 0)
+        emit_invariant_deny_se(join_mid, tenant_id, fiber_id, /*epoch=*/0, name, "hygiene");
 }
 
 // Convenience for mutation boundary integration.
