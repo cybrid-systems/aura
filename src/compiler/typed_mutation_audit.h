@@ -3358,19 +3358,16 @@ inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) 
                   ? last_type_linear_commit_proof_stamp_v_read()
                   : 0;
     }
-    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
-    if (mid == 0 && !hard)
-        return 0; // Soft/Sampled quiet: no extra mid allocation
-    if (mid == 0) {
-        mid = next_audit_mutation_id();
-        g_composite_batch_join_pin_total.fetch_add(1, std::memory_order_relaxed);
-        using ::aura::core::security_event::SecurityEventKind;
-        using ::aura::core::security_event_wal::emit_security_event_durable;
-        emit_security_event_durable(SecurityEventKind::EffectAllow, /*tenant=*/0, mid,
-                                    /*epoch=*/mid, /*effect_bits=*/0, "composite-batch-join",
-                                    "composite-batch-join", /*denied=*/false, /*fiber=*/0);
-        g_composite_batch_se_join_total.fetch_add(1, std::memory_order_relaxed);
-    }
+    // Issue #3367: hard 门面与 resolve 同表 — `mid==0` 不发明 process-origin
+    // mid (resolve's mid-fallback-refused SE is emitted by the pin caller
+    // via TLS suppression; Soft/Sampled quiet — no caller, no epoch, not
+    // production/Full — zero extra, no alloc per #3066 AC3). The previous
+    // code mints a gen N under hard mode and emitted an EffectAllow SE
+    // with tenant=0/epoch=N — bypassing the #2836 refuse contract on
+    // the same hard face and binding grant/SE/typed rows to a non-
+    // correlating gen mid.
+    if (mid == 0)
+        return 0;
     g_tls_composite_batch_join_mid = mid;
     note_boundary_audit_mid(mid);
     g_last_composite_batch_join_mid.store(mid, std::memory_order_relaxed);
