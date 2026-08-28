@@ -484,6 +484,23 @@ static void ac3214_nonsmall_allocate_notes_cover() {
           "3214: no test_issue_3214.cpp per #81967");
 }
 
+static void ac3326_factory_cover_surface() {
+    std::println("\n--- #3326: factory create_with_cover / try_allocate cover surface ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("kFactoryDefaultCoverIssue = 3326") != std::string::npos, "3326: arena stamp");
+    CHECK(arena.find("create_with_cover(void** cover_slot, const char* cover_reason") !=
+              std::string::npos,
+          "3326: create_with_cover signature");
+    CHECK(arena.find("try_allocate(std::size_t size, void** cover_slot") != std::string::npos,
+          "3326: try_allocate cover args");
+    CHECK(arena.find("allocate_raw(sizeof(T), alignof(T), cover_slot, cover_reason)") !=
+              std::string::npos,
+          "3326: create_with_cover forwards cover to allocate_raw");
+    CHECK(arena.find("if (!aura::core::lifetime::general_object_pin_required_active())") !=
+              std::string::npos,
+          "3326: Soft required-active load preserved");
+}
+
 // AC8: Soft / Off / render-hotpath single-load zero-cost contract preserved.
 // The with_cover_ body keeps the auto_wire_ call for the Soft/Off path
 // (already covered by AC4 ordering check) AND the pre-checks in
@@ -577,6 +594,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3180_cover_param_threading();
     ac3180_hot_path_cover_declarations();
     ac3214_nonsmall_allocate_notes_cover();
+    ac3326_factory_cover_surface();
     ac8_soft_off_zero_cost();
     ac9_linter_self_test();
     ac10_no_invent_docs();

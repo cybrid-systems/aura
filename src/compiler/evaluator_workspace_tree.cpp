@@ -652,7 +652,9 @@ void Evaluator::ensure_stable_ref_workspace_consistency() const noexcept {
 Env* Evaluator::copy_env(const Env& e, ast::ASTArena* target) {
     contract_assert(arena_ != nullptr);
     auto* ar = target ? target : arena_;
-    auto* env = ar ? ar->create<Env>(e) : nullptr;
+    Env* env = nullptr;
+    if (ar)
+        env = ar->create_with_cover<Env>(reinterpret_cast<void**>(&env), nullptr, e);
     // Issue #3180: workspace env is long-lived (lives in the workspace
     // arena). Declare slot cover on the stack-stable pointer field so
     // densify rewrites it.

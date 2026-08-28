@@ -97,6 +97,11 @@ inline constexpr int kGeneralObjectPinAllocateResidualIssue = 3053;
 // pin / slot / EXEMPT triad. Soft is one required-pref load. No second
 // pin registry; do not bump kGeneralObjectPinAdoptSiteCount.
 inline constexpr int kDensifyTrackedAllocateCoverIssue = 3214;
+// Issue #3326: densify-tracked create<T> / try_allocate must declare
+// cover at the allocate site (create_with_cover / try_allocate cover
+// args). Default nullptr remains Soft/compat and still fail-closes
+// Moving when uncovered. No second pin registry.
+inline constexpr int kFactoryDefaultCoverIssue = 3326;
 
 // ── Object class × required protocol inventory (#2298 AC5 / #2363) ────
 // | Class                         | Protocol                          |

@@ -3391,6 +3391,23 @@ def cmd_lint():
             "Issue #3214 densify-tracked allocate cover linter failed — run python3 scripts/coverage/checks/check_production_all_densify_allocate_cover_3214.py"
         )
         return r
+    # Issue #3326: factory-default create<T> / try_allocate still noted
+    # uncovered under required. create_with_cover + try_allocate cover args
+    # declare slot / EXEMPT at the allocate site so uncovered_under_required
+    # does not grow on cover-compliant traffic; default create stays
+    # both-null (Soft/compat) and still fail-closes Moving. Extends
+    # test_moving_densify_fail_closed + test_arena_required_cover_no_value_only
+    # (#81967); no docs/design/; no test_issue_3326.cpp.
+    fdc3326_script = COVERAGE_CHECKS / "check_factory_default_cover_3326.py"
+    if not fdc3326_script.exists():
+        fail(f"missing {fdc3326_script}")
+        return 1
+    r = run([sys.executable, str(fdc3326_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3326 factory-default cover linter failed — run python3 scripts/coverage/checks/check_factory_default_cover_3326.py"
+        )
+        return r
     # Issue #3181: clone walk in_quote boundary (binding/ref split
     # residual of #3154). pre_scan #3154 stops at NodeTag::Quote; clone
     # walk now mirrors it via `in_quote` parameter (NodeTag::Quote OR
