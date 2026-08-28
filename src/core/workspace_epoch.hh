@@ -583,6 +583,9 @@ inline void note_query_result_full_provenance_cow_mismatch() noexcept {
     g_query_result_full_provenance_cow_mismatch_total().fetch_add(1, std::memory_order_relaxed);
 }
 
+// Defined below (#3389). Forward so this reset can zero overflow too.
+inline void reset_query_result_overflow_total_for_test() noexcept;
+
 inline void reset_query_result_full_provenance_for_test() noexcept {
     g_query_result_full_provenance_total().store(0, std::memory_order_relaxed);
     g_query_result_full_provenance_fresh_hits_total().store(0, std::memory_order_relaxed);

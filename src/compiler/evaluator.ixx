@@ -6281,9 +6281,14 @@ private:
         std::uint64_t tenant_id = 0;
         std::uint64_t provenance_mutation_id = 0;
         bool effect_denied = false;
-        // Issue #1567: bridge/provenance epoch at emit (additive, ring layout
-        // compatible — new field at end).
+        // Issue #1567 / #3335: WorkspaceEpoch Mutation at emit (join key
+        // with grant.bound_mutation_id / SE.mutation_id / TypedMid). Not
+        // Bridge — Bridge is AOT/JIT/closure freshness only (#2149).
         std::uint64_t epoch = 0;
+        // Issue #3335: additive Bridge observability (END-append). Not a
+        // security fence; Agents that still want JIT/AOT freshness can
+        // read this without replacing slot.epoch semantics.
+        std::uint64_t bridge_epoch = 0;
     };
     std::array<MutationAuditEntry, kMutationAuditRingSize> mutation_audit_ring_{};
     std::atomic<std::uint64_t> mutation_audit_seq_{0};

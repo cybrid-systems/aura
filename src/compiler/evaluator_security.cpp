@@ -28,6 +28,14 @@ module aura.compiler.evaluator;
 import std;
 import aura.core.ast;
 
+// Issue #3386: query_stable_hard_reject_torn consults the multi-worker
+// production latch (C ABI, aura::serve lookup). Declared here instead of
+// including steal_safety.h so this TU does not pick up that header's
+// process-wide statics.
+namespace aura::serve {
+extern "C" int aura_runtime_multi_worker_production_latched() noexcept;
+}
+
 namespace aura::compiler {
 
 // Issue #918: explicit using-declarations (no using-namespace).
@@ -159,10 +167,20 @@ void Evaluator::emit_mutation_audit(std::uint32_t nodes_changed, std::uint32_t e
     // #1565: default mutate effect stamp on structural audits
     slot.effect_bits = static_cast<std::uint16_t>(aura::core::capability::Effect::Mutate);
     slot.tenant_id = capability_tenant_id_;
-    slot.provenance_mutation_id = 0;
     slot.effect_denied = false;
-    // #1567: full epoch stamp
-    slot.epoch = current_bridge_epoch();
+    // Issue #3335: ring.epoch is WorkspaceEpoch Mutation (same vocabulary
+    // as grant.bound_mutation_id / SE.mutation_id / TypedMid). Bridge is
+    // AOT/JIT/closure only — never the audit join key. Pre-#3335 this
+    // stamped Evaluator::current_bridge_epoch() and split from #2149.
+    const auto me = ::aura::core::current_mutation_epoch();
+    slot.epoch = me != 0 ? me : 1;
+    slot.bridge_epoch = ::aura::core::current_bridge_epoch();
+    // Issue #3296 / #3335: prefer TypedMid then Mutation so structural
+    // audits are not permanently mid=0. Soft/Off: relaxed loads only.
+    std::uint64_t mid = typed_audit::last_type_linear_commit_proof_stamp_v_read();
+    if (mid == 0)
+        mid = slot.epoch;
+    slot.provenance_mutation_id = mid;
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     // #1567: WAL append (optional; no-op when disabled)
     // Issue #3056: append stays fail-open — disk error does not abort
@@ -295,8 +313,9 @@ bool Evaluator::check_and_record_effect(std::uint16_t required_effect_bits,
     slot.tenant_id = tenant;
     slot.provenance_mutation_id = provenance_mutation_id;
     slot.effect_denied = !ok;
-    // #1567: full epoch + WAL persist on effect path too
+    // #1567 / #3335: Mutation epoch + additive Bridge observability
     slot.epoch = prov.epoch;
+    slot.bridge_epoch = ::aura::core::current_bridge_epoch();
     mutation_audit_total_.fetch_add(1, std::memory_order_relaxed);
     {
         using namespace ::aura::core::audit_wal;
@@ -519,6 +538,7 @@ bool Evaluator::enable_mutation_audit_wal(std::string_view persist_dir) noexcept
         slot.provenance_mutation_id = rec.provenance_mutation_id;
         slot.effect_denied = rec.effect_denied != 0;
         slot.epoch = rec.epoch;
+        slot.bridge_epoch = 0; // not in WAL; Mutation is rec.epoch (#3335)
         if (rec.seq + 1 > max_seq)
             max_seq = rec.seq + 1;
     }

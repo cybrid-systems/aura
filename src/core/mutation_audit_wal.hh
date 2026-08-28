@@ -43,7 +43,7 @@ struct AuditWalRecord {
     std::uint16_t reserved0 = 0;
     std::uint64_t tenant_id = 0;
     std::uint64_t provenance_mutation_id = 0;
-    std::uint64_t epoch = 0; // bridge / provenance epoch at emit
+    std::uint64_t epoch = 0; // Mutation epoch at emit (#3335; was Bridge)
     std::uint8_t effect_denied = 0;
     std::uint8_t reserved1[7]{};
 };
