@@ -206,7 +206,11 @@ namespace {
     // proof is stamped AND !would_allow AND recent densify.
     // Issue #3001: soak fail-closed if this arm grows without matching
     // RejectHard / no-ticket (last_reject_invariant_bits covers the arm).
-    if (!skip(StealInvariant::LifetimeProofOk) && is_steal_snapshot_hard_mode()) {
+    // Issue #3385: latch is also hard for this arm — a process latched
+    // multi-worker Ready while snapshot mode is Soft must still fire this
+    // arm (otherwise last !would_allow proof cannot set sticky-fail).
+    if (!skip(StealInvariant::LifetimeProofOk) &&
+        (is_steal_snapshot_hard_mode() || aura_runtime_multi_worker_production_latched() != 0)) {
         namespace lcp = aura::core::lifetime_consistency_proof;
         if (lcp::last_lifetime_consistency_proof_present() &&
             aura::core::densify_consistency::last_densify_call_seq() > 0 &&
@@ -404,7 +408,14 @@ MailboxDeliverySafety mailbox_delivery_safety_transaction(Fiber* target,
         return out;
     }
     MutationSafetySnapshot local = snap ? *snap : target->mutation_safety_snapshot();
-    std::uint64_t skip = steal_invariant_mask(StealInvariant::LifetimeProofOk);
+    // Issue #3385: only skip LifetimeProofOk when NOT (latch + held-ref).
+    // Pure payload without held-ref keeps the skip (zero extra loads);
+    // held-ref delivery under latch observes the same arm as
+    // steal_safety_transaction.
+    const bool observe_latch = aura::serve::aura_runtime_multi_worker_production_latched() != 0;
+    std::uint64_t skip = (observe_latch && check_envframe)
+                             ? 0
+                             : steal_invariant_mask(StealInvariant::LifetimeProofOk);
     if (!check_envframe)
         skip |= steal_invariant_mask(StealInvariant::EnvFrameOk);
     // Mailbox never bumps steal counters (own mailbox_* totals).

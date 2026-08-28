@@ -543,8 +543,45 @@ int run_test_steal_safety_production_residual_zero() {
         clear_production_abi_selfcheck_for_test();
     }
 
-    std::println("\n=== #3134 production-readiness residual-zero: {} passed, {} failed ===",
-                 g_passed, g_failed);
+    // ── AC16 (Issue #3385): LifetimeProofOk residual arm fires under
+    //    latched multi-worker Ready even when snapshot mode is Soft (I3
+    //    residual). Mailbox held-ref path observes the same arm under
+    //    latch; pure payload without held-ref keeps the skip (zero extra
+    //    loads). Soft + unlatched: arm skipped, no behavioural change.
+    {
+        std::println("\n--- AC16: LifetimeProofOk arm under latch (#3385) ---");
+        const auto cpp_src = read_file("src/serve/steal_safety.cpp");
+        // AC16a: LifetimeProofOk arm uses hard_mode OR latch.
+        CHECK(cpp_src.find("Issue #3385") != std::string::npos,
+              "AC16a: steal_safety.cpp cites #3385");
+        CHECK(cpp_src.find("is_steal_snapshot_hard_mode() || "
+                           "aura_runtime_multi_worker_production_latched()") != std::string::npos,
+              "AC16a: LifetimeProofOk arm hard_mode OR latch");
+        // AC16b: mailbox conditional skip based on (observe_latch && check_envframe).
+        CHECK(cpp_src.find("observe_latch") != std::string::npos,
+              "AC16b: mailbox observes latch for held-ref skip");
+        CHECK(cpp_src.find("aura::serve::aura_runtime_multi_worker_production_latched()") !=
+                  std::string::npos,
+              "AC16b: mailbox uses latched accessor");
+        // AC16c: no docs/design/3385-* per MEMORY 2026-07-19.
+        auto docs = std::filesystem::current_path() / "docs" / "design";
+        if (std::filesystem::exists(docs)) {
+            for (const auto& f : std::filesystem::directory_iterator(docs)) {
+                auto name = f.path().filename().string();
+                CHECK(name.find("3385-") == std::string::npos,
+                      "AC16c: no docs/design/3385-* (#1655)");
+                break;
+            }
+        }
+        // AC16d: no tests/issues/test_issue_3385.cpp per #81967.
+        CHECK(!std::filesystem::exists(std::filesystem::current_path() / "tests" / "issues" /
+                                       "test_issue_3385.cpp"),
+              "AC16d: tests/issues/test_issue_3385.cpp absent (#81967)");
+    }
+
+    std::println(
+        "\n=== #3134/#3288/#3385 production-readiness residual-zero: {} passed, {} failed ===",
+        g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
