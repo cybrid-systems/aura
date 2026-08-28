@@ -42,6 +42,10 @@ inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitResidualSticky = 1u
 // worker's ambient capability_tenant_id_ (principal bypass). Soft /
 // sandbox=off / light-link never reaches this check (selfcheck not required).
 inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitTenantScope = 1ull << 6;
+// Issue #3343: bit 7 set when the steal linear-probe ABI is missing
+// (weak empty aura_evaluator_probe_linear_on_steal resolved). Production
+// steal must link the strong probe (ownership + escape clear + invalidate).
+inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitProbeLinear = 1ull << 7;
 // Issue #3195: set when aura_runtime_require_production_multi_worker
 // succeeds. residual_zero / sticky-fail consult this so a later Soft
 // flip cannot wipe readiness (I3/I6). Not a metric — process latch.
@@ -111,6 +115,9 @@ extern "C" int aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept;
 // Issue #3275: tenant-scope resume ABI strong marker (1 = strong
 // aura_fiber_install_tenant_scope_for_resume / release linked).
 extern "C" int aura_abi_strong_tenant_scope_resume_v(void) noexcept;
+// Issue #3343: steal linear-probe ABI strong marker (1 = strong
+// aura_evaluator_probe_linear_on_steal linked).
+extern "C" int aura_abi_strong_probe_linear_on_steal_v(void) noexcept;
 
 // C ABI entry for hosts that cannot attach aura::serve.
 extern "C" int aura_runtime_require_production_abi_c(void) noexcept;

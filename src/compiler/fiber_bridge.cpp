@@ -129,8 +129,19 @@ __attribute__((weak)) int aura_evaluator_request_gc_safepoint() {
 // Issue #439: GC safepoint wait.
 __attribute__((weak)) void aura_evaluator_wait_for_safepoint(std::uint64_t /*timeout_ms*/) {}
 
-// Issue #683: linear ownership probe on fiber steal.
-__attribute__((weak)) void aura_evaluator_probe_linear_on_steal() {}
+// Issue #683 / #3343: linear ownership probe on fiber steal.
+// Weak no-op is Soft / light-link only. Under the production lock the
+// empty body MUST NOT silently return (that skips ownership probe +
+// escape clear + invalidate_gen). Abort so a mis-linked production
+// binary fails closed — same shape as steal-complete (#2377).
+__attribute__((weak, used)) void aura_evaluator_probe_linear_on_steal() {
+    if (aura::serve::steal_snapshot_soft_production_locked()) {
+        std::fprintf(stderr, "FATAL: weak aura_evaluator_probe_linear_on_steal resolved under "
+                             "production (#3343); multi-worker builds must link the strong "
+                             "linear-on-steal ABI (ownership probe + escape clear + invalidate)\n");
+        std::abort();
+    }
+}
 
 // Issue #2203 / #2377: steal-complete single entry (strong def in
 // evaluator_fiber_mutation.cpp runs Panic clear → residual → LayoutStamp
@@ -165,6 +176,10 @@ extern "C" __attribute__((weak, used)) int aura_abi_strong_mutation_held_v(void)
 }
 extern "C" __attribute__((weak, used)) int
 aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept {
+    return 0;
+}
+// Issue #3343: weak marker for steal linear-probe ABI (0 = not strong).
+extern "C" __attribute__((weak, used)) int aura_abi_strong_probe_linear_on_steal_v(void) noexcept {
     return 0;
 }
 

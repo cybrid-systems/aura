@@ -21,6 +21,10 @@ import std;
 import aura.compiler.service;
 import aura.compiler.value;
 
+extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void);
+extern "C" int aura_jit_linear_move_drop_elision_ok(void);
+extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
+
 namespace {
 
 using aura::compiler::CompilerService;
@@ -90,7 +94,9 @@ int run_test_steal_complete_strong_entry() {
         // Order within on_steal_complete body only (file may cite helpers earlier).
         const auto fn = fm.find("extern \"C\" void aura_evaluator_on_steal_complete");
         CHECK(fn != std::string::npos, "AC2: strong entry present");
-        const auto body = fm.substr(fn, 6000);
+        // Window covers Panic clear → residual → LayoutStamp after
+        // #3048/#3209 session-revoke lead-in + #3343 probe marker.
+        const auto body = fm.substr(fn, 16000);
         const auto i_clear = body.find("clear_gc_defer_for_evaluator");
         const auto i_resid = body.find("force_clear_residual_defer_for_evaluator");
         const auto i_stamp = body.find("has_resume_layout_stamp");
@@ -411,8 +417,87 @@ int run_test_steal_complete_strong_entry() {
         }
     }
 
-    std::println("\n=== #2377 + #2955 + #3098 + #3195 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── Issue #3343: production weak probe_linear_on_steal fail-closed ──
+    {
+        std::println("\n=== Issue #3343: production weak linear-on-steal fail-closed ===");
+        const auto fb = read_file("src/compiler/fiber_bridge.cpp");
+        const auto wc = read_file("src/serve/worker.cpp");
+        const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+        const auto hh = read_file("src/serve/runtime_production_abi.h");
+        const auto cpp = read_file("src/serve/runtime_production_abi.cpp");
+        const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_production_weak_abi_commit_readiness_3343.py");
+        const auto build = read_file("build.py");
+
+        CHECK(fb.find("Issue #3343") != std::string::npos, "3343 AC1: fiber_bridge cites #3343");
+        CHECK(fb.find("aura_evaluator_probe_linear_on_steal") != std::string::npos,
+              "3343 AC1: weak probe present");
+        {
+            const auto p =
+                fb.find("__attribute__((weak, used)) void aura_evaluator_probe_linear_on_steal");
+            CHECK(p != std::string::npos, "3343 AC1: weak used probe");
+            const auto body = fb.substr(p, 900);
+            CHECK(body.find("steal_snapshot_soft_production_locked") != std::string::npos,
+                  "3343 AC1: weak probe production-aware");
+            CHECK(body.find("std::abort()") != std::string::npos, "3343 AC1: weak probe aborts");
+        }
+        {
+            const auto p = wc.find("static inline void call_probe_linear_on_steal");
+            CHECK(p != std::string::npos, "3343 AC1: worker call_probe");
+            const auto body = wc.substr(p, 1100);
+            CHECK(body.find("steal_snapshot_soft_production_locked") != std::string::npos,
+                  "3343 AC1: worker null-ref production lock");
+            CHECK(body.find("std::abort()") != std::string::npos, "3343 AC1: worker null abort");
+            CHECK(body.find("Issue #3343") != std::string::npos, "3343 AC1: worker cites #3343");
+        }
+        CHECK(fm.find("extern \"C\" void aura_evaluator_probe_linear_on_steal()") !=
+                  std::string::npos,
+              "3343 AC2: strong probe def");
+        CHECK(fm.find("probe_and_repin_linear_on_steal") != std::string::npos,
+              "3343 AC3: strong probe re-pins");
+        CHECK(fm.find("note_escape_gate_clear_on_steal") != std::string::npos,
+              "3343 AC3: steal-complete clears escape");
+        CHECK(aura_abi_strong_probe_linear_on_steal_v() == 1,
+              "3343 AC2: this link unit has strong probe marker");
+        CHECK(aura::serve::kProductionAbiSelfcheckFailBitProbeLinear == (1ull << 7),
+              "3343 AC2: fail bit 7");
+        CHECK(hh.find("kProductionAbiSelfcheckFailBitProbeLinear") != std::string::npos,
+              "3343 AC2: header bit 7");
+        CHECK(cpp.find("aura_abi_strong_probe_linear_on_steal_v() == 0") != std::string::npos,
+              "3343 AC2: self-check requires probe marker");
+        CHECK(stub.find("Issue #3343") != std::string::npos, "3343 AC4: JIT stub cites #3343");
+        {
+            auto& pda = aura::compiler::typed_audit::g_typed_mutation_audit_counters
+                            .production_defaults_active;
+            const auto saved = pda.load(std::memory_order_relaxed);
+            pda.store(0, std::memory_order_relaxed);
+            CHECK(aura_jit_ir_typed_entry_commit_readiness_ok() == 1,
+                  "3343 AC4: Soft stub allows IR entry");
+            CHECK(aura_jit_linear_move_drop_elision_ok() == 1,
+                  "3343 AC4: Soft stub allows elision");
+            CHECK(aura_jit_linear_post_mutate_enforce(0) == 0,
+                  "3343 AC4: Soft stub post-mutate pass-through");
+            pda.store(1, std::memory_order_relaxed);
+            CHECK(aura_jit_ir_typed_entry_commit_readiness_ok() == 0,
+                  "3343 AC1: production stub refuses IR entry");
+            CHECK(aura_jit_linear_move_drop_elision_ok() == 0,
+                  "3343 AC1: production stub blocks elision");
+            CHECK(aura_jit_linear_post_mutate_enforce(0) == 1,
+                  "3343 AC1: production stub post-mutate unsafe");
+            pda.store(saved, std::memory_order_relaxed);
+        }
+        CHECK(!lint.empty() && lint.find("3343") != std::string::npos, "3343 AC5: linter");
+        CHECK(build.find("check_production_weak_abi_commit_readiness_3343") != std::string::npos,
+              "3343 AC5: build.py");
+        CHECK(read_file("docs/design/3343-production-weak-abi-commit-readiness.md").empty(),
+              "3343 AC5: no docs/design");
+        CHECK(read_file("tests/serve/test_issue_3343.cpp").empty(), "3343 AC5: no invent");
+        CHECK(cpp.find("schema-3343") == std::string::npos, "3343 AC5: no schema-3343");
+    }
+
+    std::println("\n=== #2377 + #2955 + #3098 + #3195 + #3343 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

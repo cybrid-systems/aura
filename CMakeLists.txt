@@ -163,6 +163,10 @@ target_sources(aura PRIVATE
     # Issue #1884: C hooks for TypedMutationAudit correlation (non-module)
     src/compiler/typed_mutation_audit_hooks.cpp
     src/compiler/arity_impl.cpp
+    # Issue #3343: production aura must compile the strong JIT bridge
+    # (typed-entry commit_readiness / linear elision / post-mutate enforce).
+    # Do not substitute aura_jit_bridge_stub.cpp here — its weak Soft-allow
+    # is fail-closed under production_defaults but is not the real ABI.
     src/compiler/aura_jit_bridge.cpp
     # Issue #1956: HotUpdateRegistry coordination center (non-module).
     src/compiler/hot_update_registry.cpp
@@ -730,7 +734,9 @@ if(LLVM_FOUND)
     #   handle_contract_violation (contract_handler) so minimal
     #   unit tests (e.g. test_issue_1477) link without service.ixx.
     # Do NOT add aura_jit_bridge_stub.cpp here — real bridge is already
-    # in the library (duplicate symbols).
+    # in the library (duplicate symbols). Issue #3343: production / full
+    # JIT binaries must resolve strong aura_jit_ir_typed_entry_commit_readiness_ok
+    # (and linear elision / post-mutate enforce), not the light-link stub.
     # P2: SHARED so LLVM is mapped once (~50–70MB .so) instead of
     # baked into each full-JIT test binary.
     add_library(aura_jit_test_objects SHARED

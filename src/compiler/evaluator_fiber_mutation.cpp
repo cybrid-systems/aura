@@ -3511,6 +3511,14 @@ extern "C" int aura_abi_strong_mutation_held_v(void) noexcept {
 extern "C" int aura_abi_strong_tenant_scope_resume_v(void) noexcept {
     return 1;
 }
+// Issue #3343: steal linear-probe ABI is defined strong in this TU
+// (aura_evaluator_probe_linear_on_steal above). Weak stub in
+// fiber_bridge returns 0; production self-check requires this marker
+// == 1 so a link set that resolves the empty no-op fails at startup
+// instead of silently skipping ownership probe + escape clear.
+extern "C" int aura_abi_strong_probe_linear_on_steal_v(void) noexcept {
+    return 1;
+}
 
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Always count the steal-complete entry (even with null fiber).

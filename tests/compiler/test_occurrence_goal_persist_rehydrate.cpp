@@ -61,6 +61,10 @@ import aura.compiler.type_checker;
 import aura.compiler.value;
 import aura.core.type;
 
+extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void);
+extern "C" int aura_jit_linear_move_drop_elision_ok(void);
+extern "C" int aura_jit_linear_post_mutate_enforce(std::uint32_t env_id);
+
 namespace {
 
 using aura::compiler::CompilerMetrics;
@@ -2251,7 +2255,7 @@ static void ac3224_ir_typed_entry_commit_readiness() {
         apply_production_audit_defaults();
         clear_occurrence_empty_after_fence_for_test();
         typed_audit::reset_linear_ir_fastpath_counters_for_test();
-        aura_typed_audit_test_clear_recover_override();
+        typed_audit::aura_typed_audit_test_clear_recover_override();
         typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
         CHECK(typed_audit::ir_typed_entry_commit_readiness_ok(), "3224 AC3: quiet depth==0 allows");
         typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
@@ -2283,6 +2287,94 @@ static void ac3224_ir_typed_entry_commit_readiness() {
               "3224 AC4: no tests/issues invent");
         const auto tma = read_file("src/compiler/typed_mutation_audit.h");
         CHECK(tma.find("g_3224_") == std::string::npos, "3224 AC4: no new g_3224_* counter");
+    }
+}
+
+// ── Issue #3343: production weak-ABI stubs fail-closed for IR/linear
+// commit_readiness (light-link stub) so a JIT-less production binary
+// cannot run under commit_readiness=false. Soft keeps weak allow.
+//   AC1: production_defaults + weak stub → IR refuse / elision blocked /
+//        post-mutate unsafe
+//   AC2: production / full-JIT sources compile strong jit_bridge
+//   AC3: force !commit_readiness under production → typed_audit refuse
+//   AC4: Soft / missing probe keep weak allow / pass-through
+//   AC5: this suite + steal-complete suite + linter; no invent / docs /
+//        schema-3343
+
+static void ac3343_production_weak_abi_commit_readiness() {
+    std::println("\n--- #3343: production weak ABI fail-closed on IR commit_readiness ---");
+
+    {
+        apply_dev_audit_defaults();
+        CHECK(aura_jit_ir_typed_entry_commit_readiness_ok() == 1,
+              "3343 AC4: Soft stub allows IR entry");
+        CHECK(aura_jit_linear_move_drop_elision_ok() == 1, "3343 AC4: Soft stub allows elision");
+        CHECK(aura_jit_linear_post_mutate_enforce(0) == 0,
+              "3343 AC4: Soft stub post-mutate pass-through");
+    }
+
+    {
+        apply_production_audit_defaults();
+        CHECK(aura_jit_ir_typed_entry_commit_readiness_ok() == 0,
+              "3343 AC1: production stub refuses IR entry");
+        CHECK(aura_jit_linear_move_drop_elision_ok() == 0,
+              "3343 AC1: production stub blocks elision");
+        CHECK(aura_jit_linear_post_mutate_enforce(0) == 1,
+              "3343 AC1: production stub post-mutate unsafe");
+        apply_dev_audit_defaults();
+    }
+
+    {
+        apply_production_audit_defaults();
+        clear_occurrence_empty_after_fence_for_test();
+        typed_audit::reset_linear_ir_fastpath_counters_for_test();
+        typed_audit::aura_typed_audit_test_clear_recover_override();
+        typed_audit::note_occurrence_empty_after_fence(/*production_hard=*/true);
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 1;
+        CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3343 AC3: production + mutation + !would_allow refuses");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        clear_occurrence_empty_after_fence_for_test();
+        apply_dev_audit_defaults();
+    }
+
+    {
+        const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+        const auto brc = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto cmake = read_file("CMakeLists.txt");
+        CHECK(stub.find("Issue #3343") != std::string::npos, "3343 AC1: stub cites #3343");
+        CHECK(stub.find("stub_production_defaults_active") != std::string::npos,
+              "3343 AC1: stub production-aware");
+        CHECK(brc.find("typed_audit::ir_typed_entry_commit_readiness_ok()") != std::string::npos,
+              "3343 AC2: strong IR readiness consults typed_audit");
+        CHECK(brc.find("typed_audit::linear_move_drop_elision_ok()") != std::string::npos,
+              "3343 AC2: strong elision consults typed_audit");
+        CHECK(cmake.find("Do NOT add aura_jit_bridge_stub.cpp here") != std::string::npos,
+              "3343 AC2: full JIT archive forbids stub");
+        CHECK(cmake.find("src/compiler/aura_jit_bridge.cpp") != std::string::npos,
+              "3343 AC2: production compiles strong bridge");
+    }
+
+    {
+        const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+        const auto t = read_file("tests/compiler/test_occurrence_goal_persist_rehydrate.cpp");
+        const auto steal = read_file("tests/serve/test_steal_complete_strong_entry.cpp");
+        const auto lint =
+            read_file("scripts/coverage/checks/check_production_weak_abi_commit_readiness_3343.py");
+        const auto build = read_file("build.py");
+        CHECK(t.find("ac3343_production_weak_abi_commit_readiness") != std::string::npos,
+              "3343 AC5: this suite");
+        CHECK(steal.find("Issue #3343") != std::string::npos, "3343 AC5: steal suite");
+        CHECK(!lint.empty() && lint.find("3343") != std::string::npos, "3343 AC5: linter");
+        CHECK(build.find("check_production_weak_abi_commit_readiness_3343") != std::string::npos,
+              "3343 AC5: build.py");
+        CHECK(read_file("docs/design/3343-production-weak-abi-commit-readiness.md").empty(),
+              "3343 AC5: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3343.cpp").empty(), "3343 AC5: no invent");
+        CHECK(read_file("tests/issues/test_issue_3343.cpp").empty(),
+              "3343 AC5: no tests/issues invent");
+        CHECK(stub.find("schema-3343") == std::string::npos, "3343 AC5: no schema-3343");
+        CHECK(stub.find("g_3343_") == std::string::npos, "3343 AC5: no g_3343_*");
     }
 }
 
@@ -2796,6 +2888,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     // runtime bridge + linear_safety_probe OR).
     ac3186_jit_linear_move_drop_elision_probe();
     ac3224_ir_typed_entry_commit_readiness();
+    ac3343_production_weak_abi_commit_readiness();
     ac3225_occurrence_persist_seqlock();
     // Issue #3170: outermost-success occurrence persist fingerprint guard
     // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -
