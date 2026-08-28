@@ -241,6 +241,10 @@ export struct InstructionDirtyPred {
 
 export inline constexpr int kPureWrapNoStdFunctionDirtyIssue = 3042;
 export inline std::atomic<std::uint64_t> pure_wrap_no_std_function_dirty_wired{1};
+// Issue #3315: production DirtySoAEntry / columnar mask — no residual
+// set_block_dirty_pred on the PureWrap hot path (I5 of #2258/#3042/#2907).
+export inline constexpr int kProductionDirtySoaNoPredIssue = 3315;
+export inline std::atomic<std::uint64_t> production_dirty_soa_entry_no_pred_wired{1};
 
 static_assert(std::is_trivially_copyable_v<BlockDirtyPred>,
               "BlockDirtyPred must be inlineable (no std::function) (#3042)");
@@ -668,11 +672,19 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
         const bool fn_shape_stable =
             g_fn_shape_stable_probe != nullptr && g_fn_shape_stable_probe(func.name);
 
-        // Issue #1574 / #3042: wire define mask as BlockDirtyPred (no
-        // std::function type erasure on PureWrap hot path).
-        if constexpr (requires(P& p, BlockDirtyPred pred) { p.set_block_dirty_pred(pred); }) {
-            if (define_cache && define_cache->block_dirty_per_func)
-                pass.set_block_dirty_pred(BlockDirtyPred{define_cache, fi, nullptr});
+        // Issue #3315: production DirtySoAEntry takes the columnar pred at
+        // run_on_dirty_blocks_only (no capturing lambda / no std::function).
+        // set_block_dirty_pred stays test/Soft-only when the 2-arg entry is
+        // absent. #3042 BlockDirtyPred remains the column-view type.
+        constexpr bool kDirtySoaColumnarEntry =
+            requires(P& p, aura::ir::IRFunction& f, BlockDirtyPred pred) {
+                p.run_on_dirty_blocks_only(f, pred);
+            };
+        if constexpr (!kDirtySoaColumnarEntry) {
+            if constexpr (requires(P& p, BlockDirtyPred pred) { p.set_block_dirty_pred(pred); }) {
+                if (define_cache && define_cache->block_dirty_per_func)
+                    pass.set_block_dirty_pred(BlockDirtyPred{define_cache, fi, nullptr});
+            }
         }
         // Issue #2133 / #3042: instruction dirty as InstructionDirtyPred.
         if constexpr (requires(P& p, InstructionDirtyPred pred) {
@@ -740,13 +752,22 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
             aura::core::cpp26::record_hotpath_invariant_hit();
             continue;
         }
-        // Issue #2060: prefer explicit dirty-only / SoA-columnar entry.
+        // Issue #2060 / #3315: prefer explicit dirty-only / SoA-columnar entry.
         if constexpr (requires(P& p, aura::ir::IRFunction& f) { p.run_on_dirty_blocks_only(f); }) {
             dirty_only_entry_hits_total.fetch_add(1, std::memory_order_relaxed);
             dirty_only_blocks_run_total.fetch_add(dirty_blocks, std::memory_order_relaxed);
             if (clean_blocks > 0)
                 dirty_only_blocks_skipped_total.fetch_add(clean_blocks, std::memory_order_relaxed);
-            pass.run_on_dirty_blocks_only(func);
+            if constexpr (requires(P& p, aura::ir::IRFunction& f, BlockDirtyPred pred) {
+                              p.run_on_dirty_blocks_only(f, pred);
+                          }) {
+                if (define_cache && define_cache->block_dirty_per_func)
+                    pass.run_on_dirty_blocks_only(func, BlockDirtyPred{define_cache, fi, nullptr});
+                else
+                    pass.run_on_dirty_blocks_only(func);
+            } else {
+                pass.run_on_dirty_blocks_only(func);
+            }
         } else {
             // DirtyAware + set_block_dirty_pred: pass peels clean blocks internally.
             // Still record #2060 skip metrics for Agent sparse-dirty dashboards.

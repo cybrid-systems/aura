@@ -96,8 +96,21 @@ public:
     void run(aura::ir::BasicBlock& /*block*/) {
         // Per-block compute_kind is not defined; no-op for IncrementalPass.
     }
-    // Issue #2060: DirtySoAEntryPass — function-granularity dirty gate.
-    void run_on_dirty_blocks_only(aura::ir::IRFunction& func) { run(func); }
+    // Issue #2060 / #3315: DirtySoAEntryPass — function-granularity dirty
+    // gate. Production passes a columnar BlockDirtyPred; setter stays tests.
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& func, BlockDirtyPred pred = {}) {
+        const BlockDirtyPred p = pred ? pred : block_dirty_pred_;
+        bool any = false;
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (p(static_cast<std::uint32_t>(bi))) {
+                any = true;
+                break;
+            }
+        }
+        if (!any && p)
+            return;
+        results_.push_back(aura::compiler::compute_kind(func));
+    }
 
     bool has_error() const { return false; }
     std::string_view name() const { return "compute-kind"; }
@@ -534,14 +547,16 @@ public:
     void run(aura::ir::IRFunction& func) { (void)fold_function(func); }
     void run(aura::ir::BasicBlock& block) { (void)fold_block(block); }
 
-    // Issue #2060: DirtySoAEntryPass — fold only dirty blocks (no clean peel).
-    void run_on_dirty_blocks_only(aura::ir::IRFunction& func) {
-        if (!block_dirty_pred_) {
+    // Issue #2060 / #3315: DirtySoAEntryPass — fold only dirty blocks (no
+    // clean peel). Production columnar pred is an argument (no setter).
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& func, BlockDirtyPred pred = {}) {
+        const BlockDirtyPred p = pred ? pred : block_dirty_pred_;
+        if (!p) {
             (void)fold_function(func);
             return;
         }
         for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
-            if (!is_block_dirty(static_cast<std::uint32_t>(bi)))
+            if (!p(static_cast<std::uint32_t>(bi)))
                 continue;
             known_.clear();
             folded_ += aura::compiler::constant_fold_block(func.blocks[bi], known_);
@@ -2757,8 +2772,16 @@ public:
     }
     void run(aura::ir::BasicBlock& block) { run_on_block(block); }
 
-    // Issue #2060: DirtySoAEntryPass — only dirty blocks (same peel as run(func)).
-    void run_on_dirty_blocks_only(aura::ir::IRFunction& func) { run(func); }
+    // Issue #2060 / #3315: DirtySoAEntryPass — only dirty blocks. Production
+    // columnar pred is an argument (no set_block_dirty_pred).
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& func, BlockDirtyPred pred = {}) {
+        const BlockDirtyPred p = pred ? pred : block_dirty_pred_;
+        for (std::size_t bi = 0; bi < func.blocks.size(); ++bi) {
+            if (!p(static_cast<std::uint32_t>(bi)))
+                continue;
+            run_on_block(func.blocks[bi]);
+        }
+    }
 
     // Issue #1920 / #2143: SoA type propagation via for_each_block(dirty_only).
     // Walks type_id / narrow_evidence columns without full AoS conversion.
@@ -4789,10 +4812,11 @@ consteval void check_production_soa_dirty_pack_2907() {
 static_assert((check_production_soa_dirty_pack_2907(), true),
               "production SoA dirty hot pack #2907");
 
-// Issue #2907: production hot SoA dirty pack — CF → TP → DCE on IRModuleV2
-// via run_dirty_pipeline (zero SoAtoAoSBridgePass / to_aos_view).
-// Call from CompilerService when entry.soa_mod is non-empty after dirty mark.
-// type_reg optional (DCE identity/type rules; nullptr keeps columnar path).
+// Issue #2907 / #3315: production hot SoA dirty pack — CF → TP → DCE on
+// IRModuleV2 via run_dirty_pipeline (zero SoAtoAoSBridgePass / to_aos_view,
+// zero set_block_dirty_pred). Call from CompilerService when entry.soa_mod
+// is non-empty after dirty mark. type_reg optional (DCE identity/type rules;
+// nullptr keeps columnar path).
 export inline bool
 run_production_soa_dirty_hot_pack(IRModuleV2& mod,
                                   const aura::core::TypeRegistry* type_reg = nullptr) {

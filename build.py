@@ -805,6 +805,19 @@ def cmd_lint():
             "Issue #3042 PureWrap no-std-function dirty linter failed — run python3 scripts/coverage/checks/check_pure_wrap_no_std_function_3042.py"
         )
         return r
+    # Issue #3315: production PureWrap dirty path is DirtySoAEntry /
+    # columnar mask only (no residual set_block_dirty_pred). I5 of
+    # #2258/#3042/#2907. Extends test_hot_pass_hard_dod (#81967).
+    pd3315_script = COVERAGE_CHECKS / "check_production_dirty_soa_no_pred_3315.py"
+    if not pd3315_script.exists():
+        fail(f"missing {pd3315_script}")
+        return 1
+    r = run([sys.executable, str(pd3315_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3315 production DirtySoAEntry no-pred linter failed — run python3 scripts/coverage/checks/check_production_dirty_soa_no_pred_3315.py"
+        )
+        return r
     # Issue #3043: Soft-observe AURA_HOT_CONTRACT (metrics, no abort).
     # Production default stays OFF. Extends test_hot_contract_placement
     # + test_hot_contract_unify (#81967); no docs/design/ (#1655).

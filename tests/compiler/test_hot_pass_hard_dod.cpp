@@ -46,6 +46,7 @@ using aura::compiler::HotPassDodCompliant;
 using aura::compiler::InlinePass;
 using aura::compiler::InstructionDirtyPred;
 using aura::compiler::kPassSccNoStdFunctionIssue;
+using aura::compiler::kProductionDirtySoaNoPredIssue;
 using aura::compiler::kPureWrapNoStdFunctionDirtyIssue;
 using aura::compiler::LinearOwnershipPass;
 using aura::compiler::MonomorphizePass;
@@ -361,7 +362,77 @@ int run_test_hot_pass_hard_dod() {
         CHECK(read_file("tests/compiler/test_issue_3234.cpp").empty(), "3234 AC4: no invent");
     }
 
-    std::println("\n=== #2434/#3042/#3234 results: {} passed, {} failed ===", g_passed, g_failed);
+    // ── #3315: production DirtySoAEntry / columnar mask, no pred setter ──
+    {
+        std::println("\n--- #3315 AC1: production dirty path is DirtySoAEntry / columnar ---");
+        CHECK(kProductionDirtySoaNoPredIssue == 3315, "3315 AC1: issue constant");
+        auto core = read_file("src/compiler/pass_pipeline_core.ixx");
+        auto impls = read_file("src/compiler/pass_impls.ixx");
+        CHECK(core.find("Issue #3315") != std::string::npos, "3315 AC1: pipeline cite");
+        CHECK(core.find("kDirtySoaColumnarEntry") != std::string::npos,
+              "3315 AC1: skip setter when 2-arg");
+        CHECK(impls.find(
+                  "run_on_dirty_blocks_only(aura::ir::IRFunction& func, BlockDirtyPred pred") !=
+                  std::string::npos,
+              "3315 AC1: 2-arg DirtySoAEntry");
+        CHECK(impls.find("zero set_block_dirty_pred") != std::string::npos,
+              "3315 AC1: production pack never sets pred");
+        const auto pack = impls.find("run_production_soa_dirty_hot_pack");
+        CHECK(pack != std::string::npos, "3315 AC1: production pack");
+        const auto pack_end = impls.find("\nexport ", pack + 1);
+        const auto body = impls.substr(pack, pack_end > pack ? pack_end - pack : 1200);
+        CHECK(body.find("set_block_dirty_pred") == std::string::npos,
+              "3315 AC1: pack body has no set_block_dirty_pred");
+        CHECK(core.find("set_block_dirty_pred([") == std::string::npos &&
+                  impls.find("set_block_dirty_pred([") == std::string::npos,
+              "3315 AC1: no capturing lambda");
+        CompilerService cs3315;
+        CHECK(cs3315.eval("(+ 1 2)").has_value(), "3315 eval ok");
+        CHECK(href(cs3315, "query:soa-view-enforcement-stats", "schema-3315") == 3315,
+              "3315 AC1: schema-3315");
+        CHECK(href(cs3315, "query:soa-view-enforcement-stats", "issue-3315") == 3315,
+              "3315 AC1: issue-3315");
+        CHECK(href(cs3315, "query:soa-view-enforcement-stats",
+                   "production-dirty-soa-entry-no-pred-wired") == 1,
+              "3315 AC1: wired");
+
+        std::println("\n--- #3315 AC2: clean blocks skipped under partial mask ---");
+        auto mod = make_mod(2);
+        std::vector<std::vector<std::uint8_t>> mask(1, std::vector<std::uint8_t>{1, 0});
+        DefineDirtyMaskView view;
+        view.block_dirty_per_func = &mask;
+        const auto skip0 =
+            aura::compiler::dirty_only_blocks_skipped_total.load(std::memory_order_relaxed);
+        const auto rej0 =
+            aura::compiler::pass_pipeline_concept_rejection_total.load(std::memory_order_relaxed);
+        ConstantFoldingWrap cf;
+        CHECK(run_incremental_dirty_pipeline(mod, cf, &view), "3315 AC2: partial mask ok");
+        CHECK(aura::compiler::dirty_only_blocks_skipped_total.load(std::memory_order_relaxed) >
+                  skip0,
+              "3315 AC2: clean block skipped");
+        CHECK(aura::compiler::pass_pipeline_concept_rejection_total.load(
+                  std::memory_order_relaxed) == rej0,
+              "3315 AC2: concept_rejection unchanged");
+
+        std::println("\n--- #3315 AC3: Soft / no-mask setter remains ---");
+        CHECK(impls.find("set_block_dirty_fn(bool (*fn)(std::uint32_t))") != std::string::npos,
+              "3315 AC3: test setter remains");
+        auto mod2 = make_mod(2);
+        ConstantFoldingWrap cf2;
+        CHECK(run_incremental_dirty_pipeline(mod2, cf2, nullptr), "3315 AC3: no-mask ok");
+
+        std::println("\n--- #3315 AC4: linter + no invent / docs ---");
+        auto build = read_file("build.py");
+        CHECK(build.find("check_production_dirty_soa_no_pred_3315") != std::string::npos,
+              "3315 AC4: build.py wires linter");
+        CHECK(read_file("tests/compiler/test_issue_3315.cpp").empty(), "3315 AC4: no invent");
+        CHECK(read_file("docs/design/3315-production-dirty-soa-no-pred.md").empty(),
+              "3315 AC4: no docs/design");
+        CHECK(core.find("g_3315_") == std::string::npos, "3315 AC4: no g_3315_*");
+    }
+
+    std::println("\n=== #2434/#3042/#3234/#3315 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

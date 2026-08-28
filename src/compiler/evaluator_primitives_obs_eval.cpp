@@ -16509,9 +16509,17 @@ void ObservabilityPrims::register_eval_p94(PrimRegistrar add, Evaluator& ev) {
                  make_int(static_cast<std::int64_t>(
                      aura::compiler::pure_wrap_no_std_function_dirty_wired.load(
                          std::memory_order_relaxed)))},
+                // Issue #3315: production DirtySoAEntry / columnar mask (no pred setter)
+                {"schema-3315", make_int(3315)},
+                {"issue-3315", make_int(3315)},
+                {"production-dirty-soa-entry-no-pred-wired",
+                 make_int(static_cast<std::int64_t>(
+                     aura::compiler::production_dirty_soa_entry_no_pred_wired.load(
+                         std::memory_order_relaxed)))},
                 {"issue", make_int(1619)},
                 {"schema",
-                 make_int(1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258 + #2434 + #3042
+                 make_int(
+                     1619)}, // lineage 1517 → 1619 + #1918 + #2060 + #2258 + #2434 + #3042 + #3315
             };
             return build_hash(kv);
         });

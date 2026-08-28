@@ -337,7 +337,9 @@ public:
     }
     void run(aura::ir::IRFunction& f) { impl_.run(f); }
     void run(aura::ir::BasicBlock& b) { impl_.run(b); }
-    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { impl_.run_on_dirty_blocks_only(f); }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f, BlockDirtyPred pred = {}) {
+        impl_.run_on_dirty_blocks_only(f, pred);
+    }
 
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "constant-fold"; }
@@ -375,7 +377,9 @@ public:
     }
     void run(aura::ir::IRFunction& f) { impl_.run(f); }
     void run(aura::ir::BasicBlock& b) { impl_.run(b); }
-    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { impl_.run_on_dirty_blocks_only(f); }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f, BlockDirtyPred pred = {}) {
+        impl_.run_on_dirty_blocks_only(f, pred);
+    }
 
     [[nodiscard]] bool has_error() const { return error_ || impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "type-propagation"; }
@@ -407,7 +411,9 @@ public:
     }
     void run(aura::ir::IRFunction& f) { impl_.run(f); }
     void run(aura::ir::BasicBlock& b) { impl_.run(b); }
-    void run_on_dirty_blocks_only(aura::ir::IRFunction& f) { impl_.run_on_dirty_blocks_only(f); }
+    void run_on_dirty_blocks_only(aura::ir::IRFunction& f, BlockDirtyPred pred = {}) {
+        impl_.run_on_dirty_blocks_only(f, pred);
+    }
 
     [[nodiscard]] bool has_error() const { return impl_.has_error(); }
     [[nodiscard]] std::string_view name() const { return "compute-kind"; }
