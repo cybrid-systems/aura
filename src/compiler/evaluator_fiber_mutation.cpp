@@ -375,15 +375,42 @@ aura::compiler::Evaluator::active_yield_checkpoint_stack_static() {
     return g_main_thread_yield_checkpoints;
 }
 
+// Issue #3384: single SSOT — fiber stack size when on-fiber, TLS slot (main-thread
+// fallback) otherwise. After steal, thief TLS slot != victim TLS slot — on-fiber
+// reads must consult the per-fiber stack (migrates with the fiber) instead of TLS.
+// Reads (any_active_mutation_boundary, aura_evaluator_mutation_boundary_depth,
+// restamp_yield_checkpoint_top) and writes (Guard ctor/dtor,
+// force_release_hold_after_cancel_) all route through this helper so the three
+// observer faces (TLS slot / fiber stack / MutationSafetySnapshot.depth) stay
+// coherent across steal.
+namespace boundary_ssot_detail {
+    inline int boundary_depth_ssot(Evaluator* ev) noexcept {
+        if (aura::compiler::Evaluator::g_current_fiber_void != nullptr)
+            return static_cast<int>(aura::compiler::Evaluator::active_mutation_stack().size());
+        int* slot = aura::compiler::Evaluator::mutation_boundary_depth_slot(ev);
+        return slot ? *slot : 0;
+    }
+} // namespace boundary_ssot_detail
+
 bool aura::compiler::Evaluator::any_active_mutation_boundary() const noexcept {
-    int* slot = mutation_boundary_depth_slot(const_cast<Evaluator*>(this));
-    return slot != nullptr && *slot > 0;
+    // Issue #3384: route through SSOT (fiber stack on fiber, TLS slot off fiber).
+    // After steal, thief TLS slot != victim TLS slot — TLS-only read would disagree
+    // with active_mutation_stack().size() and the published MutationSafetySnapshot.depth.
+    return boundary_ssot_detail::boundary_depth_ssot(const_cast<Evaluator*>(this)) > 0;
 }
 
 // Issue #417 / #1766: noexcept probe — Guard dtor calls this after
 // depth-slot decrement; throwing would terminate, not skip cleanup.
+// Issue #3384: on-fiber, fiber stack is its own SSOT (TLS write skipped
+// in Guard ctor) — no drift possible. Off-fiber, the invariant is
+// between g_main_thread_stack and TLS slot — both maintained in sync by
+// Guard ctor/dtor (off-fiber only). Mismatch bumps the counter; under
+// production multi-worker latched also mark-failed + republish mirror
+// (best-effort when on the holding fiber).
 void aura::compiler::Evaluator::ensure_mutation_invariants() noexcept {
     auto& stack = active_mutation_stack();
+    if (g_current_fiber_void != nullptr)
+        return;
     int* depth = mutation_boundary_depth_slot(this);
     if (!depth)
         return;
@@ -391,6 +418,16 @@ void aura::compiler::Evaluator::ensure_mutation_invariants() noexcept {
     const bool depth_zero = (*depth == 0);
     if (stack_empty != depth_zero) {
         total_invariant_violations_.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3384 AC3: production multi-worker latched mismatch →
+        // mark-failed + republish MutationSafetySnapshot mirror. Soft /
+        // single-worker / unlatched stays metric-only.
+        if (aura::serve::aura_runtime_multi_worker_production_latched() != 0) {
+            aura_evaluator_mark_outermost_mutation_failed();
+            if (auto* fib = aura::serve::g_current_fiber) {
+                fib->publish_mutation_safety_mirrors(stack.size(), /*held=*/!stack_empty,
+                                                     defuse_version_snapshot());
+            }
+        }
     }
 }
 
@@ -1658,8 +1695,10 @@ int Evaluator::try_safe_yield_at_boundary(std::int64_t timeout_ms) noexcept {
 }
 
 int Evaluator::mutation_boundary_depth_slot_value() const noexcept {
-    int* slot = mutation_boundary_depth_slot(const_cast<Evaluator*>(this));
-    return slot ? *slot : 0;
+    // Issue #3384: route through SSOT. After steal, thief TLS slot != victim
+    // TLS slot — returns fiber stack size on fiber, TLS slot value off fiber
+    // (main-thread fallback).
+    return boundary_ssot_detail::boundary_depth_ssot(const_cast<Evaluator*>(this));
 }
 
 // ═════════════════════════════════════════════════════════════════════════

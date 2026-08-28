@@ -2767,7 +2767,18 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
     // are always outermost-then-inner (destructed innermost-
     // first). Cross-fiber synchronization happens at unique_lock.
     int* slot = Evaluator::mutation_boundary_depth_slot(ev_);
-    int prev = ++(*slot);
+    int prev;
+    // Issue #3384: TLS slot is SSOT only off-fiber (main-thread fallback). On-fiber,
+    // SSOT is per-fiber mutation_stack_storage_.size() — TLS write is skipped here
+    // because TLS would be the victim worker's after steal (see #3384 AC1).
+    const bool on_fiber = (aura::compiler::Evaluator::g_current_fiber_void != nullptr);
+    if (on_fiber) {
+        auto& fiber_stack = Evaluator::active_mutation_stack();
+        prev = static_cast<int>(fiber_stack.size()) + 1;
+        (void)slot;
+    } else {
+        prev = ++(*slot);
+    }
     bool outermost = (prev == 1);
     is_outermost_ = outermost;
     // Issue #3082: mid/nested enter marks occurrence provisional so
@@ -2848,7 +2859,10 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
             m->mutation_guard_try_acquire_reject_total.fetch_add(1, std::memory_order_relaxed);
         }
         // Roll back depth bump so yield probes see no held boundary.
-        --(*slot);
+        // Issue #3384: only decrement TLS when off-fiber (we wrote it).
+        if (!on_fiber) {
+            --(*slot);
+        }
         is_outermost_ = false;
         return;
     }
@@ -3052,8 +3066,15 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
 void Evaluator::MutationBoundaryGuard::force_release_hold_after_cancel_() noexcept {
     if (cancel_force_released_ || !ev_)
         return;
-    if (int* ds = Evaluator::mutation_boundary_depth_slot(ev_))
-        *ds = 0;
+    // Issue #3384: TLS slot is SSOT only off-fiber (main-thread fallback). On-fiber,
+    // TLS write is skipped — TLS would be the calling worker's, not the holder's
+    // worker, after steal. Held flag (atomic) + MutationSafetySnapshot mirror carry
+    // the cross-thread cancel visibility. Holding fiber's own dtor decrements the
+    // fiber stack + (if off-fiber on its own worker) its TLS slot.
+    if (aura::compiler::Evaluator::g_current_fiber_void == nullptr) {
+        if (int* ds = Evaluator::mutation_boundary_depth_slot(ev_))
+            *ds = 0;
+    }
     ev_->mutation_boundary_held_.store(false, std::memory_order_release);
     aura_process_mutation_boundary_held_exit();
     aura::compiler::mutation_hold_live_note_exit(aura_fiber_current_id());
