@@ -44,6 +44,9 @@ extern "C" void aura_bump_live_closure_residual_cap_hit_total(std::uint64_t n);
 // Issue #2928: storm / throttle gates (production in hot_update_registry.cpp).
 extern "C" std::uint8_t aura_hot_update_current_storm_level(void);
 extern "C" int aura_hot_update_should_throttle_reemit(void);
+// Issue #3342: residual tick / budget (defined later in this TU).
+extern "C" std::uint64_t aura_residual_remount_budget_default() noexcept;
+extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget);
 // Process-global aot_metrics getter (defined in aura_jit_bridge.cpp; the
 // file-static aot_metrics() accessor there is not externally visible).
 extern "C" void* aura_get_aot_metrics(void);
@@ -2485,12 +2488,21 @@ extern "C" std::uint64_t aura_pure_anon_bg_overflow_must_deopt_total_v_read() no
     return g_pure_anon_bg_overflow_must_deopt_total.load(std::memory_order_relaxed);
 }
 
+static std::atomic<std::uint64_t> g_pure_anon_heal_last_overflow{0};
+static std::atomic<std::uint32_t> g_pure_anon_fail_exit_age{0};
+static constexpr std::uint32_t kPureAnonHealFailExitStride = 8;
+
 extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept {
     std::lock_guard<std::mutex> lock(g_pure_anon_bg_mtx);
     g_pure_anon_bg_head = 0;
     g_pure_anon_bg_tail = 0;
     g_pure_anon_bg_size.store(0, std::memory_order_relaxed);
     // Totals stay monotonic (Agents delta); do not zero.
+    // Issue #3342: snapshot overflow so the next overflow-advanced heal
+    // is relative to this reset, not process lifetime.
+    g_pure_anon_heal_last_overflow.store(
+        g_pure_anon_bg_overflow_total.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    g_pure_anon_fail_exit_age.store(0, std::memory_order_relaxed);
 }
 
 // Issue #3024 / #3060: production fail-closed leave-native. Set MustDeopt
@@ -2641,6 +2653,45 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
     // Issue #3227: successful remount may relocate linear roots.
     if (ok > 0)
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
+}
+
+// Issue #3342: production amortize heal when success BoundaryExit is
+// absent (failure-dominated / boundary-sparse HF mutate). Overflow
+// MustDeopt + poison stay fail-closed (#3024/#3323); this only re-arms
+// residual tick + bg drain so recovery cannot starve. Soft / Off /
+// budget=0: one production_defaults load then return. Never steal-complete
+// (#2715). Reuses existing remount / drain counters (no new query key).
+extern "C" void aura_pure_anon_maybe_heal_starved(void) noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active()) {
+        g_pure_anon_fail_exit_age.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const auto pending = g_pure_anon_bg_size.load(std::memory_order_relaxed);
+    if (pending == 0) {
+        g_pure_anon_fail_exit_age.store(0, std::memory_order_relaxed);
+        return;
+    }
+    const auto overflow = g_pure_anon_bg_overflow_total.load(std::memory_order_relaxed);
+    const auto last = g_pure_anon_heal_last_overflow.load(std::memory_order_relaxed);
+    const bool overflow_advanced = overflow > last;
+    const bool pressure = pending >= kPureAnonPressurePendingThresh;
+    if (!overflow_advanced && !pressure)
+        return;
+    // Pressure-only (no overflow since last heal): rate-limit so HF reject
+    // does not walk every outermost abort. Overflow-advanced heals now.
+    if (!overflow_advanced) {
+        const auto age = g_pure_anon_fail_exit_age.fetch_add(1, std::memory_order_relaxed) + 1;
+        if (age < kPureAnonHealFailExitStride)
+            return;
+        g_pure_anon_fail_exit_age.store(0, std::memory_order_relaxed);
+    }
+    const auto b = aura_residual_remount_budget_default();
+    if (b > 0)
+        aura_residual_live_closure_remount_tick(b);
+    const auto max_n = aura_sync_remount_pure_anon_budget_base();
+    if (max_n > 0)
+        aura_pure_anon_bg_remount_drain(max_n);
+    g_pure_anon_heal_last_overflow.store(overflow, std::memory_order_relaxed);
 }
 
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──

@@ -1454,6 +1454,126 @@ static void ac3323_5_source_and_linter() {
     CHECK(rt.find("g_3323_") == std::string::npos, "3323 AC5: no g_3323_*");
 }
 
+// ── Issue #3342: pure-anon recovery starvation (heal path, not #3323 race) ──
+// Success BoundaryExit remains primary drain. Outermost failure amortizes
+// residual tick + drain when pending ≥ pressure or overflow advanced.
+
+static void ac3342_1_fail_exit_heals_after_overflow() {
+    std::println("\n--- #3342 AC1: production fail-exit heal after overflow ---");
+    fill_pure_anon_bg_queue_to_cap();
+    const auto cid = aura_alloc_closure(/*func_id=*/0);
+    CHECK(cid >= 0, "3342 AC1: alloc");
+    aura_closure_set_must_deopt(cid, 0);
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    aura_pure_anon_bg_enqueue(cid);
+    CHECK(aura_closure_get_must_deopt(cid) != 0, "3342 AC1: overflow MustDeopt");
+    const auto pending0 = aura_pure_anon_bg_pending();
+    const auto ok0 = aura_pure_anon_bg_drain_ok_total_v_read();
+    const auto fail0 = aura_pure_anon_bg_drain_fail_total_v_read();
+    const auto rem0 = aura_residual_remount_ok_total_v_read();
+    aura_test_set_residual_remount_budget(32);
+    aura_pure_anon_maybe_heal_starved();
+    CHECK(
+        aura_pure_anon_bg_pending() < pending0 || aura_pure_anon_bg_drain_ok_total_v_read() > ok0 ||
+            aura_pure_anon_bg_drain_fail_total_v_read() > fail0 ||
+            aura_residual_remount_ok_total_v_read() > rem0 || aura_closure_get_must_deopt(cid) == 0,
+        "3342 AC1: starved heal remounted or drained (no silent hole)");
+    prod.store(prev, std::memory_order_relaxed);
+    aura_test_reset_residual_remount_state();
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3342_2_success_boundary_still_primary() {
+    std::println("\n--- #3342 AC2: success BoundaryExit drain unchanged ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mb.find("if (outermost && success)") != std::string::npos,
+          "3342 AC2: success gate still present");
+    const auto success_pos = mb.find("Issue #2928: outermost success BoundaryExit");
+    CHECK(success_pos != std::string::npos, "3342 AC2: success remount cite");
+    CHECK(mb.find("aura_pure_anon_bg_remount_drain") != std::string::npos,
+          "3342 AC2: success drain still wired");
+    CHECK(mb.find("else if (outermost && !success)") != std::string::npos,
+          "3342 AC2: failure heal is else-if (not replacing success)");
+    CHECK(mb.find("aura_pure_anon_maybe_heal_starved") != std::string::npos,
+          "3342 AC2: starved helper on failure exit");
+}
+
+static void ac3342_3_soft_zero_extra() {
+    std::println("\n--- #3342 AC3: Soft / budget=0 → no extra heal ---");
+    fill_pure_anon_bg_queue_to_cap();
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(0, std::memory_order_relaxed);
+    const auto pending0 = aura_pure_anon_bg_pending();
+    const auto ok0 = aura_pure_anon_bg_drain_ok_total_v_read();
+    aura_pure_anon_maybe_heal_starved();
+    CHECK(aura_pure_anon_bg_pending() == pending0, "3342 AC3: Soft pending unchanged");
+    CHECK(aura_pure_anon_bg_drain_ok_total_v_read() == ok0, "3342 AC3: Soft no drain");
+    prod.store(prev, std::memory_order_relaxed);
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos &&
+              rt.find("aura_pure_anon_maybe_heal_starved") != std::string::npos,
+          "3342 AC3: helper production-gated");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3342_4_pressure_rate_limit_and_steal() {
+    std::println("\n--- #3342 AC4: pressure rate-limit + steal-complete unchanged ---");
+    aura_test_reset_pure_anon_bg_queue();
+    for (int i = 0; i < 32; ++i)
+        aura_pure_anon_bg_enqueue(/*dummy=*/1);
+    CHECK(aura_pure_anon_bg_pending() >= 32, "3342 AC4: pending at pressure thresh");
+    auto& prod =
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active;
+    const auto prev = prod.exchange(1, std::memory_order_relaxed);
+    const auto pending0 = aura_pure_anon_bg_pending();
+    aura_pure_anon_maybe_heal_starved(); // age 1 < stride 8
+    CHECK(aura_pure_anon_bg_pending() == pending0,
+          "3342 AC4: first pressure-only fail-exit does not drain");
+    for (int i = 0; i < 8; ++i)
+        aura_pure_anon_maybe_heal_starved();
+    CHECK(aura_pure_anon_bg_pending() < pending0, "3342 AC4: heal after fail-exit stride");
+    prod.store(prev, std::memory_order_relaxed);
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto pos = steal.find("aura_evaluator_on_steal_complete");
+    CHECK(pos != std::string::npos, "3342 AC4: steal-complete site");
+    const auto win = steal.substr(pos, 8000);
+    CHECK(win.find("aura_pure_anon_bg_remount_drain") == std::string::npos,
+          "3342 AC4: steal does not drain (#2715)");
+    CHECK(win.find("aura_pure_anon_maybe_heal_starved") == std::string::npos,
+          "3342 AC4: steal does not starved-heal");
+    const auto hur = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(hur.find("maybe_storm_clear_health_pass") != std::string::npos,
+          "3342 AC4: storm-clear preserved");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    CHECK(rt.find("aura_sync_remount_named_live_closures") != std::string::npos,
+          "3342 AC4: named remount preserved");
+    aura_test_reset_pure_anon_bg_queue();
+}
+
+static void ac3342_5_source_and_linter() {
+    std::println("\n--- #3342 AC5: source-cite + linter + non-duplicative to #3323 ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_pure_anon_heal_starvation_3342.py");
+    CHECK(rt.find("Issue #3342") != std::string::npos, "3342 AC5: runtime cites #3342");
+    CHECK(mb.find("Issue #3342") != std::string::npos, "3342 AC5: boundary cites #3342");
+    CHECK(rt.find("aura_pure_anon_maybe_heal_starved") != std::string::npos, "3342 AC5: helper");
+    CHECK(rt.find("kPureAnonHealFailExitStride") != std::string::npos, "3342 AC5: rate-limit");
+    CHECK(rt.find("schema-3342") == std::string::npos, "3342 AC5: no schema-3342");
+    CHECK(rt.find("g_3342_") == std::string::npos, "3342 AC5: no g_3342_*");
+    CHECK(!lint.empty() && lint.find("Issue #3342") != std::string::npos, "3342 AC5: linter");
+    CHECK(build.find("check_pure_anon_heal_starvation_3342") != std::string::npos,
+          "3342 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3342-pure-anon-heal-starvation.md").empty(),
+          "3342 AC5: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3342.cpp").empty(),
+          "3342 AC5: no invent test per #81967");
+}
+
 // ── Issue #2928: budgeted residual live-closure remount (round-robin) ──
 // Outside reemit-success; clears residual MustDeopt under bounded budget.
 
@@ -2454,6 +2574,12 @@ int run_test_anonymous_residual_stable_id_policy() {
     ac3323_3_boundary_drain_after_overflow();
     ac3323_4_soft_zero_extra();
     ac3323_5_source_and_linter();
+    std::println("\n=== Issue #3342: pure-anon recovery starvation heal ===");
+    ac3342_1_fail_exit_heals_after_overflow();
+    ac3342_2_success_boundary_still_primary();
+    ac3342_3_soft_zero_extra();
+    ac3342_4_pressure_rate_limit_and_steal();
+    ac3342_5_source_and_linter();
     std::println("\n=== Issue #2928: residual remount round-robin ===");
     ac2928_1_residual_tick_clears_must_deopt();
     ac2928_2_storm_skip();
@@ -2485,7 +2611,7 @@ int run_test_anonymous_residual_stable_id_policy() {
 
     std::println("\n=== "
                  "#2605+#2637+#2638+#2666+#2691+#2714+#2850+#2893+#2928+#2977+#2978+#2980+#3024+#"
-                 "3060+#3323: "
+                 "3060+#3323+#3342: "
                  "{} "
                  "passed, {} failed ===",
                  g_passed, g_failed);

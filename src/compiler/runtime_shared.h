@@ -231,6 +231,9 @@ extern "C" std::uint64_t aura_pure_anon_bg_overflow_total_v_read() noexcept;
 // Issue #3024: production overflow MustDeopt (additive).
 extern "C" std::uint64_t aura_pure_anon_bg_overflow_must_deopt_total_v_read() noexcept;
 extern "C" void aura_test_reset_pure_anon_bg_queue() noexcept;
+// Issue #3342: production heal amortize when success BoundaryExit is absent.
+// Soft / budget=0: no-op. Never steal-complete (#2715).
+extern "C" void aura_pure_anon_maybe_heal_starved(void) noexcept;
 // Issue #2928: budgeted residual live-closure remount (round-robin cursor +
 // budget B, default 32 production / 0 Soft). Outside reemit-success paths
 // (#2602/#2691/#2850). budget_skip under hard storm / reemit throttle.
