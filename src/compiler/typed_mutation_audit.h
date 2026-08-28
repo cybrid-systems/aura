@@ -64,6 +64,15 @@ extern "C" std::uint32_t aura_process_mutation_boundary_held_count() noexcept;
 // contract_handler / value_tags / shape_profiler compile.
 extern "C" std::uint64_t aura_occurrence_goal_fingerprint_tc(void* tc_handle) noexcept;
 extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_handle) noexcept;
+// Issue #3379: TLS slot for the current commit-readiness Evaluator.
+// Caller (boundary enter / outermost Guard) sets it; the fill bridge
+// reads it. Forward declarations for the bridges live further down
+// near the CommitReadinessInput struct definition (C ABI can't
+// forward-declare a struct member pointer cleanly here without
+// introducing a duplicate struct decl that gcc 16.1 trips on).
+inline thread_local void* g_tls_audit_commit_readiness_evaluator = nullptr;
+extern "C" void aura_typed_audit_note_readiness_evaluator(void* ev) noexcept;
+extern "C" void aura_typed_audit_clear_readiness_evaluator() noexcept;
 // Issue #3233: production arms PCV stale-span exclusive (defined in
 // typed_mutation_audit_hooks.cpp). Soft/dev clears it.
 extern "C" void aura_pcv_set_stale_span_exclusive(int on) noexcept;
@@ -191,6 +200,10 @@ struct CommitReadinessInput;
 struct CommitReadiness;
 [[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept;
 [[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept;
+// Issue #3379: fill bridge declared here (struct forward-declared above)
+// so commit_readiness_live_policy can call it after CommitReadinessInput
+// is fully defined further down.
+extern "C" void aura_typed_audit_fill_from_live_tc(void* ev, CommitReadinessInput* out) noexcept;
 [[nodiscard]] inline std::uint64_t cone_outside_goal_drop_total_v_read() noexcept;
 [[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_total_v_read() noexcept;
 // NOTE: g_occurrence_hard_face_full_solve_recover_total is an `inline
@@ -2145,6 +2158,23 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
+    // Issue #3379: dual-authority close at depth==0 — consult
+    // last_proof_outcome + invalidate_gen regardless of depth.
+    // Resolves the half-green residual where depth-0 IR/JIT ran
+    // after an outermost Reject proof or post-rebind invalidate.
+    // Two relaxed loads — no commit_readiness call, no extra CS
+    // walk. Soft path stays unchanged (early return above). Quiet
+    // (proof Ok + green bind): no extra counter noise.
+    if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+        kTypeLinearProofOutcomeReject) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
+        g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     std::size_t depth = 0;
     if (g_linear_ir_fastpath_boundary_depth_override >= 0)
         depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
@@ -2162,11 +2192,6 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
     // the proof atomics directly (pure loads, no CS walk). Reuses the
     // existing g_linear_fast_path_elide_blocked_production_total
     // counter so #3305 ships additive — no new query key.
-    if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
-        kTypeLinearProofOutcomeReject) {
-        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
-        return false;
-    }
     if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
         g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0) {
         g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
@@ -3226,6 +3251,13 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
         if (in.cone_outside_goal_drop_face || in.occurrence_empty_after_fence_face) {
             g_occurrence_hard_face_full_solve_recover_total.fetch_add(1, std::memory_order_relaxed);
         }
+    }
+    // Issue #3379: fill from live TypeChecker when a current Evaluator
+    // with live commit TC is in TLS. Quiet (no TLS) → keep today's
+    // face-only fill (no extra CS walk). Soft path: TLS slot is read
+    // here too — production never depends on a hidden field.
+    if (g_tls_audit_commit_readiness_evaluator != nullptr) {
+        aura_typed_audit_fill_from_live_tc(g_tls_audit_commit_readiness_evaluator, &in);
     }
     return in;
 }

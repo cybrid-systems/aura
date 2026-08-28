@@ -1967,6 +1967,14 @@ aura_issue_test_link_light(test_capability_macro_self_evo_reason_uniformity)
 # true after a Reject proof was stamped while Move/Drop correctly blocks.
 aura_add_issue_test(test_ir_typed_entry_proof_authority)
 aura_issue_test_link_light(test_ir_typed_entry_proof_authority)
+# Issue #3379: commit_readiness_live_policy fills solve_status / linear_ok
+# / blame_ok / cs_has_work / truncated_reverify from the current commit
+# TypeChecker (via TLS evaluator + C bridge in evaluator_mutation_boundary.cpp).
+# IR/JIT Production entry now consults last_proof_outcome + invalidate_gen
+# before depth==0 short-circuit (closes half-green residual after #2553 /
+# #3130 / #3224). Quiet (no live TC) keeps today's face-only fill.
+aura_add_issue_test(test_typed_audit_commit_readiness_live_policy)
+aura_issue_test_link_light(test_typed_audit_commit_readiness_live_policy)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)

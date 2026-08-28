@@ -216,6 +216,66 @@ extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_hand
     return static_cast<std::uint64_t>(tc->clear_occurrence_persist_snapshot());
 }
 
+// Issue #3379: live TypeChecker fill for commit_readiness_live_policy.
+// The header stays TypeChecker-free (same separation as
+// aura_occurrence_goal_fingerprint_tc above); this TU owns the cast
+// + the field-by-field copy. Quiet when the live TC handle is null
+// (today's face-only fill stays; no extra CS walk).
+extern "C" void aura_typed_audit_note_readiness_evaluator(void* ev) noexcept {
+    // Variable lives at global scope in typed_mutation_audit.h
+    // (above the namespace aura::compiler::typed_audit block).
+    ::g_tls_audit_commit_readiness_evaluator = ev;
+}
+
+extern "C" void aura_typed_audit_clear_readiness_evaluator() noexcept {
+    ::g_tls_audit_commit_readiness_evaluator = nullptr;
+}
+
+extern "C" void aura_typed_audit_fill_from_live_tc(
+    void* ev, aura::compiler::typed_audit::CommitReadinessInput* out) noexcept {
+    if (ev == nullptr || out == nullptr)
+        return;
+    auto* evaluator = static_cast<aura::compiler::Evaluator*>(ev);
+    void* tc_handle = evaluator->commit_type_checker_handle();
+    if (tc_handle == nullptr)
+        return;
+    auto* tc = static_cast<aura::compiler::TypeChecker*>(tc_handle);
+    // solve_status: cast SolveResult enum (0=SOLVED, 1=CONFLICT, 2=TIMEOUT)
+    // to the uint8_t slot CommitReadinessInput expects.
+    out->solve_status = static_cast<std::uint8_t>(tc->last_delta_solve_status());
+    // linear_ok: gate on TC partial revalidate + Evaluator sticky synth
+    // hard-fail. Both contribute to a force-rollback in commit_readiness.
+    out->linear_ok =
+        !tc->last_partial_linear_revalidate_fail() && !evaluator->linear_synth_hard_fail_pending();
+    // blame_ok: rich-triple complete OR vacuous (no frames — no mutation
+    // happened, so blame is moot). mirrors DeltaBlameChain::is_complete.
+    // Route through constraint_system() because the
+    // `last_blame_chain()` accessor the wrapper exposes delegates to
+    // cs_.last_blame_chain(); going straight to ConstraintSystem
+    // sidesteps a module-export visibility mismatch that gcc 26 flags
+    // as `no member named 'last_blame_chain'` when the wrapper is
+    // forward-declared only.
+    const auto& bc = tc->constraint_system().last_blame_chain();
+    out->blame_ok = bc.is_complete() || bc.frames.empty();
+    // cs_has_work: commit_cs_has_work covers dirty / pending / touched /
+    // occurrence / let_poly. Spec text says "dirty_count || pending_full_solve_roots"
+    // but the existing accessor already folds both plus the wider CS work
+    // set so use it (strictly stronger gate — never under-marks).
+    out->cs_has_work = tc->commit_cs_has_work();
+    // truncated_reverify: from the same DeltaBlameChain face used by
+    // commit_readiness()'s truncate branch (#2458). Quiet (no blame
+    // chain) → face bit false → commit_readiness path unchanged.
+    out->truncated_reverify = bc.truncated_reverify;
+    // truncated_full_solve_recovered: leave at the live_policy default
+    // (false) unless the CS owns an explicit recover stamp. Test-only
+    // site (type_checker_impl.cpp:3289) bumps the process-wide counter
+    // but does not currently stamp the per-input flag; full-fidelity
+    // recover signal stays at the counter level (Agent-observable).
+    // The issue's "from existing CS flags" maps cleanly onto
+    // truncated_reverify alone for the live_policy path; the recover
+    // bit is a per-commit decision owned by the caller's hook.
+}
+
 // Issue #3361 / #3313: densify-entry revalidate without a complete Evaluator
 // type in typed_mutation_audit.h (hot TUs / light-link). Weak no-op lives
 // in fiber.cpp. Path matches the in-header call this C ABI replaced.
@@ -629,6 +689,15 @@ void Evaluator::enter_mutation_boundary() {
     if (auto* tc = static_cast<aura::compiler::TypeChecker*>(commit_type_checker_handle())) {
         cp.occurrence_entry_size = tc->constraint_system().occurrence_goals_size();
     }
+    // Issue #3379: outermost enter — note the current Evaluator for
+    // commit_readiness_live_policy to fill solve_status / linear_ok /
+    // blame_ok / cs_has_work / truncated_reverify from live TC.
+    // Nested enters do not clobber the outermost slot (stack already
+    // non-empty). Quiet (no TLS or no live TC) → live_policy keeps
+    // today's face-only fill (no extra CS walk).
+    if (active_mutation_stack().empty()) {
+        aura_typed_audit_note_readiness_evaluator(this);
+    }
     active_mutation_stack().push_back(std::move(cp));
     // Issue #3102: AC2 — open the per-boundary TLS tracker so apply_coercion_map
     // pushes nodes that the abort path can consume + force-dirty. depth>0
@@ -789,6 +858,13 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
     } pcv_ckpt_exit{!cp.lightweight};
     if (stack.empty())
         typed_audit::clear_boundary_audit_mid();
+    // Issue #3379: outermost exit — drop the TLS evaluator slot so a
+    // subsequent commit_readiness_live_policy() (outside any boundary)
+    // falls back to today's face-only fill. Nested exits keep the
+    // outer Evaluator's slot intact until the outermost runs.
+    if (stack.empty()) {
+        aura_typed_audit_clear_readiness_evaluator();
+    }
     // Issue #3102: AC5 — boundary exit (success or abort) decays the TLS
     // depth. For abort, coerced_nodes_tracker_take() at the abort site
     // already emptied the vector; this call just drops the depth so the
