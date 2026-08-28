@@ -567,36 +567,42 @@ void aura::compiler::Evaluator::pin_stable_refs_for_cow_boundary(
 // Issue #3328: production re-use of the pin force_refresh_pcv_span on
 // fingerprint mismatch (or empty fail-closed — never silent pre-mutate
 // walk). Soft: pcv_span_for_agent_export is identity.
+// Issue #3392 (I1): hot-path zero-heap-temp. The StableNodeRef buffer is
+// thread-local and reused — no per-call heap allocation on the Agent
+// export face. #398 callback `for_each_stable_child` is the zero-alloc
+// iteration; we adopt it here and keep the allocating convenience
+// (`FlatAST::children_stable(NodeId)`) for C++ callers (per AC2).
 std::vector<aura::ast::FlatAST::StableNodeRef>
 aura::compiler::Evaluator::children_stable_batch(aura::ast::NodeId id) noexcept {
-    std::vector<aura::ast::FlatAST::StableNodeRef> out;
+    thread_local std::vector<aura::ast::FlatAST::StableNodeRef> out;
+    out.clear();
     auto* ws = workspace_flat();
     if (!ws)
         return out;
-    {
-        auto kids = ws->children_columnar(id);
-        const bool production = typed_audit::production_defaults_active();
-        kids = ws->pcv_span_for_agent_export(kids, id, production);
-        if (production && kids.has_fingerprint() &&
-            kids.is_stale(static_cast<std::uint64_t>(ws->generation()), ws->wrap_epoch(),
-                          ws->node_gen_for(id))) {
-            kids = ws->force_refresh_pcv_span(kids, id);
-            if (!kids.has_fingerprint())
-                return out; // stale-span fail-closed (do not export pre-mutate)
-        }
-        for (std::size_t i = 0; i < kids.size(); ++i) {
-            const auto cid = kids[i];
-            if (cid == aura::ast::NULL_NODE)
-                continue;
-            if (!allow_query_stable_ref_export(cid))
-                return out;
-        }
+    auto kids = ws->children_columnar(id);
+    const bool production = typed_audit::production_defaults_active();
+    kids = ws->pcv_span_for_agent_export(kids, id, production);
+    if (production && kids.has_fingerprint() &&
+        kids.is_stale(static_cast<std::uint64_t>(ws->generation()), ws->wrap_epoch(),
+                      ws->node_gen_for(id))) {
+        kids = ws->force_refresh_pcv_span(kids, id);
+        if (!kids.has_fingerprint())
+            return out; // stale-span fail-closed (do not export pre-mutate)
     }
-    out = ws->children_stable(id);
-    if (out.empty())
-        return out;
-    for (auto& r : out)
+    for (std::size_t i = 0; i < kids.size(); ++i) {
+        const auto cid = kids[i];
+        if (cid == aura::ast::NULL_NODE)
+            continue;
+        if (!allow_query_stable_ref_export(cid))
+            return out;
+    }
+    // Issue #3392: fill via for_each_stable_child callback (no per-call
+    // heap allocation for the StableNodeRef vector). Same make_ref_layout
+    // + pin + stamp as the old path, just zero-alloc iteration.
+    ws->for_each_stable_child(id, [&](aura::ast::FlatAST::StableNodeRef r) {
         stamp_query_stable_ref_export(r);
+        out.push_back(r);
+    });
     pin_stable_refs_for_cow_boundary(out);
     for (auto& r : out)
         r.pin_for_cow();
