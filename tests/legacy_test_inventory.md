@@ -1195,7 +1195,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 
 #### domain/ (261)
 
-- `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
+- `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
 - `tests/compiler/test_adt_exhaustiveness_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: InvariantAuditResult::adt_ok + counters wired
 - `tests/compiler/test_adt_match_exhaustiveness_incremental_task2.cpp` (—) [domain_suite, theme_compiler] — test_adt_match_exhaustiveness_incremental_task2.cpp

@@ -4206,6 +4206,21 @@ def cmd_lint():
             "Issue #3184 abort restore force-dirty linter failed — run python3 scripts/coverage/checks/check_abort_restore_force_dirty_3184.py"
         )
         return r
+    # Issue #3324: abort dual-topology restore must not clean-hit pre-abort
+    # IR / source_to_ir_map. lookup consults abort_map_invalid; relower
+    # skips partial peel; recover skips patch on abort-stale. Extends
+    # test_abort_ir_cache_fence_first (#81967); no docs/design/; no new
+    # query keys.
+    arsm3324_script = COVERAGE_CHECKS / "check_abort_restore_stale_map_stamp_3324.py"
+    if not arsm3324_script.exists():
+        fail(f"missing {arsm3324_script}")
+        return 1
+    r = run([sys.executable, str(arsm3324_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3324 abort-restore stale map/stamp linter failed — run python3 scripts/coverage/checks/check_abort_restore_stale_map_stamp_3324.py"
+        )
+        return r
     # Issue #3185: densify-entry LCP consult (steal×GC residual).
     # Closes the entry-side consultation gap from #2888 / #2957: production
     # densify entry (Phase-5) + optional one-shot Moving densify
