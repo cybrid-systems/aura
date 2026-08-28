@@ -3742,10 +3742,66 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             spec.max_no_yield_ms = max_no_yield_ms;
             try {
                 auto& handle = scope.spawn(std::move(spec));
-                // #2009: handle is a reference; extract id before any potential
-                // concurrent scope mutation.
-                const auto id = handle.id;
+                // #2009: handle is a reference; extract fields before any
+                // potential concurrent scope mutation. Issue #3366: extract
+                // out_name (also used by the !ok branch) before the success
+                // path's string_heap push.
                 const std::string out_name = handle.name.empty() ? name : handle.name;
+                const auto id = handle.id;
+                // Issue #3366: AgentScope::spawn pushes failed handles (quota /
+                // BP-admit / dangling scheduler) and returns a HardDeny
+                // thread_local handle for concurrent-enter. None of those
+                // throw — so without this check the Aura prim would emit
+                // ok=#t with id=0 (or a stale id) and no deny_class /
+                // quota_dimension. Mirror orch:spawn-agent (#2079/#3251) so
+                // supervision-face Agents can branch on the same fields
+                // (quota_exceeded / quota_dimension / deny_class / retry-after-ms).
+                if (!handle.ok) {
+                    aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    aura::orch::g_orch_module_stats.spawn_failures.fetch_add(
+                        1, std::memory_order_relaxed);
+                    std::vector<std::pair<std::string, EvalValue>> qkv = {
+                        {"ok", make_bool(false)},
+                        {"id", make_int(0)},
+                        {"name", make_string(ev.string_heap_.size())},
+                        {"quota-exceeded", make_bool(handle.quota_exceeded)},
+                        {"schema", make_int(2588)},
+                        {"schema-2083", make_int(2083)},
+                        {"schema-2161", make_int(2161)},
+                        {"status",
+                         [&] {
+                             auto s = ev.string_heap_.size();
+                             ev.string_heap_.push_back("spawn-failed");
+                             return make_string(s);
+                         }()},
+                    };
+                    ev.string_heap_.push_back(out_name);
+                    if (!handle.quota_dimension.empty()) {
+                        auto qidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(handle.quota_dimension);
+                        qkv.push_back({"quota-dimension", make_string(qidx)});
+                    }
+                    qkv.push_back(
+                        {"quota-used", make_int(static_cast<std::int64_t>(handle.quota_used))});
+                    qkv.push_back(
+                        {"quota-limit", make_int(static_cast<std::int64_t>(handle.quota_limit))});
+                    qkv.push_back({"retry-after-ms",
+                                   make_int(static_cast<std::int64_t>(handle.retry_after_ms))});
+                    if (!handle.error.empty()) {
+                        auto eidx = ev.string_heap_.size();
+                        ev.string_heap_.push_back(handle.error);
+                        qkv.push_back({"error", make_string(eidx)});
+                    }
+                    // Issue #3251: unified deny-class (quota vs bp-admit) —
+                    // same shape as orch:spawn-agent (#2079).
+                    const auto dcls = (handle.quota_dimension == "mailbox-bp")
+                                          ? aura::orch::AgentDenyClass::BpAdmit
+                                          : aura::orch::AgentDenyClass::Quota;
+                    add_deny_class(qkv, dcls, handle.quota_dimension, handle.retry_after_ms,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(qkv);
+                }
                 const auto sidx = ev.string_heap_.size();
                 ev.string_heap_.push_back(out_name);
                 aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
