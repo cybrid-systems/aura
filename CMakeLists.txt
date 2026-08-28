@@ -1985,6 +1985,22 @@ aura_issue_test_link_light(test_typed_audit_commit_readiness_live_policy)
 # hermetic tests drive recover scenarios without a real Evaluator.
 aura_add_issue_test(test_typed_audit_commit_readiness_recover_acl)
 aura_issue_test_link_light(test_typed_audit_commit_readiness_recover_acl)
+# Issue #3382: lightweight / render abort clears type/linear + coercion +
+# occurrence persist authority. Full abort body already has the ordered
+# restore (#3281: IR force-dirty → proof clear → coercion rewind →
+# occurrence restore → dual-clear → persist clear). Lightweight failure
+# branch (render hot path / region-mode Guards / #1355 #2121) only did
+# rollback_render_lightweight_checkpoint + rollback_to_size +
+# defuse_index_ = nullptr — left last_proof_outcome + last_coercions_ +
+# TLS coerced nodes + occurrence persist buffer live while the log was
+# rolled back (half-green close of #3030/#3102/#3158). Fix: reuse the
+# same helpers as the full abort body — but without the dual-topology
+# walk (that's why lightweight exists: no children_ snapshot, no parent_
+# rebuild). Production/Full: helpers run. Soft/Off: helpers early-out /
+# observe-only (no extra structural writes, AC5). No new query key; no
+# new proof schema. AC1-AC5 source-cite in the test.
+aura_add_issue_test(test_type_linear_lightweight_abort_clear)
+aura_issue_test_link_light(test_type_linear_lightweight_abort_clear)
 # Issue #2807: pre_scan treats unquote-splicing as caller-scope (like unquote).
 aura_add_issue_test(test_unquote_splicing_hygiene)
 aura_issue_test_link_light(test_unquote_splicing_hygiene)

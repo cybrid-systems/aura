@@ -962,6 +962,23 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
             last_boundary_rollback_stats_ = stats;
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
                 m->mutation_lightweight_rollback_total.fetch_add(1, std::memory_order_relaxed);
+            // Issue #3382: lightweight failure must clear type/linear +
+            // coercion + occurrence persist authority — same helpers as
+            // the full abort body (#3281 ordered restore). Without this,
+            // a failed region mutate after a previous outermost green stamp
+            // leaves last_proof_outcome + last_coercions_ + TLS coerced
+            // nodes + occurrence persist buffer live while the log has
+            // been rolled back — half-green close of #3030/#3102/#3158.
+            // No dual-topology walk (that's why lightweight exists: no
+            // children_ snapshot, no parent_ rebuild). Production/Full:
+            // helpers run. Soft/Off: helpers early-out / observe-only
+            // (no extra structural writes, AC5). No new query key.
+            typed_audit::clear_type_linear_commit_proof_on_abort();
+            typed_audit::clear_coercion_commit_readiness_on_abort();
+            dual_clear_coercion_state_on_abort();
+            (void)aura::compiler::coerced_nodes_tracker_take(); // discard
+            aura::compiler::dirty::bump_dead_coercion_decision_invalidate();
+            aura_clear_occurrence_persist_buffer(this);
             defuse_index_ = nullptr;
         }
     } else if (!success && workspace_flat_) {
