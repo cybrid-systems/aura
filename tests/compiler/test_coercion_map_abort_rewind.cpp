@@ -451,7 +451,9 @@ void test_ac3359_castop_abort_elision_interleave() {
     using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
     using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
     using aura::compiler::typed_audit::kCastopAbortElisionInterleaveIssue;
+    using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
     using aura::compiler::typed_audit::linear_move_drop_elision_ok;
+    using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
     using aura::compiler::typed_audit::reset_abort_authority_hold_for_test;
     using aura::compiler::typed_audit::reset_linear_ir_fastpath_counters_for_test;
     using aura::compiler::typed_audit::reset_mid_abort_authority_for_test;
@@ -470,8 +472,12 @@ void test_ac3359_castop_abort_elision_interleave() {
     clear_type_linear_proof_outcome_for_test();
     set_strategy(AuditStrategy::Full);
     g_linear_ir_fastpath_boundary_depth_override = 0;
+    // Issue #3414: Quiet last-proof is not authority at depth==0.
+    // Stamp green so this abort-interleave fixture still starts from a
+    // grantable IR/JIT entry (the abort path is the thing under test).
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
 
-    expect_true("3359 AC1: quiet depth==0 allows before abort",
+    expect_true("3359 AC1: Stamped depth==0 allows before abort",
                 ir_typed_entry_commit_readiness_ok());
     expect_true("3359 AC1: no abort → elision not blocked", !abort_or_mid_abort_blocks_elision());
 

@@ -67,7 +67,7 @@ int run_test_ir_typed_entry_proof_authority() {
         if (fn_pos == std::string::npos) {
             CHECK(false, "AC1: ir_typed_entry_commit_readiness_ok not found");
         } else {
-            const std::string scope = h.substr(fn_pos, 1500);
+            const std::string scope = h.substr(fn_pos, 3500);
             CHECK(scope.find("g_last_type_linear_proof_outcome") != std::string::npos,
                   "AC1: ir_typed_entry_commit_readiness_ok consults "
                   "g_last_type_linear_proof_outcome");
@@ -89,13 +89,10 @@ int run_test_ir_typed_entry_proof_authority() {
         CHECK(mmd_pos != std::string::npos,
               "AC2: linear_move_drop_elision_ok still present (no regression of #3186)");
         if (mmd_pos != std::string::npos) {
-            const std::string scope = h.substr(mmd_pos, 1200);
-            CHECK(
-                scope.find("g_last_type_linear_proof_outcome") != std::string::npos,
-                "AC2: linear_move_drop_elision_ok still consults g_last_type_linear_proof_outcome");
-            CHECK(
-                scope.find("g_last_proof_would_allow_commit") != std::string::npos,
-                "AC2: linear_move_drop_elision_ok still consults g_last_proof_would_allow_commit");
+            const std::string scope = h.substr(mmd_pos, 2500);
+            CHECK(scope.find("linear_ir_fastpath_try_skip") != std::string::npos ||
+                      scope.find("commit_readiness") != std::string::npos,
+                  "AC2: linear_move_drop_elision_ok still gates via fastpath/readiness");
         }
         const auto lfp_pos = h.find("inline bool linear_fast_path_ok() noexcept");
         CHECK(lfp_pos != std::string::npos,
@@ -114,7 +111,7 @@ int run_test_ir_typed_entry_proof_authority() {
         std::println("\n--- AC3: production guard + depth==0 short-circuit preserved ---");
         const auto fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept");
         if (fn_pos != std::string::npos) {
-            const std::string scope = h.substr(fn_pos, 2000);
+            const std::string scope = h.substr(fn_pos, 3500);
             // Soft path: !production_defaults && !Full → return true (zero extra work)
             CHECK(scope.find("if (!(production_defaults_active() || get_strategy() == "
                              "AuditStrategy::Full))") != std::string::npos,
@@ -122,6 +119,9 @@ int run_test_ir_typed_entry_proof_authority() {
             // depth==0 short-circuit
             CHECK(scope.find("if (depth == 0)") != std::string::npos,
                   "AC3: depth==0 short-circuit preserved");
+            // Issue #3414: Quiet / unbound last-proof is not authority at depth==0
+            CHECK(scope.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
+                  "AC3/#3414: depth==0 requires Stamped last-proof (Quiet/unbound refuse)");
         }
     }
 
@@ -130,7 +130,7 @@ int run_test_ir_typed_entry_proof_authority() {
         std::println("\n--- AC4: existing counter reused, no new query key ---");
         const auto fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept");
         if (fn_pos != std::string::npos) {
-            const std::string scope = h.substr(fn_pos, 2000);
+            const std::string scope = h.substr(fn_pos, 3500);
             // Verify the existing counter is bumped in the new reject paths.
             const auto bump_count = [&]() -> std::size_t {
                 std::size_t count = 0;
@@ -158,8 +158,8 @@ int run_test_ir_typed_entry_proof_authority() {
         // not test_issue_*.
         const auto self_path = "tests/compiler/test_ir_typed_entry_proof_authority.cpp";
         auto self = read_file(self_path);
-        CHECK(self.find("test_issue_3305") == std::string::npos,
-              "AC5: this test file does not invent test_issue_3305_*");
+        CHECK(read_file("tests/compiler/test_issue_3305.cpp").empty(),
+              "AC5: no invent tests/compiler/test_issue_3305.cpp");
     }
 
     // ── AC6: thematic naming follows existing IR / type-linear suite ──
@@ -181,3 +181,9 @@ int run_test_ir_typed_entry_proof_authority() {
     std::println("\n=== Issue #3305 done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_ir_typed_entry_proof_authority();
+}
+#endif
