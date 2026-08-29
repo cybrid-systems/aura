@@ -2157,6 +2157,13 @@ enum class LinearFastPathExitAction : std::uint8_t {
     return true;
 }
 
+// Issue #3359: Production/Full refuse identity / Move/Drop / IR-entry
+// elision while abort-authority or mid-abort is outstanding (or the
+// #3225 persist seqlock is odd). Defined after mid-abort helpers.
+// Soft: false (observe-only, no extra bump).
+[[nodiscard]] inline bool abort_or_mid_abort_blocks_elision() noexcept;
+inline constexpr int kCastopAbortElisionInterleaveIssue = 3359;
+
 // Issue #3130: single pure predicate for IR/JIT Move/Drop elision —
 // closes the half-green residual by also consulting the live
 // commit_readiness face. Wraps the existing linear_ir_fastpath_try_skip
@@ -2170,6 +2177,12 @@ enum class LinearFastPathExitAction : std::uint8_t {
 // no linear elision" as an absolute invariant; the prior half-green
 // window broke the self-evo closed loop under concurrent densify/steal.
 [[nodiscard]] inline bool linear_move_drop_elision_ok() noexcept {
+    // Issue #3359: re-sample mid-abort outstanding / abort-authority
+    // in_flight / persist seqlock before any elision grant.
+    if (abort_or_mid_abort_blocks_elision()) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     if (!linear_ir_fastpath_try_skip()) {
         return false;
     }
@@ -2197,6 +2210,12 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
+    // Issue #3359: re-sample mid-abort outstanding before granting
+    // IR/JIT entry (depth-0 included — stale CastOp must not ship).
+    if (abort_or_mid_abort_blocks_elision()) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
     // Issue #3379: dual-authority close at depth==0 — consult
     // last_proof_outcome + invalidate_gen regardless of depth.
     // Resolves the half-green residual where depth-0 IR/JIT ran
@@ -2292,9 +2311,12 @@ inline void reset_coercion_commit_readiness_cleared_on_abort_for_test() noexcept
 
 inline void clear_coercion_commit_readiness_on_abort() noexcept {
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
-    if (hard)
+    if (hard) {
         g_coercion_commit_readiness_cleared_on_abort_total.fetch_add(1, std::memory_order_relaxed);
-    else
+        // Issue #3359: drop the grant face so identity CastOp cannot
+        // re-arm would_allow_commit while abort / densify interleave.
+        g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    } else
         g_coercion_commit_readiness_cleared_on_abort_observe_total.fetch_add(
             1, std::memory_order_relaxed);
 }
@@ -2424,11 +2446,15 @@ inline std::atomic<std::uint32_t> g_mid_abort_authority_wired{1};
         if (s.mid.compare_exchange_strong(expected, mid, std::memory_order_acq_rel,
                                           std::memory_order_relaxed)) {
             s.ver.store(1, std::memory_order_release);
+            // Issue #3359: mid-bound abort enter also drops the CoercionMap
+            // commit-readiness face (identity CastOp cannot re-grant).
+            clear_coercion_commit_readiness_on_abort();
             return 1;
         }
         if (s.mid.load(std::memory_order_acquire) == mid) {
             const auto v = s.ver.load(std::memory_order_relaxed);
             s.ver.store(v + 1, std::memory_order_release);
+            clear_coercion_commit_readiness_on_abort();
             return v + 1;
         }
     }
@@ -2466,6 +2492,27 @@ inline void reset_mid_abort_authority_for_test() noexcept {
     g_mid_abort_authority_mismatch_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3359: Production/Full refuse elision while abort × densify
+// interleave is live. Soft: false (observe-only). Quiet: no abort →
+// four acquire loads that miss (zero extra stores).
+[[nodiscard]] inline bool abort_or_mid_abort_blocks_elision() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return false;
+    if (g_abort_authority_in_flight.load(std::memory_order_acquire) != 0)
+        return true;
+    const auto tls_mid = g_tls_boundary_audit_mid;
+    if (tls_mid != 0 && mid_abort_authority_outstanding(tls_mid))
+        return true;
+    for (const auto& s : g_mid_abort_authority) {
+        if (s.mid.load(std::memory_order_acquire) != 0)
+            return true;
+    }
+    // Issue #3225: odd persist seqlock → densify/abort write in flight.
+    if ((g_occurrence_persist_seq.load(std::memory_order_acquire) & 1ull) != 0)
+        return true;
+    return false;
+}
+
 // Returns true when production/Full actually armed the hold.
 [[nodiscard]] inline bool begin_abort_authority_hold() noexcept {
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
@@ -2476,6 +2523,10 @@ inline void reset_mid_abort_authority_for_test() noexcept {
     g_abort_authority_in_flight.fetch_add(1, std::memory_order_release);
     g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
     g_abort_authority_hold_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3359: clear CoercionMap commit-readiness at abort enter
+    // (symmetric to proof clear) so identity elision cannot re-grant
+    // while abort × densify is in flight.
+    clear_coercion_commit_readiness_on_abort();
     return true;
 }
 inline void end_abort_authority_hold() noexcept {
