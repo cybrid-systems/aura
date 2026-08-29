@@ -582,6 +582,58 @@ static void ac10_no_invent_docs() {
           "AC10: no tests/issues/test_issue_3156.cpp (per #81934 — src/-aligned suite instead)");
 }
 
+// #3403: InlinePass + run_pipeline dual-emit residual — SoA hot entry +
+// hard-zero bridge gate. Source-cite via read_file (no new helpers):
+// InlinePass must declare run_on_dirty_blocks_only(IRModuleV2&,
+// DefineDirtyMaskView*) as the production hot entry with a #3403
+// source-cite anchor; run(IRModule&) carries the cold / tests / debug
+// print path anchor. soa_view.ixx carries
+// hard_zero_dual_emit_bridge_in_production() abort gate AND
+// record_soa_dual_emit_bridge() aborts under production_defaults_active().
+static void ac3403_inline_pass_soa() {
+    std::println("\n--- #3403 AC: InlinePass SoA hot entry + hard-zero bridge gate ---");
+    const auto pass_impls = read_file("src/compiler/pass_impls.ixx");
+    const auto soa_view = read_file("src/compiler/soa_view.ixx");
+    const auto build = read_file("build.py");
+
+    // AC1: InlinePass SoA hot entry + cold-path source-cite anchor.
+    CHECK(pass_impls.find("void run_on_dirty_blocks_only(aura::ir::IRModuleV2& module,") !=
+              std::string::npos,
+          "AC1: InlinePass declares run_on_dirty_blocks_only(IRModuleV2&, "
+          "DefineDirtyMaskView*) SoA hot entry");
+    CHECK(pass_impls.find("// Issue #3403 AC1: SoA dirty-block-only entry for the InlinePass") !=
+              std::string::npos,
+          "AC1: InlinePass SoA hot entry #3403 source-cite anchor present");
+    CHECK(pass_impls.find("// Issue #3403: AoS `run(IRModule&)` is the cold") != std::string::npos,
+          "AC1: InlinePass::run(IRModule&) #3403 cold / tests / debug "
+          "print path source-cite anchor present");
+
+    // AC2: soa_view.ixx carries the hard-zero gate + production abort.
+    CHECK(soa_view.find("hard_zero_dual_emit_bridge_in_production") != std::string::npos,
+          "AC2: soa_view.ixx declares hard_zero_dual_emit_bridge_in_production() "
+          "abort gate");
+    CHECK(soa_view.find("g_soa_dual_emit_bridge_count") != std::string::npos,
+          "AC2: soa_view.ixx declares g_soa_dual_emit_bridge_count counter");
+    CHECK(soa_view.find("production_defaults_active()") != std::string::npos,
+          "AC2: soa_view.ixx guards production_defaults_active()");
+    CHECK(soa_view.find("HARD ZERO VIOLATED") != std::string::npos,
+          "AC2: soa_view.ixx hard-zero abort message present");
+
+    // AC5: no test_issue_3403.cpp, no docs/design/3403-*.md.
+    const auto issue_test_3403 = read_file("tests/core/test_issue_3403.cpp");
+    CHECK(issue_test_3403.empty(),
+          "AC5: no tests/core/test_issue_3403.cpp (extends existing per #81934)");
+
+    // AC6: source-cite #3403 + build.py registration.
+    CHECK(pass_impls.find("#3403") != std::string::npos ||
+              soa_view.find("#3403") != std::string::npos,
+          "AC6: source-cite #3403 present in pass_impls.ixx / soa_view.ixx");
+    CHECK(build.find("check_inline_pass_soa_3403") != std::string::npos,
+          "AC6: build.py registers check_inline_pass_soa_3403");
+    CHECK(build.find("inline-pass-soa-3403") != std::string::npos,
+          "AC6: build.py dispatch entry present");
+}
+
 // #3402: FlatAST dense children columns + columnar walks over contiguous
 // NodeId. Source-cite via read_file (no new helpers): dense columns
 // (child_data_ / child_begin_ / child_count_) appended at struct END per
@@ -736,6 +788,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac10_no_invent_docs();
     ac3401_eval_flat_hot_path_intern();
     ac3402_dense_children_columns();
+    ac3403_inline_pass_soa();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);
