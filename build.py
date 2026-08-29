@@ -3788,6 +3788,20 @@ def cmd_lint():
             "Issue #3283 deferred-hybrid re-arm lag linter failed — run python3 scripts/coverage/checks/check_deferred_rearm_lag_3283.py"
         )
         return r
+    # Issue #3348: non-stale record_dependency / record_block_dependency
+    # mirror growth last-look before partial peel (#3283 residual). Soft
+    # + counters flat: one acquire, zero extra. Extends
+    # test_cascade_decision_residual_atomic; no docs/design / invent.
+    nsm3348_script = COVERAGE_CHECKS / "check_nonstale_mirror_growth_force_full_3348.py"
+    if not nsm3348_script.exists():
+        fail(f"missing {nsm3348_script}")
+        return 1
+    r = run([sys.executable, str(nsm3348_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3348 non-stale mirror growth force-full linter failed — run python3 scripts/coverage/checks/check_nonstale_mirror_growth_force_full_3348.py"
+        )
+        return r
     # Issue #3258: abort fence rejects concurrent lookup until force-dirty
     # walk completes. Extends test_abort_ir_cache_fence_first.cpp (#81967);
     # no docs/design/ (#1655).
