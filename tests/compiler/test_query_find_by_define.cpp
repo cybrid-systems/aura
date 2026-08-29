@@ -33,7 +33,10 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
+using aura::compiler::types::is_pair;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -59,15 +62,16 @@ int run_test_query_find_by_define() {
             "\n--- #3390 AC1: Define name → index hit, result equals find_define_by_name ---");
         using aura::compiler::typed_audit::apply_dev_audit_defaults;
         using aura::compiler::typed_audit::apply_production_audit_defaults;
-        apply_production_audit_defaults();
+        apply_dev_audit_defaults();
         CompilerService cs;
         auto& ev = cs.evaluator();
         CHECK(cs.eval("(set-code \"(define foo3390 42)\")").has_value(), "3390 AC1: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3390 AC1: eval");
+        apply_production_audit_defaults();
         auto* ws = ev.workspace_flat();
         CHECK(ws != nullptr, "3390 AC1: workspace");
         // Get the expected NodeId from find_define_by_name directly.
-        auto expected = ws->find_define_by_name(*ev.workspace_pool_, "foo3390");
+        auto expected = ws->find_define_by_name(*ev.workspace_pool(), "foo3390");
         CHECK(expected.has_value(), "3390 AC1: find_define_by_name returns foo3390");
         // query:find under production → schema-2 hash; non-empty result.
         auto qr = cs.eval("(query :find \"foo3390\" :as-query-result)");
@@ -89,7 +93,7 @@ int run_test_query_find_by_define() {
         CHECK(cs.eval("(set-code \"(define foo3390 42)\")").has_value(), "3390 AC2: set-code");
         CHECK(cs.eval("(eval-current)").has_value(), "3390 AC2: eval");
         auto* ws = ev.workspace_flat();
-        const auto miss = ws->find_define_by_name(*ev.workspace_pool_, "bar3390");
+        const auto miss = ws->find_define_by_name(*ev.workspace_pool(), "bar3390");
         CHECK(!miss.has_value(), "3390 AC2: find_define_by_name misses for bar3390");
         // query:find for absent name → index miss → fallback scan → void.
         auto qr = cs.eval("(query :find \"bar3390\")");
@@ -138,6 +142,83 @@ int run_test_query_find_by_define() {
         {
             std::ifstream f("tests/issues/test_issue_3390.cpp");
             CHECK(!f.good(), "3390 AC5: no tests/issues/test_issue_3390.cpp");
+        }
+    }
+
+    // Issue #3427: production query:find miss is not a full SoA walk.
+    {
+        std::println("\n--- #3427 AC1: production Define-name hit unchanged ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define foo3427 42)\")").has_value(), "3427 AC1: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3427 AC1: eval");
+        apply_production_audit_defaults();
+        auto hit = cs.eval("(query :find \"foo3427\" :as-query-result #t)");
+        CHECK(hit.has_value(), "3427 AC1: production Define hit returns");
+        CHECK(hit && is_hash(*hit), "3427 AC1: production Define hit is schema-2 hash");
+        apply_dev_audit_defaults();
+    }
+    {
+        std::println("\n--- #3427 AC2: production miss → query-unindexed, no size() walk ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define foo3427 42)\")").has_value(), "3427 AC2: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3427 AC2: eval");
+        apply_production_audit_defaults();
+        CHECK(cs.eval("(define r3427 (query :find \"bar3427\"))").has_value(),
+              "3427 AC2: bind miss");
+        auto eq = cs.eval("(equal? (car r3427) \"query-unindexed\")");
+        CHECK(eq && is_bool(*eq) && as_bool(*eq), "3427 AC2: production miss is query-unindexed");
+        apply_dev_audit_defaults();
+    }
+    {
+        std::println("\n--- #3427 AC3: Soft miss still size() first-match / void ---");
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        apply_dev_audit_defaults();
+        CompilerService cs;
+        CHECK(cs.eval("(set-code \"(define foo3427 42)\")").has_value(), "3427 AC3: set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3427 AC3: eval");
+        auto miss = cs.eval("(query :find \"bar3427\")");
+        CHECK(miss.has_value(), "3427 AC3: Soft miss returns");
+        CHECK(!(miss && is_hash(*miss)), "3427 AC3: Soft miss is not a QueryResult hash");
+        CHECK(!(miss && is_pair(*miss)), "3427 AC3: Soft miss is not query-unindexed merr");
+    }
+    {
+        std::println("\n--- #3427 AC4: production branch has zero id < flat.size() loops ---");
+        const auto qwsp = read_src("src/compiler/evaluator_primitives_query_workspace.cpp");
+        CHECK(!qwsp.empty(), "3427 AC4: query_workspace.cpp readable");
+        const auto start = qwsp.find("[\"query:find\"]");
+        CHECK(start != std::string::npos, "3427 AC4: query:find present");
+        const auto nxt = qwsp.find("[\"query:children\"]", start);
+        const auto win = qwsp.substr(start, nxt == std::string::npos ? 4000 : nxt - start);
+        const auto fd = win.find("find_define_by_name");
+        CHECK(fd != std::string::npos, "3427 AC4: find_define_by_name in query:find");
+        const auto after = win.substr(fd);
+        const auto soft = after.find("Fallback: existing size() walk");
+        const auto prod = soft == std::string::npos ? after : after.substr(0, soft);
+        CHECK(prod.find("query-unindexed") != std::string::npos, "3427 AC4: query-unindexed");
+        CHECK(prod.find("Issue #3427") != std::string::npos, "3427 AC4: Issue #3427 cite");
+        CHECK(prod.find("id < flat.size()") == std::string::npos,
+              "3427 AC4: production branch has zero id < flat.size() loops");
+        CHECK(prod.find("flat.get(") == std::string::npos,
+              "3427 AC4: production branch does not flat.get in a size() loop");
+        CHECK(after.find("id < flat.size()") != std::string::npos,
+              "3427 AC4: Soft size() fallback still present");
+        CHECK(qwsp.find("check_query_find_prod_no_scan_3427") != std::string::npos ||
+                  read_src("build.py").find("check_query_find_prod_no_scan_3427") !=
+                      std::string::npos,
+              "3427 AC5: linter wired");
+        {
+            std::ifstream f("docs/design/3427-query-find-prod-no-scan.md");
+            CHECK(!f.good(), "3427 AC5: no docs/design/3427-*");
+        }
+        {
+            std::ifstream f("tests/issues/test_issue_3427.cpp");
+            CHECK(!f.good(), "3427 AC5: no tests/issues/test_issue_3427.cpp");
         }
     }
 

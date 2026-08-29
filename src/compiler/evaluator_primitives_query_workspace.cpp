@@ -673,6 +673,14 @@ void register_workspace_query_primitives(
                 return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
             }
         }
+        // Issue #3427: production miss is not a full SoA walk (I6). Never
+        // a green schema-2 prefix of a scanned locator. Soft
+        // keeps the historical size() first-match scan (#3390 AC2).
+        if (aura::compiler::typed_audit::production_defaults_active()) {
+            aura::core::note_query_result_overflow_total();
+            return mev("query-unindexed",
+                       "query:find miss is not a full SoA walk under production (I6)");
+        }
         // Fallback: existing size() walk for non-Define names / first-match ties.
         // Issue #2488: SoA shared lock for multi-column get() vs concurrent
         // add_node (workspace_mtx shared alone does not cover flatast_mutex_
