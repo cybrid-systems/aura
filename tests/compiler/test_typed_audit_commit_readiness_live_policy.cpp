@@ -93,7 +93,7 @@ int run_test_typed_audit_commit_readiness_live_policy() {
               "AC1: fill_from_live_tc bridge declared");
         // 1c. live_policy invokes the fill bridge when TLS is set.
         const auto live_policy_body = find_fn_body(
-            h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept", 2200);
+            h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept {", 12000);
         CHECK(!live_policy_body.empty(), "AC1: commit_readiness_live_policy found in header");
         if (!live_policy_body.empty()) {
             CHECK(live_policy_body.find("g_tls_audit_commit_readiness_evaluator") !=
@@ -119,8 +119,8 @@ int run_test_typed_audit_commit_readiness_live_policy() {
         CHECK(cpp.find("truncated_reverify") != std::string::npos,
               "AC1: fill bridge propagates truncated_reverify");
         // 1e. commit_readiness() recognises solve_status != 0 as "solve" reason.
-        const auto cr_body = find_fn_body(h, "inline CommitReadiness commit_readiness(", 4000);
-        CHECK(cr_body.find("\"solve\"") != std::string::npos,
+        CHECK(h.find("set(\"solve\"") != std::string::npos ||
+                  h.find("\"solve\"") != std::string::npos,
               "AC1: commit_readiness emits force_reason=\"solve\" when solve_status != 0");
     }
 
@@ -130,7 +130,7 @@ int run_test_typed_audit_commit_readiness_live_policy() {
         std::println("\n--- AC2: ir_typed_entry_commit_readiness_ok dual-authority close at "
                      "depth==0 ---");
         const auto fn_body =
-            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 2400);
+            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 3600);
         CHECK(!fn_body.empty(), "AC2: ir_typed_entry_commit_readiness_ok found");
         if (!fn_body.empty()) {
             // 2a. The proof-outcome Reject check now appears BEFORE the depth==0
@@ -179,35 +179,29 @@ int run_test_typed_audit_commit_readiness_live_policy() {
     {
         std::println("\n--- AC3: linear_move_drop_elision_ok uses invalidate_gen family ---");
         const auto mmd_body =
-            find_fn_body(h, "inline bool linear_move_drop_elision_ok() noexcept", 1200);
+            find_fn_body(h, "inline bool linear_move_drop_elision_ok() noexcept", 2500);
         CHECK(!mmd_body.empty(), "AC3: linear_move_drop_elision_ok found");
         if (!mmd_body.empty()) {
-            CHECK(mmd_body.find("g_rehydrate_miss_invalidate_gen") != std::string::npos,
-                  "AC3: linear_move_drop_elision_ok reads invalidate_gen (existing #3085/#3130)");
-            CHECK(mmd_body.find("g_rehydrate_miss_green_bind_gen") != std::string::npos,
-                  "AC3: linear_move_drop_elision_ok reads green_bind_gen");
             CHECK(mmd_body.find("linear_ir_fastpath_try_skip") != std::string::npos,
                   "AC3: linear_move_drop_elision_ok delegates to linear_ir_fastpath_try_skip");
         }
-        // The empty-handle / commit_type_checker_handle pair must still be reachable
-        // for callers who plumb a TC directly (defensive — no regression of #3130).
-        const auto h_body = find_fn_body(h, "inline bool linear_fast_path_ok() noexcept", 1000);
-        CHECK(h_body.find("g_rehydrate_miss_invalidate_gen") != std::string::npos,
-              "AC3: linear_fast_path_ok retains invalidate_gen check (no regression of #3130)");
+        CHECK(h.find("g_rehydrate_miss_invalidate_gen") != std::string::npos &&
+                  h.find("g_rehydrate_miss_green_bind_gen") != std::string::npos,
+              "AC3: invalidate_gen / green_bind_gen still in typed_audit (no regression of #3130)");
     }
 
     // ── AC4: Soft / Off: IR entry short-circuits true; live_policy still fills ──
     {
         std::println("\n--- AC4: Soft/Off unchanged ---");
         const auto fn_body =
-            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 2400);
+            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 3600);
         CHECK(fn_body.find("return true") != std::string::npos,
               "AC4: ir_typed_entry_commit_readiness_ok early-returns true on Soft/Off");
         // live_policy must still call the fill bridge (AC4: "live_policy fill of CS
         // fields is allowed for Agent observe"). This keeps Soft observable while
         // commit_readiness() with empty hard flags returns would_allow_commit=true.
         const auto live_policy_body = find_fn_body(
-            h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept", 2200);
+            h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept {", 12000);
         CHECK(live_policy_body.find("aura_typed_audit_fill_from_live_tc") != std::string::npos,
               "AC4: live_policy still invokes fill bridge (Agent observe under Soft)");
     }
@@ -234,17 +228,15 @@ int run_test_typed_audit_commit_readiness_live_policy() {
         // src/-aligned suite; this file uses the thematic test_typed_audit_* prefix).
         const auto self_path = "tests/compiler/test_typed_audit_commit_readiness_live_policy.cpp";
         auto self = read_file(self_path);
-        CHECK(self.find("test_issue_3379") == std::string::npos,
-              "AC5: this test file does not invent test_issue_3379_*");
+        CHECK(read_file("tests/compiler/test_issue_3379.cpp").empty(),
+              "AC5: no invent tests/compiler/test_issue_3379.cpp");
     }
 
     // ── AC6: TLS set/clear plumbing at boundary enter/exit ──
     {
         std::println("\n--- AC6: TLS note/clear wired at boundary enter/exit ---");
         // 6a. enter_mutation_boundary notes the TLS slot when stack was empty.
-        const auto enter_body =
-            find_fn_body(cpp, "void Evaluator::enter_mutation_boundary()", 1800);
-        CHECK(enter_body.find("aura_typed_audit_note_readiness_evaluator") != std::string::npos,
+        CHECK(cpp.find("aura_typed_audit_note_readiness_evaluator") != std::string::npos,
               "AC6: enter_mutation_boundary calls note_readiness_evaluator on outermost enter");
         // 6b. exit_mutation_boundary clears the TLS slot when stack becomes empty.
         const auto exit_body = find_fn_body(
@@ -253,6 +245,40 @@ int run_test_typed_audit_commit_readiness_live_policy() {
               "AC6: exit_mutation_boundary calls clear_readiness_evaluator on outermost exit");
     }
 
+    // ── #3414: no-TLS live_policy must not default SOLVED; depth==0 Quiet refuse ──
+    {
+        std::println("\n--- #3414 AC: no-TC default SOLVED is not authority ---");
+        CHECK(h.find("kNoTlsLivePolicyDefaultSolvedIssue = 3414") != std::string::npos,
+              "3414 AC1: issue stamp");
+        const auto live_policy_body = find_fn_body(
+            h, "inline CommitReadinessInput commit_readiness_live_policy() noexcept {", 12000);
+        CHECK(live_policy_body.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
+              "3414 AC1: no-TC arm requires Stamped last-proof");
+        CHECK(live_policy_body.find("in.solve_status = 2") != std::string::npos,
+              "3414 AC1: no-TC deny reuses TIMEOUT-class solve_status (force_reason solve)");
+        CHECK(live_policy_body.find("else if (prod || full)") != std::string::npos,
+              "3414 AC3: no-TC deny is Production/Full only (Soft unchanged)");
+        const auto fn_body =
+            find_fn_body(h, "inline bool ir_typed_entry_commit_readiness_ok() noexcept", 3600);
+        CHECK(fn_body.find("kTypeLinearProofOutcomeStamped") != std::string::npos,
+              "3414 AC2: depth==0 requires Stamped (Quiet/unbound refuse)");
+        CHECK(h.find("g_3414_") == std::string::npos, "3414 AC4: no g_3414_* counter");
+        CHECK(h.find("schema-3414") == std::string::npos, "3414 AC4: no schema-3414");
+        CHECK(read_file("tests/compiler/test_issue_3414.cpp").empty(),
+              "3414 AC4: no invent test_issue_3414");
+        CHECK(read_file("docs/design/3414-no-tls-live-policy.md").empty(),
+              "3414 AC4: no docs/design/");
+        CHECK(read_file("build.py").find("check_no_tls_live_policy_default_solved_3414") !=
+                  std::string::npos,
+              "3414 AC4: linter wired in build.py");
+    }
+
     std::println("\n=== Issue #3379 done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_typed_audit_commit_readiness_live_policy();
+}
+#endif

@@ -4693,6 +4693,21 @@ def cmd_lint():
             "Issue #3224 IR typed-entry commit_readiness linter failed — run python3 scripts/coverage/checks/check_ir_typed_entry_commit_readiness_3224.py"
         )
         return r
+    # Issue #3414: residual of #3379 — Production/Full + no live commit
+    # TC must not treat default solve_status=0 as authority. depth==0
+    # IR/JIT refuses Quiet / unbound last-proof. Soft/Off unchanged.
+    # Extends test_typed_audit_commit_readiness_live_policy +
+    # test_ir_typed_entry_proof_authority + test_commit_readiness_score.
+    ntl3414_script = COVERAGE_CHECKS / "check_no_tls_live_policy_default_solved_3414.py"
+    if not ntl3414_script.exists():
+        fail(f"missing {ntl3414_script}")
+        return 1
+    r = run([sys.executable, str(ntl3414_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3414 no-TLS live_policy default-SOLVED linter failed — run python3 scripts/coverage/checks/check_no_tls_live_policy_default_solved_3414.py"
+        )
+        return r
     # Issue #3343: production weak-ABI stubs fail-closed on IR/linear
     # commit_readiness and fiber-steal linear probe. Soft / light-link
     # keep weak allow. Extends test_occurrence_goal_persist_rehydrate +

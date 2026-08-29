@@ -27,9 +27,14 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test;
 using aura::compiler::typed_audit::commit_readiness;
 using aura::compiler::typed_audit::commit_readiness_live_policy;
 using aura::compiler::typed_audit::CommitReadinessInput;
+using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
+using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
+using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
@@ -204,8 +209,12 @@ static void ac5_source_schema_live() {
           "AC5: build script");
     CHECK(build.find("cmd_commit_readiness_score_coverage") != std::string::npos, "AC5: build cmd");
 
-    // Live policy under production → hard flags on; clean face allows.
+    // Live policy under production → hard flags on. #3414: Quiet + no TLS
+    // is not authority — stamp a green proof so the clean-face check is
+    // the same as an outermost-success bind (not the half-green default).
     apply_production_audit_defaults();
+    aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+        aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped);
     auto live = commit_readiness_live_policy();
     CHECK(live.empty_cs_hard, "AC5: production empty_cs_hard");
     CHECK(live.truncate_hard, "AC5: production truncate_hard");
@@ -213,6 +222,7 @@ static void ac5_source_schema_live() {
     CHECK(live.blame_hard, "AC5: production blame_hard");
     const auto clean = commit_readiness(live);
     CHECK(clean.would_allow_commit && clean.force_reason == "ok", "AC5: live clean allows");
+    aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test();
 
     apply_dev_audit_defaults();
     live = commit_readiness_live_policy();
@@ -227,6 +237,42 @@ static void ac5_source_schema_live() {
     CHECK(href(cs, "commit-readiness-force-reason") == 0, "AC5: clean face reason ok");
 }
 
+// ── #3414: Production/Full + no live TC must not default SOLVED ──
+static void ac3414_no_tls_default_solved_refused() {
+    std::println("\n--- #3414: no-TLS live_policy default SOLVED is not authority ---");
+    apply_production_audit_defaults();
+    aura_typed_audit_clear_readiness_evaluator();
+    clear_type_linear_proof_outcome_for_test();
+    aura::compiler::typed_audit::clear_cone_outside_goal_drop_for_test();
+    aura::compiler::typed_audit::clear_occurrence_empty_after_fence_for_test();
+    aura::compiler::typed_audit::clear_partial_cone_truncate_for_test();
+    aura::compiler::typed_audit::clear_refined_consistency_drift_for_test();
+    aura::compiler::typed_audit::reset_pending_full_solve_residual_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    auto live = commit_readiness_live_policy();
+    CHECK(live.solve_status != 0, "3414 AC1: no-TC Quiet sets solve_status (not default SOLVED)");
+    const auto cr = commit_readiness(live);
+    CHECK(!cr.would_allow_commit, "3414 AC1: would_allow_commit false after TIMEOUT-class deny");
+    CHECK(cr.force_reason == "solve" || cr.force_reason_code == 1,
+          "3414 AC1: reuse force_reason solve");
+
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3414 AC2: Production depth==0 Quiet last-proof refuses");
+
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    live = commit_readiness_live_policy();
+    const auto green = commit_readiness(live);
+    CHECK(green.would_allow_commit && green.force_reason == "ok",
+          "3414 AC1: Stamped + gen match + clear faces allows");
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3414 AC2: Stamped depth==0 allows");
+
+    apply_dev_audit_defaults();
+    clear_type_linear_proof_outcome_for_test();
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3414 AC3: Soft depth==0 still allows");
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
 } // namespace
 
 int run_test_commit_readiness_score() {
@@ -237,6 +283,7 @@ int run_test_commit_readiness_score() {
     ac3_truncate_hard();
     ac4_soft_observe();
     ac5_source_schema_live();
+    ac3414_no_tls_default_solved_refused();
     apply_dev_audit_defaults();
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

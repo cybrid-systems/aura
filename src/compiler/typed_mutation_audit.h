@@ -2207,6 +2207,11 @@ inline constexpr int kCastopAbortElisionInterleaveIssue = 3359;
 // (depth==0): one depth load, no commit_readiness. Reuses
 // g_linear_fast_path_elide_blocked_production_total — no new counter.
 inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
+// Issue #3414: residual of #3379 — Production/Full + no live commit TC
+// must not treat default solve_status=0 as authority. depth==0 IR/JIT
+// refuses Quiet / unbound last-proof (not only Reject). Soft/Off
+// unchanged. Reuses g_linear_fast_path_elide_blocked_production_total.
+inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
@@ -2238,8 +2243,19 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
         depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
     else
         depth = aura_evaluator_mutation_boundary_depth();
-    if (depth == 0)
+    if (depth == 0) {
+        // Issue #3414: Quiet / unbound last-proof is not authority at
+        // depth==0. Only a Stamped proof (this-eval green stamp) may
+        // grant. Reject already denied above. Soft returned true at
+        // the production/Full guard. Reuses the existing elide counter.
+        if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) !=
+            kTypeLinearProofOutcomeStamped) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
         return true;
+    }
     // Issue #3305: dual-authority close — also consult the last
     // TypeLinearCommitProof face (same SSOT as linear_fast_path_ok /
     // linear_move_drop_elision_ok). commit_readiness_live_policy()
@@ -3456,6 +3472,24 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
     // here too — production never depends on a hidden field.
     if (g_tls_audit_commit_readiness_evaluator != nullptr) {
         aura_typed_audit_fill_from_live_tc(g_tls_audit_commit_readiness_evaluator, &in);
+    } else if (prod || full) {
+        // Issue #3414: no live commit TC. Default solve_status=0 (SOLVED)
+        // is not authority. Deny via existing "solve" (TIMEOUT-class)
+        // unless last proof is Stamped AND invalidate_gen==green_bind_gen
+        // AND pending/cone/refined faces are already clear (those faces
+        // keep their own force_reason — do not overwrite with "solve").
+        // Soft/Off skips this arm (no extra CS walk). Two relaxed loads
+        // + two acquire/relaxed gen loads; no ConstraintSystem walk.
+        const auto outcome = g_last_type_linear_proof_outcome.load(std::memory_order_relaxed);
+        const bool stamped = outcome == kTypeLinearProofOutcomeStamped;
+        const bool gen_ok = g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) ==
+                            g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed);
+        const bool faces_clear = !in.pending_full_solve_residual &&
+                                 !in.cone_outside_goal_drop_face &&
+                                 !in.occurrence_empty_after_fence_face &&
+                                 !in.refined_consistency_drift && !in.region_type_cross_talk_face;
+        if (faces_clear && !(stamped && gen_ok) && in.solve_status == 0)
+            in.solve_status = 2; // TIMEOUT-class → commit_readiness "solve"
     }
     return in;
 }
