@@ -4378,9 +4378,16 @@ aura_issue_test_link_light(test_pmr_alloc_fiber_safe)
 add_dependencies(all_test_issue_targets test_pmr_alloc_fiber_safe)
 
 # Issue #2652 / #2649 H12: empty stats keys / NUL display / hash races.
+# Issue #3400: fixture registered (was registry-only, never built) so the
+# check-stable-ref node-gen domain probe rows actually compile + run.
+# Lives in tests/core/ per #81934/#81967.
 aura_add_issue_test(test_string_heap_corruption_guard)
 aura_issue_test_link_light(test_string_heap_corruption_guard)
 add_dependencies(all_test_issue_targets test_string_heap_corruption_guard)
+
+aura_add_issue_test(test_stale_ref_string_heap)
+aura_issue_test_link_light(test_stale_ref_string_heap)
+add_dependencies(all_test_issue_targets test_stale_ref_string_heap)
 
 # Issue #2654: language (hash) / hash-set! grow past fixed capacity 8.
 aura_add_issue_test(test_hash_table_grow)
