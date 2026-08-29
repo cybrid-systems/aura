@@ -2747,6 +2747,87 @@ static void ac3308_6_source_and_linter() {
           "3308 AC6: source-cite linter script present");
 }
 
+// ── Issue #3356: densify success cone-limited pin/EnvFrame/JIT rewrite ──
+static void ac3356_1_cone_limited_rewrite() {
+    std::println("\n--- #3356 AC1: densify success + dirty cone → cone-limited rewrite ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto pin = read_file("src/core/lifetime_pin.hh");
+    CHECK(hh.find("kDensifyConeRewriteIssue = 3356") != std::string::npos, "3356 AC1: stamp");
+    CHECK(svc.find("Issue #3356") != std::string::npos, "3356 AC1: compact hook cites #3356");
+    CHECK(svc.find("object_remap_size()") != std::string::npos, "3356 AC1: densify success gate");
+    CHECK(svc.find("any_block_dirty()") != std::string::npos, "3356 AC1: dirty mask");
+    CHECK(svc.find("note_densify_cone_rewrite") != std::string::npos, "3356 AC1: cone counter");
+    CHECK(pin.find("remap_pins_pointing_to") != std::string::npos, "3356 AC1: pin rewrite");
+    CHECK(arena.find("remap_pins_pointing_to") != std::string::npos,
+          "3356 AC1: live_compact pin remap");
+    const auto npos = svc.find("void on_arena_compact_notify()");
+    CHECK(npos != std::string::npos, "3356 AC1: notify present");
+    const auto nend = svc.find("\n    }\n\nprivate:", npos);
+    const auto body =
+        nend == std::string::npos ? svc.substr(npos, 2500) : svc.substr(npos, nend - npos);
+    CHECK(body.find(".mark_all_blocks_dirty(") == std::string::npos,
+          "3356 AC1: notify has no wholesale mark_all_blocks_dirty");
+    CHECK(body.find("force_soa_instruction_dirty_sync") != std::string::npos,
+          "3356 AC1: cone rewrite finish_dirty_sync");
+}
+
+static void ac3356_2_empty_cone_skip() {
+    std::println("\n--- #3356 AC2: empty cone / objects_moved==0 → zero extra IR restamp ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(hh.find("densify_cone_rewrite_skip_empty_total") != std::string::npos,
+          "3356 AC2: skip_empty counter");
+    CHECK(svc.find("object_remap_size() > 0") != std::string::npos, "3356 AC2: moved gate");
+    CHECK(svc.find("if (!entry.any_block_dirty())") != std::string::npos,
+          "3356 AC2: skip outside cone");
+}
+
+static void ac3356_3_pin_fail_closed() {
+    std::println("\n--- #3356 AC3: production pin rewrite-miss fail-closed ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(arena.find("verify_pins_under_moving_compact") != std::string::npos,
+          "3356 AC3: pin verify fail-closed");
+    CHECK(svc.find("verify_pins_under_moving_compact") != std::string::npos,
+          "3356 AC3: hook cites pin fail-closed");
+}
+
+static void ac3356_4_existing_suite() {
+    std::println("\n--- #3356 AC4: existing densify suite + #3350 retained ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    CHECK(arena.find("remap_linear_roots_under_moving") != std::string::npos,
+          "3356 AC4: #3350 linear_roots rewrite retained");
+    CHECK(t.find("ac1_source_cite_live_compact_result") != std::string::npos,
+          "3356 AC4: existing #2495 suite retained");
+}
+
+static void ac3356_5_source_and_linter() {
+    std::println("\n--- #3356 AC5: source-cite + linter + no invent ---");
+    const auto hh = read_file("src/core/post_compact_lifecycle.hh");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_densify_cone_rewrite_3356.py");
+    CHECK(hh.find("#3356") != std::string::npos, "3356 AC5: lifecycle cites #3356");
+    CHECK(t.find("ac3356_1_cone_limited_rewrite") != std::string::npos, "3356 AC5: AC1 test");
+    CHECK(!lint.empty() && lint.find("Issue #3356") != std::string::npos, "3356 AC5: linter");
+    CHECK(build.find("check_densify_cone_rewrite_3356") != std::string::npos,
+          "3356 AC5: build.py wires linter");
+    const auto p3350 = build.find("check_linear_root_moving_remap_3350");
+    const auto p3356 = build.find("check_densify_cone_rewrite_3356");
+    CHECK(p3350 != std::string::npos && p3356 != std::string::npos && p3356 > p3350,
+          "3356 AC5: linter AFTER #3350");
+    CHECK(hh.find("schema-3356") == std::string::npos, "3356 AC5: no schema-3356");
+    CHECK(hh.find("g_3356_") == std::string::npos, "3356 AC5: no g_3356_*");
+    CHECK(read_file("docs/design/3356-densify-cone-rewrite.md").empty(),
+          "3356 AC5: no docs/design/3356-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3356.cpp").empty(), "3356 AC5: no test_issue_3356.cpp");
+    CHECK(read_file("tests/issues/test_issue_3356.cpp").empty(),
+          "3356 AC5: no tests/issues/test_issue_3356.cpp");
+}
+
 
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
@@ -3391,6 +3472,13 @@ int run_test_moving_densify_fail_closed() {
         CHECK(t3372_self.find("3372 AC") != std::string::npos,
               "3372 AC5: existing test file cites #3372");
     }
+
+    std::println("\n=== Issue #3356: densify success cone-limited rewrite ===");
+    ac3356_1_cone_limited_rewrite();
+    ac3356_2_empty_cone_skip();
+    ac3356_3_pin_fail_closed();
+    ac3356_4_existing_suite();
+    ac3356_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

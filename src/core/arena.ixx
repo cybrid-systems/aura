@@ -2396,6 +2396,10 @@ public:
                 // when the object moved; verify stays belt-and-suspenders.
                 // Empty registry: one lock + empty check (Soft / quiet).
                 // Abort/join drain still uses unpin_* (#3249 stays closed).
+                // Issue #3356: pin rewrite is densify-success address remap
+                // (moved set). IR/JIT cone-limited restamp is the compact-hook
+                // sibling (on_arena_compact_notify) — dirty mask only, no
+                // wholesale mark_all_blocks_dirty.
                 (void)aura::core::lifetime::remap_linear_roots_under_moving(last_object_remap_);
                 std::unordered_set<void*> old_addrs;
                 old_addrs.reserve(last_object_remap_.size());

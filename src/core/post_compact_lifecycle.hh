@@ -70,6 +70,9 @@ namespace aura::core::post_compact_lifecycle {
 
 // Issue stamp for Agents / query surface.
 inline constexpr int kPostCompactLifecycleIssue = 2436;
+// Issue #3356: densify success rewrites pin/EnvFrame/JIT in the dirty
+// cone only (no wholesale mark_all_blocks_dirty / global IR restamp).
+inline constexpr int kDensifyConeRewriteIssue = 3356;
 
 // Step ids for force-reason / debug (match lifecycle comment above).
 inline constexpr std::uint8_t kStepNone = 0;
@@ -107,6 +110,19 @@ inline std::atomic<std::uint64_t> post_compact_lifecycle_wired{1};
 inline std::atomic<std::uint64_t> post_compact_lifecycle_orchestrator_total{0};
 // Last completed step id (best-effort; concurrent closes may race — telemetry).
 inline std::atomic<std::uint8_t> post_compact_lifecycle_last_step{kStepNone};
+// Issue #3356: cone-limited IR rewrite after densify success.
+// entries_total = already-dirty cache entries that received finish_dirty_sync
+// (not wholesale mark_all_blocks_dirty). skip_empty_total = objects_moved==0
+// or dirty cone empty (AC2 zero extra IR restamp).
+inline std::atomic<std::uint64_t> densify_cone_rewrite_entries_total{0};
+inline std::atomic<std::uint64_t> densify_cone_rewrite_skip_empty_total{0};
+
+inline void note_densify_cone_rewrite(std::uint64_t cone_n) noexcept {
+    if (cone_n == 0)
+        densify_cone_rewrite_skip_empty_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        densify_cone_rewrite_entries_total.fetch_add(cone_n, std::memory_order_relaxed);
+}
 
 inline void note_lifecycle_soft_skip() noexcept {
     post_compact_lifecycle_soft_skip_total.fetch_add(1, std::memory_order_relaxed);
