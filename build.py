@@ -14437,6 +14437,35 @@ def cmd_unpack_stable_ref_arg_v2_coverage():
     return 0
 
 
+def cmd_structural_mutate_resolve_helper_coverage():
+    """Issue #3399: structural mutate:* call-site coverage.
+
+    The Issue #3396 inbound unpack (unpack_stable_ref_arg /
+    unpack_query_stable_ref) already rejects bare int under production
+    via the #3395 gate, but 10 structural mutate:* prims (record-patch,
+    remove-node, insert-child, replace-subtree, splice, wrap, move-node,
+    inline-call, extract-function / refactor/extract,
+    rollback-macro-introduced) still hard-require is_int(a[0) and
+    write the occupancy index. This ticket is the call-site coverage:
+    every structural prim with a workspace-node operand must route that
+    operand through resolve_mutate_node_arg. Under production, this
+    routes through the #3395 bare-int production reject gate; Soft
+    keeps the bare-int path (Issue #2186 compat). Non-regress: #489
+    helper + #2186 ensure + #3395 default-query face.
+    """
+    print(f"{B}=== structural mutate:resolve_mutate_node_arg call-site coverage (#3399) ==={N}")
+    script = COVERAGE_CHECKS / "check_structural_mutate_resolve_helper_3399.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("structural mutate:resolve_mutate_node_arg call-site (#3399) coverage contract rows failed")
+        return 1
+    ok("structural mutate:resolve_mutate_node_arg call-site (#3399) coverage clean")
+    return 0
+
+
 def cmd_as_stable_ref_v2_coverage():
     """Issue #3398: production query:as-stable-ref must pack the v2 spine.
 
@@ -21722,6 +21751,7 @@ def main():
         "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
         "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
+        "structural-mutate-resolve-helper": cmd_structural_mutate_resolve_helper_coverage,
         "as-stable-ref-v2": cmd_as_stable_ref_v2_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
