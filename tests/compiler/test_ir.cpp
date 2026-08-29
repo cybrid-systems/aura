@@ -1979,6 +1979,119 @@ int main() {
             apply_dev_audit_defaults();
         }
 
+        // ── Issue #3430: production_defaults forces Strict without set_strict ──
+        {
+            using aura::compiler::CompilerMetrics;
+            using aura::compiler::GradualPermissiveness;
+            using aura::compiler::kProductionDefaultsForceStrictUnifyIssue;
+            using aura::compiler::TypeChecker;
+            using aura::compiler::typed_audit::apply_dev_audit_defaults;
+            using aura::compiler::typed_audit::apply_production_audit_defaults;
+            using aura::core::TypeRegistry;
+
+            struct ProdScope {
+                ProdScope() { apply_production_audit_defaults(); }
+                ~ProdScope() { apply_dev_audit_defaults(); }
+            };
+
+            if (kProductionDefaultsForceStrictUnifyIssue == 3430) {
+                ++ts_passed;
+                std::println("TS OK: ac3430_5_stamp");
+            } else {
+                ++ts_failed;
+                std::println(std::cerr, "TS FAIL: ac3430_5_stamp");
+            }
+
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                TypeChecker tc(treg);
+                if (!tc.is_strict() &&
+                    tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3430_1_effective_strict_without_set_strict");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr,
+                                 "TS FAIL: ac3430_1_effective_strict_without_set_strict");
+                }
+                CompilerMetrics metrics{};
+                tc.set_metrics(&metrics);
+                aura::diag::DiagnosticCollector diag;
+                aura::ast::ASTArena arena;
+                auto alloc = arena.allocator();
+                aura::ast::StringPool pool(alloc);
+                aura::ast::FlatAST flat(alloc);
+                auto pr = aura::parser::parse_to_flat("(: x Int \"hello\")", flat, pool);
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    flat.root = pr.root;
+                    (void)tc.infer_flat(flat, pool, pr.root, diag);
+                }
+                bool saw_te = false;
+                for (const auto& d : diag.diagnostics()) {
+                    if (d.kind == aura::diag::ErrorKind::TypeError &&
+                        (d.message.find("type mismatch") != std::string::npos ||
+                         d.message.find("incompatible ground types") != std::string::npos))
+                        saw_te = true;
+                }
+                if (saw_te && tc.last_coercions().empty() &&
+                    metrics.gradual_ground_incompatible_error_total.load() > 0) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3430_1_typeerror + no CastOp");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3430_1_typeerror / CastOp / counter");
+                }
+            }
+
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                TypeChecker tc(treg);
+                if (tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3430_2_live_effective_strict");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3430_2_live_effective_strict");
+                }
+            }
+
+            {
+                apply_dev_audit_defaults();
+                TypeRegistry treg;
+                aura::compiler::ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+                auto fl = treg.lookup_type("Float");
+                if (cs.consistent_unify(treg.int_type(), treg.string_type()) &&
+                    cs.consistent_unify(treg.int_type(), fl)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3430_3_soft_balanced_unify_true");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3430_3_soft_balanced_unify_true");
+                }
+            }
+
+            {
+                ProdScope prod;
+                TypeRegistry treg;
+                aura::compiler::ConstraintSystem cs(treg);
+                cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+                auto lin = treg.register_linear(treg.int_type());
+                if (cs.consistent_unify(treg.dynamic_type(), treg.string_type()) &&
+                    !cs.consistent_unify(treg.dynamic_type(), lin)) {
+                    ++ts_passed;
+                    std::println("TS OK: ac3430_4_dynamic_and_linear");
+                } else {
+                    ++ts_failed;
+                    std::println(std::cerr, "TS FAIL: ac3430_4_dynamic_and_linear");
+                }
+            }
+
+            apply_dev_audit_defaults();
+        }
+
         // ── Issue #2993: type-check metrics tier ──
         {
             const auto prev = aura::compiler::typecheck_metrics_tier();

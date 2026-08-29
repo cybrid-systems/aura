@@ -36,7 +36,11 @@
 // already enforces the contract.
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
 #include "compiler/typed_mutation_audit.h"
+
+#include <fstream>
+#include <iterator>
 
 import std;
 using aura::test::g_failed;
@@ -282,6 +286,136 @@ int aura_issue_1413_run() {
                   "ac3202_3_dynamic_permissive");
             CHECK(cs.consistent_unify(reg.int_type(), fl), "ac3202_3_numeric_int_float");
             CHECK(cs.consistent_unify(fl, reg.int_type()), "ac3202_3_numeric_float_int");
+        }
+
+        apply_dev_audit_defaults();
+    }
+
+    // ── #3430: production_defaults forces Strict without set_strict ──
+    {
+        using aura::compiler::CompilerMetrics;
+        using aura::compiler::ConstraintSystem;
+        using aura::compiler::GradualPermissiveness;
+        using aura::compiler::kProductionDefaultsForceStrictUnifyIssue;
+        using aura::compiler::TypeChecker;
+        using aura::compiler::typed_audit::apply_dev_audit_defaults;
+        using aura::compiler::typed_audit::apply_production_audit_defaults;
+        using aura::core::TypeRegistry;
+
+        struct ProdScope {
+            ProdScope() { apply_production_audit_defaults(); }
+            ~ProdScope() { apply_dev_audit_defaults(); }
+        };
+
+        CHECK(kProductionDefaultsForceStrictUnifyIssue == 3430, "ac3430_5_stamp");
+
+        {
+            std::println("\n--- #3430 AC1: Production + no set_strict → Int~String reject ---");
+            ProdScope prod;
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            CHECK(!tc.is_strict(), "ac3430_1_strict_flag_still_false");
+            CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+                  "ac3430_1_effective_strict_without_set_strict");
+            CompilerMetrics metrics{};
+            tc.set_metrics(&metrics);
+            aura::diag::DiagnosticCollector diag;
+            aura::ast::ASTArena arena;
+            auto alloc = arena.allocator();
+            aura::ast::StringPool pool(alloc);
+            aura::ast::FlatAST flat(alloc);
+            auto pr = aura::parser::parse_to_flat("(: x Int \"hello\")", flat, pool);
+            CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "ac3430_1 parse");
+            if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                flat.root = pr.root;
+                (void)tc.infer_flat(flat, pool, pr.root, diag);
+            }
+            CHECK(has_kind_msg(diag, aura::diag::ErrorKind::TypeError, "type mismatch") ||
+                      has_kind_msg(diag, aura::diag::ErrorKind::TypeError,
+                                   "incompatible ground types"),
+                  "ac3430_1_typeerror");
+            CHECK(tc.last_coercions().empty(), "ac3430_1_no_castop");
+            CHECK(metrics.gradual_ground_incompatible_error_total.load() > 0,
+                  "ac3430_1_error_counter");
+        }
+
+        {
+            std::println("\n--- #3430 AC2: infer_flat_partial first pass uses Strict ---");
+            const auto impl = [] {
+                std::ifstream in("src/compiler/type_checker_impl.cpp");
+                if (!in) {
+                    in.open("../src/compiler/type_checker_impl.cpp");
+                }
+                if (!in) {
+                    in.open("../../src/compiler/type_checker_impl.cpp");
+                }
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }();
+            const auto ixx = [] {
+                std::ifstream in("src/compiler/type_checker.ixx");
+                if (!in)
+                    in.open("../src/compiler/type_checker.ixx");
+                if (!in)
+                    in.open("../../src/compiler/type_checker.ixx");
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }();
+            CHECK(impl.find("TypeChecker::infer_flat_partial") != std::string::npos,
+                  "ac3430_2_partial_entry");
+            CHECK(impl.find("engine.set_gradual_permissiveness(gradual_permissiveness_)") !=
+                      std::string::npos,
+                  "ac3430_2_partial_plumbs_knob");
+            CHECK(ixx.find("if (aura::compiler::typed_audit::production_defaults_active())") !=
+                          std::string::npos &&
+                      ixx.find("return GradualPermissiveness::Strict;") != std::string::npos,
+                  "ac3430_2_effective_ssot");
+            ProdScope prod;
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            CHECK(tc.effective_gradual_permissiveness() == GradualPermissiveness::Strict,
+                  "ac3430_2_live_effective_strict");
+        }
+
+        {
+            std::println("\n--- #3430 AC3: Soft Balanced Warning path + Int↔Float ---");
+            apply_dev_audit_defaults();
+            TypeRegistry reg;
+            TypeChecker tc(reg);
+            CHECK(!aura::compiler::typed_audit::production_defaults_active(), "ac3430_3_soft");
+            CHECK(tc.effective_gradual_permissiveness() == tc.gradual_permissiveness() ||
+                      tc.is_strict(),
+                  "ac3430_3_soft_follows_knob");
+            ConstraintSystem cs(reg);
+            cs.set_unify_gradual_mode(GradualPermissiveness::Balanced);
+            CHECK(cs.consistent_unify(reg.int_type(), reg.string_type()),
+                  "ac3430_3_soft_balanced_unify_true");
+            auto fl = reg.lookup_type("Float");
+            CHECK(cs.consistent_unify(reg.int_type(), fl), "ac3430_3_numeric_int_float");
+            CHECK(cs.consistent_unify(fl, reg.int_type()), "ac3430_3_numeric_float_int");
+        }
+
+        {
+            std::println("\n--- #3430 AC4: Dynamic~T and Linear+Dynamic reject (#117) ---");
+            ProdScope prod;
+            TypeRegistry reg;
+            ConstraintSystem cs(reg);
+            cs.set_unify_gradual_mode(GradualPermissiveness::Strict);
+            CHECK(cs.consistent_unify(reg.dynamic_type(), reg.string_type()),
+                  "ac3430_4_dynamic_permissive");
+            auto lin = reg.register_linear(reg.int_type());
+            CHECK(!cs.consistent_unify(reg.dynamic_type(), lin), "ac3430_4_linear_dynamic_reject");
+            CHECK(!cs.consistent_unify(lin, reg.dynamic_type()), "ac3430_4_dynamic_linear_reject");
+        }
+
+        {
+            std::println("\n--- #3430 AC5: no invent / docs ---");
+            std::ifstream d("docs/design/3430-production-defaults-force-strict.md");
+            CHECK(!d.good(), "ac3430_5_no_docs");
+            std::ifstream t("tests/issues/test_issue_3430.cpp");
+            CHECK(!t.good(), "ac3430_5_no_invent");
+            std::ifstream t2("tests/compiler/test_issue_3430.cpp");
+            CHECK(!t2.good(), "ac3430_5_no_compiler_invent");
         }
 
         apply_dev_audit_defaults();
