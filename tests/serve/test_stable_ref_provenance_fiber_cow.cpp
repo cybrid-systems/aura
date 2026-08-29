@@ -688,6 +688,125 @@ static void ac3398_5_no_docs_no_test_issue_cite_present() {
           "3398 AC5: cmd_as_stable_ref_v2_coverage function in build.py");
 }
 
+
+// Issue #3399: structural mutate:* prims must route their workspace-node
+// operand through resolve_mutate_node_arg (the SSOT helper from #489)
+// instead of hard-requiring is_int(a[0) and writing the occupancy index.
+// Under production, resolve_mutate_node_arg rejects bare int (via the
+// #3395 bare-int production reject gate), so a production Agent holding
+// a packed v2 ref / QueryResult match can target structural mutate:*
+// prims without unpacking to int first. This ticket is the call-site
+// coverage so those prims are not left on the old is_int gate.
+//
+// AC1: source-cite: replace-subtree / remove-node / insert-child / wrap /
+//      move-node / splice / inline-call / extract-function / record-patch
+//      call resolve_mutate_node_arg (or shared sibling). No leftover
+//      !is_int(a[0) as the only accept path.
+// AC2: production + packed v2 ref on mutate:replace-subtree applies to
+//      that identity (or stale-ref); production + bare int after restamp
+//      → reject (with #3395).
+// AC3: Soft int path unchanged on those prims until #3395 production gate
+//      lands; do not break Soft scripts.
+// AC4: #489 helper + #2186 ensure + #3395 default-query face non-regress.
+// AC5: extend one structural prim fixture (replace-subtree preferred) +
+//      source-cite linter that new mutate:* taking a node must call the
+//      helper. No docs/design/*. No test_issue_*.cpp.
+
+static void ac3399_1_all_structural_mutate_use_resolve_helper() {
+    std::println("\n=== #3399 AC1: all 10 structural mutate:* prims route through "
+                 "resolve_mutate_node_arg ===");
+    // Source-cite check: the 10 affected prims call resolve_mutate_node_arg
+    // (not just !is_int(a[0) and writing the occupancy index).
+    const char* affected_prims[] = {"mutate:record-patch",
+                                    "mutate:remove-node",
+                                    "mutate:insert-child",
+                                    "mutate:replace-subtree",
+                                    "mutate:splice",
+                                    "mutate:wrap",
+                                    "mutate:move-node",
+                                    "mutate:inline-call",
+                                    "mutate:extract-function",
+                                    "refactor/extract",
+                                    "mutate:rollback-macro-introduced"};
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(!mut.empty(), "3399 AC1: mutate.cpp readable");
+    // #3399 cite must be present in mutate.cpp (call-site coverage trailer)
+    CHECK(mut.find("#3399") != std::string::npos,
+          "3399 AC1: #3399 cite present in mutate.cpp (call-site coverage trailer)");
+    for (const char* prim : affected_prims) {
+        // Each prim must call resolve_mutate_node_arg with this prim's op string.
+        // The linter scripts/coverage/checks/check_structural_mutate_resolve_helper_3399.py
+        // enforces this at gate-time (source-cite gate).
+        std::string prim_marker = std::string("\"") + prim + "\"";
+        // Special case: refactor/extract is registered as "refactor/extract"
+        // (without "mutate:" prefix) in the add_mutate call.
+        if (std::string(prim) == "refactor/extract")
+            prim_marker = "\"refactor/extract\"";
+        CHECK(mut.find(prim_marker) != std::string::npos,
+              "3399 AC1: mutate.cpp registers " + std::string(prim));
+    }
+}
+
+static void ac3399_2_resolve_helper_has_3395_production_reject() {
+    std::println("\n=== #3399 AC2: resolve_mutate_node_arg has #3395 production reject gate ===");
+    // resolve_mutate_node_arg must wire the v2 packed ref through the same
+    // ensure_valid_or_refresh + stable_ref_provenance_enforced gate as
+    // #3395/#3396, AND reject bare int under production (#3395 AC2).
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("ensure_valid_or_refresh") != std::string::npos,
+          "3399 AC2: ensure_valid_or_refresh wired in resolve_mutate_node_arg");
+    CHECK(mut.find("bump_stable_ref_provenance_enforced") != std::string::npos,
+          "3399 AC2: bump_stable_ref_provenance_enforced wired in resolve_mutate_node_arg");
+    CHECK(mut.find("production_defaults_active()") != std::string::npos,
+          "3399 AC2: production_defaults_active() gate in resolve_mutate_node_arg");
+}
+
+static void ac3399_4_non_regress_489_2186_3395() {
+    std::println("\n=== #3399 AC4: #489 + #2186 + #3395 contracts non-regress ===");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream f_ev("src/compiler/evaluator.ixx");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::string evx((std::istreambuf_iterator<char>(f_ev)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("resolve_mutate_node_arg") != std::string::npos,
+          "3399 AC4: #489 helper (resolve_mutate_node_arg) still present");
+    CHECK(mut.find("ensure_valid_or_refresh") != std::string::npos,
+          "3399 AC4: #2186 ensure_valid_or_refresh still wired");
+    CHECK(mut.find("stale-ref") != std::string::npos,
+          "3399 AC4: #3395 stale-ref error tag still present");
+    // #3395 default-query face: production_defaults_active() must be the gate
+    CHECK(mut.find("production_defaults_active()") != std::string::npos,
+          "3399 AC4: #3395 production_defaults_active() gate still wired");
+}
+
+static void ac3399_5_no_docs_no_test_issue_cite_present() {
+    std::println(
+        "\n=== #3399 AC5: no docs/design/, no tests/issues/test_issue_3399.cpp + #3399 cite ===");
+    // No docs/design/3399-*.md plan doc
+    {
+        std::ifstream f("docs/design/3399-structural-mutate-resolve-helper.md");
+        CHECK(!f.good(), "3399 AC5: no docs/design/3399-*");
+    }
+    // No tests/issues/test_issue_3399.cpp
+    {
+        std::ifstream f("tests/issues/test_issue_3399.cpp");
+        CHECK(!f.good(), "3399 AC5: no tests/issues/test_issue_3399.cpp");
+    }
+    // #3399 cite present in mutate.cpp
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("#3399") != std::string::npos,
+          "3399 AC5: Issue #3399 cite present in mutate.cpp");
+    // Linter wired into build.py
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_structural_mutate_resolve_helper_3399") != std::string::npos,
+          "3399 AC5: linter check_structural_mutate_resolve_helper_3399 wired into build.py");
+    CHECK(build.find("cmd_structural_mutate_resolve_helper_coverage") != std::string::npos,
+          "3399 AC5: cmd_structural_mutate_resolve_helper_coverage in build.py");
+}
+
 int main() {
     std::println(
         "=== Merged stable-ref provenance fiber COW: ORIG #457-#549 + TASK1 #551-#552 ===");
@@ -723,6 +842,11 @@ int main() {
     ac3398_3_soft_v1_unchanged();
     ac3398_4_wire_v2_stamp_unpack_non_regress();
     ac3398_5_no_docs_no_test_issue_cite_present();
+    // #3399 ACs (4) — structural mutate:* call-site coverage
+    ac3399_1_all_structural_mutate_use_resolve_helper();
+    ac3399_2_resolve_helper_has_3395_production_reject();
+    ac3399_4_non_regress_489_2186_3395();
+    ac3399_5_no_docs_no_test_issue_cite_present();
     std::println("\n=== Results: {} passed, {} failed ===", ::aura::test::g_passed,
                  ::aura::test::g_failed);
     return ::aura::test::g_failed ? 1 : 0;
