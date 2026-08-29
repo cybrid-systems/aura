@@ -1709,6 +1709,8 @@ aura_issue_test_link_light(test_coercion_map_abort_rewind)
 # stays at schema-1 (no ref stamp).
 aura_add_issue_test(test_query_result_full_provenance)
 aura_issue_test_link_light(test_query_result_full_provenance)
+aura_add_issue_test(test_query_find_by_define)
+aura_issue_test_link_light(test_query_find_by_define)
 # Issue #3104: restamp-budget hard-gate under production defaults.
 # unified_restamp_after_boundary sets restamp_last_budget_exceeded_ +
 # bumps g_unified_restamp_torn_visible_total + calls
@@ -3566,6 +3568,7 @@ add_executable(test_module_query_batch
     tests/compiler/test_query_and_replace_batch.cpp
     tests/compiler/test_query_by_marker_provenance.cpp
     tests/compiler/test_query_epoch_contract.cpp
+    tests/compiler/test_query_find_by_define.cpp
     tests/compiler/test_query_hygiene_default.cpp
     tests/compiler/test_query_index_composite.cpp
     tests/compiler/test_query_pattern_default_hygiene.cpp

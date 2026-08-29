@@ -14778,6 +14778,28 @@ def cmd_query_default_stamped_coverage():
     return 0
 
 
+def cmd_query_find_prod_no_scan_coverage():
+    """Issue #3427: production query:find miss is not a full SoA walk.
+
+    #3390 index-hit Define names; production miss still walked size()+get.
+    That is the I6 multi-round cliff. Production miss is query-unindexed
+    (reuse overflow counter). Soft keeps the size() first-match walk.
+    Extends test_query_find_by_define. No docs/design/, no
+    tests/issues/test_issue_3427.cpp.
+    """
+    print(f"{B}=== query-find production no-scan coverage (#3427) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_find_prod_no_scan_3427.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-find production no-scan (#3427) coverage contract rows failed")
+        return 1
+    ok("query-find production no-scan (#3427) coverage clean")
+    return 0
+
+
 def cmd_query_children_stable_no_tls_coverage():
     """Issue #3397: production query:children-stable must not return the TLS
     span view.
@@ -22812,6 +22834,7 @@ def main():
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
         "query-default-stamped": cmd_query_default_stamped_coverage,
+        "query-find-prod-no-scan": cmd_query_find_prod_no_scan_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
         "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
         "structural-mutate-resolve-helper": cmd_structural_mutate_resolve_helper_coverage,
