@@ -14612,6 +14612,33 @@ def cmd_as_stable_ref_v2_coverage():
     return 0
 
 
+def cmd_stable_ref_probe_3400_coverage():
+    """Issue #3400: mutate:check-stable-ref probes the node_gen_ domain.
+
+    The Agent early-validity probe compared workspace FlatAST::generation()
+    to the captured StableNodeRef gen — two different counter domains that
+    diverge by design after any Guard / atomic-batch bump, so the probe
+    lied in both directions (false stale on live node; false live after
+    wrap / slot reuse). This ticket routes the probe through the #3396
+    unpack SSOT (v1 Soft / v2 production) and makes validity =
+    ref.is_valid_in(flat) && flat.get_safe(ref). Production with a
+    provenance-less v1 pack → stale-ref (same face as #3396 apply).
+    GUARD_EXEMPT read-only face + StaleRefPolicy Strict/Warn/Disabled kept.
+    Non-regress: #235/#391 probe + policy, #3396 unpack, #3399 SSOT routing.
+    """
+    print(f"{B}=== check-stable-ref node-gen domain probe (#3400) ==={N}")
+    script = COVERAGE_CHECKS / "check_stable_ref_probe_3400.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("check-stable-ref node-gen domain probe (#3400) coverage contract rows failed")
+        return 1
+    ok("check-stable-ref node-gen domain probe (#3400) coverage clean")
+    return 0
+
+
 def cmd_query_result_soft_prod_transition_coverage():
     """Issue #3311: Soft → Production arm invalidates Soft-only schema-2 QueryResult.
 
@@ -21898,6 +21925,7 @@ def main():
         "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
         "structural-mutate-resolve-helper": cmd_structural_mutate_resolve_helper_coverage,
         "as-stable-ref-v2": cmd_as_stable_ref_v2_coverage,
+        "stable-ref-probe-3400": cmd_stable_ref_probe_3400_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,
         "cone-truncate-force-closure-2909": cmd_cone_truncate_force_closure_2909,

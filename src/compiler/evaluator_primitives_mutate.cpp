@@ -2596,14 +2596,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_bool(true);
         });
     // Issue #235: (mutate:check-stable-ref stable-ref) — Verify
-    // a stable-ref is still valid. Returns #t if the captured
-    // node-id still has the same generation, #f otherwise.
+    // a stable-ref is still valid. Issue #3400: validity is the
+    // StableNodeRef's own node gen (node_gen_[id]) via is_valid_in() +
+    // get_safe(), NOT the workspace FlatAST generation counter — the two
+    // counters diverge by design after any Guard / atomic-batch bump,
+    // which made the old compare lie in both directions (false stale on
+    // live node; false live after wrap/slot reuse).
+    // Unpack goes through the #3396 SSOT helper: v1 (id . gen) under
+    // Soft, v2 packed spine under production. Production with a
+    // provenance-less v1 pack → stale-ref (same face as #3396 apply).
     // Useful for agents that want to do an early validity check
     // before invoking a more expensive mutation.
     // GUARD_EXEMPT: read-only stable-ref probe — no AST write (#2986). PrimMeta.guard_exempt.
     add_mutate(
         "mutate:check-stable-ref",
-        [&ev, mev, safe_str](const auto& a) -> EvalValue {
+        [&ev, mev, unpack_stable_ref_arg](const auto& a) -> EvalValue {
             // Wave1 B-09: pin adopts outer Guard exclusive — no nested shared.
             auto pin = ev.pin_workspace_flat();
             if (!is_pair(a[0]))
@@ -2611,24 +2618,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             if (!pin)
                 return mev("no-workspace", "no workspace AST loaded");
             auto& flat = *pin;
-            // Unpack the (id . gen) pair
-            auto outer = as_pair_idx(a[0]);
-            if (!is_int(ev.pairs_[outer].car))
-                return mev("bad-arg", "stable-ref car must be a node id (int)");
-            auto node = static_cast<aura::ast::NodeId>(as_int(ev.pairs_[outer].car));
-            auto cdr = ev.pairs_[outer].cdr;
-            if (!is_pair(cdr))
-                return mev("bad-arg", "stable-ref cdr must be a pair (gen . nil)");
-            auto inner = as_pair_idx(cdr);
-            if (!is_int(ev.pairs_[inner].car))
-                return mev("bad-arg", "stable-ref gen must be an int");
-            auto captured_gen = static_cast<std::uint16_t>(as_int(ev.pairs_[inner].car));
-            // Issue #391: consult the StaleRefPolicy. The
-            // validity check is identical; the policy only
-            // affects whether a stale ref blocks the mutate
-            // (Strict) or just bumps the warned counter
-            // (Warn). Disabled skips both.
-            bool valid = (node < flat.size()) && (flat.generation() == captured_gen);
+            // Issue #3400: unpack via the #3396 SSOT (v1 Soft / v2 production).
+            auto ref = unpack_stable_ref_arg(a[0]);
+            if (!ref) {
+                if (aura::compiler::typed_audit::production_defaults_active()) {
+                    // Production: missing wrap/tenant/cow provenance →
+                    // stale-ref (same as #3396 apply), never a boolean #t.
+                    ev.bump_stale_ref_blocked_count();
+                    return mev("stale-ref", "packed ref missing provenance");
+                }
+                return mev("bad-arg", "stable-ref must be a packed pair with int id");
+            }
+            // Issue #3400 AC2: live node after an unrelated sibling mutate
+            // (workspace gen bumped, node_gen_ unchanged) must read #t —
+            // hence node-gen domain, not the workspace gen.
+            bool valid = ref->is_valid_in(flat) && flat.get_safe(*ref).has_value();
             if (!valid) {
                 const auto policy = ev.get_stale_ref_policy();
                 if (policy == aura::compiler::Evaluator::StaleRefPolicy::Disabled) {
