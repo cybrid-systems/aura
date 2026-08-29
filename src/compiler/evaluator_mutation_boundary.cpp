@@ -188,6 +188,7 @@ freeze_proof_goal_truth_from_type_checker(void* tc_handle) noexcept {
     const auto& goals = tc->constraint_system().occurrence_goals_for_test();
     t.live_goal_count = static_cast<std::uint64_t>(goals.size());
     t.from_cs = true;
+    t.fingerprint_overflow = goals.size() > kProofGoalFingerprintMaxGoals;
     if (goals.empty()) {
         t.goal_fingerprint = 0;
         return t;
@@ -384,7 +385,33 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     // Production-only; Soft / Off: zero extra work (guard never fires
     // because production_defaults_active() == false -> fingerprint stays
     // 0 -> fp matches expected 0).
-    const auto live_fp = aura::compiler::typed_audit::occurrence_goal_fingerprint(tc);
+    const auto live_truth = freeze_proof_goal_truth_from_type_checker(tc);
+    const auto live_fp = live_truth.goal_fingerprint;
+    // Issue #3418: n>16 prefix mix matches even when the tail drifted.
+    // Production/Full fail-closed (reuse force_reason 16) before the
+    // 16-prefix equality check. Soft/Off: mix 16, observe only.
+    {
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        if (hard && (live_truth.fingerprint_overflow ||
+                     live_truth.live_goal_count >
+                         aura::compiler::typed_audit::kProofGoalFingerprintMaxGoals)) {
+            (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+            ev->bump_occurrence_persist_fingerprint_mismatch();
+            const auto fp_overflow_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+            (void)
+                aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    fp_overflow_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
+            aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+            ev->clear_type_export_authority();
+            return;
+        }
+    }
     if (aura::compiler::typed_audit::production_defaults_active() &&
         ev->expected_occurrence_snapshot_fp() != 0 &&
         live_fp != ev->expected_occurrence_snapshot_fp()) {

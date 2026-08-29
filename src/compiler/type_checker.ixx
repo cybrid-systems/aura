@@ -3148,6 +3148,12 @@ export struct TypeChecker {
         if (!h.fingerprint_ok)
             h.faces_bitmask |= kOccurrenceCommitFaceFingerprintMismatch;
         const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+        // Issue #3418: overflow is not a matching prefix — expose via the
+        // existing fingerprint-mismatch face (no new query key). Soft observes.
+        if (hard && goals.size() > kProofGoalFingerprintMaxGoals) {
+            h.fingerprint_ok = false;
+            h.faces_bitmask |= kOccurrenceCommitFaceFingerprintMismatch;
+        }
         // Recover authority: empty_after_fence / cone_outside / refined_drift
         // (AC2). Fingerprint mismatch is Agent-visible but does not force
         // recover (rehydrate stamps epoch=0, which would false-positive).

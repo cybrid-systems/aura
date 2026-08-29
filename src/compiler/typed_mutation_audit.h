@@ -1388,6 +1388,9 @@ inline constexpr int kTypeLinearCommitProofIssue = 2697;
 inline constexpr int kTypeLinearCommitProofGoalTruthIssue = 2842;
 // Bound fingerprint walk (soft-cone discipline; no heap beyond existing).
 inline constexpr std::size_t kProofGoalFingerprintMaxGoals = 16;
+// Issue #3418: n>16 prefix mix is not authority — Production/Full refuse
+// green stamp / persist (force_reason 16). Soft mixes 16, observe only.
+inline constexpr int kProofGoalFingerprintOverflowIssue = 3418;
 
 // File-scope atomics (mirror #2693/#2694/#2695/#2696 pattern).
 inline std::atomic<std::uint64_t> g_last_type_linear_commit_proof_stamp{0};
@@ -2734,6 +2737,9 @@ struct ProofGoalTruth {
     std::uint64_t live_goal_count = 0;
     std::uint64_t goal_fingerprint = 0;
     bool from_cs = false;
+    // Issue #3418: live_goal_count exceeded kProofGoalFingerprintMaxGoals.
+    // Appended at END. Production/Full treat as occurrence_consistent=false.
+    bool fingerprint_overflow = false;
 };
 
 // Quiet default (empty goals, zero extra cost).
@@ -2780,6 +2786,7 @@ inline void apply_proof_goal_truth(TypeLinearCommitProof& p, const ProofGoalTrut
         if (t.live_goal_count == 0)
             t.goal_fingerprint = 0;
         t.from_cs = goal_truth_from_cs || (live_goal_count_hint != kProofLiveGoalCountHintAuto);
+        t.fingerprint_overflow = t.live_goal_count > kProofGoalFingerprintMaxGoals;
         return t;
     }
     // Gauge fallback (no CS at stamp).
@@ -2788,6 +2795,7 @@ inline void apply_proof_goal_truth(TypeLinearCommitProof& p, const ProofGoalTrut
     if (t.live_goal_count == 0)
         t.goal_fingerprint = 0;
     t.from_cs = false;
+    t.fingerprint_overflow = t.live_goal_count > kProofGoalFingerprintMaxGoals;
     return t;
 }
 
@@ -2870,6 +2878,25 @@ inline void reject_stamp_last_look_mismatch(TypeLinearCommitProof& p,
 
 // Issue #3416 AC3: live_goal_count vs linear_root_count mismatch on the
 // stamper → Reject (force_reason 16), no green face. Soft/Off skip.
+// Issue #3418: prefix mix of kProofGoalFingerprintMaxGoals is not
+// authority when live_goal_count overflowed. Production/Full refuse
+// green (force_reason 16, occurrence_consistent=false). Soft/Off skip.
+inline void reject_fingerprint_cap_overflow(TypeLinearCommitProof& p,
+                                            const ProofGoalTruth& truth) noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    if (!p.would_allow_commit)
+        return;
+    if (!truth.fingerprint_overflow && truth.live_goal_count <= kProofGoalFingerprintMaxGoals)
+        return;
+    p.would_allow_commit = false;
+    p.linear_ok = false;
+    p.occurrence_consistent = false;
+    p.force_reason_code = 16;
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    (void)invalidate_fast_path_on_rehydrate_miss();
+}
+
 inline void reject_stamper_live_goal_linear_root_mismatch(TypeLinearCommitProof& p) noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return;
@@ -2939,6 +2966,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
                                       p.linear_root_count, p.audit_mid))
         reject_stamp_last_look_mismatch(p, truth);
     apply_proof_goal_truth(p, truth);
+    reject_fingerprint_cap_overflow(p, truth);
     reject_stamper_live_goal_linear_root_mismatch(p);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (AC3).
@@ -3023,6 +3051,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
                                       p.linear_root_count, p.audit_mid))
         reject_stamp_last_look_mismatch(p, truth);
     apply_proof_goal_truth(p, truth);
+    reject_fingerprint_cap_overflow(p, truth);
     reject_stamper_live_goal_linear_root_mismatch(p);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (same as live path).

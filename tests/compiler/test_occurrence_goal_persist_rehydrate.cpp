@@ -993,6 +993,86 @@ static void ac3346_4_soft_zero_extra_and_linter() {
     ac3346_reset_faces();
 }
 
+static void ac3418_fingerprint_cap_overflow_rejects() {
+    std::println("\n--- #3418: n>16 prefix mix is not green authority ---");
+    ac3346_reset_faces();
+    apply_production_audit_defaults();
+
+    TypeRegistry reg;
+    TypeChecker tc(reg);
+    CompilerMetrics metrics{};
+    tc.set_metrics(&metrics);
+    auto& cs = tc.constraint_system();
+    cs.set_metrics(&metrics);
+    tc.set_cache_epoch(1);
+    cs.set_current_epoch(1);
+    for (int i = 0; i < 16; ++i) {
+        auto v = cs.fresh_var();
+        cs.note_occurrence_goal(v, reg.int_type(), static_cast<std::uint32_t>(i + 1),
+                                static_cast<std::uint64_t>(34180 + i), /*epoch=*/1);
+    }
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto fp16 = typed_audit::occurrence_goal_fingerprint(&tc);
+    CHECK(cs.occurrence_goals_size() == 16 && fp16 != 0, "3418: 16-goal prefix mix");
+    auto v17 = cs.fresh_var();
+    cs.note_occurrence_goal(v17, reg.int_type(), /*pred=*/99, /*mut=*/34199, /*epoch=*/7);
+    CHECK(cs.occurrence_goals_size() == 17, "3418: 17 live goals");
+    const auto fp17 = typed_audit::occurrence_goal_fingerprint(&tc);
+    CHECK(fp17 == fp16, "3418: 17th goal does not change the 16-prefix mix");
+    typed_audit::note_stamp_last_look_tc(&tc);
+    const auto n = static_cast<std::uint64_t>(cs.occurrence_goals_size());
+    const auto p = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        34180, /*would_allow_commit=*/true, /*linear_ok=*/true, n, fp17, /*from_cs=*/true);
+    CHECK(!p.would_allow_commit, "3418 AC2: production overflow rejects green stamp");
+    CHECK(!p.occurrence_consistent, "3418 AC1: occurrence_consistent false");
+    CHECK(p.force_reason_code == 16, "3418 AC2: force_reason 16");
+    CHECK(p.live_goal_count == 17, "3418 AC4: live_goal_count published as 17");
+    CHECK(typed_audit::last_type_linear_proof_outcome_v_read() ==
+              typed_audit::kTypeLinearProofOutcomeReject,
+          "3418 AC2: Reject outcome");
+
+    const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(emb.find("Issue #3418") != std::string::npos, "3418 AC3: persist overflow cite");
+    CHECK(emb.find("fingerprint_overflow") != std::string::npos,
+          "3418 AC3: persist fail-closed on overflow");
+
+    apply_dev_audit_defaults();
+    ac3346_reset_faces();
+    TypeRegistry reg2;
+    TypeChecker tc2(reg2);
+    auto& cs2 = tc2.constraint_system();
+    cs2.set_current_epoch(1);
+    for (int i = 0; i < 17; ++i) {
+        auto v = cs2.fresh_var();
+        cs2.note_occurrence_goal(v, reg2.int_type(), static_cast<std::uint32_t>(i + 1),
+                                 static_cast<std::uint64_t>(i + 1), 1);
+    }
+    typed_audit::note_stamp_last_look_tc(&tc2);
+    const auto fps = typed_audit::occurrence_goal_fingerprint(&tc2);
+    const auto ps = typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+        34181, true, true, 17, fps, true);
+    CHECK(ps.would_allow_commit, "3418 AC2: Soft overflow still mixes 16 (observe only)");
+    apply_dev_audit_defaults();
+    ac3346_reset_faces();
+}
+
+static void ac3418_source_and_linter() {
+    std::println("\n--- #3418: source-cite + linter ---");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kProofGoalFingerprintOverflowIssue = 3418") != std::string::npos,
+          "3418: issue stamp");
+    CHECK(tma.find("reject_fingerprint_cap_overflow") != std::string::npos, "3418: reject helper");
+    CHECK(tma.find("fingerprint_overflow") != std::string::npos, "3418: ProofGoalTruth field");
+    CHECK(tma.find("g_3418_") == std::string::npos, "3418: no g_3418_*");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_proof_goal_fingerprint_overflow_3418") != std::string::npos,
+          "3418: build.py");
+    CHECK(build.find("check_occurrence_persist_fingerprint_3170") != std::string::npos,
+          "3418: predecessor #3170 present");
+    CHECK(read_file("docs/design/3418-fingerprint-overflow.md").empty(), "3418: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3418.cpp").empty(), "3418: no invent");
+}
+
 // ── #2896 AC1: production + non-empty goals → append without env ──
 static void ac2896_1_production_persist_without_env() {
     std::println("\n--- #2896 AC1: production + goals → append without env ---");
@@ -3130,6 +3210,9 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3346_2_outstanding_authority_refuses_stamp();
     ac3346_3_stamp_matches_live_under_acquire();
     ac3346_4_soft_zero_extra_and_linter();
+    std::println("\n=== #3418 fingerprint cap overflow silent-green ===");
+    ac3418_fingerprint_cap_overflow_rejects();
+    ac3418_source_and_linter();
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
