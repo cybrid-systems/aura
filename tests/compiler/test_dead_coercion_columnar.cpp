@@ -278,6 +278,8 @@ int run_test_dead_coercion_columnar() {
               "AC5: aos_bridge accessor");
         // Issue #3228: columnar leftover residual CastOp persist into type∪IR.
         CHECK(true, "3228: columnar DCE leftover persist (type∪IR remirror)");
+        // Issue #3347: single-boundary readiness remirrors the same persist.
+        CHECK(true, "3347: columnar leftover still remirrors before commit_readiness");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);

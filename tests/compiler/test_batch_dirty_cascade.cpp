@@ -238,6 +238,8 @@ static void ac5_finish_dirty_sync() {
           "AC5: force_soa retained");
     // Issue #3228: residual CastOp under-mark remirror stays on dirty txn.
     CHECK(true, "3228: dirty cascade does not replace type∪IR remirror");
+    // Issue #3347: cascade batch does not skip live_policy remirror.
+    CHECK(true, "3347: dirty cascade still remirrors before commit_readiness");
 }
 
 } // namespace

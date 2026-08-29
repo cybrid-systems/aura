@@ -116,6 +116,7 @@ static void run_526() {
               "dirty block CastOp elided");
         CHECK(func.blocks[1].instructions[1].opcode == IROpcode::CastOp, "clean block untouched");
         // Issue #3228: dirty-only DCE leaves clean-block CastOp for remirror.
+        // Issue #3347: leftover CastOp still remirrors before commit_readiness.
 
         cs.evaluator().bump_passes_skipped_type_dirty(1);
         const auto ps1 = cs.evaluator().get_passes_skipped_type_dirty();
