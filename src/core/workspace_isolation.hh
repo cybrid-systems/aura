@@ -223,7 +223,7 @@ struct WorkspaceIsolationPolicy {
     // fallback never widens access (deny remains deny; the test surface
     // uses it). AC3: Soft/Off short-circuits before any lock or principal
     // load. SE reason string + counter names unchanged (#2968 stable).
-    [[nodiscard]] bool try_grant_cross_tenant_privileged(TenantId from, TenantId to,
+    [[nodiscard]] bool try_grant_cross_tenant_privileged(TenantId /*from*/, TenantId to,
                                                          std::uint16_t effect_bits,
                                                          TenantId caller_principal) noexcept {
         using ::aura::core::capability::EffectSandboxMode;
