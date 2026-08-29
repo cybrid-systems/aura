@@ -25,6 +25,7 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 using aura::compiler::typed_audit::InvariantAuditResult;
@@ -221,6 +222,53 @@ int run_test_adt_exhaustiveness_audit() {
             cs.evaluator().run_typed_mutation_invariant_audit(1, "happy", 0, 0, 1, false, &inv);
         CHECK(inv.adt_ok, "happy: adt_ok true without match");
         (void)ok;
+    }
+
+    // ── Issue #3358: mutate-then-match non-exhaustive — Production force,
+    //    Soft observes. Reuses inject + force_linear_rollback authority. ──
+    {
+        std::println("\n--- #3358: mutate-then-match Production reject / Soft observe ---");
+        const auto tc = read_file("src/compiler/evaluator_typecheck.cpp");
+        CHECK(tc.find("AdtNonExhaustive") != std::string::npos,
+              "3358: audit path classifies AdtNonExhaustive");
+        CHECK(tc.find("note_adt_non_exhaustive_fail") != std::string::npos,
+              "3358: audit notes sticky");
+        reset_for_test();
+        set_strategy(AuditStrategy::Full);
+        const auto save = g_typed_mutation_audit_counters.production_defaults_active.load(
+            std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.production_defaults_active.store(1,
+                                                                         std::memory_order_relaxed);
+        CompilerService cs;
+        (void)cs.eval("(+ 1 1)");
+        const auto sites0 =
+            load_u64(g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total);
+        cs.evaluator().inject_adt_non_exhaustive_for_test();
+        InvariantAuditResult inv{};
+        (void)cs.evaluator().run_typed_mutation_invariant_audit(3358, "mutate-then-match", 0, 0, 1,
+                                                                false, &inv);
+        CHECK(!inv.adt_ok, "3358: Production audit adt_ok false");
+        CHECK(cs.evaluator().force_linear_rollback("mutate:replace-type", &inv),
+              "3358: Production force-rollback");
+        CHECK(load_u64(g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total) > sites0,
+              "3358: Soft counter still advances on Production path");
+        cs.evaluator().clear_adt_non_exhaustive_inject_for_test();
+        cs.evaluator().clear_last_mutate_error();
+        g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                         std::memory_order_relaxed);
+        reset_for_test();
+        set_strategy(AuditStrategy::Sampled);
+        apply_dev_audit_defaults();
+        CompilerService cs_soft;
+        (void)cs_soft.eval("(+ 1 1)");
+        cs_soft.evaluator().inject_adt_non_exhaustive_for_test();
+        InvariantAuditResult soft{};
+        (void)cs_soft.evaluator().run_typed_mutation_invariant_audit(3358, "soft-observe", 0, 0, 1,
+                                                                     false, &soft);
+        CHECK(!soft.adt_ok, "3358: Soft still stamps adt_ok false");
+        CHECK(!cs_soft.evaluator().force_linear_rollback("soft-mutate", &soft),
+              "3358: Soft does not force-rollback");
+        cs_soft.evaluator().clear_adt_non_exhaustive_inject_for_test();
     }
 
     reset_for_test();

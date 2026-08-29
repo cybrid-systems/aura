@@ -3823,6 +3823,10 @@ public:
     [[nodiscard]] bool last_cross_closure_escape_fail() const noexcept;
     void note_cross_closure_escape_fail() noexcept;
     void clear_cross_closure_escape_fail() noexcept;
+    // Issue #3358: sticky adt_ok=false for unified force_linear_rollback.
+    [[nodiscard]] bool last_adt_non_exhaustive_fail() const noexcept;
+    void note_adt_non_exhaustive_fail() noexcept;
+    void clear_adt_non_exhaustive_fail() noexcept;
     // Issue #2545 / #2563: unified linear hard-fail authority (synth +
     // post-mutate + cross-batch + cross-closure). Pure classify — zero side
     // effects; zero cost when all axes clean (a few relaxed atomic loads).
@@ -3832,6 +3836,7 @@ public:
     //                        already owned by audit walk)
     //   CrossBatchEscape   → force; escape counters owned by hard_block path
     //   CrossClosureEscape → force under hard; counters owned by discovery path
+    //   AdtNonExhaustive   → force under production/Full when adt_ok=false (#3358)
     //   None               → continue (type/provenance may still deny)
     // Soft Warning synth never appears as SynthHardFail (#2514 AC retained).
     enum class LinearForceAuthority : std::uint8_t {
@@ -3841,6 +3846,7 @@ public:
         CrossBatchEscape = 3,
         CrossClosureEscape = 4,        // Issue #2563
         LinearDensifyRootMismatch = 5, // Issue #2642: Phase 5 post-compact linear-root scan
+        AdtNonExhaustive = 6,          // Issue #3358: production/Full adt_ok=false
         // Authority table (AC5 #2673): LinearDensifyRootMismatch is its
         // own authority, distinct from #2664 CrossBatchEscape (external-
         // root hard-fail). The two paths fire on different conditions
@@ -5764,6 +5770,7 @@ private:
     std::atomic<std::uint32_t> last_post_mutate_linear_fail_{0};
     std::atomic<std::uint32_t> last_cross_batch_escape_fail_{0};
     std::atomic<std::uint32_t> last_cross_closure_escape_fail_{0}; // Issue #2563
+    std::atomic<std::uint32_t> last_adt_non_exhaustive_fail_{0};   // Issue #3358
     // Issue #2145: Strict sandbox — deny further mutate after hard-gate fail.
     std::atomic<std::uint32_t> strict_mutate_hold_{0};
     // Issue #2264: test inject — next run_typed_mutation_invariant_audit fails adt_ok.

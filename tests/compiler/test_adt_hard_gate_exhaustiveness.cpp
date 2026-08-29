@@ -28,6 +28,7 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
 using aura::compiler::typed_audit::InvariantAuditResult;
@@ -228,6 +229,64 @@ static void ac8_source_wiring() {
           "AC8: counter key in query surface");
 }
 
+// Issue #3358: production/Full adt_ok=false force-rollbacks via the
+// unified authority table; Soft observes only.
+static void ac3358_1_production_force_via_authority() {
+    std::println("\n--- #3358 AC1: production/Full adt_ok=false → force_linear_rollback ---");
+    reset_for_test();
+    set_strategy(AuditStrategy::Full);
+    const auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    CompilerService cs;
+    (void)cs.eval("(+ 1 1)");
+    const auto hard0 = load_u64(g_typed_mutation_audit_counters.hard_gate_force_rollback_total);
+    const auto sites0 = load_u64(g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total);
+    cs.evaluator().inject_adt_non_exhaustive_for_test();
+    InvariantAuditResult inv{};
+    (void)cs.evaluator().run_typed_mutation_invariant_audit(
+        /*mid=*/3358, "test-adt-3358", 0, 0, 1, /*composite=*/false, &inv);
+    CHECK(!inv.adt_ok, "ac3358_1_production_force_via_authority: adt_ok false");
+    const auto auth = cs.evaluator().classify_linear_force(&inv);
+    CHECK(static_cast<int>(auth) == 6, "3358 AC1: classify AdtNonExhaustive (=6)");
+    CHECK(cs.evaluator().force_linear_rollback("mutate:replace-type", &inv),
+          "3358 AC1: force_linear_rollback true");
+    CHECK(cs.evaluator().last_mutate_error().find("adt") != std::string::npos,
+          "3358 AC1: deny kind adt");
+    CHECK(load_u64(g_typed_mutation_audit_counters.hard_gate_force_rollback_total) > hard0,
+          "3358 AC1: hard-gate force-rollback advanced");
+    CHECK(load_u64(g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total) > sites0,
+          "3358 AC1: adt_non_exhaustive_sites_total advanced");
+    cs.evaluator().clear_adt_non_exhaustive_inject_for_test();
+    cs.evaluator().clear_last_mutate_error();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    apply_dev_audit_defaults();
+}
+
+static void ac3358_2_soft_observe_only() {
+    std::println("\n--- #3358 AC2: Soft observe-only; no force-rollback for ADT ---");
+    reset_for_test();
+    set_strategy(AuditStrategy::Sampled);
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    (void)cs.eval("(+ 1 1)");
+    const auto hard0 = load_u64(g_typed_mutation_audit_counters.hard_gate_force_rollback_total);
+    cs.evaluator().inject_adt_non_exhaustive_for_test();
+    InvariantAuditResult inv{};
+    (void)cs.evaluator().run_typed_mutation_invariant_audit(
+        /*mid=*/3358, "soft-adt-3358", 0, 0, 1, /*composite=*/false, &inv);
+    CHECK(!inv.adt_ok, "3358 AC2: audit still stamps adt_ok false");
+    const auto auth = cs.evaluator().classify_linear_force(&inv);
+    CHECK(static_cast<int>(auth) == 0, "3358 AC2: Soft classify None");
+    CHECK(!cs.evaluator().force_linear_rollback("soft-mutate", &inv),
+          "3358 AC2: Soft force_linear_rollback false");
+    CHECK(load_u64(g_typed_mutation_audit_counters.hard_gate_force_rollback_total) == hard0,
+          "3358 AC2: no hard-gate force-rollback under Soft");
+    cs.evaluator().clear_adt_non_exhaustive_inject_for_test();
+    cs.evaluator().clear_last_mutate_error();
+}
+
 } // namespace
 
 int run_test_adt_hard_gate_exhaustiveness() {
@@ -240,6 +299,8 @@ int run_test_adt_hard_gate_exhaustiveness() {
     ac6_partial_non_exhaustive_counter();
     ac7_schema_2288();
     ac8_source_wiring();
+    ac3358_1_production_force_via_authority();
+    ac3358_2_soft_observe_only();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -196,6 +196,8 @@ int run_test_type_dirty_cone_dep_graph() {
         CHECK(dirty.find("mirror_type_affected_to_cascade") != std::string::npos, "mirror helper");
         CHECK(dirty.find("force_adt_exhaust_sites_into_cone") != std::string::npos,
               "#3045 under-mark exhaustiveness cone-force");
+        CHECK(dirty.find("expand_adt_enclosing_parent_into_cone") != std::string::npos,
+              "#3358 ReplaceType enclosing-parent cone expansion");
         CHECK(dirty.find("cascade_skip_subtree") != std::string::npos ||
                   dirty.find("dirty_skip_subtree") != std::string::npos,
               "#2106 skip subtree");

@@ -2444,6 +2444,21 @@ def cmd_lint():
             "Issue #3317 ADT exhaust outermost recheck linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_outermost_recheck_3317.py"
         )
         return r
+    # Issue #3358: ReplaceType / structural mutate enclosing-parent cone
+    # (expansion of 1) + production/Full adt_ok=false force-rollback via
+    # the unified authority table. Soft observes. Extends type /
+    # occurrence / linear / audit suites (#81967); no docs/design/; no
+    # new query key.
+    aer3358_script = COVERAGE_CHECKS / "check_adt_exhaust_replace_type_cone_3358.py"
+    if not aer3358_script.exists():
+        fail(f"missing {aer3358_script}")
+        return 1
+    r = run([sys.executable, str(aer3358_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3358 ADT exhaust ReplaceType cone linter failed — run python3 scripts/coverage/checks/check_adt_exhaust_replace_type_cone_3358.py"
+        )
+        return r
     # Issue #3237: query:type / type_export_is_authoritative gates on
     # Full-audit residual faces (pending_full_solve + TIMEOUT). Soft
     # unchanged; quiet two loads. Extends test_solve_delta_unresolved_export.

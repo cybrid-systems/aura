@@ -1414,6 +1414,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                    // Actually apply the type change
                    flat.set_type(node, new_tid);
                    ev.workspace_flat_->mark_dirty_upward(node);
+                   // Issue #3358: ReplaceType of Match / Variant /
+                   // constructor expands the enclosing parent into the
+                   // dirty cone so exhaustiveness cannot skip the site.
+                   (void)aura::compiler::force_enclosing_match_parent_into_cone(flat, node);
                    if (allow_macro_rt && was_macro_rt)
                        propagate_macro_introduced_marker(ev, flat, node,
                                                          parse_no_auto_restamp_opt_out(ev, a));

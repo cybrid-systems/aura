@@ -37,6 +37,7 @@ using aura::compiler::ConstraintSystem;
 using aura::compiler::kAdtExhaustCommitRecheckIssue;
 using aura::compiler::kAdtExhaustCompleteSeedIssue;
 using aura::compiler::kAdtExhaustOutermostRecheckIssue;
+using aura::compiler::kAdtExhaustReplaceTypeConeIssue;
 using aura::compiler::recheck_all_live_adt_exhaust_before_proof;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -686,6 +687,69 @@ static void ac3317_4_source_linter() {
           "3317 AC4: no docs/design");
 }
 
+// ── Issue #3358: ReplaceType parent cone + production adt force ──
+static void ac3358_1_replace_type_parent_cone() {
+    std::println("\n--- #3358 AC1: ReplaceType enclosing-parent cone expansion of 1 ---");
+    CHECK(kAdtExhaustReplaceTypeConeIssue == 3358, "3358 AC1: issue stamp");
+    CHECK(aura::compiler::dirty::expand_adt_enclosing_parent_into_cone(0) == 0,
+          "3358 AC1: parent==0 → 0 extra");
+    CHECK(aura::compiler::dirty::expand_adt_enclosing_parent_into_cone(7) == 1,
+          "3358 AC1: parent forced");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("force_enclosing_match_parent_into_cone") != std::string::npos,
+          "3358 AC1: replace-type calls helper");
+    CHECK(mut.find("Issue #3358") != std::string::npos, "3358 AC1: replace-type cite");
+    const auto tci = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(tci.find("force_enclosing_match_parent_into_cone") != std::string::npos,
+          "3358 AC1: helper impl");
+    CHECK(tci.find("expand_adt_enclosing_parent_into_cone") != std::string::npos,
+          "3358 AC1: undermark parent expansion");
+    const auto dp = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(dp.find("expand_adt_enclosing_parent_into_cone") != std::string::npos,
+          "3358 AC1: dirty_propagation helper");
+}
+
+static void ac3358_2_production_force_adt() {
+    std::println("\n--- #3358 AC2: production/Full adt_ok=false uses authority table ---");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto eixx = read_file("src/compiler/evaluator.ixx");
+    CHECK(etc.find("LinearForceAuthority::AdtNonExhaustive") != std::string::npos,
+          "3358 AC2: classify AdtNonExhaustive");
+    CHECK(eixx.find("AdtNonExhaustive = 6") != std::string::npos, "3358 AC2: enum value");
+    CHECK(etc.find("production_defaults_active()") != std::string::npos &&
+              etc.find("AdtNonExhaustive") != std::string::npos,
+          "3358 AC2: production/Full gate");
+    CHECK(etc.find("deny_kind = \"adt\"") != std::string::npos, "3358 AC2: deny kind adt");
+}
+
+static void ac3358_3_soft_observe() {
+    std::println("\n--- #3358 AC3: Soft observe-only via adt_non_exhaustive_sites_total ---");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(etc.find("adt_non_exhaustive_sites_total") != std::string::npos ||
+              aud.find("adt_non_exhaustive_sites_total") != std::string::npos,
+          "3358 AC3: reuse Soft counter");
+    CHECK(etc.find("classify returns None") != std::string::npos ||
+              etc.find("Soft still observes") != std::string::npos,
+          "3358 AC3: Soft classify None documented");
+}
+
+static void ac3358_4_source_linter() {
+    std::println("\n--- #3358 AC4: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_adt_exhaust_replace_type_cone_3358.py");
+    CHECK(ixx.find("kAdtExhaustReplaceTypeConeIssue = 3358") != std::string::npos,
+          "ac3358_4_source_linter: stamp");
+    CHECK(!lint.empty() && lint.find("Issue #3358") != std::string::npos, "3358 AC4: linter");
+    CHECK(build.find("check_adt_exhaust_replace_type_cone_3358") != std::string::npos,
+          "3358 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3358.cpp").empty(), "3358 AC4: no invent");
+    CHECK(read_file("docs/design/3358-adt-exhaust-replace-type.md").empty(),
+          "3358 AC4: no docs/design");
+}
+
 static void ac3005_6_linter_no_design() {
     std::println("\n--- #3005 AC6: linter + no invent / no design ---");
     const auto t = read_file("tests/compiler/test_adt_match_goal_table.cpp");
@@ -740,8 +804,12 @@ int run_test_adt_match_goal_table() {
     ac3317_2_soft_observe();
     ac3317_3_reuse_apis();
     ac3317_4_source_linter();
-    std::println("\n=== #2564/#3005/#3045/#3083/#3236/#3317: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    ac3358_1_replace_type_parent_cone();
+    ac3358_2_production_force_adt();
+    ac3358_3_soft_observe();
+    ac3358_4_source_linter();
+    std::println("\n=== #2564/#3005/#3045/#3083/#3236/#3317/#3358: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

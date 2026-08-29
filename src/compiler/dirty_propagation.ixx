@@ -740,6 +740,17 @@ inline std::size_t force_adt_exhaust_sites_into_cone(std::span<const NodeId> mat
     return n;
 }
 
+// Issue #3358: cone expansion of 1. Force the enclosing parent
+// (Match / Variant) into the type∪IR dirty cone so ReplaceType of a
+// constructor cannot skip exhaustiveness. parent==0 → 0 extra (Quiet).
+// Reuses force_adt_exhaust_sites_into_cone (no new process-wide lock).
+inline std::size_t expand_adt_enclosing_parent_into_cone(NodeId parent) {
+    if (parent == 0)
+        return 0;
+    NodeId one = parent;
+    return force_adt_exhaust_sites_into_cone(std::span<const NodeId>(&one, 1));
+}
+
 // Issue #3065: after DeadCoercion elim (AST identity / IR CastOp) persist
 // the eliminated NodeIds into the type∪IR dirty cone so a remutate of the
 // same site re-enters typecheck (AC1). Unions into last_type_cone_ast —

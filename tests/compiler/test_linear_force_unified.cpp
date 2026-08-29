@@ -252,6 +252,24 @@ static void ac6_source_and_schema() {
           "AC6: linter script present");
 }
 
+// Issue #3358: ADT non-exhaustive joins the unified force authority table.
+static void ac3358_adt_authority() {
+    std::println("\n--- #3358: AdtNonExhaustive authority table ---");
+    const auto etc = read_file("src/compiler/evaluator_typecheck.cpp");
+    const auto eixx = read_file("src/compiler/evaluator.ixx");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(eixx.find("AdtNonExhaustive = 6") != std::string::npos,
+          "ac3358_adt_authority: enum value");
+    CHECK(etc.find("case LinearForceAuthority::AdtNonExhaustive") != std::string::npos,
+          "3358: force switch case");
+    CHECK(etc.find("LinearForceAuthority::AdtNonExhaustive") != std::string::npos,
+          "3358: classify returns AdtNonExhaustive");
+    CHECK(aud.find("AdtNonExhaustive") != std::string::npos, "3358: authority table comment");
+    CHECK(etc.find("adt_non_exhaustive_sites_total") != std::string::npos ||
+              aud.find("adt_non_exhaustive_sites_total") != std::string::npos,
+          "3358: Soft reuses adt_non_exhaustive_sites_total");
+}
+
 } // namespace
 
 int run_test_linear_force_unified() {
@@ -262,6 +280,7 @@ int run_test_linear_force_unified() {
     ac4_soft_warning();
     ac5_clean_zero_cost();
     ac6_source_and_schema();
+    ac3358_adt_authority();
     apply_dev_audit_defaults();
     if (g_failed)
         return 1;

@@ -490,6 +490,13 @@ export inline constexpr int kAdtExhaustCommitRecheckIssue = 3236;
 // ADT is in the mutated set. Soft observe; quiet empty mutated-ADT set.
 export inline constexpr int kAdtExhaustOutermostRecheckIssue = 3317;
 
+// Issue #3358: residual of #2223/#2264 — ReplaceType / structural mutate
+// of a Match / Variant node or its constructor must expand the enclosing
+// parent into the dirty cone (expansion of 1) so exhaustiveness cannot
+// skip the site. production/Full: adt_ok=false force-rollbacks via the
+// unified authority table. Soft observes adt_non_exhaustive_sites_total.
+export inline constexpr int kAdtExhaustReplaceTypeConeIssue = 3358;
+
 // Issue #2900 / #2963: Agent-controlled delta TIMEOUT policy (SolverBudget).
 // Production never honors allow_timeout_commit (always escalate / reject
 // on unsolved via #2277). Soft + allow_timeout_commit: keep TIMEOUT with
@@ -3646,6 +3653,13 @@ force_adt_exhaust_undermark_into_cone(aura::ast::FlatAST& flat, const aura::ast:
                                       aura::core::TypeRegistry& reg,
                                       const std::vector<aura::ast::NodeId>& dirty_nodes,
                                       ConstraintSystem* cs = nullptr, void* metrics = nullptr);
+
+// Issue #3358: cone expansion of 1. If `node` is a Match / Variant
+// (DefineType) or its constructor, force the enclosing parent into the
+// dirty cone so ReplaceType cannot skip exhaustiveness. Quiet: not
+// ADT-related or node==0 → 0 extra.
+export std::size_t force_enclosing_match_parent_into_cone(aura::ast::FlatAST& flat,
+                                                          aura::ast::NodeId node);
 
 // Issue #3317: complete recheck of every live match whose subject ADT
 // appears in the mutated type set, after drain + residual face clear

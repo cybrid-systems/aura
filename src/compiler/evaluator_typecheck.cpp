@@ -1842,6 +1842,13 @@ bool Evaluator::run_typed_mutation_invariant_audit(std::uint64_t mutation_id,
             r.adt_ok = false;
         }
     }
+    // Issue #3358: sticky adt_ok=false for unified force_linear_rollback
+    // under production/Full. Soft still observes via
+    // adt_non_exhaustive_sites_total (classify returns None).
+    if (!r.adt_ok)
+        note_adt_non_exhaustive_fail();
+    else
+        clear_adt_non_exhaustive_fail();
 
     const auto fid = static_cast<std::int64_t>(aura_fiber_current_id());
     typed_audit::record_invariant_audit_result(mutation_id, op_name, r, before_epoch, after_epoch,
@@ -2154,6 +2161,18 @@ void Evaluator::clear_cross_closure_escape_fail() noexcept {
     last_cross_closure_escape_fail_.store(0, std::memory_order_relaxed);
 }
 
+bool Evaluator::last_adt_non_exhaustive_fail() const noexcept {
+    return last_adt_non_exhaustive_fail_.load(std::memory_order_relaxed) != 0;
+}
+
+void Evaluator::note_adt_non_exhaustive_fail() noexcept {
+    last_adt_non_exhaustive_fail_.store(1, std::memory_order_relaxed);
+}
+
+void Evaluator::clear_adt_non_exhaustive_fail() noexcept {
+    last_adt_non_exhaustive_fail_.store(0, std::memory_order_relaxed);
+}
+
 // Issue #2642: clear pending flag for LinearDensifyRootMismatch authority.
 // Forward-compatible stub — full O(dirty) walk + flag-set site is the
 // follow-up commit; for now this just makes the symbol resolve so the
@@ -2169,6 +2188,8 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
     // Soft Warning never sets the sticky flag (#2514 / #2357).
     if (linear_synth_hard_fail_pending())
         return LinearForceAuthority::SynthHardFail;
+    const bool adt_hard = typed_audit::production_defaults_active() ||
+                          typed_audit::get_strategy() == typed_audit::AuditStrategy::Full;
     // Optional precomputed audit result (avoids re-running linear walk).
     if (precomputed_invariant_result) {
         const auto* r =
@@ -2179,6 +2200,10 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
             return LinearForceAuthority::CrossBatchEscape;
         if (!r->linear_ok)
             return LinearForceAuthority::PostMutateLinear;
+        // Issue #3358: production/Full adt_ok=false uses the unified force
+        // entry. Soft classify stays None (observe-only).
+        if (!r->adt_ok && adt_hard)
+            return LinearForceAuthority::AdtNonExhaustive;
     }
     // Sticky post-mutate / escape axes (set by audit; pure peek).
     if (last_cross_closure_escape_fail())
@@ -2187,6 +2212,8 @@ Evaluator::classify_linear_force(const void* precomputed_invariant_result) const
         return LinearForceAuthority::CrossBatchEscape;
     if (last_post_mutate_linear_fail())
         return LinearForceAuthority::PostMutateLinear;
+    if (adt_hard && last_adt_non_exhaustive_fail())
+        return LinearForceAuthority::AdtNonExhaustive;
     return LinearForceAuthority::None;
 }
 
@@ -2298,6 +2325,14 @@ bool Evaluator::force_linear_rollback(std::string_view op,
             // Clear the pending flag (the scan already bumped the counter).
             clear_linear_densify_root_mismatch_pending();
             deny_kind = "linear-densify-root-mismatch";
+            break;
+        case LinearForceAuthority::AdtNonExhaustive:
+            // Issue #3358: production/Full adt_ok=false uses the unified
+            // force entry (same as linear). Soft observes via
+            // adt_non_exhaustive_sites_total (audit already bumped
+            // adt_exhaustiveness_fail_total — no re-bump).
+            clear_adt_non_exhaustive_fail();
+            deny_kind = "adt";
             break;
         case LinearForceAuthority::None:
             return false;
@@ -2500,7 +2535,9 @@ bool Evaluator::finish_mutate_hard_gate(std::uint64_t nodes_changed, bool linear
     if (force_linear_rollback(op, &r) || force_linear_rollback(op))
         return false;
 
-    // Deny: non-linear axes (type / provenance / adt) — not force_linear.
+    // Deny: remaining non-linear axes (type / provenance). ADT under
+    // production/Full is AdtNonExhaustive in the authority table (#3358);
+    // Sampled hard-gate without production still falls through here.
     std::string_view kind = "invariant";
     if (!r.adt_ok)
         kind = "adt";
