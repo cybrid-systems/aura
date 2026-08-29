@@ -238,11 +238,15 @@ static void ac3126_admin_fence_locked() {
     }
 
     // AC5: revoke_effect_capability foreign-tenant fence locks + uses
-    // effects_for_locked + revoke_locked.
+    // effects_for_locked + revoke_locked. Bound to the next Evaluator
+    // method so later sites (e.g. #3411 set_tenant_principal) are not
+    // scored as the revoke fence.
     {
         const auto es = read_file("src/compiler/evaluator_security.cpp");
         const auto revoke_pos = es.find("void Evaluator::revoke_effect_capability(");
-        const std::string revoke_block = es.substr(revoke_pos);
+        const auto next_func = es.find("void Evaluator::set_effect_sandbox_mode(", revoke_pos);
+        const std::string revoke_block = es.substr(
+            revoke_pos, (next_func > revoke_pos) ? next_func - revoke_pos : es.size() - revoke_pos);
         CHECK(revoke_block.find("std::lock_guard<std::mutex> lock(reg_revoke.mtx)") !=
                   std::string::npos,
               "AC5: revoke_effect_capability takes registry mtx");

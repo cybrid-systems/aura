@@ -101,7 +101,10 @@ def main() -> int:
         fails.append("AC4: grant_effect_session still has unlocked has_capability fence")
 
     # AC5 — revoke_effect_capability fence locks + uses revoke_locked.
-    rev_block = es[rev_pos:]
+    # Bound to the next Evaluator method so later sites (e.g. #3411
+    # set_tenant_principal) are not scored as the revoke fence.
+    sandbox_pos = es.find("void Evaluator::set_effect_sandbox_mode(", rev_pos)
+    rev_block = es[rev_pos:sandbox_pos] if sandbox_pos > rev_pos else es[rev_pos:]
     must("std::lock_guard<std::mutex> lock(reg_revoke.mtx)", "AC5", rev_block)
     must("effects_for_locked(self_tenant)", "AC5", rev_block)
     must("reg_revoke.revoke_locked(", "AC5", rev_block)
