@@ -1517,10 +1517,11 @@ bool Evaluator::allow_query_stable_ref_export(ast::NodeId id) const noexcept {
     auto* ws = workspace_flat_;
     if (!ws || id == ast::NULL_NODE)
         return true;
-    // #3230/#3259/#3312: eager cone exports; gap/torn remainder fail-closed.
-    if (ws->node_eagerly_restamped(id))
-        return true;
-    if (!ws->nested_authority_gap() && !ws->restamp_last_budget_exceeded() &&
+    const bool ov = aura::ast::restamp_hot_cone_held_overflow(); // Issue #3426
+    if (!ov)
+        if (ws->node_eagerly_restamped(id))
+            return true;
+    if (!ov && !ws->nested_authority_gap() && !ws->restamp_last_budget_exceeded() &&
         !ws->restamp_over_budget_torn())
         return true;
     if (typed_audit::should_hard_reject_soft_sibling()) {

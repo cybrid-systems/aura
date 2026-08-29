@@ -143,6 +143,9 @@ inline constexpr std::uint32_t kRestampHotConeFracPercentDefault = 50;
 // buffer (restamp_hot_cone_after_budget is production-only).
 inline constexpr int kRestampHotConeAgentHeldIssue = 3327;
 inline constexpr std::uint16_t kRestampHotConeHeldCap = 64;
+// Issue #3426: held-cap overflow must not eager a 64-id prefix (half-green
+// Agent memory). Flag only — no unbounded buffer, no new query key.
+inline constexpr int kRestampHotConeHeldOverflowIssue = 3426;
 [[nodiscard]] inline bool restamp_over_budget_torn(bool last_budget_exceeded,
                                                    bool generation_torn) noexcept {
     return last_budget_exceeded || generation_torn;
@@ -230,6 +233,7 @@ inline void set_restamp_budget_nodes_for_process(std::uint32_t n) noexcept {
 // Deduped, capped; excess is fail-closed by the hot-cone budget (AC2).
 inline std::uint32_t g_restamp_hot_cone_held_ids[kRestampHotConeHeldCap]{};
 inline std::atomic<std::uint16_t> g_restamp_hot_cone_held_count{0};
+inline std::atomic<std::uint8_t> g_restamp_hot_cone_held_overflow{0};
 
 inline void note_restamp_hot_cone_held_node(std::uint32_t node_id) noexcept {
     if (node_id == 0)
@@ -240,8 +244,10 @@ inline void note_restamp_hot_cone_held_node(std::uint32_t node_id) noexcept {
         if (g_restamp_hot_cone_held_ids[i] == node_id)
             return;
     }
-    if (n >= kRestampHotConeHeldCap)
+    if (n >= kRestampHotConeHeldCap) {
+        g_restamp_hot_cone_held_overflow.store(1, std::memory_order_relaxed);
         return;
+    }
     g_restamp_hot_cone_held_ids[n] = node_id;
     g_restamp_hot_cone_held_count.store(static_cast<std::uint16_t>(n + 1),
                                         std::memory_order_relaxed);
@@ -256,8 +262,13 @@ inline void note_restamp_hot_cone_held_node(std::uint32_t node_id) noexcept {
     return i < kRestampHotConeHeldCap ? g_restamp_hot_cone_held_ids[i] : 0u;
 }
 
+[[nodiscard]] inline bool restamp_hot_cone_held_overflow() noexcept {
+    return g_restamp_hot_cone_held_overflow.load(std::memory_order_relaxed) != 0;
+}
+
 inline void clear_restamp_hot_cone_held_for_test() noexcept {
     g_restamp_hot_cone_held_count.store(0, std::memory_order_relaxed);
+    g_restamp_hot_cone_held_overflow.store(0, std::memory_order_relaxed);
 }
 
 inline void clear_restamp_budget_nodes_override_for_test() noexcept {

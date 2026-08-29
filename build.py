@@ -3971,6 +3971,19 @@ def cmd_lint():
             "Issue #3327 restamp hot-cone Agent-held linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_agent_held_3327.py"
         )
         return r
+    # Issue #3426: held-cap overflow fail-closes the whole held set (no
+    # half-green prefix). Extends test_restamp_budget_hard_gate (#81967);
+    # no docs/design/; no test_issue_3426.cpp.
+    rhc3426_script = COVERAGE_CHECKS / "check_restamp_hot_cone_held_overflow_3426.py"
+    if not rhc3426_script.exists():
+        fail(f"missing {rhc3426_script}")
+        return 1
+    r = run([sys.executable, str(rhc3426_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3426 restamp hot-cone held overflow linter failed — run python3 scripts/coverage/checks/check_restamp_hot_cone_held_overflow_3426.py"
+        )
+        return r
     # Issue #3260: reconcile #1908 file-level vs per-eval provenance
     # counters. Extends test_clone_provenance_per_evaluator.cpp (#81967);
     # no docs/design/ (#1655).
@@ -13096,6 +13109,30 @@ def cmd_restamp_hot_cone_budget_3259_coverage():
         fail("restamp hot-cone budget (#3259) coverage contract rows failed")
         return 1
     ok("restamp hot-cone budget (#3259) coverage clean")
+    return 0
+
+
+def cmd_restamp_hot_cone_held_overflow_3426_coverage():
+    """Issue #3426: held-cap overflow fail-closes the whole held set.
+
+    #3327 unions Agent-held ids into the over-budget hot cone, capped at
+    64. Excess was a silent prefix (first 64 green, tail restamp-lag).
+    Production overflow skips held-prefix eager and overflow dominates
+    the eager-bit allow. Soft / unlatched: zero extra. Reuse
+    forced-stale / restamp-lag / torn. Extends
+    test_restamp_budget_hard_gate. No docs/design/, no
+    tests/issues/test_issue_3426.cpp.
+    """
+    print(f"{B}=== restamp hot-cone held overflow (#3426) ==={N}")
+    script = COVERAGE_CHECKS / "check_restamp_hot_cone_held_overflow_3426.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("restamp hot-cone held overflow (#3426) coverage contract rows failed")
+        return 1
+    ok("restamp hot-cone held overflow (#3426) coverage clean")
     return 0
 
 
@@ -22559,6 +22596,7 @@ def main():
         "abort-force-lookup-reject-3258-coverage": cmd_abort_force_lookup_reject_3258_coverage,
         "restamp-hot-cone-budget-3259": cmd_restamp_hot_cone_budget_3259_coverage,
         "restamp-hot-cone-budget-3259-coverage": cmd_restamp_hot_cone_budget_3259_coverage,
+        "restamp-hot-cone-held-overflow": cmd_restamp_hot_cone_held_overflow_3426_coverage,
         "macro-provenance-counter-unify-3260": cmd_macro_provenance_counter_unify_3260_coverage,
         "macro-provenance-counter-unify-3260-coverage": cmd_macro_provenance_counter_unify_3260_coverage,
         "flush-mutation-boundary-toctou-3261": cmd_flush_mutation_boundary_toctou_3261_coverage,

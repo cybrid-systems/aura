@@ -929,6 +929,7 @@ aura::compiler::Evaluator::unified_restamp_after_boundary(UnifiedRestampSite sit
             if (production) {
                 note_restamp_hot_cone_held_from_pins_(); // Issue #3327
                 // Issue #3259: lazy-only → eager hot cone; never green a pre-mutate gen.
+                // Issue #3426: overflow skip lives in restamp_hot_cone_after_budget.
                 if (r.nodes == 0)
                     r.nodes = ws->restamp_hot_cone_after_budget();
                 aura::core::force_query_epoch_stale_from_restamp_budget();
