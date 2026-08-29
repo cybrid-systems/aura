@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <fstream>
 #include <print>
 #include <string>
@@ -350,6 +351,87 @@ static void ac3177_clear_aot_metrics_for_eval_no_match() {
     aura_set_aot_metrics(nullptr);
 }
 
+// ── Issue #3410: production mutate dual-fresh miss must not soft-migrate
+// onto pre-mutate g_jit_fns native. Source-cite verification (runtime
+// production probe requires wiring that #3410 deliberately avoids — the
+// fix is gated on aura::compiler::typed_audit::production_defaults_active
+// which is process-wide and not safe to flip in a single-eval test).
+//
+// AC6: try_cross_cow_soft_migrate_ has production probe after within-cap
+//      check; same-gen drift → set MustDeopt + return 0 (reuse existing
+//      cross_cow_note_hard_ + cross_cow_hard_reject_total counter).
+// AC7: no docs/design/3410-* (per #1655); no test_issue_3410.cpp (per
+//      #81934 — extend existing test_cross_cow_soft_migrate.cpp).
+// AC8: build.py wires cmd_dual_fresh_mutate_soft_migrate_3410_coverage;
+//      observability_metrics.h has no new field for #3410 (reuses existing
+//      MustDeopt / cross_cow_hard_reject_total counters per AC5).
+static void ac3410_production_probe() {
+    std::println("\n--- AC6: #3410 production probe — same-gen drift → MustDeopt refuse ---");
+    const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+    const auto hot = read_file("src/compiler/hot_update_registry.cpp");
+    CHECK(rt.find("Issue #3410") != std::string::npos, "AC6: #3410 marker in runtime");
+    CHECK(rt.find("production_defaults_active()") != std::string::npos,
+          "AC6: production probe wired");
+    // Production probe activates AFTER within-cap check (so cap-drift hard
+    // reject path is unchanged) and BEFORE the restamp / linear path
+    // (so production same-gen drift cannot restamp + continue native).
+    const auto prod_pos = rt.find("production_defaults_active()");
+    const auto within_cap_pos = rt.find("cross_cow_drift_within_cap_");
+    const auto restamp_pos = rt.find("stamp_closure_provenance_locked(cid);");
+    CHECK(prod_pos != std::string::npos && within_cap_pos != std::string::npos &&
+              restamp_pos != std::string::npos && prod_pos > within_cap_pos &&
+              prod_pos < restamp_pos,
+          "AC6: production probe between within-cap check and restamp");
+    CHECK(rt.find("g_closure_must_deopt[cid] = 1") != std::string::npos,
+          "AC6: MustDeopt set on production drift refuse");
+    // Reuse existing CrossCowHardReject reason (no new metric field per AC5).
+    CHECK(rt.find("cross_cow_note_hard_(CrossCowHardReject::Other)") != std::string::npos,
+          "AC6: reuse CrossCowHardReject::Other reason");
+    // Facade reference: production mark_define_dirty / invalidate_function
+    // bumps bridge_epoch + defuse_version + aot table epoch in sequence.
+    CHECK(rt.find("hard_invalidate_via_facade") != std::string::npos ||
+              hot.find("hard_invalidate_via_facade") != std::string::npos,
+          "AC6: hard_invalidate_via_facade referenced");
+    // Cow-gen mismatch path (#2547) unchanged — still hard-rejects cross-cow.
+    CHECK(rt.find("closure_cow_gen_mismatch_") != std::string::npos,
+          "AC6: cow-gen mismatch path unchanged");
+}
+
+static void ac3410_no_design_doc() {
+    std::println("\n--- AC7: #3410 no docs/design/3410-*; no test_issue_3410.cpp ---");
+    namespace fs = std::filesystem;
+    bool has_design_doc = false;
+    if (fs::exists("docs/design")) {
+        for (const auto& entry : fs::directory_iterator("docs/design")) {
+            const auto name = entry.path().filename().string();
+            if (name.find("3410") != std::string::npos) {
+                has_design_doc = true;
+                break;
+            }
+        }
+    }
+    CHECK(!has_design_doc, "AC7: no docs/design/3410-* per #1655");
+    CHECK(!fs::exists("tests/issues/test_issue_3410.cpp") &&
+              !fs::exists("tests/compiler/test_issue_3410.cpp") &&
+              !fs::exists("tests/core/test_issue_3410.cpp"),
+          "AC7: no test_issue_3410.cpp per #81934 (extend existing test)");
+}
+
+static void ac3410_build_and_metric() {
+    std::println("\n--- AC8: #3410 build.py wiring + no new metric field ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("cmd_dual_fresh_mutate_soft_migrate_3410_coverage") != std::string::npos,
+          "AC8: cmd_dual_fresh_mutate_soft_migrate_3410_coverage in build.py");
+    CHECK(build.find("check_dual_fresh_mutate_soft_migrate_3410") != std::string::npos,
+          "AC8: linter script registered");
+    const auto obs = read_file("src/compiler/observability_metrics.h");
+    // Per AC5: reuse existing MustDeopt + cross_cow_hard_reject_total
+    // counters. No new metric field for #3410.
+    CHECK(obs.find("dual_fresh_mutate_soft_migrate") == std::string::npos &&
+              obs.find("3410_soft_migrate") == std::string::npos,
+          "AC8: no new metric field per AC5 (reuse existing counters)");
+}
+
 int run_test_cross_cow_soft_migrate() {
     std::println("test_cross_cow_soft_migrate");
     ac1_soft_migrate();
@@ -369,9 +451,14 @@ int run_test_cross_cow_soft_migrate() {
     // aura_jit_bridge.cpp:2124 fetch_adds on dead stack memory.
     ac3177_clear_aot_metrics_for_eval_match();
     ac3177_clear_aot_metrics_for_eval_no_match();
+    // Issue #3410: production mutate dual-fresh miss must not soft-migrate
+    // onto pre-mutate g_jit_fns native (extend existing test per #81934).
+    ac3410_production_probe();
+    ac3410_no_design_doc();
+    ac3410_build_and_metric();
     if (g_failed)
         return 1;
-    std::println("cross-COW soft migrate #2371 + #2603: OK ({} passed)", g_passed);
+    std::println("cross-COW soft migrate #2371 + #2603 + #3410: OK ({} passed)", g_passed);
     return 0;
 }
 

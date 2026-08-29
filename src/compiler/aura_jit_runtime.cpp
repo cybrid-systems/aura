@@ -1369,6 +1369,29 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
         aura_unlock_workspace_write();
         return 0;
     }
+    // Issue #3410: production probe — same-gen drift is mutate-driven.
+    // In production, even within-cap drift (cap_defuse != cur_defuse or
+    // cap_bridge != cur_bridge) means the cid was stamped before a mutate
+    // advanced defuse_version / bridge_epoch. hard_invalidate_via_facade
+    // (hot_update_registry.cpp:132) bumps bridge_epoch + defuse_version +
+    // aot table epoch in sequence on every mark_define_dirty /
+    // invalidate_function call. True COW catch-up goes through the
+    // cow_gen_mismatch hard-reject (#2547) above. Soft/Off retains the
+    // existing restamp path (zero extra when production probe == 0).
+    // Reuses existing cross_cow_hard_reject_total + MustDeopt counters
+    // (no new metric per AC5). Production Restrict/Strict + mutate-driven
+    // dual-fresh must NOT soft-migrate onto pre-mutate g_jit_fns.fn —
+    // MustDeopt forces reemit remap to retarget.
+    if (aura::compiler::typed_audit::production_defaults_active() &&
+        ((cap_defuse != 0 && cur_defuse != 0 && cap_defuse != cur_defuse) ||
+         (cap_bridge != 0 && cur_bridge != 0 && cap_bridge != cur_bridge))) {
+        if (cid >= g_closure_must_deopt.size())
+            g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
+        g_closure_must_deopt[cid] = 1;
+        cross_cow_note_hard_(CrossCowHardReject::Other);
+        aura_unlock_workspace_write();
+        return 0;
+    }
     const std::uint8_t lin = cid < g_closure_linear_state.size() ? g_closure_linear_state[cid] : 0;
     if (lin != 0) {
         // Issue #2505: linear fingerprint drift vs live → hard reject
