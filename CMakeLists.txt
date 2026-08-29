@@ -1727,6 +1727,10 @@ set_tests_properties(test_restamp_budget_hard_gate_verification PROPERTIES LABEL
 # Issue #495: Task2 refinement closed-loop integration matrix.
 aura_add_issue_test(test_refinement_closed_loop)
 aura_issue_test_link_light(test_refinement_closed_loop)
+# Issue #1413 / #2992 / #3202 / #3430: bidirectional annotation +
+# gradual ground unify fixture (test_bidirectional_annotation.cpp).
+aura_add_issue_test(test_bidirectional_annotation)
+aura_issue_test_link_light(test_bidirectional_annotation)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a

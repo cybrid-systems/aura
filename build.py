@@ -2731,6 +2731,20 @@ def cmd_lint():
             "Issue #3202 production Strict ground unify linter failed — run python3 scripts/coverage/checks/check_production_strict_ground_unify_3202.py"
         )
         return r
+    # Issue #3430: production_defaults forces Strict unify without
+    # waiting for Hard-gate set_strict (I1 residual of #3202). Soft /
+    # Off / env Balanced unchanged. Extends test_bidirectional_annotation
+    # + test_ir; no docs/design / invent.
+    psgu3430_script = COVERAGE_CHECKS / "check_production_defaults_force_strict_unify_3430.py"
+    if not psgu3430_script.exists():
+        fail(f"missing {psgu3430_script}")
+        return 1
+    r = run([sys.executable, str(psgu3430_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3430 production_defaults force-Strict unify linter failed — run python3 scripts/coverage/checks/check_production_defaults_force_strict_unify_3430.py"
+        )
+        return r
     # Issue #3203: Soft TIMEOUT/CONFLICT must never grant query:type
     # authority (residual of #3081). Persist grant cannot override a
     # half-solved face. Extends test_solve_delta_unresolved_export.
@@ -17376,6 +17390,29 @@ def cmd_gradual_permissiveness_2992_coverage():
     return 0
 
 
+def cmd_production_defaults_force_strict_unify_3430_coverage():
+    """Issue #3430: production_defaults forces Strict unify without set_strict.
+
+    #3202 is the conjunct inside consistent_unify. Residual: Production
+    first-pass infer_flat_partial stayed Balanced unless Hard later
+    called set_strict. effective_gradual_permissiveness() now returns
+    Strict under production_defaults. Soft / Off unchanged. Extends
+    test_bidirectional_annotation + test_ir. No docs/design/, no
+    tests/issues/test_issue_3430.cpp.
+    """
+    print(f"{B}=== production_defaults force-Strict unify coverage (#3430) ==={N}")
+    script = COVERAGE_CHECKS / "check_production_defaults_force_strict_unify_3430.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production_defaults force-Strict unify (#3430) coverage contract rows failed")
+        return 1
+    ok("production_defaults force-Strict unify (#3430) coverage clean")
+    return 0
+
+
 def cmd_typecheck_metrics_tier_2993_coverage():
     """Issue #2993: type-check metrics tier minimal default."""
     print(f"{B}=== typecheck metrics tier coverage (#2993) ==={N}")
@@ -22770,6 +22807,7 @@ def main():
         "hot-residual-soft-must-deopt-3084": cmd_hot_residual_soft_must_deopt_3084,
         "hot-residual-soft-must-deopt-3084-coverage": cmd_hot_residual_soft_must_deopt_3084_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
+        "production-defaults-force-strict-unify": cmd_production_defaults_force_strict_unify_3430_coverage,
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
         "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,
         "solve-delta-timeout-fail-closed-3003": cmd_solve_delta_timeout_fail_closed_3003_coverage,

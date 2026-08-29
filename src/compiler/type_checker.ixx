@@ -149,11 +149,16 @@ export inline constexpr std::size_t kTypeDepBucketCap = 256;
 //
 // Issue #3202: Production + Strict additionally returns false from
 // consistent_unify (hard-reject; no CastOp). Soft Strict stays true.
+// Issue #3430: production_defaults forces effective Strict without
+// waiting for Hard-gate set_strict so first-pass infer_flat_partial
+// is not Balanced.
 //
 // Int ↔ Float stays silent. Dynamic ~ T stays fully permissive.
 // Env: AURA_GRADUAL_PERMISSIVENESS=permissive|balanced|strict
 // EDSL: (type:set-gradual-permissiveness ...) + compile:bidirectional-stats
 export inline constexpr int kProductionStrictGroundUnifyIssue = 3202;
+// Issue #3430: production_defaults forces Strict unify without set_strict.
+export inline constexpr int kProductionDefaultsForceStrictUnifyIssue = 3430;
 export enum class GradualPermissiveness : std::uint8_t {
     Permissive = 0,
     Balanced = 1,
@@ -1700,6 +1705,11 @@ public:
         return gradual_permissiveness_;
     }
     [[nodiscard]] GradualPermissiveness effective_gradual_permissiveness() const noexcept {
+        // Issue #3430: production_defaults is Strict without waiting for
+        // Hard-gate set_strict (I1 residual of #3202). Soft / Off keep
+        // set_strict / env Balanced.
+        if (aura::compiler::typed_audit::production_defaults_active())
+            return GradualPermissiveness::Strict;
         return strict_ ? GradualPermissiveness::Strict : gradual_permissiveness_;
     }
     void maybe_report_ground_inconsistency(aura::core::TypeId inferred,
@@ -3041,28 +3051,36 @@ export struct TypeChecker {
     // because that's what users mean by "typecheck".
     void set_strict(bool s) {
         strict_ = s;
-        solve_delta_cs_.set_unify_gradual_mode(s ? GradualPermissiveness::Strict
-                                                 : gradual_permissiveness_);
+        solve_delta_cs_.set_unify_gradual_mode(effective_gradual_permissiveness());
     }
     bool is_strict() const { return strict_; }
 
     // Issue #2992: ground-type diagnostic knob. Forwarded to the
     // per-call InferenceEngine. set_strict(true) still wins.
     // Issue #3202: also syncs long-lived CS unify mode.
+    // Issue #3430: production_defaults forces Strict (SSOT).
     void set_gradual_permissiveness(GradualPermissiveness p) noexcept {
         gradual_permissiveness_ = p;
-        solve_delta_cs_.set_unify_gradual_mode(strict_ ? GradualPermissiveness::Strict : p);
+        solve_delta_cs_.set_unify_gradual_mode(effective_gradual_permissiveness());
     }
     [[nodiscard]] GradualPermissiveness gradual_permissiveness() const noexcept {
         return gradual_permissiveness_;
+    }
+    [[nodiscard]] GradualPermissiveness effective_gradual_permissiveness() const noexcept {
+        // Issue #3430: production_defaults is Strict without waiting for
+        // Hard-gate set_strict (I1 residual of #3202). Soft / Off keep
+        // set_strict / env Balanced.
+        if (aura::compiler::typed_audit::production_defaults_active())
+            return GradualPermissiveness::Strict;
+        return strict_ ? GradualPermissiveness::Strict : gradual_permissiveness_;
     }
 
     explicit TypeChecker(aura::core::TypeRegistry& reg)
         : types(reg)
         , solve_delta_cs_(reg) {
-        // Issue #3202: env-default Strict must reach the long-lived CS.
-        solve_delta_cs_.set_unify_gradual_mode(strict_ ? GradualPermissiveness::Strict
-                                                       : gradual_permissiveness_);
+        // Issue #3202 / #3430: env-default Strict and production_defaults
+        // must reach the long-lived CS without a later set_strict.
+        solve_delta_cs_.set_unify_gradual_mode(effective_gradual_permissiveness());
         // Issue #3380: ctor no longer installs a process-global recover
         // hook. Recover is bound to the commit TypeChecker used by
         // persist via the Evaluator TLS handle (set at outermost
