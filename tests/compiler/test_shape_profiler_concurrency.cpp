@@ -3,6 +3,7 @@
 //          Issue #2937 — FnKey-sharded locks (extend per #81967).
 //          Issue #3199 — on_arena_compact per-shard unique (no all-shards).
 //          Issue #3271 — dirty hook is fn ptr (no std::function).
+//          Issue #3357 — TLS record_shape merge (hot-FnKey unique_lock amortisation).
 //
 //   AC1: docs model A (shared_mutex) in shape_profiler.h
 //   AC2: concurrent record_shape + invalidate does not corrupt profiles_
@@ -41,6 +42,8 @@ using aura::compiler::shape::kShapeDirtyHookNoStdFunctionIssue;
 using aura::compiler::shape::kShapeProfilerConcurrencyIssue;
 using aura::compiler::shape::kShapeProfilerShardCount;
 using aura::compiler::shape::kShapeProfilerShardIssue;
+using aura::compiler::shape::kShapeTlsMergeBatch;
+using aura::compiler::shape::kShapeTlsRecordMergeIssue;
 using aura::compiler::shape::SHAPE_FLOAT;
 using aura::compiler::shape::SHAPE_INT;
 using aura::compiler::shape::ShapeProfiler;
@@ -289,6 +292,128 @@ static void ac3271_5_source_and_linter() {
     CHECK(prev.find("Follow-up #3271") != std::string::npos, "3271 AC5: sequential after #3270");
     CHECK(read_file("docs/design/3271-shape-dirty-hook.md").empty(), "3271 AC5: no docs/design");
     CHECK(read_file("tests/compiler/test_issue_3271.cpp").empty(), "3271 AC5: no invent");
+}
+
+static void ac3357_1_hot_fnkey_less_contention() {
+    std::println("\n--- #3357 AC1: TLS merge lowers unique_lock pressure on hot FnKey ---");
+    CHECK(kShapeTlsRecordMergeIssue == 3357, "3357 AC1: stamp");
+    auto soak = [](bool tls) -> std::uint64_t {
+        ShapeProfiler sp;
+        sp.set_tls_merge_enabled(tls);
+        std::atomic<bool> start{false};
+        auto worker = [&]() {
+            while (!start.load(std::memory_order_acquire)) {
+            }
+            for (int i = 0; i < 4000; ++i)
+                (void)sp.record_shape(42, SHAPE_INT);
+        };
+        std::thread t0(worker), t1(worker), t2(worker), t3(worker);
+        start.store(true, std::memory_order_release);
+        t0.join();
+        t1.join();
+        t2.join();
+        t3.join();
+        sp.flush_tls_records();
+        return sp.lock_contended_total();
+    };
+    const auto c_off = soak(false);
+    const auto c_on = soak(true);
+    std::println("  lock_contended tls-off={} tls-on={} batch={}", c_off, c_on,
+                 kShapeTlsMergeBatch);
+    CHECK(c_on <= c_off, "3357 AC1: TLS merge lock_contended_total <= baseline");
+}
+
+static void ac3357_2_stability_unchanged() {
+    std::println("\n--- #3357 AC2: stability / dominant_shape unchanged ---");
+    ShapeProfiler sp;
+    sp.set_tls_merge_enabled(true);
+    for (int i = 0; i < 200; ++i)
+        (void)sp.record_shape(7, SHAPE_INT);
+    CHECK(sp.is_stable(7), "3357 AC2: stable after enough INT samples");
+    CHECK(sp.dominant_shape(7) == SHAPE_INT, "3357 AC2: dominant INT");
+    CHECK(!sp.deopt_storm_active(), "3357 AC2: no storm from stable records");
+}
+
+static void ac3357_3_soft_zero_extra() {
+    std::println("\n--- #3357 AC3: ≤1 observation no extra merge atomic ---");
+    ShapeProfiler sp;
+    sp.set_tls_merge_enabled(true);
+    (void)sp.record_shape(3, SHAPE_INT);
+    CHECK(sp.tls_merge_batches_total() == 0,
+          "3357 AC3: first observation unique_locks; no merge batch atomic");
+    sp.set_tls_merge_enabled(false);
+    ShapeProfiler sp2;
+    sp2.set_tls_merge_enabled(false);
+    for (int i = 0; i < 32; ++i)
+        (void)sp2.record_shape(3, SHAPE_INT);
+    CHECK(sp2.tls_merge_batches_total() == 0, "3357 AC3: TLS off → zero merge batches");
+}
+
+static void ac3357_4_compact_invalidate_unchanged() {
+    std::println("\n--- #3357 AC4: compact / invalidate contracts unchanged ---");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(cpp.find("unique_lock_all_shards_") != std::string::npos,
+          "3357 AC4: all-shards helper kept");
+    const auto compact = [&]() {
+        auto fn = cpp.find("ShapeProfiler::on_arena_compact");
+        if (fn == std::string::npos)
+            return std::string{};
+        auto brace = cpp.find('{', fn);
+        int depth = 0;
+        std::size_t end = brace;
+        for (; end < cpp.size(); ++end) {
+            if (cpp[end] == '{')
+                ++depth;
+            else if (cpp[end] == '}') {
+                --depth;
+                if (depth == 0) {
+                    ++end;
+                    break;
+                }
+            }
+        }
+        return cpp.substr(brace, end - brace);
+    }();
+    CHECK(compact.find("unique_lock_all_shards_()") == std::string::npos,
+          "3357 AC4: compact still no all-shards (#3199)");
+    CHECK(compact.find("update_deopt_storm_state_") == std::string::npos ||
+              compact.find("Explicitly do NOT call update_deopt_storm_state_") != std::string::npos,
+          "3357 AC4: compact still not storm (#2617)");
+    ShapeProfiler sp;
+    for (int i = 0; i < 150; ++i)
+        (void)sp.record_shape(9, SHAPE_INT);
+    const auto v0 = sp.current_snapshot(9).version;
+    (void)sp.on_arena_compact();
+    CHECK(sp.arena_compact_calls() >= 1, "3357 AC4: compact runs");
+    (void)sp.invalidate(9);
+    CHECK(!sp.is_stable(9), "3357 AC4: invalidate clears stability");
+    CHECK(sp.current_snapshot(9).version >= v0, "3357 AC4: version advances");
+}
+
+static void ac3357_5_source_and_linter() {
+    std::println("\n--- #3357 AC5: source-cite + linter + no invent ---");
+    const auto hh = read_file("src/compiler/shape_profiler.h");
+    const auto cpp = read_file("src/compiler/shape_profiler.cpp");
+    const auto t = read_file("tests/compiler/test_shape_profiler_concurrency.cpp");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_shape_tls_record_merge_3357.py");
+    CHECK(hh.find("kShapeTlsRecordMergeIssue = 3357") != std::string::npos, "3357 AC5: stamp");
+    CHECK(hh.find("std::function<") == std::string::npos, "3357 AC5: no std::function");
+    CHECK(cpp.find("thread_local") != std::string::npos, "3357 AC5: TLS bucket");
+    CHECK(cpp.find("kShapeTlsMergeBatch") != std::string::npos, "3357 AC5: merge batch");
+    CHECK(t.find("ac3357_1_hot_fnkey_less_contention") != std::string::npos, "3357 AC5: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3357") != std::string::npos, "3357 AC5: linter");
+    CHECK(build.find("check_shape_tls_record_merge_3357") != std::string::npos,
+          "3357 AC5: build.py");
+    const auto p3271 = build.find("check_shape_dirty_hook_no_std_function_3271");
+    const auto p3357 = build.find("check_shape_tls_record_merge_3357");
+    CHECK(p3271 != std::string::npos && p3357 != std::string::npos && p3357 > p3271,
+          "3357 AC5: linter AFTER #3271");
+    CHECK(hh.find("schema-3357") == std::string::npos, "3357 AC5: no schema-3357");
+    CHECK(hh.find("g_3357_") == std::string::npos, "3357 AC5: no g_3357_*");
+    CHECK(read_file("docs/design/3357-shape-tls-record-merge.md").empty(),
+          "3357 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3357.cpp").empty(), "3357 AC5: no invent");
 }
 
 static void ac3199_4_source_and_linter() {
@@ -684,6 +809,13 @@ int run_test_shape_profiler_concurrency() {
     ac3271_3_unset_zero_extra();
     ac3271_4_hook_path_no_meta();
     ac3271_5_source_and_linter();
+
+    std::println("\n=== Issue #3357: TLS record_shape merge ===");
+    ac3357_1_hot_fnkey_less_contention();
+    ac3357_2_stability_unchanged();
+    ac3357_3_soft_zero_extra();
+    ac3357_4_compact_invalidate_unchanged();
+    ac3357_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
