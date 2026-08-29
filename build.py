@@ -15404,6 +15404,47 @@ def cmd_deopt_pending_closure_call_3412_coverage():
     return 0
 
 
+def cmd_partial_reemit_success_coverage_3413_coverage():
+    """Issue #3413: last_reemit_success must not stamp the full force_jit
+    mask on any n>0 — only_covered over-covers residual.
+
+    Production `covered = override || demoted` in decide_and_reemit /
+    on_reemit_pipeline_call washes residual_force_mask to 0 even for
+    groups never re-emitted, breaking only_covered re-promote +
+    storm-clear min-dirty. Fix: stamp the actually-emitted bits
+    (`candidates ∩ emit_region_mask_`), not the full demoted mask.
+    AC1 AC2 AC3 AC4 AC5 AC6.
+
+    Source-cite linter (scripts/check_partial_reemit_success_coverage_3413.py)
+    verifies:
+      AC1 decide_and_reemit skips the fallback `covered = demoted` stamp;
+         on_reemit_pipeline_call uses
+         `covered = candidates & emit_region_mask_` (not demoted).
+         demoted fallback preserved as last-resort for candidates == 0.
+      AC2 residual_force_mask() still exposes uncovered bits so
+         only_covered re-promote clears only the emitted bits.
+      AC3 Storm-clear min-dirty still drives for the uncovered bit.
+      AC4 Soft / Off / force_jit_regions_mask_ == 0 → zero extra stores
+         (both call sites gate on `demoted != 0` before stamping).
+      AC5 Non-duplicative vs #2895 / #2949 / #2978 / #3026 / #3136 /
+         #3229 (all upstream contracts preserved).
+      AC6 No docs/design/3413-* (per #1655); no test_issue_3413.cpp
+         (per #81934). Extends test_aot_incremental_reemit.cpp.
+      AC7 test markers + build.py registration; no design docs.
+    """
+    print(f"{B}=== partial_reemit_success_coverage coverage (#3413) ==={N}")
+    script = SCRIPTS / "check_partial_reemit_success_coverage_3413.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("partial_reemit_success_coverage (#3413) coverage contract rows failed")
+        return 1
+    ok("partial_reemit_success_coverage (#3413) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22541,6 +22582,8 @@ def main():
         "wildcard-ta-string-gate-3411-coverage": cmd_wildcard_ta_string_gate_3411_coverage,
         "deopt-pending-closure-call-3412": cmd_deopt_pending_closure_call_3412_coverage,
         "deopt-pending-closure-call-3412-coverage": cmd_deopt_pending_closure_call_3412_coverage,
+        "partial-reemit-success-coverage-3413": cmd_partial_reemit_success_coverage_3413_coverage,
+        "partial-reemit-success-coverage-3413-coverage": cmd_partial_reemit_success_coverage_3413_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
