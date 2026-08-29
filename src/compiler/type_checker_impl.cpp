@@ -4949,11 +4949,15 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
         // Interface…Class are SV/SVA containers — type as Void/Dyn until
         // specialized synthesize peels land.
         case Tag::Pair:
-            // Cons cell: synthesize car if present, else Dyn list-ish.
-            if (!v.children.empty())
-                result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
-            else
-                result = reg_.dynamic_type();
+            // Issue #3432: empty Pair is incomplete cons, not Any.
+            // Residual of #976/#3330: covered tag still cached Dynamic.
+            // Prefer fresh_var so later car synth can bind it. Do not
+            // send Pair to the #3330 default arm. Soft: same fresh_var.
+            if (v.children.empty()) {
+                result = cs_.fresh_var();
+                break;
+            }
+            result = synthesize_flat(flat, pool, v.child(0), flat.get(v.child(0)));
             break;
         case Tag::Export:
         case Tag::Interface:

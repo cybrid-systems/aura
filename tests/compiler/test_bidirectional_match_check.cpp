@@ -11,8 +11,10 @@
 //   AC5: Source-cite check_flat_match + selective renarrow integration
 //   #3044: exhaustive NodeTag coverage — Production TypeError / Soft Warning
 //   #3330: Production default must not return/cache Dynamic after uncovered tag
+//   #3432: covered empty Pair must not synthesize/cache Dynamic
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 #include <cstdint>
 #include <fstream>
@@ -323,16 +325,122 @@ static void ac3044_exhaustive_tag_coverage() {
     CHECK(href(cs, "uncovered-tag-total") >= 0, "3044 AC4: total readable");
 }
 
+static void ac3432_empty_pair_no_dynamic() {
+    std::println("\n--- #3432 AC1–AC4: covered empty Pair never Dynamic ---");
+    using aura::ast::NodeTag;
+    using aura::compiler::kBidirectionalEmptyPairNoDynamicIssue;
+    using aura::compiler::TypeChecker;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::TypeTag;
+
+    struct ProdScope {
+        ProdScope() { apply_production_audit_defaults(); }
+        ~ProdScope() { apply_dev_audit_defaults(); }
+    };
+
+    CHECK(kBidirectionalEmptyPairNoDynamicIssue == 3432, "3432 AC4: issue stamp");
+    apply_dev_audit_defaults();
+
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    aura::core::TypeRegistry treg;
+    aura::diag::DiagnosticCollector diag;
+
+    // AC1: Production + empty Pair → TYPE_VAR or Void, never Dynamic.
+    {
+        std::println("\n--- 3432 AC1: Production empty Pair never Dynamic ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_node(NodeTag::Pair);
+        CHECK(flat.get(id).children.empty(), "3432 AC1: empty Pair children");
+        const auto c0 =
+            aura::compiler::g_bidirectional_uncovered_tag_total.load(std::memory_order_relaxed);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty != treg.dynamic_type(), "3432 AC1: empty Pair never Dynamic");
+        CHECK(treg.tag_of(ty) != TypeTag::DYNAMIC, "3432 AC1: tag_of != DYNAMIC");
+        CHECK(treg.is_var(ty) || ty == treg.void_type(), "3432 AC1: TYPE_VAR or Void");
+        CHECK(flat.type_id(id) == ty.index, "3432 AC1: cache matches result");
+        CHECK(flat.type_id(id) != treg.dynamic_type().index, "3432 AC1: cache not Dynamic");
+        CHECK(!flat.is_dirty(id), "3432 AC1: dirty cleared after assignment");
+        CHECK(tc.last_uncovered_bidirectional_tag_count() == 0,
+              "3432 AC1: Pair covered, default arm not taken");
+        CHECK(aura::compiler::g_bidirectional_uncovered_tag_total.load(std::memory_order_relaxed) ==
+                  c0,
+              "3432 AC3: covered Pair zero extra stores");
+    }
+
+    // AC2: Pair with car still synthesizes the car (non-regress #976).
+    {
+        std::println("\n--- 3432 AC2: Pair with car synthesizes car ---");
+        ProdScope prod;
+        TypeChecker tc(treg);
+        diag.clear();
+        auto car = flat.add_literal(42);
+        auto cdr = flat.add_literal(0);
+        auto id = flat.add_pair(car, cdr);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(ty == treg.int_type(), "3432 AC2: Pair with car synthesizes car");
+        CHECK(treg.tag_of(ty) != TypeTag::DYNAMIC, "3432 AC2: car path not Dynamic");
+    }
+
+    // Soft: same fresh_var (no Dynamic compat on empty Pair).
+    {
+        std::println("\n--- 3432 AC3: Soft empty Pair also not Dynamic ---");
+        apply_dev_audit_defaults();
+        TypeChecker tc(treg);
+        diag.clear();
+        auto id = flat.add_node(NodeTag::Pair);
+        auto ty = tc.infer_flat(flat, pool, id, diag);
+        CHECK(!aura::compiler::typed_audit::production_defaults_active(), "3432 AC3: Soft");
+        CHECK(ty != treg.dynamic_type(), "3432 AC3: Soft empty Pair never Dynamic");
+        CHECK(treg.is_var(ty) || ty == treg.void_type(), "3432 AC3: Soft TYPE_VAR or Void");
+        CHECK(aura::compiler::is_bidirectional_tag_covered(NodeTag::Pair),
+              "3432 AC3: coverage table lists Pair");
+    }
+
+    auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    auto hdr = read_file("src/compiler/type_checker.ixx");
+    CHECK(hdr.find("kBidirectionalEmptyPairNoDynamicIssue = 3432") != std::string::npos,
+          "3432 AC4: header stamp");
+    CHECK(hdr.find("case T::Pair:") != std::string::npos, "3432 AC3: coverage table lists Pair");
+    CHECK(impl.find("Issue #3432") != std::string::npos, "3432 AC4: impl cite");
+    const auto synth = impl.find("TypeId InferenceEngine::synthesize_flat");
+    CHECK(synth != std::string::npos, "3432 AC4: synthesize_flat");
+    const auto pair_pos = impl.find("case Tag::Pair:", synth);
+    const auto def_pos = impl.find("default:", synth);
+    CHECK(pair_pos != std::string::npos && def_pos != std::string::npos && pair_pos < def_pos,
+          "3432 AC3: Pair case before #3330 default arm");
+    const auto next_case = impl.find("case Tag::Export:", pair_pos);
+    CHECK(next_case != std::string::npos && next_case < def_pos, "3432 AC3: Pair not default");
+    const auto pair_body = impl.substr(pair_pos, next_case - pair_pos);
+    CHECK(pair_body.find("cs_.fresh_var()") != std::string::npos, "3432 AC1: empty Pair fresh_var");
+    CHECK(pair_body.find("result = reg_.dynamic_type()") == std::string::npos,
+          "3432 AC1: Pair arm does not cache Dynamic");
+    CHECK(pair_body.find("synthesize_flat(flat, pool, v.child(0)") != std::string::npos,
+          "3432 AC2: car still synthesized");
+    CHECK(read_file("docs/design/3432-empty-pair-no-dynamic.md").empty(),
+          "3432 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3432.cpp").empty(), "3432 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3432.cpp").empty(), "3432 AC4: no issues invent");
+    apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_bidirectional_match_check() {
     std::println("=== Issue #2348: bidirectional match check-mode + GuardShape ===");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     ac1_match_check_mode();
     ac2_guardshape_check();
     ac3_opt_out();
     ac4_observability();
     ac5_source_cite();
     ac3044_exhaustive_tag_coverage();
+    ac3432_empty_pair_no_dynamic();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
