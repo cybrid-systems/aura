@@ -194,6 +194,9 @@ inline constexpr int kPcvSpanStaleAcrossGuardIssue = 3167;
 // Issue #3233: next locked set_child after fingerprint mismatch forces
 // exclusive in-place even if a stale SafePCVSpan still holds a ref.
 inline constexpr int kPcvStaleSpanExclusiveIssue = 3233;
+// Issue #3429: shared-but-not-stale cow_set / with_set consumes the
+// #2406 TLS freelist before heap (I1 residual of #2521/#2906).
+inline constexpr int kPcvSharedCowTlsIssue = 3429;
 // Issue #3328: production children_stable / query re-use of a held
 // SafePCVSpan must force_refresh_pcv_span or surface structured
 // stale-span (across-guard). Soft keeps is_stale + #3167 counter only.
@@ -228,6 +231,7 @@ inline void pcv_checkpoint_live_exit() noexcept {
 inline constexpr std::uint32_t kPcvSpanNoOwner = std::numeric_limits<std::uint32_t>::max();
 
 // Issue #2406 / #2521: TLS freelist for exclusive short-lived PCV allocs.
+// Issue #3429: shared-but-not-stale with_set / cow_set consumes it first.
 // Production default ON (AC1). Override:
 //   AURA_PCV_TLS=0|f|F|n|N  → force off (deterministic alloc accounting)
 //   AURA_PCV_TLS=1|t|T|y|Y  → force on
@@ -541,8 +545,12 @@ public:
                                                                        std::memory_order_relaxed);
             return *this; // same storage identity, updated element
         }
-        // Shared / null: classic COW allocate + copy.
-        auto out = make_storage_owned(size_);
+        // Shared / live snapshot / same-gen span: still COW (never write
+        // through an alias). Issue #3429: TLS freelist first (#2406);
+        // heap only on miss. Exclusive / stale-exclusive stay in-place above.
+        auto out = tls_pcv_acquire(size_);
+        if (!out)
+            out = heap_pcv_allocate(size_);
         const T* src = src_data();
         if (src)
             std::copy(src, src + size_, out->data.get());
@@ -577,6 +585,7 @@ public:
                     1, std::memory_order_relaxed);
             return;
         }
+        // Issue #3429: shared-but-not-stale — with_set TLS-acquires before heap.
         *this = with_set(i, v);
     }
 
@@ -729,14 +738,19 @@ private:
         delete raw; // freelist full
     }
 
-    static StoragePtr make_from_tls_or_new(size_type n) {
-        // Always allocate/reuse capacity kTlsMaxElems when n <= kTlsMaxElems.
-        (void)n;
+    static void tls_storage_deleter(const Storage* p) noexcept {
+        tls_recycle(const_cast<Storage*>(p));
+    }
+
+    // Issue #3429: pop a warm #2406 TLS slot. Empty when inactive,
+    // oversized, or the freelist is cold — caller heap-falls-back.
+    static StoragePtr tls_pcv_acquire(size_type n) {
+        if (!pcv_tls_scratch_active() || n == 0 || n > kTlsMaxElems)
+            return {};
         auto& fl = tls_freelist();
         const auto tid = current_tid();
         if (fl.owner_tid == 0)
             fl.owner_tid = tid;
-        auto recycle_del = [](const Storage* p) { tls_recycle(const_cast<Storage*>(p)); };
         for (std::size_t i = 0; i < kTlsSlots; ++i) {
             if (fl.slots[i]) {
                 Storage* raw = fl.slots[i].release();
@@ -749,14 +763,31 @@ private:
                 g_pcv_hotpath_metrics().tls_scratch_hit_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
                 tls_last_alloc_was_hit() = true;
-                return StoragePtr(raw, recycle_del);
+                return StoragePtr(raw, tls_storage_deleter);
             }
         }
-        // Miss: fresh alloc into pool capacity (still recyclable).
-        g_pcv_hotpath_metrics().tls_scratch_miss_total.fetch_add(1, std::memory_order_relaxed);
+        return {};
+    }
+
+    static StoragePtr heap_pcv_allocate(size_type n) {
+        if (n == 0) {
+            tls_last_alloc_was_hit() = false;
+            return std::make_shared<Storage>();
+        }
+        if (pcv_tls_scratch_active() && n <= kTlsMaxElems) {
+            g_pcv_hotpath_metrics().tls_scratch_miss_total.fetch_add(1, std::memory_order_relaxed);
+            tls_last_alloc_was_hit() = false;
+            Storage* raw = new Storage(kTlsMaxElems);
+            return StoragePtr(raw, tls_storage_deleter);
+        }
         tls_last_alloc_was_hit() = false;
-        Storage* raw = new Storage(kTlsMaxElems);
-        return StoragePtr(raw, recycle_del);
+        return std::make_shared<Storage>(n);
+    }
+
+    static StoragePtr make_from_tls_or_new(size_type n) {
+        if (auto hit = tls_pcv_acquire(n); hit)
+            return hit;
+        return heap_pcv_allocate(n);
     }
 
     // Allocate a fresh shared storage with the given capacity.

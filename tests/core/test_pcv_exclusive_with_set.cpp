@@ -9,6 +9,7 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
 #include "core/persistent_child_vector.hh"
 
 #include <chrono>
@@ -29,6 +30,7 @@ using aura::ast::FlatAST;
 using aura::ast::g_pcv_hotpath_metrics;
 using aura::ast::kPcvExclusiveSetIssue;
 using aura::ast::kPcvHotpathIssue;
+using aura::ast::kPcvSharedCowTlsIssue;
 using aura::ast::kPcvSpanQueryRefreshIssue;
 using aura::ast::kPcvStaleSpanExclusiveIssue;
 using aura::ast::NodeId;
@@ -73,6 +75,15 @@ static void ac3167_4_additive_counter_only();
 static void ac3328_1_production_held_span_refresh();
 static void ac3328_2_soft_frozen_view();
 static void ac3328_3_2906_3233_non_regression();
+void ac3393_1_production_arms_flag();
+void ac3393_2_soft_off_does_not_arm();
+void ac3393_3_existing_ac3233_non_regress();
+void ac3393_4_no_invent();
+static void ac3429_1_unique_move_out_exclusive();
+static void ac3429_2_live_span_tls_before_heap();
+static void ac3429_3_soft_flag_off_unchanged();
+static void ac3429_4_extend_suite_no_invent();
+static void ac3429_5_no_new_query_or_ffi();
 
 int run_test_pcv_exclusive_with_set() {
     std::println("=== Issue #2140: PCV exclusive with_set ===");
@@ -336,6 +347,13 @@ int run_test_pcv_exclusive_with_set() {
     ac3393_3_existing_ac3233_non_regress();
     ac3393_4_no_invent();
 
+    std::println("\n=== Issue #3429: shared-but-not-stale COW consumes TLS before heap ===");
+    ac3429_1_unique_move_out_exclusive();
+    ac3429_2_live_span_tls_before_heap();
+    ac3429_3_soft_flag_off_unchanged();
+    ac3429_4_extend_suite_no_invent();
+    ac3429_5_no_new_query_or_ffi();
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
@@ -391,19 +409,18 @@ void ac3393_2_soft_off_does_not_arm() {
 
 void ac3393_3_existing_ac3233_non_regress() {
     std::println("\n--- #3393 AC3/AC4: #3233 AC1 + AC3 non-regress under production arms ---");
-    using aura::ast::pcv_stale_span_force_exclusive_total;
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
     using aura::compiler::typed_audit::apply_production_audit_defaults;
     apply_dev_audit_defaults();
     aura::ast::pcv_set_stale_span_exclusive_enabled(false);
-    const auto before = pcv_stale_span_force_exclusive_total();
+    const auto before = g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load();
     apply_production_audit_defaults();
     CHECK(aura::ast::pcv_stale_span_exclusive_enabled(), "3393 AC3: production arms flag");
     // The actual counter bump is exercised by
     // ac3233_1_stale_span_next_set_child_exclusive earlier in this run —
     // here we just confirm the gate is open and the fixture drives the
     // bump under production_defaults.
-    CHECK(pcv_stale_span_force_exclusive_total() == before,
+    CHECK(g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load() == before,
           "3393 AC3: gate open; counter bumped by ac3233_1 fixture");
     apply_dev_audit_defaults();
     aura::ast::pcv_set_stale_span_exclusive_enabled(false);
@@ -419,6 +436,155 @@ void ac3393_4_no_invent() {
         std::ifstream f("tests/issues/test_issue_3393.cpp");
         CHECK(!f.good(), "3393 AC5: no tests/issues/test_issue_3393.cpp");
     }
+}
+
+// Issue #3429: shared-but-not-stale set_child_locked / with_set still COWs
+// (no write-through of a live snapshot) but the new block comes from the
+// #2406 TLS freelist when warm. Heap only on miss. Exclusive move-out and
+// stale-exclusive are unchanged.
+
+static void ac3429_1_unique_move_out_exclusive() {
+    std::println("\n--- #3429 AC1: unique move-out exclusive; no with_set COW ---");
+    CHECK(kPcvSharedCowTlsIssue == 3429, "3429 AC1: issue stamp");
+    set_pcv_tls_scratch_for_test(true);
+    pcv_set_stale_span_exclusive_enabled(false);
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[4] = {flat.add_literal(1), flat.add_literal(2), flat.add_literal(3),
+                      flat.add_literal(4)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 4));
+    const auto ex0 = g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.load();
+    const auto wcow0 = g_pcv_hotpath_metrics().with_set_cow_total.load();
+    const auto lcow0 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
+    for (int i = 0; i < 32; ++i)
+        flat.set_child(root, static_cast<std::uint32_t>(i % 4), flat.add_literal(200 + i));
+    CHECK(g_pcv_hotpath_metrics().flatast_locked_move_out_exclusive_total.load() > ex0,
+          "3429 AC1: locked exclusive increments");
+    CHECK(g_pcv_hotpath_metrics().with_set_cow_total.load() == wcow0,
+          "3429 AC1: with_set_cow_total does not increment");
+    CHECK(g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load() == lcow0,
+          "3429 AC1: locked COW stays quiet without snapshot");
+    clear_pcv_tls_scratch_for_test();
+}
+
+static void ac3429_2_live_span_tls_before_heap() {
+    std::println("\n--- #3429 AC2: live span still COWs; TLS before heap ---");
+    set_pcv_tls_scratch_for_test(true);
+    pcv_set_stale_span_exclusive_enabled(false);
+    reset_pcv_hotpath_metrics_for_test();
+    // Warm several TLS slots at once so base + shared with_set both hit.
+    {
+        auto a = make_n(8);
+        auto b = make_n(8);
+        auto c = make_n(8);
+        auto d = make_n(8);
+        (void)a;
+        (void)b;
+        (void)c;
+        (void)d;
+    }
+    CHECK(g_pcv_hotpath_metrics().tls_scratch_recycle_total.load() > 0, "3429 AC2: freelist warm");
+    auto base = make_n(8);
+    auto pin = base;
+    CHECK(!base.is_unique(), "3429 AC2: live pin aliases storage");
+    const auto old = base[3];
+    const auto hit0 = g_pcv_hotpath_metrics().tls_scratch_hit_total.load();
+    const auto cow0 = g_pcv_hotpath_metrics().with_set_cow_total.load();
+    const auto ca0 = g_pcv_hotpath_metrics().cow_alloc_total.load();
+    auto next = base.with_set(3, 9999);
+    CHECK(next[3] == 9999, "3429 AC2: new handle updated");
+    CHECK(pin[3] == old, "3429 AC2: pin sees pre-mutation (no write-through)");
+    CHECK(base[3] == old, "3429 AC2: receiver unchanged under share");
+    CHECK(next.storage_identity() != base.storage_identity(), "3429 AC2: COW new storage");
+    CHECK(g_pcv_hotpath_metrics().tls_scratch_hit_total.load() > hit0,
+          "3429 AC2: TLS freelist consumed");
+    CHECK(g_pcv_hotpath_metrics().with_set_cow_total.load() > cow0, "3429 AC2: still COW");
+    CHECK(g_pcv_hotpath_metrics().cow_alloc_total.load() == ca0,
+          "3429 AC2: TLS hit skips heap cow_alloc");
+
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    SafePCVSpan<NodeId> safe = flat.children_safe(root);
+    const auto s0 = safe[0];
+    const auto lcow0 = g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load();
+    const auto hit1 = g_pcv_hotpath_metrics().tls_scratch_hit_total.load();
+    flat.set_child(root, 0, flat.add_literal(50));
+    CHECK(safe[0] == s0, "3429 AC2: SafePCVSpan frozen");
+    CHECK(g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load() > lcow0,
+          "3429 AC2: live pin locked COW");
+    CHECK(g_pcv_hotpath_metrics().tls_scratch_hit_total.load() > hit1 ||
+              g_pcv_hotpath_metrics().with_set_cow_total.load() > cow0,
+          "3429 AC2: locked COW still TLS-or-cow counted");
+
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    const auto vat = hh.find("PersistentChildVector with_set(");
+    const auto nxt = hh.find("void cow_set(", vat == std::string::npos ? 0 : vat);
+    const auto win =
+        (vat != std::string::npos && nxt > vat) ? hh.substr(vat, nxt - vat) : std::string{};
+    CHECK(win.find("tls_pcv_acquire") != std::string::npos, "3429 AC2: with_set TLS acquire");
+    CHECK(win.find("heap_pcv_allocate") != std::string::npos, "3429 AC2: with_set heap fallback");
+    const auto tpos = win.find("tls_pcv_acquire");
+    const auto hpos = win.find("heap_pcv_allocate");
+    CHECK(tpos != std::string::npos && hpos != std::string::npos && tpos < hpos,
+          "3429 AC2: TLS acquire before heap");
+    CHECK(hh.find("*this = with_set") != std::string::npos, "3429 AC2: cow_set delegates with_set");
+    clear_pcv_tls_scratch_for_test();
+}
+
+static void ac3429_3_soft_flag_off_unchanged() {
+    std::println("\n--- #3429 AC3: Soft + flag==0 unchanged vs #3233 AC2 / #3393 AC2 ---");
+    set_pcv_tls_scratch_for_test(true);
+    pcv_set_stale_span_exclusive_enabled(false);
+    CHECK(!aura::ast::pcv_stale_span_exclusive_enabled(), "3429 AC3: Soft flag off");
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    CHECK(hh.find("stale_span_force_exclusive_enabled{0}") != std::string::npos,
+          "3429 AC3: #3393 AC2 default 0");
+    reset_pcv_hotpath_metrics_for_test();
+    FlatAST flat;
+    NodeId kids[2] = {flat.add_literal(10), flat.add_literal(20)};
+    auto root = flat.add_begin(std::span<const NodeId>(kids, 2));
+    auto span = flat.children_safe(root);
+    const auto s0 = span[0];
+    flat.set_child(root, 0, flat.add_literal(999));
+    CHECK(span[0] == s0, "3429 AC3: live span still COWs (#3233 AC2)");
+    CHECK(g_pcv_hotpath_metrics().flatast_locked_move_out_cow_total.load() > 0 ||
+              g_pcv_hotpath_metrics().with_set_cow_total.load() > 0,
+          "3429 AC3: Soft live pin forces COW");
+    CHECK(g_pcv_hotpath_metrics().stale_span_force_exclusive_total.load() == 0,
+          "3429 AC3: Soft no force-exclusive");
+    clear_pcv_tls_scratch_for_test();
+}
+
+static void ac3429_4_extend_suite_no_invent() {
+    std::println("\n--- #3429 AC4: extend exclusive-with-set suite; no invent ---");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_pcv_shared_cow_tls_3429") != std::string::npos,
+          "3429 AC4: build.py wires linter");
+    CHECK(read_file("tests/core/test_issue_3429.cpp").empty(), "3429 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3429.cpp").empty(), "3429 AC4: no issues invent");
+}
+
+static void ac3429_5_no_new_query_or_ffi() {
+    std::println("\n--- #3429 AC5: no new query key / FFI / packed-children ---");
+    const auto hh = read_file("src/core/persistent_child_vector.hh");
+    const auto ast = read_file("src/core/ast.ixx");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(q.find("with-set-cow-total") != std::string::npos ||
+              hh.find("with_set_cow_total") != std::string::npos,
+          "3429 AC5: reuse with_set_cow_total");
+    CHECK(hh.find("flatast_locked_move_out_cow_total") != std::string::npos,
+          "3429 AC5: reuse locked COW total");
+    CHECK(q.find("schema-3429") == std::string::npos, "3429 AC5: no schema-3429");
+    CHECK(hh.find("g_3429_") == std::string::npos && ast.find("g_3429_") == std::string::npos,
+          "3429 AC5: no g_3429_*");
+    CHECK(hh.find("extern \"C\"") == std::string::npos ||
+              hh.find("aura_pcv_shared_cow") == std::string::npos,
+          "3429 AC5: no new FFI");
+    CHECK(ast.find("std::vector<PersistentChildVector") != std::string::npos,
+          "3429 AC5: children_ still vector of PCV (no packed rewrite)");
+    CHECK(read_file("docs/design/3429-pcv-shared-cow-tls.md").empty(), "3429 AC5: no docs/design");
+    CHECK(sizeof(aura::ast::PcvHotpathMetrics) == 136, "3429 AC5: metrics size unchanged");
 }
 
 #ifndef AURA_ISSUE_BATCH_MEMBER
