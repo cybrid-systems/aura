@@ -3762,8 +3762,8 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         return it->second;
                     }
                     std::string raw(raw_sv);
-                    auto sid = string_heap_->size();
-                    string_heap_->push_back(std::move(raw));
+                    auto sid = string_heap_.size();
+                    string_heap_.push_back(std::move(raw));
                     auto val = make_string(sid);
                     string_intern_.emplace(raw_sv, val);
                     if (raw_sv.size() <= 6)

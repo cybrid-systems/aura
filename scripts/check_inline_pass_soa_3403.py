@@ -58,7 +58,8 @@ def main() -> int:
     sv_stripped = _strip_comments_and_strings(soa_view)
 
     # AC1: InlinePass SoA hot entry + cold-path source-cite anchor.
-    soa_entry = "void run_on_dirty_blocks_only(aura::ir::IRModuleV2& module,"
+    # IRModuleV2 lives in aura::compiler (ir_soa.ixx), not aura::ir.
+    soa_entry = "void run_on_dirty_blocks_only(IRModuleV2& module,"
     if soa_entry not in pass_impls:
         fails.append(
             "AC1: InlinePass is missing "

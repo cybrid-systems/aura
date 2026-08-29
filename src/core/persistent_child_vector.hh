@@ -882,6 +882,11 @@ public:
     using const_iterator = const T*;
 
     SafePCVSpan() noexcept = default;
+    // Issue #3402: dense child_data_ span is owned by FlatAST, so no PCV
+    // Storage keep is required. Storage is a private nested type; naming
+    // it at the call site does not compile. Keep stays empty (use_count 0).
+    explicit SafePCVSpan(std::span<const T> sp) noexcept
+        : span_(sp) {}
     // Issue #370 / #2036: legacy 2-arg ctor (no fingerprint). is_stale() on
     // such a span returns false (no captured_node_id_); callers that need
     // stale detection must use the 6-arg ctor below.
