@@ -1000,6 +1000,20 @@ def cmd_lint():
             "Issue #3330 bidirectional uncovered no-Dynamic linter failed — run python3 scripts/coverage/checks/check_bidirectional_uncovered_no_dynamic_3330.py"
         )
         return r
+    # Issue #3432: covered Pair empty arm must not cache Dynamic
+    # (residual of #976/#3330). Soft: same fresh_var. Quiet: Pair
+    # with children still synthesizes the car. Extends
+    # test_bidirectional_match_check; no docs/design / invent.
+    epnd3432_script = COVERAGE_CHECKS / "check_empty_pair_no_dynamic_3432.py"
+    if not epnd3432_script.exists():
+        fail(f"missing {epnd3432_script}")
+        return 1
+    r = run([sys.executable, str(epnd3432_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3432 empty Pair no-Dynamic linter failed — run python3 scripts/coverage/checks/check_empty_pair_no_dynamic_3432.py"
+        )
+        return r
     # Issue #3045: ADT exhaustiveness under-mark cone-force. Variant add /
     # arm delete still puts match sites in the dirty cone; Production
     # hard-rejects non-exhaustive. Extends test_adt_match_goal_table
@@ -12315,6 +12329,29 @@ def cmd_bidirectional_match_coverage():
     return 0
 
 
+def cmd_empty_pair_no_dynamic_3432_coverage():
+    """Issue #3432: covered Pair empty arm must not cache Dynamic.
+
+    Residual of #976/#3330: Pair is covered so it does not hit
+    note_uncovered_bidirectional_tag, but the empty-children arm
+    returned dynamic_type(). Empty Pair now synthesizes fresh_var.
+    Soft: same fresh_var. Quiet: Pair with children synthesizes car.
+    Extends test_bidirectional_match_check. No docs/design/, no
+    tests/issues/test_issue_3432.cpp.
+    """
+    print(f"{B}=== empty Pair no-Dynamic coverage (#3432) ==={N}")
+    script = COVERAGE_CHECKS / "check_empty_pair_no_dynamic_3432.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("empty Pair no-Dynamic (#3432) coverage contract rows failed")
+        return 1
+    ok("empty Pair no-Dynamic (#3432) coverage clean")
+    return 0
+
+
 def cmd_mutation_hold_slo_coverage():
     """Issue #2349: outermost hold SLO circuit-breaker (production fail path).
 
@@ -22844,6 +22881,7 @@ def main():
         "hot-residual-soft-must-deopt-3084": cmd_hot_residual_soft_must_deopt_3084,
         "hot-residual-soft-must-deopt-3084-coverage": cmd_hot_residual_soft_must_deopt_3084_coverage,
         "gradual-permissiveness-2992": cmd_gradual_permissiveness_2992_coverage,
+        "empty-pair-no-dynamic": cmd_empty_pair_no_dynamic_3432_coverage,
         "production-defaults-force-strict-unify": cmd_production_defaults_force_strict_unify_3430_coverage,
         "typecheck-metrics-tier-2993": cmd_typecheck_metrics_tier_2993_coverage,
         "solve-delta-locality-budget-2994": cmd_solve_delta_locality_budget_2994_coverage,

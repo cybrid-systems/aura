@@ -1731,6 +1731,10 @@ aura_issue_test_link_light(test_refinement_closed_loop)
 # gradual ground unify fixture (test_bidirectional_annotation.cpp).
 aura_add_issue_test(test_bidirectional_annotation)
 aura_issue_test_link_light(test_bidirectional_annotation)
+# Issue #2348 / #3044 / #3330 / #3432: bidirectional match + tag
+# coverage + empty Pair no-Dynamic fixture.
+aura_add_issue_test(test_bidirectional_match_check)
+aura_issue_test_link_light(test_bidirectional_match_check)
 # Issue #384: Bidirectional inference engine — first slice.
 # Additive check-mode plumbing in synthesize_flat_lambda (the
 # caller hands an expected function type when the arg is a
