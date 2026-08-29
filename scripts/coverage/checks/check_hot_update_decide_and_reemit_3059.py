@@ -55,8 +55,15 @@ def main() -> int:
         body = cpp[impl : impl + 1800]
         if "aura_reemit_aot_for_dirty" not in body:
             fails.append("AC1: facade does not call aura_reemit_aot_for_dirty")
-        if "note_reemit_success_coverage" not in body:
-            fails.append("AC1: facade missing coverage stamp")
+        # Issue #3413: last_reemit_success is stamped by
+        # on_reemit_pipeline_call (candidates ∩ emit_region_mask_), not
+        # a facade fallback that copies the full demoted / force_jit
+        # mask on any n>0. Requiring note_reemit_success_coverage here
+        # would resurrect that over-cover.
+        if "note_reemit_success_coverage(" in body:
+            fails.append("AC1: facade must not fallback-stamp via note_reemit_success_coverage (#3413)")
+        if "skip the fallback `covered = demoted` stamp" not in body:
+            fails.append("AC1: facade missing #3413 skip of full-mask coverage stamp")
     must("ReemitReason::Cascade", "AC1 cascade", dirty)
     must("decide_and_reemit", "AC1 cascade call", dirty)
     must("ReemitReason::BoundaryExit", "AC1 BoundaryExit", mb)
