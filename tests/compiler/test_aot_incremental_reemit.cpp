@@ -1862,6 +1862,93 @@ int main() {
               "3412 AC7: linter script registered");
     }
 
+    // ── #3413: last_reemit_success must not stamp the full force_jit
+    // mask on any n>0 — only_covered over-covers residual. Production
+    // `covered = override || demoted` in decide_and_reemit /
+    // on_reemit_pipeline_call washes residual_force_mask to 0 even for
+    // groups never re-emitted, breaking only_covered re-promote +
+    // storm-clear min-dirty. Fix: stamp `candidates ∩ emit_region_mask_`
+    // (the actually-emitted bits), not the full demoted mask. Source-cite
+    // verification (extend existing per #81934).
+    {
+        std::println("\n--- #3413 AC1: reemit success coverage uses candidates ∩ emit mask, not "
+                     "demoted ---");
+        const auto hot = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(hot.find("Issue #3413") != std::string::npos,
+              "3413 AC1: Issue #3413 marker in hot_update_registry.cpp");
+        // decide_and_reemit must NOT have a fallback `covered = demoted` stamp
+        // when on_reemit_pipeline_call didn't already stamp last_success.
+        // The fallback was the source of the over-cover (residual -> 0).
+        CHECK(hot.find("skip the fallback `covered = demoted` stamp") != std::string::npos,
+              "3413 AC1: decide_and_reemit skips the fallback demoted stamp");
+        // on_reemit_pipeline_call must use candidates ∩ emit_region_mask_ as
+        // covered (not the full demoted mask). Partial success must not
+        // over-cover residual_force_mask.
+        CHECK(hot.find("covered = candidates & emit_region_mask_.load") != std::string::npos,
+              "3413 AC1: on_reemit_pipeline_call uses candidates ∩ emit_region_mask_ as covered");
+
+        std::println(
+            "\n--- #3413 AC2/AC3: only_covered re-promote + storm-clear min-dirty intact ---");
+        // AC2: residual_force_mask() still exposes uncovered bits so
+        // only_covered re-promote clears only the emitted bits.
+        CHECK(hot.find("residual_force_mask") != std::string::npos,
+              "3413 AC2: residual_force_mask accessor intact");
+        CHECK(hot.find("maybe_force_jit_repromote_on_clean_success") != std::string::npos,
+              "3413 AC2: only_covered re-promote path intact");
+        // AC3: storm-clear min-dirty still drives for the uncovered bit
+        // (no full demoted stamp that would zero residual).
+        const auto obs = read_file("src/compiler/observability_metrics.h");
+        CHECK(obs.find("residual_force_mask") != std::string::npos ||
+                  hot.find("residual_force_mask") != std::string::npos,
+              "3413 AC3: residual_force_mask counter / accessor preserved");
+
+        std::println(
+            "\n--- #3413 AC4: Soft / Off / force_jit_regions_mask_==0 → zero extra stores ---");
+        // AC4: zero extra stores when force_jit_regions_mask_ == 0. Both
+        // decide_and_reemit and on_reemit_pipeline_call gate on
+        // `demoted != 0` before stamping — the Soft / mask-idle path
+        // short-circuits.
+        CHECK(hot.find("const auto demoted = force_jit_regions_mask_.load") != std::string::npos,
+              "3413 AC4: demoted mask gated on non-zero (Soft / mask-idle zero-cost)");
+        CHECK(hot.find("if (demoted != 0)") != std::string::npos,
+              "3413 AC4: if (demoted != 0) gate preserved at both call sites");
+
+        std::println("\n--- #3413 AC5: non-duplicative vs #2895/#2949/#2978/#3026/#3136/#3229 ---");
+        // #2895 only_covered re-promote, #2949 re-promote, #2978 sync
+        // remount covered named, #3026 residual observe, #3136/#3229
+        // relower define coverage. All upstream contracts preserved per
+        // source-cite marker — the #3413 fix narrows what gets STAMPED
+        // (not what gets CHECKED downstream).
+        CHECK(hot.find("Issue #2895") != std::string::npos,
+              "3413 AC5: #2895 only_covered re-promote preserved");
+        CHECK(hot.find("Issue #2949") != std::string::npos ||
+                  hot.find("resolve_force_jit_repromote_only_covered") != std::string::npos,
+              "3413 AC5: #2949 only_covered default preserved");
+        CHECK(hot.find("Issue #2978") != std::string::npos,
+              "3413 AC5: #2978 sync remount covered named preserved");
+        CHECK(hot.find("Issue #3026") != std::string::npos ||
+                  hot.find("residual_force_mask") != std::string::npos,
+              "3413 AC5: #3026 residual observe preserved");
+        CHECK(hot.find("Issue #3136") != std::string::npos ||
+                  hot.find("Issue #3229") != std::string::npos,
+              "3413 AC5: #3136 / #3229 relower define coverage preserved");
+
+        std::println("\n--- #3413 AC6: no docs/design/3413-*; no test_issue_3413.cpp ---");
+        CHECK(read_file("docs/design/3413-last-reemit-success-coverage.md").empty() &&
+                  read_file("docs/design/3413-only-covered-over-covers.md").empty(),
+              "3413 AC6: no docs/design/3413-* per #1655");
+        CHECK(read_file("tests/issues/test_issue_3413.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3413.cpp").empty() &&
+                  read_file("tests/core/test_issue_3413.cpp").empty(),
+              "3413 AC6: no test_issue_3413.cpp per #81934 (extend existing test)");
+
+        std::println("\n--- #3413 AC7: build.py wiring ---");
+        CHECK(build.find("cmd_partial_reemit_success_coverage_3413_coverage") != std::string::npos,
+              "3413 AC7: cmd_partial_reemit_success_coverage_3413_coverage in build.py");
+        CHECK(build.find("check_partial_reemit_success_coverage_3413") != std::string::npos,
+              "3413 AC7: linter script registered");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
