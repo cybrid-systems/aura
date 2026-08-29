@@ -2295,7 +2295,7 @@ check_macro_self_evo(TenantId tenant, bool sandbox_active = false, bool wildcard
 //
 // Return: true = allow; false = deny (counter bumped + SE emitted).
 inline bool try_grant_capability_string_path_privileged_locked(TenantId caller,
-                                                               std::string_view cap_name,
+                                                               std::string_view /*cap_name*/,
                                                                std::uint16_t eff_bits) noexcept {
     using namespace ::aura::core::capability;
 
