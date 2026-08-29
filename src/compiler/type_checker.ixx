@@ -1159,6 +1159,13 @@ public:
     // (single invalidate authority with predicate_memo). Zero cost when empty.
     [[nodiscard]] std::size_t
     drop_occurrence_goals_for_conds(std::span<const std::uint32_t> cond_nodes) noexcept;
+    // Issue #3408: drop goals whose var field equals the given TypeId.
+    // Used by Set assignment hygiene to clear stale refinements of the
+    // assigned name (I4 «过期窄化仍能用» after set!). Bumps the same
+    // occurrence_goal_stale_drop_total counter as the conds variant.
+    // Zero cost when occurrence_goals_ is empty.
+    [[nodiscard]] std::size_t
+    drop_occurrence_goals_for_var_type(aura::core::TypeId var_type) noexcept;
     [[nodiscard]] std::size_t occurrence_goals_size() const noexcept {
         return occurrence_goals_.size();
     }

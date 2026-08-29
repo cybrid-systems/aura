@@ -147,6 +147,94 @@ int run_test_synthesize_set_walks_rhs() {
               "AC4: no tests/issues/test_issue_3407.cpp (R1 abandoned scheme)");
     }
 
+    // --- AC5: #3408 synthesize_flat Set case wired with assignment hygiene ---
+    {
+        std::println("\n--- AC5: #3408 synthesize_flat Set assignment hygiene ---");
+        const auto tci2 = read_file("src/compiler/type_checker_impl.cpp");
+        const auto fn_pos = tci2.find("TypeId InferenceEngine::synthesize_flat(");
+        const auto tci2_after = (fn_pos == std::string::npos) ? std::string{} : tci2.substr(fn_pos);
+        const auto set_pos = tci2_after.find("case Tag::Set:");
+        CHECK(set_pos != std::string::npos, "AC5: synthesize_flat Set case present");
+        // Find the next break after the Set case to scope the body.
+        const auto break_pos = tci2_after.find("break;", set_pos);
+        CHECK(break_pos != std::string::npos, "AC5: synthesize_flat Set case has a break");
+        const auto set_body = tci2_after.substr(set_pos, break_pos - set_pos);
+        // After #3408: the synthesize_flat Set case must call (in order):
+        // (a) invalidate_predicate_memo_for_var_names({var_name})
+        // (b) cs_.drop_occurrence_goals_for_var_type(var_type)
+        // (c) cs_.mark_touched_on_delta(var_type, /*occurrence_narrow=*/false)
+        CHECK(contains(set_body, "invalidate_predicate_memo_for_var_names({var_name})"),
+              "AC5: synthesize_flat Set case invalidates predicate memo for var_name");
+        CHECK(contains(set_body, "cs_.drop_occurrence_goals_for_var_type(var_type)"),
+              "AC5: synthesize_flat Set case drops occurrence goals for var_type");
+        CHECK(contains(set_body, "mark_touched_on_delta(var_type, /*occurrence_narrow=*/false)"),
+              "AC5: synthesize_flat Set case marks touched on delta (non-narrow)");
+        // Source-cite #3408 anchor must be in the branch comment.
+        CHECK(contains(set_body, "#3408"),
+              "AC5: synthesize_flat Set case cites #3408 (source-cite anchor)");
+    }
+
+    // --- AC6: #3408 check_flat Set case wired with assignment hygiene ---
+    {
+        std::println("\n--- AC6: #3408 check_flat Set assignment hygiene ---");
+        const auto tci2 = read_file("src/compiler/type_checker_impl.cpp");
+        const auto check_pos = tci2.find("InferenceEngine::check_flat(");
+        CHECK(check_pos != std::string::npos, "AC6: check_flat present");
+        const auto check_after = tci2.substr(check_pos);
+        // Find the Set branch in check_flat.
+        const auto set_branch_pos = check_after.find("NodeTag::Set");
+        CHECK(set_branch_pos != std::string::npos, "AC6: check_flat Set branch present");
+        // Scope: from the Set branch to the closing of the inner if block.
+        const auto set_branch = check_after.substr(set_branch_pos);
+        // After #3408: check_flat Set must call (in order):
+        // (a) invalidate_predicate_memo_for_var_names({var_name})
+        // (b) cs_.drop_occurrence_goals_for_var_type(var_type)
+        // (c) cs_.mark_touched_on_delta(var_type, /*occurrence_narrow=*/false)
+        CHECK(contains(set_branch, "invalidate_predicate_memo_for_var_names({var_name})"),
+              "AC6: check_flat Set invalidates predicate memo for var_name");
+        CHECK(contains(set_branch, "cs_.drop_occurrence_goals_for_var_type(var_type)"),
+              "AC6: check_flat Set drops occurrence goals for var_type");
+        CHECK(contains(set_branch, "mark_touched_on_delta(var_type, /*occurrence_narrow=*/false)"),
+              "AC6: check_flat Set marks touched on delta (non-narrow)");
+        // The expected-context unify must still happen (check_flat Set
+        // contract unchanged for the expected half — #3407 AC3).
+        CHECK(contains(set_branch, "consistent_unify(val_type, expected)"),
+              "AC6: check_flat Set still unifies with expected (#3407 contract unchanged)");
+    }
+
+    // --- AC7: #3408 infer_flat_partial affected_names includes NodeTag::Set ---
+    {
+        std::println("\n--- AC7: #3408 infer_flat_partial affected_names includes Set ---");
+        const auto tci2 = read_file("src/compiler/type_checker_impl.cpp");
+        // Locate the affected_names collection block in infer_flat_partial.
+        const auto aff_pos = tci2.find("affected_names.insert(std::string(nm));");
+        CHECK(aff_pos != std::string::npos, "AC7: affected_names collection block present");
+        // Walk backwards to find the tag list (the `if` condition with NodeTag::...).
+        const auto tag_list_start = tci2.rfind("nv.tag ==", aff_pos);
+        const auto tag_list_end_search = tci2.find("affected_names.insert", tag_list_start);
+        const auto tag_list = tci2.substr(tag_list_start, tag_list_end_search - tag_list_start);
+        // The tag list must include NodeTag::Set alongside Variable / Define /
+        // Let / LetRec / Lambda.
+        CHECK(contains(tag_list, "NodeTag::Set"),
+              "AC7: infer_flat_partial affected_names tag list includes NodeTag::Set");
+        // Existing tags must still be present (no regression).
+        CHECK(contains(tag_list, "NodeTag::Variable"),
+              "AC7: NodeTag::Variable still in affected_names tag list");
+        CHECK(contains(tag_list, "NodeTag::Define"),
+              "AC7: NodeTag::Define still in affected_names tag list");
+    }
+
+    // --- AC8: no docs/design/3408-*; no test_issue_3408.cpp ---
+    {
+        std::println("\n--- AC8: no docs/design/3408-*; no test_issue_3408.cpp ---");
+        CHECK(read_file("docs/design/3408-set-assignment-hygiene.md").empty(),
+              "AC8: no docs/design/3408-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3408.cpp").empty(),
+              "AC8: no test_issue_3408.cpp per #81934");
+        CHECK(read_file("tests/issues/test_issue_3408.cpp").empty(),
+              "AC8: no tests/issues/test_issue_3408.cpp (R1 abandoned scheme)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
