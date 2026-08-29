@@ -15286,6 +15286,45 @@ def cmd_grant_ssot_ta_fence_3409_coverage():
     return 0
 
 
+def cmd_dual_fresh_mutate_soft_migrate_3410_coverage():
+    """Issue #3410: production mutate dual-fresh miss must not soft-migrate
+    onto pre-mutate g_jit_fns native.
+
+    Production Restricted/Strict + same-gen drift (cap_defuse != cur_defuse or
+    cap_bridge != cur_bridge) inside try_cross_cow_soft_migrate_ now refuses
+    + sets MustDeopt instead of restamping + continuing native. True COW
+    catch-up still goes through cow_gen_mismatch hard-reject (#2547). Soft
+    / Off retains the existing restamp path (zero extra when production
+    probe == 0). Reuses existing MustDeopt + cross_cow_hard_reject_total
+    counters (no new metric field per AC5).
+
+    Source-cite linter (scripts/check_dual_fresh_mutate_soft_migrate_3410.py)
+    verifies:
+      AC1 try_cross_cow_soft_migrate_ has production probe AFTER within-cap
+         check and BEFORE the restamp call site (cap-drift path unchanged;
+         restamp cannot be reached on production same-gen drift).
+      AC2 Production probe sets g_closure_must_deopt[cid] = 1 + reuses
+         CrossCowHardReject::Other (no new metric per AC5).
+      AC3 Soft/Off path retained: production probe == 0 → existing restamp.
+      AC4 True COW catch-up unchanged: cow_gen_mismatch hard-rejects above.
+      AC5 No new metric field; reuses MustDeopt + cross_cow_hard_reject_total.
+      AC6 No docs/design/3410-* (per #1655); no test_issue_3410.cpp
+         (per #81934). Extends test_cross_cow_soft_migrate.cpp.
+      AC7 test markers + build.py registration; no design docs.
+    """
+    print(f"{B}=== dual_fresh_mutate_soft_migrate coverage (#3410) ==={N}")
+    script = SCRIPTS / "check_dual_fresh_mutate_soft_migrate_3410.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dual_fresh_mutate_soft_migrate (#3410) coverage contract rows failed")
+        return 1
+    ok("dual_fresh_mutate_soft_migrate (#3410) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22419,6 +22458,8 @@ def main():
         "set-assignment-hygiene-3408-coverage": cmd_set_assignment_hygiene_3408_coverage,
         "grant-ssot-ta-fence-3409": cmd_grant_ssot_ta_fence_3409_coverage,
         "grant-ssot-ta-fence-3409-coverage": cmd_grant_ssot_ta_fence_3409_coverage,
+        "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
+        "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
