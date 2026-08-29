@@ -786,6 +786,10 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // with effect_enforced_in_body=true so dispatch does not double-audit.
     // Issue #2986: optional guard_exempt marks metadata/policy setters that
     // intentionally skip MutationBoundaryGuard (paired with // GUARD_EXEMPT:).
+    // Issue #3423: non-exempt wrappers acquire *before* fn(a) so a body
+    // that writes without try_acquire cannot half-mutate then return
+    // naked-mutate. Nested body try_acquire is already no-op on
+    // workspace_mtx_. #2986/#3197 post-check stays as a belt.
     auto add_mutate = [&](std::string name, auto fn, bool guard_exempt = false) {
         // Capture concrete op name for check_and_record_effect / isolation.
         auto op_name = std::make_shared<std::string>(std::move(name));
@@ -934,8 +938,21 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                     wraps_before =
                         m->mutation_boundary_primitives_wrapped.load(std::memory_order_relaxed);
                 // Issue #3197: nested try_acquire does not bump the
-                // outermost wrap counter — snapshot the acquire token.
+                // outermost wrap counter — snapshot the acquire token
+                // *before* the wrapper acquire so the belt still sees it.
                 const auto token_before = aura::compiler::mutate_guard_acquire_token();
+                // Issue #3423: acquire before fn(a). GUARD_EXEMPT skips
+                // (metadata/policy — no extra acquire). Acquire fail →
+                // structured reject, zero topology write.
+                std::unique_ptr<Evaluator::MutationBoundaryGuard> wrapper_guard;
+                bool wrapper_ok = true;
+                if (!guard_exempt) {
+                    auto gr =
+                        aura::compiler::mutate_dispatch_try_acquire(ev, /*pending=*/1, &wrapper_ok);
+                    if (!gr)
+                        return mev("guard-reject", gr.error().message);
+                    wrapper_guard = std::move(*gr);
+                }
                 auto result = fn(a);
                 if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics())) {
                     const auto wraps_after =
@@ -951,14 +968,18 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                         // Issue #2986 / #3197: production + requires_guard
                         // naked body → hard fail-closed. Happy Guard path
                         // does not load production_defaults.
+                        // Issue #3423: belt — wrapper already acquired for
+                        // !exempt; this arm is leftover if acquire is skipped.
                         if (!guard_exempt &&
                             aura::compiler::typed_audit::production_defaults_active()) {
                             m->naked_mutate_fail_closed_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
+                            if (wrapper_guard)
+                                wrapper_guard->mark_failed();
                             ev.mark_outermost_mutation_failed();
                             return mev("naked-mutate", std::string(op) +
                                                            " skipped MutationBoundaryGuard under "
-                                                           "production (#2986/#3197)");
+                                                           "production (#2986/#3197/#3423)");
                         }
                     } else {
                         m->mutate_guard_enforced.fetch_add(1, std::memory_order_relaxed);

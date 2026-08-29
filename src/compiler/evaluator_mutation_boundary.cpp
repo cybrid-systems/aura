@@ -3297,6 +3297,13 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         }
     }
     bool success = cancel_forced_fail ? false : success_flag_load(flag_);
+    // Issue #3423: nested Guard fail must flip the outermost success
+    // flag. add_mutate now holds the outermost Guard; a body that
+    // sets its nested ok=false still has to abort-restore via the
+    // wrapper dtor (sole restore path). Soft / outermost: no extra
+    // store (this arm is nested-fail only).
+    if (!is_outermost_ && !success && ev_)
+        ev_->mark_outermost_mutation_failed();
     // Issue #2944: outermost MutationBoundary exit revokes mutation-session
     // grants bound to session_mid_at_enter_ (success or fail). Nested
     // guards skip (session_mid_at_enter_==0). Zero cost when no live

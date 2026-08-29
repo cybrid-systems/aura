@@ -309,8 +309,10 @@ static void ac2986_3_metrics_and_fail_closed() {
     CHECK(m != nullptr, "2986 AC3: metrics");
     const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
     bool ok = true;
-    auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
-    CHECK(gr.has_value(), "2986 AC3: try_acquire still works");
+    {
+        auto gr = Evaluator::MutationBoundaryGuard::try_acquire(cs.evaluator(), 1, &ok);
+        CHECK(gr.has_value(), "2986 AC3: try_acquire still works");
+    }
     const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
     CHECK(t1 >= t0 + 1, "2986 AC3: try_acquire_total moves (metrics remain)");
     CHECK(href(cs, "query:mutation-boundary-coverage-stats", "mutate-guard-enforced") >= 0,
@@ -545,6 +547,89 @@ static void ac3352_4_run_all_once_and_linter() {
     CHECK(t1 == t0 + 1, "AC4: run_all acquires Guard once (not per rule)");
 }
 
+static void ac3423_1_acquire_before_fn() {
+    std::println("\n--- #3423 AC1: add_mutate acquire textually before fn(a) ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto disp = read_file("src/compiler/mutate_dispatch.hh");
+    CHECK(disp.find("kAddMutateAcquireBeforeBodyIssue = 3423") != std::string::npos, "AC1 stamp");
+    CHECK(mut.find("Issue #3423") != std::string::npos, "AC1 cite");
+    const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
+    CHECK(lam != std::string::npos, "AC1 add_mutate lambda");
+    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 14000);
+    const auto acq = win.find("mutate_dispatch_try_acquire");
+    const auto fn = win.find("auto result = fn(a)");
+    CHECK(acq != std::string::npos && fn != std::string::npos && acq < fn,
+          "AC1 acquire before fn(a)");
+    CHECK(win.find("guard-reject") != std::string::npos, "AC1 guard-reject kind");
+}
+
+static void ac3423_2_production_rebind_and_reject_kind() {
+    std::println("\n--- #3423 AC2: structural mutate still writes under wrapper Guard ---");
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define x 1)\")").has_value(), "set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    const auto naked0 = m->naked_mutate_fail_closed_total.load(std::memory_order_relaxed);
+    auto r = cs.eval("(mutate:rebind \"x\" \"2\")");
+    CHECK(r.has_value(), "rebind under wrapper acquire");
+    const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    CHECK(t1 > t0, "AC2 wrapper+body acquire totals move");
+    CHECK(m->naked_mutate_fail_closed_total.load(std::memory_order_relaxed) == naked0,
+          "AC2 happy path is not naked-mutate");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto lam = mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
+    const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 14000);
+    const auto rej = win.find("guard-reject");
+    const auto fna = win.find("auto result = fn(a)");
+    CHECK(rej != std::string::npos && fna != std::string::npos && rej < fna,
+          "AC2 guard-reject precedes fn(a) (no write on acquire fail)");
+}
+
+static void ac3423_3_exempt_no_extra_acquire() {
+    std::println("\n--- #3423 AC3: GUARD_EXEMPT metadata prims skip wrapper acquire ---");
+    CompilerService cs;
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "metrics");
+    const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    auto fp = cs.eval("(mutate:set-agent-fingerprint 7)");
+    CHECK(fp.has_value() && is_int(*fp) && as_int(*fp) == 7, "AC3 fingerprint setter");
+    const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    CHECK(t1 == t0, "AC3 exempt does not acquire");
+    CHECK(m->naked_mutate_fail_closed_total.load(std::memory_order_relaxed) == 0,
+          "AC3 exempt does not fail-closed");
+}
+
+static void ac3423_4_belt_and_nested() {
+    std::println("\n--- #3423 AC4: #2986/#3197 belt + nested fail cite ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto bound = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(mut.find("naked_mutate_attempt") != std::string::npos, "AC4 belt attempt");
+    CHECK(mut.find("mutate_guard_acquire_token") != std::string::npos, "AC4 token");
+    CHECK(bound.find("Issue #3423") != std::string::npos, "AC4 nested fail cite");
+    CHECK(bound.find("mark_outermost_mutation_failed") != std::string::npos,
+          "AC4 nested fail flips outermost");
+}
+
+static void ac3423_5_source_and_linter() {
+    std::println("\n--- #3423 AC5: linter after #3352 + no invent ---");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_add_mutate_acquire_before_body_3423.py");
+    CHECK(!lint.empty() && lint.find("3423") != std::string::npos, "AC5 linter");
+    CHECK(build.find("check_add_mutate_acquire_before_body_3423") != std::string::npos,
+          "AC5 build.py");
+    const auto i3352 = build.find("check_transform_engine_guard_3352");
+    const auto i3423 = build.find("check_add_mutate_acquire_before_body_3423");
+    CHECK(i3352 != std::string::npos && i3423 != std::string::npos && i3423 > i3352,
+          "AC5 linter after #3352");
+    CHECK(read_file("docs/design/3423-add-mutate-acquire-before-body.md").empty(),
+          "AC5 no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3423.cpp").empty(), "AC5 no invent");
+    CHECK(read_file("tests/issues/test_issue_3423.cpp").empty(), "AC5 no invent issues/");
+}
+
 } // namespace
 
 int run_test_mutation_guard_try_acquire_unit() {
@@ -571,6 +656,11 @@ int run_test_mutation_guard_try_acquire_unit() {
     ac3352_2_cli_offline();
     ac3352_3_soft_no_ev_zero_extra();
     ac3352_4_run_all_once_and_linter();
+    ac3423_1_acquire_before_fn();
+    ac3423_2_production_rebind_and_reject_kind();
+    ac3423_3_exempt_no_extra_acquire();
+    ac3423_4_belt_and_nested();
+    ac3423_5_source_and_linter();
 
     std::println("\n=== test_mutation_guard_try_acquire_unit: {} passed, {} failed ===", g_passed,
                  g_failed);
