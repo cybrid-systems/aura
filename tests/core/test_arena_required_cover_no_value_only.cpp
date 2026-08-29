@@ -582,6 +582,70 @@ static void ac10_no_invent_docs() {
           "AC10: no tests/issues/test_issue_3156.cpp (per #81934 — src/-aligned suite instead)");
 }
 
+// #3401: eval_flat hot-path intern — production skips the function-scope
+// try/catch; LiteralString / :foo Variable arms read pool resolve via
+// std::string_view and consult Evaluator::string_intern_ / keyword_intern_
+// first; std::string construction + string_heap_.push_back /
+// keyword_table_.push_back happen only on the first encounter of a
+// unique literal / keyword. Source-cite via read_file (no new helpers).
+static void ac3401_eval_flat_hot_path_intern() {
+    std::println("\n--- #3401 AC: eval_flat hot-path intern (no try/catch in prod, no heap push on "
+                 "happy path) ---");
+    const auto eval_flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    const auto evaluator_ixx = read_file("src/compiler/evaluator.ixx");
+
+    // AC1: eval_flat function-scope try { is wrapped with #ifndef NDEBUG.
+    CHECK(
+        eval_flat.find("#ifndef NDEBUG") != std::string::npos &&
+            eval_flat.find(
+                "Issue #3401: production (NDEBUG) builds skip the function-scope\n    try/catch") !=
+                std::string::npos,
+        "AC1: eval_flat function-scope try { wrapped with #ifndef NDEBUG");
+
+    // AC2: LiteralString arm reads pool resolve via std::string_view and
+    // consults string_intern_; std::string construction only on miss.
+    CHECK(eval_flat.find("// Issue #3401: happy-path string intern") != std::string::npos,
+          "AC2: LiteralString arm carries #3401 happy-path intern comment");
+    CHECK(eval_flat.find("string_view raw_sv = p->resolve") != std::string::npos,
+          "AC2: LiteralString arm reads pool resolve via std::string_view");
+    CHECK(eval_flat.find("string_intern_.find") != std::string::npos,
+          "AC2: LiteralString arm consults string_intern_ first");
+    CHECK(eval_flat.find("string_intern_.emplace") != std::string::npos,
+          "AC2: LiteralString arm records into string_intern_ on miss");
+    CHECK(eval_flat.find("std::string raw(raw_sv)") != std::string::npos,
+          "AC2: LiteralString arm intern-once construction only on miss");
+
+    // AC3: :foo keyword Variable arm reads pool resolve via string_view and
+    // consults keyword_intern_; std::string construction only on miss.
+    CHECK(eval_flat.find("// Issue #3401: keyword O(1) intern") != std::string::npos,
+          "AC3: :foo keyword Variable arm carries #3401 O(1) intern comment");
+    CHECK(eval_flat.find("string_view name = p->resolve") != std::string::npos,
+          "AC3: :foo keyword Variable arm reads pool resolve via std::string_view");
+    CHECK(eval_flat.find("keyword_intern_.find") != std::string::npos,
+          "AC3: :foo keyword Variable arm consults keyword_intern_ first");
+    CHECK(eval_flat.find("keyword_intern_.emplace") != std::string::npos,
+          "AC3: :foo keyword Variable arm records into keyword_intern_ on miss");
+
+    // AC4: eval_env.lookup call site uses std::string_view (no std::string
+    // construction on the hot path).
+    CHECK(eval_flat.find("eval_env.lookup(std::string(name))") == std::string::npos,
+          "AC4: eval_env.lookup call site does not construct std::string "
+          "(Env::lookup already takes string_view)");
+
+    // AC5: Evaluator class declares string_intern_ + keyword_intern_ near
+    // short_str_cache_ / keyword_table_.
+    CHECK(evaluator_ixx.find("string_intern_;") != std::string::npos,
+          "AC5: Evaluator class declares string_intern_");
+    CHECK(evaluator_ixx.find("keyword_intern_;") != std::string::npos,
+          "AC5: Evaluator class declares keyword_intern_");
+
+    // AC6: no test_issue_3401.cpp, no docs/design/3401-*.md, no
+    // classify_eval_value_tag reintroduction (#2616 invariant).
+    const auto issue_test_3401 = read_file("tests/core/test_issue_3401.cpp");
+    CHECK(issue_test_3401.empty(),
+          "AC6: no tests/core/test_issue_3401.cpp (extends existing per #81934)");
+}
+
 } // namespace
 
 int run_test_arena_required_cover_no_value_only() {
@@ -598,6 +662,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac8_soft_off_zero_cost();
     ac9_linter_self_test();
     ac10_no_invent_docs();
+    ac3401_eval_flat_hot_path_intern();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);
