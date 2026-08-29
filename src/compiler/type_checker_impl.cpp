@@ -4865,9 +4865,40 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
             result = reg_.void_type();
             break;
         }
-        case Tag::Set:
+        case Tag::Set: {
+            // Issue #3407: synthesize_flat Set was the odd arm —
+            // returned Void without walking the RHS, so (set! x "hi")
+            // under Production+Strict where x : Int never fired the
+            // #3202 ground reject, and query:type / next mutate saw
+            // green Void on the Set node (I1 «渐进不撒谎» + I4
+            // «过期窄化仍能用» on the assignment face, not the
+            // uncovered-tag face). check_flat Set already walks RHS
+            // + unifies with var type + reports ground mismatch
+            // (the intended contract, ~line 7558); mirror it here,
+            // minus the expected unification (synthesize has no
+            // expected). Unbound set! keeps Void via env_.lookup
+            // miss path (existing UnboundVariable diagnostic).
+            // Reuse consistent_unify + maybe_report_ground_inconsistency;
+            // no new query key, no new constraint kind. Soft / Off:
+            // ground mismatch falls through to Warning path
+            // unchanged (#3044 covered-tag table still counts Set).
             result = reg_.void_type();
+            if (v.children.size() >= 1 && v.child(0) != NULL_NODE) {
+                auto val_id = v.child(0);
+                auto val_type = synthesize_flat(flat, pool, val_id, flat.get(val_id));
+                auto var_name = std::string(pool.resolve(v.sym_id));
+                auto var_type = env_.lookup(var_name);
+                if (var_type.valid()) {
+                    if (!cs_.consistent_unify(val_type, var_type))
+                        flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::TypeError));
+                    maybe_report_ground_inconsistency(val_type, var_type);
+                }
+                // Unbound set!: env_.lookup miss; Set still returns
+                // Void. (Existing UnboundVariable diagnostic fires
+                // later via Variable lookup, not here.)
+            }
             break;
+        }
         case Tag::Quote:
             result = reg_.dynamic_type();
             break;

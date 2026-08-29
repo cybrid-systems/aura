@@ -15153,6 +15153,50 @@ def cmd_recover_fail_clear_persist_3406_coverage():
     return 0
 
 
+def cmd_synthesize_set_walks_rhs_3407_coverage():
+    """Issue #3407: synthesize_flat NodeTag::Set must walk RHS + unify with var type + report ground mismatch.
+
+    Residual from #3044 / #976: Set was added to the bidirectional
+    covered-tag table so it does NOT hit note_uncovered_bidirectional_tag
+    (#3330). The residual is the opposite shape — Set is covered but
+    the synthesize_flat arm is a no-op (returns Void without walking RHS).
+    check_flat Set already walks RHS + unifies + reports ground mismatch
+    (the intended contract, ~line 7558); synthesize_flat Set was the odd
+    arm — under Production+Strict, (set! x "hi") where x : Int never
+    fired the #3202 ground reject, query:type / next mutate saw green
+    Void on the Set node, env_ was not rebound, occurrence goals keyed
+    on x were not dropped. I1 «渐进不撒谎» + I4 «过期窄化仍能用» on the
+    assignment face (not the uncovered-tag face).
+
+    Source-cite linter (scripts/check_synthesize_set_walks_rhs_3407.py)
+    verifies:
+      AC1 synthesize_flat Set case synthesizes the RHS child (val_id),
+         looks up var_name in env_, unifies val_type with var_type,
+         and calls maybe_report_ground_inconsistency.
+      AC2 synthesize_flat_begin / infer_flat / infer_flat_partial walk
+         the Set RHS via synthesize_flat (Begin children go through
+         synthesize_flat; infer_flat defaults to synthesize_flat for
+         the root; infer_flat_partial calls synthesize_flat on every
+         node in the partial cone).
+      AC3 check_flat Set contract unchanged (same unify + ground report,
+         plus expected unification — check_flat has expected).
+      AC4 no docs/design/3407-* (per #1655); no test_issue_3407.cpp
+         (per #81934). Test file is test_synthesize_set_walks_rhs.cpp.
+      AC5 source-cite #3407 + build.py registration; no design docs.
+    """
+    print(f"{B}=== synthesize_set_walks_rhs coverage (#3407) ==={N}")
+    script = SCRIPTS / "check_synthesize_set_walks_rhs_3407.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("synthesize_set_walks_rhs (#3407) coverage contract rows failed")
+        return 1
+    ok("synthesize_set_walks_rhs (#3407) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22280,6 +22324,8 @@ def main():
         "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
         "recover-fail-clear-persist-3406": cmd_recover_fail_clear_persist_3406_coverage,
         "recover-fail-clear-persist-3406-coverage": cmd_recover_fail_clear_persist_3406_coverage,
+        "synthesize-set-walks-rhs-3407": cmd_synthesize_set_walks_rhs_3407_coverage,
+        "synthesize-set-walks-rhs-3407-coverage": cmd_synthesize_set_walks_rhs_3407_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
