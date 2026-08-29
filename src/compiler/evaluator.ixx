@@ -6184,6 +6184,22 @@ private:
     std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
                        std::equal_to<>>
         short_str_cache_;
+    // Issue #3401: full-size string intern — O(1) hot-path dedup so the
+    // LiteralString arm does not call string_heap_.push_back / construct
+    // std::string on the happy (already-interned) path. Keys are std::string
+    // to match the dominant Pattern in this class; construction happens
+    // exactly once per unique literal (on miss), then the EvalValue is
+    // returned from the cache for all subsequent hits.
+    std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        string_intern_;
+    // Issue #3401: keyword intern — O(1) lookup replaces the O(n) linear
+    // scan over keyword_table_ in eval_flat's :foo Variable arm. Keys keep
+    // the leading ':' for backward compatibility with existing readers
+    // that index keyword_table_[kidx] expecting ":foo".
+    std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
+                       std::equal_to<>>
+        keyword_intern_;
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;

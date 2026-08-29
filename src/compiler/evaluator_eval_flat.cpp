@@ -3552,9 +3552,16 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
         static_cast<CompilerMetrics*>(compiler_metrics_)
             ->hotpath_eval_flat_calls.fetch_add(1, std::memory_order_relaxed);
     }
-    // Catch bad_variant_access and return friendly error instead of crash.
-    // This happens when user code passes wrong argument types to primitives.
+    // Issue #3401: production (NDEBUG) builds skip the function-scope
+    // try/catch — every error path inside the TCO loop already returns
+    // std::unexpected(Diagnostic), so the catch only adds C-stack frame
+    // cost + try-table overhead on the hot path. Soft / unit builds
+    // keep the catch for friendly error messages.
+#ifndef NDEBUG
+    // Soft: catch bad_variant_access and out_of_range / bad_alloc for
+    // friendly Diagnostic instead of crash.
     try {
+#endif
         // TCO loop state: f/p point to the current FlatAST/Pool,
         // which may change during closure/macro tail calls.
         aura::ast::FlatAST* f = &flat;
@@ -3745,43 +3752,45 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 case aura::ast::NodeTag::LiteralFloat:
                     return make_float(v.float_value);
                 case aura::ast::NodeTag::LiteralString: {
-                    auto raw = std::string(p->resolve(v.sym_id));
-                    // Short strings: use cache to avoid duplicate heap pushes
-                    if (raw.size() <= 6) {
-                        auto it = short_str_cache_.find(raw);
-                        if (it != short_str_cache_.end())
-                            return it->second;
-                        auto sid = string_heap_.size();
-                        string_heap_.push_back(raw);
-                        auto val = make_string(sid);
-                        short_str_cache_[raw] = val;
-                        return val;
+                    // Issue #3401: happy-path string intern. std::string
+                    // construction + string_heap_.push_back happen only on
+                    // the first encounter of a unique literal; subsequent
+                    // hits return the cached EvalValue directly (string_view
+                    // lookup, zero heap allocation, zero push_back).
+                    std::string_view raw_sv = p->resolve(v.sym_id);
+                    if (auto it = string_intern_.find(raw_sv); it != string_intern_.end()) {
+                        return it->second;
                     }
-                    auto sid = string_heap_.size();
-                    string_heap_.push_back(std::move(raw));
-                    return make_string(sid);
+                    std::string raw(raw_sv);
+                    auto sid = string_heap_->size();
+                    string_heap_->push_back(std::move(raw));
+                    auto val = make_string(sid);
+                    string_intern_.emplace(raw_sv, val);
+                    if (raw_sv.size() <= 6)
+                        short_str_cache_[std::string(raw_sv)] = val;
+                    return val;
                 }
                 case aura::ast::NodeTag::Variable: {
-                    auto name = p->resolve(v.sym_id);
-                    // Keyword: :foo → self-evaluating keyword value (interned)
+                    // Issue #3401: keyword O(1) intern. std::string
+                    // construction + keyword_table_.push_back happen only
+                    // on the first encounter of a unique :foo literal;
+                    // subsequent hits return the cached EvalValue directly.
+                    // The leading ':' is preserved in keyword_table_[kidx]
+                    // for backward compatibility with existing readers.
+                    std::string_view name = p->resolve(v.sym_id);
                     if (!name.empty() && name[0] == ':') {
-                        auto kwstr = std::string(name);
-                        std::uint64_t kidx = 0;
-                        // Check if already interned
-                        bool found = false;
-                        for (; kidx < keyword_table_.size(); ++kidx) {
-                            if (keyword_table_[kidx] == kwstr) {
-                                found = true;
-                                break;
-                            }
+                        if (auto it = keyword_intern_.find(name); it != keyword_intern_.end()) {
+                            return it->second;
                         }
-                        if (!found) [[unlikely]] {
-                            kidx = keyword_table_.size();
-                            keyword_table_.push_back(kwstr);
-                        }
-                        return make_keyword(kidx);
+                        auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
+                        keyword_table_.push_back(std::string(name));
+                        auto val = make_keyword(kidx);
+                        keyword_intern_.emplace(name, val);
+                        return val;
                     }
-                    auto val = eval_env.lookup(std::string(name));
+                    // Issue #3401: name is std::string_view (no std::string
+                    // construction); Env::lookup already takes string_view.
+                    auto val = eval_env.lookup(name);
                     if (val) {
                         // Issue #229 Cycle 1 fix: dereference cell
                         // sentinel. The Define case binds the name to
@@ -6115,6 +6124,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                         Diagnostic{ErrorKind::InternalError, "eval_flat: unsupported node type"});
             }
         }
+#ifndef NDEBUG
     } catch (const std::bad_alloc& e) {
         return std::unexpected(Diagnostic{ErrorKind::InternalError, "out of memory"});
     } catch (const std::out_of_range& e) {
@@ -6125,6 +6135,7 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
             ErrorKind::TypeError,
             std::format("type mismatch (wrong argument type passed to primitive): {}", e.what())});
     }
+#endif
 }
 
 

@@ -14926,6 +14926,42 @@ def cmd_shape_compact_no_global_bump_2908_coverage():
     return 0
 
 
+def cmd_eval_flat_hot_path_3401_coverage():
+    """Issue #3401: eval_flat hot-path intern — no try/catch in production,
+    no std::string / push_back on the LiteralString / :keyword happy path.
+
+    Source-cite linter (scripts/check_eval_flat_hot_path_3401.py) verifies:
+      AC1 #ifndef NDEBUG wraps the eval_flat function-scope try { (production
+         skips the catch; Soft keeps it for friendly Diagnostics).
+      AC2 LiteralString arm reads pool resolve via std::string_view and
+         consults Evaluator::string_intern_ first; std::string construction
+         + string_heap_.push_back happen only on the first encounter.
+      AC3 :foo keyword Variable arm reads pool resolve via string_view and
+         consults Evaluator::keyword_intern_ first; std::string construction
+         + keyword_table_.push_back happen only on the first encounter.
+      AC4 eval_env.lookup call site uses std::string_view (Env::lookup
+         signature already takes string_view — no regression).
+      AC5 Evaluator class declares string_intern_ + keyword_intern_ as
+         unordered_map<std::string, types::EvalValue, ...> members near
+         short_str_cache_ / keyword_table_.
+      AC6 no tests/core/test_issue_3401.cpp (extends existing tests per
+         #81934); no docs/design/3401-*.md (per #1655); #2616
+         classify_eval_value_tag ban preserved.
+      AC7 source-cite #3401 + registered in build.py; no design docs.
+    """
+    print(f"{B}=== eval_flat hot-path intern coverage (#3401) ==={N}")
+    script = SCRIPTS / "check_eval_flat_hot_path_3401.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("eval_flat hot-path intern (#3401) coverage contract rows failed")
+        return 1
+    ok("eval_flat hot-path intern (#3401) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22041,6 +22077,8 @@ def main():
         "shape-profiler-shard-2937-coverage": cmd_shape_profiler_shard_2937_coverage,
         "shape-compact-no-global-bump-2908": cmd_shape_compact_no_global_bump_2908,
         "shape-compact-no-global-bump-2908-coverage": cmd_shape_compact_no_global_bump_2908_coverage,
+        "eval-flat-hot-path-3401": cmd_eval_flat_hot_path_3401_coverage,
+        "eval-flat-hot-path-3401-coverage": cmd_eval_flat_hot_path_3401_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
