@@ -1271,6 +1271,19 @@ def cmd_lint():
             "Issue #3352 TransformEngine Guard linter failed — run python3 scripts/coverage/checks/check_transform_engine_guard_3352.py"
         )
         return r
+    # Issue #3423: add_mutate acquires via mutate_dispatch_try_acquire
+    # before fn(a) (I4 residual of #2986/#3197). GUARD_EXEMPT skips.
+    # Extends test_mutation_guard_try_acquire_unit; linter after #3352.
+    amb3423_script = COVERAGE_CHECKS / "check_add_mutate_acquire_before_body_3423.py"
+    if not amb3423_script.exists():
+        fail(f"missing {amb3423_script}")
+        return 1
+    r = run([sys.executable, str(amb3423_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3423 add_mutate acquire-before-body linter failed — run python3 scripts/coverage/checks/check_add_mutate_acquire_before_body_3423.py"
+        )
+        return r
     # Issue #3075: production_defaults arms QueryEpoch strict so
     # Agents cannot re-query green after mutate / restamp-lag.
     # Soft/dev stays off (no extra acquire). Extends query-epoch
