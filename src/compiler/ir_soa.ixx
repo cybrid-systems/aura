@@ -215,6 +215,12 @@ export inline constexpr int kIrSoaBatchOnlyProductionDefaultIssue = 3201;
 // Issue #3293: production residual multi-via-single stays hard-abort by
 // default (machine-checked by check_ir_dirty_batch_only_production_default_
 // 3293.py; AC4 live SIGABRT fixture under production defaults).
+// Issue #3355: production TU hard-ban of the SoA single-mark *call site*
+// (compile-time / linter close of the #3293 residual). The symbol stays
+// for Soft/unit + the SIGABRT fixture; production dual-emit uses
+// mark_blocks_dirty of 1. C++ modules compile the interface once so
+// `= delete` cannot be per-TU — the linter is the Hard gate.
+export inline constexpr int kIrSoaSingleMarkProductionBanIssue = 3355;
 // Issue #2936: production-smoke-wired sentinel (additive observability).
 export inline std::atomic<std::uint64_t>&
 g_ir_dirty_batch_only_production_smoke_wired_atomic() noexcept {
@@ -420,6 +426,10 @@ export struct IRFunctionSoA {
     // `block.start_idx` / `block.end_idx`.
     // Issue #2522: one generation bump (same as mark_blocks_dirty of 1).
     // Prefer mark_blocks_dirty for multi-block cascades (#2615).
+    // Issue #3355: production TU hard-ban — do not call from src/compiler
+    // production paths (linter enumerates one-arg SoA single-mark). Use
+    // mark_blocks_dirty / bits_only / mark_all_blocks_dirty. Soft/unit
+    // retain this API (AC2 metric-only; AC3 #3293 SIGABRT fixture).
     void mark_block_dirty(std::uint32_t block_id);
 
     // Issue #2522: batch mark N blocks dirty + cascade instr ranges,
@@ -733,6 +743,8 @@ namespace detail {
 } // namespace detail
 
 inline void IRFunctionSoA::mark_block_dirty(std::uint32_t block_id) {
+    // Issue #3355: Soft/test single-mark body. Production TUs must not
+    // call this (check_ir_soa_single_mark_production_ban_3355.py).
     detail::mark_block_dirty_no_bump(*this, block_id);
     // Issue #2111 / #2432: generation fence on block dirty (and instr cascade).
     bump_generation();

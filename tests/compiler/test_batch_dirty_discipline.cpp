@@ -28,6 +28,12 @@
 //   #2936 AC4: schema-2936 + production-smoke-wired; #2615/#2773/#2774 preserved
 //   #2936 AC5: intentional residual still works when AURA_IR_DIRTY_BATCH_ONLY unset
 //   #2936 AC6: coverage linter + no docs/design/
+//
+//   #3355 AC1: production dual-emit uses mark_blocks_dirty of 1
+//   #3355 AC2: Soft residual metric-only (hard-abort untouched)
+//   #3355 AC3: #3293 SIGABRT fixture retained
+//   #3355 AC4: linter enumerates one-arg SoA single-mark; naked prod fails
+//   #3355 AC5: linter after #3293; no docs/design; no test_issue_*.cpp
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -906,6 +912,92 @@ static void ac3293_3_source_and_linter() {
     CHECK(read_file("docs/design/3293-ir-dirty-batch-only.md").empty(), "3293 AC3: no docs/design");
 }
 
+// ── Issue #3355: production TU hard-ban SoA single-mark ──
+// Dual-emit residual now batch-of-1. Soft/unit keep mark_block_dirty
+// (AC2 metric-only; AC3 #3293 SIGABRT fixture). Linter enumerates
+// one-arg SoA single-mark call sites in src/.
+
+static void ac3355_1_production_batch_of_one() {
+    std::println("\n--- #3355 AC1: production dual-emit batch-of-1 ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto svc = read_file("src/compiler/service.ixx");
+    CHECK(soa.find("kIrSoaSingleMarkProductionBanIssue = 3355") != std::string::npos,
+          "3355 AC1: stamp in ir_soa.ixx");
+    CHECK(soa.find("production TU hard-ban") != std::string::npos, "3355 AC1: ban comment");
+    CHECK(svc.find("Issue #3355") != std::string::npos, "3355 AC1: dual-emit cites #3355");
+    CHECK(svc.find("mark_blocks_dirty(one)") != std::string::npos,
+          "3355 AC1: dual-emit mark_blocks_dirty of 1");
+    CHECK(svc.find("functions[func_idx].mark_block_dirty(block_idx)") == std::string::npos,
+          "3355 AC1: dual-emit no longer calls SoA single-mark");
+}
+
+static void ac3355_2_soft_metric_only() {
+    std::println("\n--- #3355 AC2: Soft residual metric-only (no extra abort) ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+    ::setenv("AURA_IR_DIRTY_BATCH_ONLY", "0", 1);
+    CHECK(!ir_dirty_batch_only_hard(), "3355 AC2: env=0 hard=false");
+    auto fn = make_n_block_fn(4);
+    const std::uint32_t one[] = {0};
+    fn.mark_blocks_dirty(one); // clear streak
+    const auto r0 =
+        g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed);
+    const auto h0 = g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed);
+    fn.mark_block_dirty(1);
+    fn.mark_block_dirty(2); // residual, Soft → metric only
+    CHECK(g_ir_soa_residual_multi_via_single_cascades_total.load(std::memory_order_relaxed) ==
+              r0 + 1,
+          "3355 AC2: Soft residual cascade metric trips");
+    CHECK(g_ir_soa_batch_only_hard_abort_total.load(std::memory_order_relaxed) == h0,
+          "3355 AC2: Soft residual does NOT bump hard-abort counter");
+}
+
+static void ac3355_3_3293_fixture_retained() {
+    std::println("\n--- #3355 AC3: #3293 SIGABRT fixture retained ---");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    CHECK(t.find("ac3293_1_production_hard_face") != std::string::npos,
+          "3355 AC3: ac3293_1 still present");
+    CHECK(soa.find("std::abort()") != std::string::npos, "3355 AC3: abort path retained");
+}
+
+static void ac3355_4_linter_enumerates() {
+    std::println("\n--- #3355 AC4: linter enumerates production single-mark ---");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_ir_soa_single_mark_production_ban_3355.py");
+    CHECK(!lint.empty(), "3355 AC4: linter present");
+    CHECK(lint.find("SINGLE_MARK_RE") != std::string::npos, "3355 AC4: enumerates one-arg sites");
+    CHECK(lint.find("naked production single-mark") != std::string::npos,
+          "3355 AC4: naked production site fails");
+    CHECK(lint.find("SINGLE_MARK_EXEMPT") != std::string::npos, "3355 AC4: Soft/test EXEMPT class");
+}
+
+static void ac3355_5_source_and_linter() {
+    std::println("\n--- #3355 AC5: source-cite + linter + no invent ---");
+    const auto soa = read_file("src/compiler/ir_soa.ixx");
+    const auto t = read_file("tests/compiler/test_batch_dirty_discipline.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_ir_soa_single_mark_production_ban_3355.py");
+    CHECK(soa.find("#3355") != std::string::npos, "3355 AC5: ir_soa cites #3355");
+    CHECK(t.find("ac3355_1_production_batch_of_one") != std::string::npos, "3355 AC5: AC1 test");
+    CHECK(t.find("ac3355_3_3293_fixture_retained") != std::string::npos, "3355 AC5: AC3 test");
+    CHECK(!lint.empty() && lint.find("Issue #3355") != std::string::npos, "3355 AC5: linter");
+    CHECK(build.find("check_ir_soa_single_mark_production_ban_3355") != std::string::npos,
+          "3355 AC5: build.py wires linter");
+    const auto p3293 = build.find("check_ir_dirty_batch_only_production_default_3293");
+    const auto p3355 = build.find("check_ir_soa_single_mark_production_ban_3355");
+    CHECK(p3293 != std::string::npos && p3355 != std::string::npos && p3355 > p3293,
+          "3355 AC5: linter AFTER #3293");
+    CHECK(soa.find("schema-3355") == std::string::npos, "3355 AC5: no schema-3355");
+    CHECK(soa.find("g_3355_") == std::string::npos, "3355 AC5: no g_3355_*");
+    CHECK(read_file("docs/design/3355-ir-soa-single-mark-production-ban.md").empty(),
+          "3355 AC5: no docs/design/3355-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3355.cpp").empty(),
+          "3355 AC5: no test_issue_3355.cpp");
+    CHECK(read_file("tests/issues/test_issue_3355.cpp").empty(),
+          "3355 AC5: no tests/issues/test_issue_3355.cpp");
+}
+
 } // namespace
 
 int run_test_batch_dirty_discipline() {
@@ -947,8 +1039,14 @@ int run_test_batch_dirty_discipline() {
     ac3293_1_production_hard_face();
     ac3293_2_soft_metric_only();
     ac3293_3_source_and_linter();
-    std::println("\n=== #2615/#2681/#2773/#2774/#2936/#3201: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== Issue #3355: production TU hard-ban SoA single-mark ===");
+    ac3355_1_production_batch_of_one();
+    ac3355_2_soft_metric_only();
+    ac3355_3_3293_fixture_retained();
+    ac3355_4_linter_enumerates();
+    ac3355_5_source_and_linter();
+    std::println("\n=== #2615/#2681/#2773/#2774/#2936/#3201/#3293/#3355: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

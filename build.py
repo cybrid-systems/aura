@@ -2635,6 +2635,21 @@ def cmd_lint():
             "Issue #3293 IR dirty batch-only production default linter failed — run python3 scripts/coverage/checks/check_ir_dirty_batch_only_production_default_3293.py"
         )
         return r
+    # Issue #3355: production TU hard-ban residual SoA single-mark (compile-
+    # time / linter close of #3293). Dual-emit uses mark_blocks_dirty of 1;
+    # linter enumerates one-arg .mark_block_dirty(id) in src/. Soft/unit
+    # keep the API + #3293 SIGABRT fixture. Extends
+    # test_batch_dirty_discipline (#81967); no docs/design/; no new query keys.
+    ism3355_script = COVERAGE_CHECKS / "check_ir_soa_single_mark_production_ban_3355.py"
+    if not ism3355_script.exists():
+        fail(f"missing {ism3355_script}")
+        return 1
+    r = run([sys.executable, str(ism3355_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3355 IR SoA single-mark production-ban linter failed — run python3 scripts/coverage/checks/check_ir_soa_single_mark_production_ban_3355.py"
+        )
+        return r
     # Issue #3202: Production + Strict ground unify hard-rejects Int~String
     # (residual of #2992). Soft / balanced / permissive stay diagnostic-only.
     # Extends test_bidirectional_annotation; no docs/design / invent.
