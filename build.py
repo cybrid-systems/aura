@@ -3621,6 +3621,20 @@ def cmd_lint():
             "Issue #3326 factory-default cover linter failed — run python3 scripts/coverage/checks/check_factory_default_cover_3326.py"
         )
         return r
+    # Issue #3420: production required refuses factory-default both-null
+    # allocate (residual of #3326 inventory path). Soft keeps default
+    # create. Extends test_moving_densify_fail_closed +
+    # test_arena_required_cover_no_value_only; linter after #3326.
+    fru3420_script = COVERAGE_CHECKS / "check_factory_refuse_uncovered_3420.py"
+    if not fru3420_script.exists():
+        fail(f"missing {fru3420_script}")
+        return 1
+    r = run([sys.executable, str(fru3420_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3420 factory-refuse uncovered linter failed — run python3 scripts/coverage/checks/check_factory_refuse_uncovered_3420.py"
+        )
+        return r
     # Issue #3181: clone walk in_quote boundary (binding/ref split
     # residual of #3154). pre_scan #3154 stops at NodeTag::Quote; clone
     # walk now mirrors it via `in_quote` parameter (NodeTag::Quote OR

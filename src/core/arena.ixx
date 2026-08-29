@@ -637,6 +637,11 @@ inline constexpr int kDensifyTrackedAllocateCoverIssue = 3214;
 // try_allocate cover args) so uncovered_under_required does not grow
 // and sticky densify-off is not armed solely by that allocate.
 inline constexpr int kFactoryDefaultCoverIssue = 3326;
+// Issue #3420: residual of #3326 — production required + densify-tracked
+// + both-null must refuse the allocate (nullptr) instead of inventory +
+// proceed. Soft/Off/compat keep default create. Reuses
+// g_intermediate_create_uncovered_under_required_total (no new key).
+inline constexpr int kFactoryRefuseUncoveredIssue = 3420;
 
 [[nodiscard]] inline std::uint64_t intermediate_create_with_cover_total_v_read() noexcept {
     return g_intermediate_create_with_cover_total.load(std::memory_order_relaxed);
@@ -1649,18 +1654,18 @@ public:
             {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
         // Issue #2971 / #3053: auto-wire happens in allocate_raw_impl
         // (create / try_allocate / allocate_checked share that path).
-        // Issue #3326: default cover is both-null (Soft/compat). Production
-        // densify-tracked intermediates should use create_with_cover so
-        // uncovered_under_required does not grow on cover-compliant sites.
+        // Issue #3326: default cover is both-null (Soft/compat).
+        // Issue #3420: production required refuses both-null at
+        // allocate_raw_impl (nullptr, uncovered metric, no live object).
         return result;
     }
 
-    // Issue #3326: cover-aware create. Pass a real void** slot (rewritten
-    // by densify) or an EXEMPT cover_reason for true non-surviving temps.
-    // Default create<T> stays both-null for Soft/compat and still
-    // fail-closes Moving when uncovered. After construct, *slot is written
-    // so register_external_root_slot_for_densify sees a live pointer
-    // (allocate_raw may have observed *slot == nullptr).
+    // Issue #3326 / #3420: cover-aware create. Pass a real void** slot
+    // (rewritten by densify) or an EXEMPT cover_reason for true
+    // non-surviving temps. Default create<T> stays both-null for
+    // Soft/compat. Production required refuses both-null at
+    // allocate_raw_impl. After construct, *slot is written so
+    // register_external_root_slot_for_densify sees a live pointer.
     template <typename T, typename... Args>
         requires std::constructible_from<T, Args...>
     [[nodiscard]] T* create_with_cover(void** cover_slot, const char* cover_reason, Args&&... args)
@@ -2677,11 +2682,11 @@ public:
     // (SmallObjectPool path when size <= 64). Used by live-compact
     // stress tests and legacy #1467 harness.
     // Issue #1546/#1554: quota-bound when arena_owner_ is set (via set_arena).
-    // Issue #3326: optional cover_slot / cover_reason pass-through (same
-    // triad as allocate_checked / create_with_cover). Default nullptr
-    // preserves legacy uncovered bump under required. When slot is
-    // provided, *slot is written after allocate so densify rewrite
-    // sees a live pointer.
+    // Issue #3326 / #3420: optional cover_slot / cover_reason pass-through
+    // (same triad as allocate_checked / create_with_cover). Default
+    // nullptr is Soft/compat; production required refuses both-null.
+    // When slot is provided, *slot is written after allocate so densify
+    // rewrite sees a live pointer.
     [[nodiscard]] void* try_allocate(std::size_t size, void** cover_slot = nullptr,
                                      const char* cover_reason = nullptr) noexcept {
         if (size == 0)
@@ -2918,16 +2923,11 @@ public:
             g_intermediate_create_with_cover_total.fetch_add(1, std::memory_order_relaxed);
             return;
         }
-        // Issue #3156: required + both null is the closed dual-track.
-        // Inventory into intermediate_creates_ so the pre-densify
-        // has_unpinned_intermediate_creates_() scan fail-closes
-        // (block + sticky-off via existing #3017/#3093 path) and bump
-        // the new uncovered metric. NEVER call note_intermediate_create_
-        // auto_wire_ here under required — that path bumps
-        // g_intermediate_create_value_only_total which must stay 0 in
-        // production soak (AC4). Migration cue: callers should switch
-        // to wire_general_object_create_pair_or_exempt(..., "reason") or
-        // pass slot=nullptr from a known-stable field.
+        // Issue #3156 / #3420: required + both null. Factory allocate
+        // refuses this case in allocate_raw_impl (no live object). Direct
+        // leftover notes still inventory so pre-densify
+        // has_unpinned_intermediate_creates_() fail-closes. NEVER call
+        // note_intermediate_create_auto_wire_ here under required.
         if (aura::core::lifetime::general_object_pin_required_active()) {
             intermediate_creates_.push_back(p);
             g_intermediate_create_uncovered_under_required_total.fetch_add(
@@ -3105,8 +3105,26 @@ public:
     // Issue #3180: optional cover_slot/cover_reason pass-through so hot-path
     // callers (Evaluator / CompilerService) can declare cover at the
     // allocate site and skip the implicit uncovered bump under required.
+    // Issue #3420: production required + both-null densify-tracked
+    // allocate refuses (nullptr) and bumps the existing uncovered
+    // metric. Soft / render: one required_active load, no pin atomics.
+    [[nodiscard]] bool factory_uncovered_refused_(void** cover_slot,
+                                                  const char* cover_reason) noexcept {
+        if (!aura::core::lifetime::general_object_pin_required_active())
+            return false;
+        if (aura::core::arena_policy::in_render_hotpath())
+            return false;
+        if (cover_slot != nullptr || cover_reason != nullptr)
+            return false;
+        g_intermediate_create_uncovered_under_required_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        return true;
+    }
+
     void* allocate_raw_impl(std::size_t size, std::size_t alignment, void** cover_slot = nullptr,
                             const char* cover_reason = nullptr) {
+        if (factory_uncovered_refused_(cover_slot, cover_reason))
+            return nullptr;
         // ── GC integration (Issue #113 Phase 4) ──────────
         // Check the safepoint before allocating. This lets a
         // compute-heavy fiber that doesn't yield for long
