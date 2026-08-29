@@ -4887,6 +4887,20 @@ def cmd_lint():
             "Issue #3418 fingerprint cap overflow linter failed — run python3 scripts/coverage/checks/check_proof_goal_fingerprint_overflow_3418.py"
         )
         return r
+    # Issue #3431: unstaged expected_fp==0 skips #3170 fingerprint
+    # guard under Production. Soft 0==0 skip kept. Extends
+    # test_outermost_persist_fail_closed; linter after #3170/#3418;
+    # no docs/design / invent / new query key.
+    ufp3431_script = COVERAGE_CHECKS / "check_occurrence_unstaged_expected_fp_3431.py"
+    if not ufp3431_script.exists():
+        fail(f"missing {ufp3431_script}")
+        return 1
+    r = run([sys.executable, str(ufp3431_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3431 unstaged expected_fp persist linter failed — run python3 scripts/coverage/checks/check_occurrence_unstaged_expected_fp_3431.py"
+        )
+        return r
     # Issue #3416: last-proof last-writer across steal × dual-Evaluator.
     # Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
     # Green bind eval-scoped. Soft/Off no extra slot. Extends
@@ -17514,6 +17528,28 @@ def cmd_occurrence_persist_fingerprint_3170():
     return 0
 
 
+def cmd_occurrence_unstaged_expected_fp_3431_coverage():
+    """Issue #3431: unstaged expected_fp==0 skips #3170 guard under Production.
+
+    #3170 required expected != 0 so never-staged persist wrote. Production
+    + expected==0 + nonempty live goals now abort (reuse mismatch +
+    force_reason 16). Soft keeps 0==0 skip. Extends
+    test_outermost_persist_fail_closed. No docs/design/, no
+    tests/issues/test_issue_3431.cpp.
+    """
+    print(f"{B}=== occurrence unstaged expected_fp (#3431) ==={N}")
+    script = COVERAGE_CHECKS / "check_occurrence_unstaged_expected_fp_3431.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("occurrence unstaged expected_fp (#3431) coverage contract rows failed")
+        return 1
+    ok("occurrence unstaged expected_fp (#3431) coverage clean")
+    return 0
+
+
 def cmd_solve_delta_partial_cleared_3169():
     """Issue #3169: production solve_delta fail-closed + clear partial
     goals / unresolved after TIMEOUT / instance-repair failure.
@@ -22774,6 +22810,7 @@ def main():
         "cascade-rearm-new-edge-only-3168": cmd_cascade_rearm_new_edge_only_3168,
         "cascade-rearm-new-edge-only-3168-coverage": cmd_cascade_rearm_new_edge_only_3168,
         "occurrence-persist-fingerprint-3170": cmd_occurrence_persist_fingerprint_3170,
+        "occurrence-unstaged-expected-fp": cmd_occurrence_unstaged_expected_fp_3431_coverage,
         "occurrence-persist-fingerprint-3170-coverage": cmd_occurrence_persist_fingerprint_3170,
         "solve-delta-partial-cleared-3169": cmd_solve_delta_partial_cleared_3169,
         "solve-delta-partial-cleared-3169-coverage": cmd_solve_delta_partial_cleared_3169,

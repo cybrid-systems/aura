@@ -1650,6 +1650,9 @@ inline std::atomic<std::uint64_t> g_occurrence_commit_snapshot_mid{0};
 // empty-after-fence + invalidate_fast_path). Soft/quiet: unused.
 // Reuses miss + empty-after-fence — no new counter / query key.
 inline constexpr int kOccurrencePersistSeqIssue = 3225;
+// Issue #3431: unstaged expected_fp==0 skips the #3170 fingerprint
+// guard under Production (I1 residual of #3170/#3376).
+inline constexpr int kOccurrenceUnstagedExpectedFpIssue = 3431;
 inline std::atomic<std::uint64_t> g_occurrence_persist_seq{0};
 [[nodiscard]] inline std::uint64_t occurrence_persist_seq_v_read() noexcept {
     return g_occurrence_persist_seq.load(std::memory_order_relaxed);
