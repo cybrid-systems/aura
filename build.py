@@ -15249,6 +15249,43 @@ def cmd_set_assignment_hygiene_3408_coverage():
     return 0
 
 
+def cmd_grant_ssot_ta_fence_3409_coverage():
+    """Issue #3409: CapabilityRegistry::grant SSOT TenantAdmin fence.
+
+    grant() / grant_locked() now take a TenantId caller_principal (default
+    0 for legacy direct callers). Production Restricted/Strict applies a
+    TA fence in grant_locked (no extra metric field — reuse
+    capability_macro_self_evo_grant_deny_total): refuses when
+    (tenant is foreign) OR (effects contain high bits {TA, MSE, Mutate,
+    Syscall}) without TA on caller_principal. Soft/Off: zero-cost
+    (no fence). Evaluator::grant_capability forwards
+    capability_tenant_id_ as caller_principal. New stable SE reason
+    `grant-ssot-needs-tenant-admin` (does not change old reason strings).
+
+    Source-cite linter (scripts/check_grant_ssot_ta_fence_3409.py)
+    verifies:
+      AC1 TA fence lives in grant_locked with new SE reason.
+      AC2 grant() signature accepts TenantId caller_principal (default 0).
+      AC3 Evaluator::grant_capability forwards capability_tenant_id_.
+      AC4 Reuse capability_macro_self_evo_grant_deny_total (no new field).
+      AC5 security_defaults.hh kernel render bootstrap (tenant=0 / Render).
+      AC6 No docs/design/3409-* (per #1655); no test_issue_3409.cpp
+         (per #81934). Extends test_tenant_isolation_enforcement.cpp.
+      AC7 test markers + build.py registration; no design docs.
+    """
+    print(f"{B}=== grant_ssot_ta_fence coverage (#3409) ==={N}")
+    script = SCRIPTS / "check_grant_ssot_ta_fence_3409.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("grant_ssot_ta_fence (#3409) coverage contract rows failed")
+        return 1
+    ok("grant_ssot_ta_fence (#3409) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22380,6 +22417,8 @@ def main():
         "synthesize-set-walks-rhs-3407-coverage": cmd_synthesize_set_walks_rhs_3407_coverage,
         "set-assignment-hygiene-3408": cmd_set_assignment_hygiene_3408_coverage,
         "set-assignment-hygiene-3408-coverage": cmd_set_assignment_hygiene_3408_coverage,
+        "grant-ssot-ta-fence-3409": cmd_grant_ssot_ta_fence_3409_coverage,
+        "grant-ssot-ta-fence-3409-coverage": cmd_grant_ssot_ta_fence_3409_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
