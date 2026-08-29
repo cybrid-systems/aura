@@ -202,6 +202,9 @@ struct TypeLinearEvolutionSnapshot {
     std::int64_t proof_stamped_after_rebind_total = 0;
     std::int64_t proof_reject_after_rebind_fail_total = 0;
     std::int64_t occurrence_empty_after_fence_soft_total = 0;
+    // Issue #3416: last-proof stamper identity bound (1) or unbound (0).
+    // Folded into existing snapshot — no new query key.
+    std::int64_t last_proof_stamper_bound = 0;
 };
 
 // Purpose: one-shot Agent self-evo poll of type×linear×occurrence axis
@@ -238,6 +241,8 @@ struct TypeLinearEvolutionSnapshot {
     s.partial_cone_truncated = typed_audit::last_partial_cone_truncated() ? 1 : 0;
     s.occurrence_empty_after_fence_total =
         static_cast<std::int64_t>(typed_audit::occurrence_empty_after_fence_total_v_read());
+    s.last_proof_stamper_bound =
+        static_cast<std::int64_t>(typed_audit::last_proof_stamper_bound_v_read());
     s.occurrence_empty_after_fence_soft_total =
         static_cast<std::int64_t>(typed_audit::occurrence_empty_after_fence_soft_total_v_read());
     s.cone_outside_goal_drop_total =

@@ -673,6 +673,7 @@ void register_query_reflect_primitives(PrimRegistrar add, std::pmr::vector<Pair>
                 "cone-outside-goal-drop-reject-total",
                 static_cast<std::int64_t>(
                     aura::compiler::typed_audit::cone_outside_goal_drop_reject_total_v_read()));
+            insert_kv("last-proof-stamper-bound", snap.last_proof_stamper_bound);
             insert_kv("type-linear-evolution-snapshot-wired", 1);
             // Issue #3116: abort dual-clear of last_coercions_ + TLS context.
             insert_kv(

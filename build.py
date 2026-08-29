@@ -4767,6 +4767,20 @@ def cmd_lint():
             "Issue #3346 stamp last-look densify×steal×mid-abort linter failed — run python3 scripts/coverage/checks/check_stamp_last_look_densify_steal_abort_3346.py"
         )
         return r
+    # Issue #3416: last-proof last-writer across steal × dual-Evaluator.
+    # Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
+    # Green bind eval-scoped. Soft/Off no extra slot. Extends
+    # test_ir_typed_entry_proof_authority + live_policy + steal suites.
+    lp3416_script = COVERAGE_CHECKS / "check_last_proof_eval_identity_3416.py"
+    if not lp3416_script.exists():
+        fail(f"missing {lp3416_script}")
+        return 1
+    r = run([sys.executable, str(lp3416_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3416 last-proof eval-identity linter failed — run python3 scripts/coverage/checks/check_last_proof_eval_identity_3416.py"
+        )
+        return r
     # Issue #3226: production soundness sample must run a real
     # same-lambda full lower + #2113 IR compare (closes #2245
     # deferred trivial prod_ok). Soft / sample_bp==0 skip lower.

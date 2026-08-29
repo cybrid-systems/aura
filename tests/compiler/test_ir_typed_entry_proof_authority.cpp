@@ -178,6 +178,24 @@ int run_test_ir_typed_entry_proof_authority() {
                     "(matches existing suite convention)");
     }
 
+    // ── #3416: last-proof stamper identity ──
+    {
+        std::println("\n--- #3416: last-proof bound to TLS eval ---");
+        CHECK(h.find("kLastProofEvalIdentityIssue = 3416") != std::string::npos,
+              "3416: issue stamp");
+        CHECK(h.find("g_last_proof_stamper_eval") != std::string::npos, "3416: stamper gauge");
+        CHECK(h.find("last_proof_bound_to_current_eval") != std::string::npos,
+              "3416: bound helper");
+        const auto fn_pos = h.find("inline bool ir_typed_entry_commit_readiness_ok() noexcept");
+        if (fn_pos != std::string::npos) {
+            const std::string scope = h.substr(fn_pos, 4500);
+            CHECK(scope.find("last_proof_bound_to_current_eval") != std::string::npos,
+                  "3416 AC1: typed entry consults stamper identity");
+        }
+        CHECK(read_file("tests/compiler/test_issue_3416.cpp").empty(),
+              "3416: no invent test_issue_3416");
+    }
+
     std::println("\n=== Issue #3305 done ===");
     return g_failed == 0 ? 0 : 1;
 }

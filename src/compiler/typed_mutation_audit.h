@@ -1396,6 +1396,11 @@ inline std::atomic<std::uint32_t> g_type_linear_commit_proof_wired{1};
 // Quiet default 0 → fast-path disabled (zero cost full check).
 inline std::atomic<std::uint8_t> g_last_proof_would_allow_commit{0};
 inline std::atomic<std::uint8_t> g_last_proof_linear_ok{0};
+// Issue #3416: last-proof stamper eval identity (TLS Evaluator pointer).
+// Production IR/JIT treats the face as unbound unless this matches the
+// current TLS eval. Soft/Off does not store or consult (AC4).
+inline constexpr int kLastProofEvalIdentityIssue = 3416;
+inline std::atomic<std::uintptr_t> g_last_proof_stamper_eval{0};
 inline std::atomic<std::uint64_t> g_linear_ir_fastpath_skip_total{0};
 inline std::atomic<std::uint64_t> g_linear_ir_fastpath_skip_blocked_total{0};
 inline std::atomic<std::uint32_t> g_linear_ir_fastpath_wired{1};
@@ -1416,6 +1421,7 @@ inline void stamp_type_linear_commit_proof(std::uint64_t current_epoch_or_defuse
 inline void clear_last_proof_face_for_test() noexcept {
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
 }
 
 inline void clear_type_linear_commit_proof_for_test() noexcept {
@@ -1489,6 +1495,7 @@ inline std::atomic<std::uint32_t> g_linear_fast_path_rehydrate_gen_elision_wired
 inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     g_rehydrate_miss_invalidate_gen.store(0, std::memory_order_relaxed);
     g_rehydrate_miss_green_bind_gen.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
     g_rehydrate_miss_invalidate_total.store(0, std::memory_order_relaxed);
     g_rehydrate_miss_invalidate_observe_total.store(0, std::memory_order_relaxed);
     g_rehydrate_miss_force_deopt_total.store(0, std::memory_order_relaxed);
@@ -1516,6 +1523,7 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
     return true;
 }
 
@@ -1533,6 +1541,7 @@ inline void reset_rehydrate_miss_invalidate_for_test() noexcept {
     g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
     g_steal_densify_success_invalidate_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -1552,10 +1561,37 @@ inline void publish_last_proof_face(bool would_allow, bool linear_ok) noexcept {
     g_last_proof_linear_ok.store(linear_ok ? 1 : 0, std::memory_order_release);
     // Issue #3032: a fresh green face re-binds invalidate gen so Move/Drop
     // may elide again only after the miss generation is acknowledged.
-    if (would_allow && linear_ok)
+    // Issue #3416: green bind is eval-scoped — stamp the TLS Evaluator so
+    // eval A cannot ride eval B's bind. Soft/Off: no extra store (AC4).
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (would_allow && linear_ok) {
         g_rehydrate_miss_green_bind_gen.store(
             g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire),
             std::memory_order_release);
+        if (hard)
+            g_last_proof_stamper_eval.store(
+                reinterpret_cast<std::uintptr_t>(::g_tls_audit_commit_readiness_evaluator),
+                std::memory_order_release);
+    } else if (hard) {
+        g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    }
+}
+
+// Issue #3416: last-proof is unbound unless the stamper matches TLS eval.
+// Soft/Off: true with no extra load (AC4). Production: refuse when
+// TLS != stamper (eval A cannot elide on eval B's stamp). stamper==0
+// and TLS==0 compare equal so a face with no identity recorded (fresh
+// process / test teardown) does not lock out IR; a foreign stamper
+// with TLS cleared still refuses.
+[[nodiscard]] inline bool last_proof_bound_to_current_eval() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return true;
+    const auto stamper = g_last_proof_stamper_eval.load(std::memory_order_acquire);
+    return stamper == reinterpret_cast<std::uintptr_t>(::g_tls_audit_commit_readiness_evaluator);
+}
+
+[[nodiscard]] inline std::uint32_t last_proof_stamper_bound_v_read() noexcept {
+    return g_last_proof_stamper_eval.load(std::memory_order_relaxed) != 0 ? 1u : 0u;
 }
 
 // Issue #2717: active stamp inside boundary + composite commit. The
@@ -2069,6 +2105,10 @@ inline void reset_linear_force_full_validate_for_test() noexcept {
     if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
         g_rehydrate_miss_green_bind_gen.load(std::memory_order_acquire))
         return false;
+    // Issue #3416: last-proof last-writer — eval A cannot elide on eval B's
+    // green bind. Soft: last_proof_bound_to_current_eval early-returns.
+    if (!last_proof_bound_to_current_eval())
+        return false;
     return true;
 }
 
@@ -2153,6 +2193,15 @@ enum class LinearFastPathExitAction : std::uint8_t {
                                                                         std::memory_order_relaxed);
         return false;
     }
+    // Issue #3416: re-sample stamper after ok so eval A cannot elide on
+    // eval B's post-steal green bind. Soft: helper early-returns true.
+    if (!last_proof_bound_to_current_eval()) {
+        g_linear_ir_fastpath_skip_blocked_total.fetch_add(1, std::memory_order_relaxed);
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        return false;
+    }
     g_linear_ir_fastpath_skip_total.fetch_add(1, std::memory_order_relaxed);
     return true;
 }
@@ -2212,6 +2261,8 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
 // refuses Quiet / unbound last-proof (not only Reject). Soft/Off
 // unchanged. Reuses g_linear_fast_path_elide_blocked_production_total.
 inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
+// Issue #3416: last-proof last-writer across steal × dual-Evaluator.
+// Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
 [[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
     if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
         return true;
@@ -2254,6 +2305,12 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
                                                                         std::memory_order_relaxed);
             return false;
         }
+        // Issue #3416: Stamped is unbound unless stamper == TLS eval.
+        if (!last_proof_bound_to_current_eval()) {
+            g_linear_fast_path_elide_blocked_production_total.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+            return false;
+        }
         return true;
     }
     // Issue #3305: dual-authority close — also consult the last
@@ -2268,6 +2325,11 @@ inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
     // counter so #3305 ships additive — no new query key.
     if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
         g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Issue #3416: mid-boundary IR also requires stamper == TLS eval.
+    if (!last_proof_bound_to_current_eval()) {
         g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
         return false;
     }
@@ -2358,6 +2420,7 @@ inline void clear_type_linear_commit_proof_on_abort() noexcept {
     g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
     g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
     g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
     // Issue #3091: abort / force-rollback must also clear
     // g_last_stamped_audit_mid so the next build returns audit_mid = 0
     // (AC5). The TLS boundary mid is independently cleared by
@@ -2805,6 +2868,23 @@ inline void reject_stamp_last_look_mismatch(TypeLinearCommitProof& p,
     (void)invalidate_fast_path_on_rehydrate_miss();
 }
 
+// Issue #3416 AC3: live_goal_count vs linear_root_count mismatch on the
+// stamper → Reject (force_reason 16), no green face. Soft/Off skip.
+inline void reject_stamper_live_goal_linear_root_mismatch(TypeLinearCommitProof& p) noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    if (!p.would_allow_commit)
+        return;
+    if (p.live_goal_count == p.linear_root_count)
+        return;
+    p.would_allow_commit = false;
+    p.linear_ok = false;
+    p.occurrence_consistent = false;
+    p.force_reason_code = 16;
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    (void)invalidate_fast_path_on_rehydrate_miss();
+}
+
 // Build a TypeLinearCommitProof from live state. Pure read of existing
 // surfaces + collect_linear_or_dirty_roots_for_rebind (#2723/#2742) for
 // linear_root_count. live_goal_count from optional hint (stamp site with
@@ -2859,6 +2939,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
                                       p.linear_root_count, p.audit_mid))
         reject_stamp_last_look_mismatch(p, truth);
     apply_proof_goal_truth(p, truth);
+    reject_stamper_live_goal_linear_root_mismatch(p);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (AC3).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
@@ -2942,6 +3023,7 @@ inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outco
                                       p.linear_root_count, p.audit_mid))
         reject_stamp_last_look_mismatch(p, truth);
     apply_proof_goal_truth(p, truth);
+    reject_stamper_live_goal_linear_root_mismatch(p);
     p.schema = kTypeLinearCommitProofIssue;
     // Last stamped linear_root for query / Agent drift detect (same as live path).
     g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
