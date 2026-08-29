@@ -845,13 +845,28 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // ref_tenant is correct for on_ref.
                 const bool strict_iso =
                     (ev.effect_sandbox_mode() == 2) || aura::core::sandbox::is_strict();
-                if (strict_iso && ref_tenant == 0) {
+                const bool restricted_iso = ev.effect_sandbox_mode() == 1;
+                if (ref_tenant == 0 && target_node != 0 && (strict_iso || restricted_iso)) {
                     const auto self = ev.capability_tenant_id();
-                    if (self != 0) {
-                        const auto& hs =
-                            aura::core::provenance::g_provenance_tracker().last_hygiene;
-                        if (hs.tenant_id != 0 && hs.tenant_id != self)
-                            ref_tenant = hs.tenant_id;
+                    if (self != 0 &&
+                        (strict_iso || aura::core::provenance::hard_capture_tenant_active() ||
+                         aura::core::provenance::multi_tenant_env_active())) {
+                        // Issue #3415: occupancy int — consult last stamp /
+                        // hygiene so Restricted+MT does not restamp a foreign
+                        // owner as the caller. Soft / single-tenant Restricted
+                        // skip (legacy #2056 / #1878 Strict-only slot).
+                        auto existing = aura::core::provenance::existing_stamp_for_node(
+                            static_cast<std::uint32_t>(target_node));
+                        if (existing == 0) {
+                            const auto& hs =
+                                aura::core::provenance::g_provenance_tracker().last_hygiene;
+                            if (hs.tenant_id != 0 &&
+                                (hs.node_id == 0 ||
+                                 hs.node_id == static_cast<std::uint32_t>(target_node)))
+                                existing = hs.tenant_id;
+                        }
+                        if (existing != 0 && existing != self)
+                            ref_tenant = existing;
                     }
                 }
                 // Issue #2942: pick mandated entry by target shape.
@@ -1228,6 +1243,9 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                               const char* op, bool* ok,
                                               aura::ast::NodeId& out_node) -> EvalValue {
         if (auto packed = unpack_stable_ref_arg(arg)) {
+            // Issue #3415 AC7: packed / stamped ref keeps tenant. Do not
+            // make_stamped_ref (occupancy restamp as caller). add_mutate
+            // already routed foreign tenant through require_effect_on_ref.
             ev.bump_stable_ref_validated_in_primitives_count();
             // Issue #818: full provenance enforcement on mutate hot paths.
             // Stamp validate_with_provenance when valid; attempt auto-

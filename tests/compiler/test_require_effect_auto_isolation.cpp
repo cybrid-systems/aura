@@ -22,6 +22,8 @@
 #include "compiler/security_capabilities.h"
 #include "compiler/typed_mutation_audit.h"
 #include "core/capability_model.hh"
+#include "core/provenance_tracker.hh"
+#include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
@@ -39,10 +41,12 @@ import aura.compiler.value;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::Evaluator;
 using aura::compiler::security::kEffectMutate;
 using aura::core::bump_mutation_epoch;
 using aura::core::current_mutation_epoch;
 using aura::core::capability::CapabilityGrant;
+using aura::core::capability::Effect;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::reset_capability_effects_for_test;
@@ -68,6 +72,9 @@ static void reset_all() {
     reset_security_event_ring_for_test();
     using ::aura::core::workspace_isolation::g_workspace_isolation;
     g_workspace_isolation().set_strict_sandbox_linked(false);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Off);
 }
 
 // Helper: count IsolationDeny SecurityEvents in the ring since a baseline.
@@ -1062,7 +1069,7 @@ static void ac3365_1_restricted_mt_unstamped_denies() {
     // deny under (Restricted && multi) where multi=true.
     // Issue #3365: also verify the deny reason propagates as
     // `isolation-deny: unstamped-ref` (set via resolve_stamped caller-side).
-    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+    const bool denied = !ev.check_workspace_isolation(
         /*target=*/42, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac1");
     CHECK(denied, "3365 AC1: Restricted + MT + layout-only ref (ref_tenant=0) is denied");
     // Tear down for next AC.
@@ -1090,7 +1097,7 @@ static void ac3365_2_correct_stamp_allows() {
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
     // Correct-stamp ref (ref_tenant == target == 42) → same tenant → allow.
-    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+    const bool denied = !ev.check_workspace_isolation(
         /*target=*/42, /*ref_tenant=*/42, /*required_effects=*/0, "test:3365-ac2");
     CHECK(
         !denied,
@@ -1121,7 +1128,7 @@ static void ac3365_3_single_tenant_restricted_allows() {
     }
     // Single-tenant + layout-only ref → still allow (multi=false → new arm
     // does not fire).
-    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+    const bool denied = !ev.check_workspace_isolation(
         /*target=*/7, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac3");
     CHECK(!denied, "3365 AC3: single-tenant Restricted + layout-only ref allows (no MT, #2056 "
                    "legacy contract)");
@@ -1148,7 +1155,7 @@ static void ac3365_4_soft_off_zero_cost() {
         reg.grant(42, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
-    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+    const bool denied = !ev.check_workspace_isolation(
         /*target=*/42, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac4");
     CHECK(!denied, "3365 AC4: Off + MT + layout-only ref allows (sandbox_restricted=false → OR-arm "
                    "not fired)");
@@ -1176,7 +1183,7 @@ static void ac3365_5_strict_unstamped_denies() {
         reg.grant(7, "tenant-admin",
                   static_cast<Effect>(aura::compiler::security::kEffectTenantAdmin), {});
     }
-    const bool denied = !aura::core::workspace_isolation::check_workspace_isolation(
+    const bool denied = !ev.check_workspace_isolation(
         /*target=*/7, /*ref_tenant=*/0, /*required_effects=*/0, "test:3365-ac5");
     CHECK(denied, "3365 AC5: Strict + layout-only ref denies (pre-existing behavior preserved)");
     ev.set_effect_sandbox_mode(0);
@@ -1204,6 +1211,137 @@ static void ac3365_6_source_cite_and_no_invent() {
                   std::string("3365 AC6: no docs/design/") + name + " (forbidden per #1655)");
         }
     }
+}
+
+// Issue #3415: occupancy NodeId must not restamp a foreign owner as the
+// caller. Restricted+MT consults last stamp / hygiene; require_effect
+// isolation target uses foreign ref_tenant (align resolve_stamped).
+static void ac3415_1_occupancy_foreign_stamp_denies() {
+    std::println("\n--- #3415 AC1: Restricted+MT occupancy of foreign-stamped NodeId denies ---");
+    reset_all();
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(99);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(99, "mut-3415-b", kEffectMutate, me == 0 ? 1 : me);
+    ev.grant_effect_capability(7, "mut-3415-a", kEffectMutate, me == 0 ? 1 : me);
+    (void)ev.make_stamped_ref(/*node_id=*/3);
+    CHECK(aura::core::provenance::existing_stamp_for_node(3) == 99,
+          "3415 AC1: B stamp slot records tenant 99");
+    ev.set_capability_tenant_id(7);
+    const bool ok = ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                                  "3415-ac1-occupancy", /*node_id=*/3);
+    CHECK(!ok, "3415 AC1: Restricted+MT occupancy of B's NodeId IsolationDeny");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+}
+
+static void ac3415_2_on_ref_foreign_still_denies() {
+    std::println("\n--- #3415 AC2: stamped foreign on_ref still denies ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(7, "mut-3415-ac2", kEffectMutate, me == 0 ? 1 : me);
+    auto foreign = ev.make_stamped_ref(/*node_id=*/1);
+    foreign.tenant_id = 99;
+    const bool ok = ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate),
+                                             "3415-ac2-on-ref", foreign);
+    CHECK(!ok, "3415 AC2: foreign stamped on_ref denies (#2658 no regression)");
+}
+
+static void ac3415_3_same_tenant_stamped_allows() {
+    std::println("\n--- #3415 AC3: same-tenant stamped ref still allows ---");
+    reset_all();
+    bump_mutation_epoch(1);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    const auto me = current_mutation_epoch();
+    ev.grant_effect_capability(7, "mut-3415-ac3", kEffectMutate, me == 0 ? 1 : me);
+    auto own = ev.make_stamped_ref(/*node_id=*/1);
+    CHECK(own.tenant_id == 7, "3415 AC3: stamp is caller");
+    const bool ok =
+        ev.require_effect_on_ref(static_cast<std::uint16_t>(kEffectMutate), "3415-ac3-same", own);
+    CHECK(ok, "3415 AC3: same-tenant stamped ref allows with Mutate grant");
+}
+
+static void ac3415_4_soft_and_single_tenant_unchanged() {
+    std::println("\n--- #3415 AC4: Soft / single-tenant Restricted occupancy unchanged ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(0);
+    ev.set_capability_tenant_id(0);
+    CHECK(ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate), "3415-ac4-soft",
+                                        /*node_id=*/1),
+          "3415 AC4: Soft occupancy for_node_id allows");
+    reset_all();
+    CompilerService cs2;
+    auto& ev2 = cs2.evaluator();
+    ev2.set_effect_sandbox_mode(1);
+    ev2.set_capability_tenant_id(7);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    const auto me = current_mutation_epoch();
+    ev2.grant_effect_capability(7, "mut-3415-ac4", kEffectMutate, me == 0 ? 1 : me);
+    CHECK(ev2.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                         "3415-ac4-single", /*node_id=*/1),
+          "3415 AC4: single-tenant Restricted occupancy allows (#2056)");
+}
+
+static void ac3415_5_no_grant_denies() {
+    std::println("\n--- #3415 AC5: no Mutate grant denies ---");
+    reset_all();
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);
+    ev.set_capability_tenant_id(7);
+    CHECK(!ev.require_effect_for_node_id(static_cast<std::uint16_t>(kEffectMutate),
+                                         "3415-ac5-nogrant",
+                                         /*node_id=*/1),
+          "3415 AC5: no Mutate grant denies");
+}
+
+static void ac3415_6_source_cite_and_no_invent() {
+    std::println("\n--- #3415 AC6: source-cite + no invent ---");
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto ixx = read_file("src/compiler/evaluator.ixx");
+    const auto build = read_file("build.py");
+    CHECK(sec.find("Issue #3415") != std::string::npos, "3415 AC6: security cites #3415");
+    CHECK(sec.find("iso_target") != std::string::npos, "3415 AC6: require_effect iso_target");
+    CHECK(sec.find("existing_stamp_for_node") != std::string::npos,
+          "3415 AC6: for_node_id consults existing stamp");
+    CHECK(mut.find("Issue #3415") != std::string::npos, "3415 AC6: mutate cites #3415");
+    CHECK(ixx.find("kBareNodeIdIsolationIssue = 3415") != std::string::npos, "3415 AC6: ixx stamp");
+    CHECK(build.find("check_bare_nodeid_foreign_stamp_3415") != std::string::npos,
+          "3415 AC6: build.py wires linter");
+    CHECK(read_file("tests/compiler/test_issue_3415.cpp").empty() &&
+              read_file("tests/core/test_issue_3415.cpp").empty() &&
+              read_file("tests/issues/test_issue_3415.cpp").empty(),
+          "3415 AC6: no test_issue_3415.cpp");
+    CHECK(read_file("docs/design/3415-bare-nodeid-isolation.md").empty(),
+          "3415 AC6: no docs/design/3415-*");
+}
+
+static void ac3415_7_packed_resolve_keeps_stamp() {
+    std::println("\n--- #3415 AC7: packed resolve_mutate_node_arg keeps stamp ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto resolve = mut.find("auto resolve_mutate_node_arg");
+    CHECK(resolve != std::string::npos, "3415 AC7: resolve_mutate_node_arg present");
+    const auto packed = mut.find("if (auto packed = unpack_stable_ref_arg", resolve);
+    CHECK(packed != std::string::npos, "3415 AC7: packed unpack present");
+    const auto int_br = mut.find("if (is_int(arg))", packed);
+    CHECK(int_br > packed, "3415 AC7: occupancy int branch after packed");
+    const auto body = mut.substr(packed, int_br - packed);
+    CHECK(body.find("Issue #3415") != std::string::npos, "3415 AC7: packed cites #3415");
+    CHECK(body.find("make_stamped_ref(") == std::string::npos,
+          "3415 AC7: packed path does not occupancy-restamp");
 }
 
 } // namespace
@@ -1262,6 +1400,14 @@ int run_test_require_effect_auto_isolation() {
     ac3365_4_soft_off_zero_cost();
     ac3365_5_strict_unstamped_denies();
     ac3365_6_source_cite_and_no_invent();
+    std::println("\n=== Issue #3415: occupancy NodeId foreign-stamp isolation ===");
+    ac3415_1_occupancy_foreign_stamp_denies();
+    ac3415_2_on_ref_foreign_still_denies();
+    ac3415_3_same_tenant_stamped_allows();
+    ac3415_4_soft_and_single_tenant_unchanged();
+    ac3415_5_no_grant_denies();
+    ac3415_6_source_cite_and_no_invent();
+    ac3415_7_packed_resolve_keeps_stamp();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

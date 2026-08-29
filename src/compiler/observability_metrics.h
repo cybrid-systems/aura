@@ -9538,6 +9538,10 @@ struct CompilerMetrics {
     // Additive, struct-end layout-stable (#2906) — Agent dashboards.
     static constexpr int kSoftTimeoutQuarantineIssue = 3331;
     std::atomic<std::uint64_t> solve_delta_soft_timeout_quarantine_total{0};
+    // Issue #3412: aura_closure_call slow path consults deopt_pending and
+    // bumps this existing counter (AuraJit::Metrics has a namesake; AOT
+    // metrics pointer is CompilerMetrics). Appended at END (#2906).
+    std::atomic<std::uint64_t> deopt_pending_invoke_fallbacks{0};
 };
 
 // Issue #2248: adaptive thr feed lives in ir_cache_pure (module). Header
