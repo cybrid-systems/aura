@@ -49,6 +49,12 @@ namespace aura::compiler::shape {
 //   - Deopt-storm ring under meta_mtx_ (mutation-only; never from compact).
 //   - dirty_hook_ is std::atomic<DirtyHookFn> (#3271) — no std::function;
 //     load after shard unlock so the callback stays allocation-free.
+//   - Issue #3357: record_shape TLS histogram / last-shape sample per FnKey
+//     (bounded slots). Same-fiber repeats coalesce; merge into the shard
+//     under one unique_lock at kShapeTlsMergeBatch. is_stable / dominant
+//     remain shard-shared reads. ≤1 observation per merge window takes
+//     the existing unique_lock path (no extra atomics). No std::function;
+//     no process-wide lock.
 //   - External deopt/dirty hooks fire *after* releasing locks so
 //     callbacks may re-enter without deadlock.
 //   - Metrics atomics remain lock-free for publish. Contention counted in
@@ -61,6 +67,10 @@ inline constexpr int kShapeProfilerShardIssue = 2937;
 inline constexpr int kShapeCompactNoAllShardsLockIssue = 3199;
 // Issue #3271: dirty hook is a trivially-copyable fn ptr (no std::function).
 inline constexpr int kShapeDirtyHookNoStdFunctionIssue = 3271;
+// Issue #3357: TLS record_shape merge (hot-FnKey unique_lock amortisation).
+inline constexpr int kShapeTlsRecordMergeIssue = 3357;
+inline constexpr std::size_t kShapeTlsRecordSlots = 8;
+inline constexpr std::uint32_t kShapeTlsMergeBatch = 8;
 // Fixed shard count — power-of-two friendly; FnKey hash selects shard.
 inline constexpr std::size_t kShapeProfilerShardCount = 16;
 // Production IR/cascade callback. Unset (nullptr) is zero extra (#3271).
@@ -227,6 +237,11 @@ inline std::atomic<std::uint64_t>& g_shape_compact_no_global_bump_wired_atomic()
 class ShapeProfiler {
 public:
     ShapeProfiler();
+    ~ShapeProfiler();
+    ShapeProfiler(const ShapeProfiler&) = delete;
+    ShapeProfiler& operator=(const ShapeProfiler&) = delete;
+    ShapeProfiler(ShapeProfiler&&) = delete;
+    ShapeProfiler& operator=(ShapeProfiler&&) = delete;
 
     // ── Record a shape observation ─────────────────────────────
     // Called after each eval of function `fn` with the observed shape ID.
@@ -412,6 +427,15 @@ public:
     [[nodiscard]] std::uint64_t lock_contended_total() const noexcept {
         return lock_contended_total_.load(std::memory_order_relaxed);
     }
+    // Issue #3357: TLS merge batches (unique_lock amortisation). 0 when
+    // TLS merge disabled / ≤1 observation per window (no extra atomic).
+    [[nodiscard]] std::uint64_t tls_merge_batches_total() const noexcept {
+        return tls_merge_batches_total_.load(std::memory_order_relaxed);
+    }
+    void set_tls_merge_enabled(bool on) noexcept { tls_merge_enabled_ = on; }
+    [[nodiscard]] bool tls_merge_enabled() const noexcept { return tls_merge_enabled_; }
+    // Same-thread: apply pending TLS observations into the shard.
+    void flush_tls_records() noexcept;
     // Issue #2937: public shard count for tests / Agents.
     [[nodiscard]] static constexpr std::size_t shard_count() noexcept {
         return kShapeProfilerShardCount;
@@ -439,6 +463,12 @@ private:
     // Invalidate body without taking locks (caller holds unique lock on
     // the owning shard for `fn`).
     bool invalidate_unlocked_(FnKey fn);
+    // Issue #3357: apply `n` same-shape observations under one unique_lock.
+    bool record_shape_apply_locked_(FnKey fn, ShapeID shape_id, std::uint32_t n);
+    void tls_bind_owner_();
+    void tls_drop_owner_() noexcept;
+    void tls_drop_fn_(FnKey fn) noexcept;
+    bool tls_record_(FnKey fn, ShapeID shape_id, bool& out_stable);
     struct ShapeRecord {
         ShapeID shape_id;
         std::uint64_t timestamp;
@@ -511,6 +541,10 @@ private:
     std::array<ProfileShard, kShapeProfilerShardCount> shards_{};
     // Issue #2141 / #2937: process-wide contention counter (any shard/config).
     mutable std::atomic<std::uint64_t> lock_contended_total_{0};
+    // Issue #3357: TLS merge batch counter (bumped only on merge, not on
+    // the ≤1 unique_lock path).
+    std::atomic<std::uint64_t> tls_merge_batches_total_{0};
+    bool tls_merge_enabled_ = true;
     // Config knobs (not on hot record_shape path for distinct FnKeys).
     mutable std::shared_mutex config_mtx_;
     // Deopt-storm ring (mutation-only meta; never compact). Hook is atomic.

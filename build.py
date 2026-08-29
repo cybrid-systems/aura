@@ -4043,6 +4043,19 @@ def cmd_lint():
             "Issue #3271 shape-dirty-hook linter failed — run python3 scripts/coverage/checks/check_shape_dirty_hook_no_std_function_3271.py"
         )
         return r
+    # Issue #3357: record_shape TLS histogram merge (hot-FnKey unique_lock
+    # amortisation). Extends test_shape_profiler_concurrency (#81967);
+    # no docs/design/; no std::function; no new query key.
+    stls3357_script = COVERAGE_CHECKS / "check_shape_tls_record_merge_3357.py"
+    if not stls3357_script.exists():
+        fail(f"missing {stls3357_script}")
+        return 1
+    r = run([sys.executable, str(stls3357_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3357 shape TLS record-merge linter failed — run python3 scripts/coverage/checks/check_shape_tls_record_merge_3357.py"
+        )
+        return r
     # Issue #2967: durable high-risk grant call-site gate — caller must
     # hold TenantAdmin (or "tenant-admin" / "capability" string caps mapped
     # to TenantAdmin) AND pass a non-empty audit reason under production.

@@ -322,7 +322,28 @@ ShapeProfiler::ShapeProfiler() {
     // window/threshold knobs actually take effect without env.
     if (shape_high_mutation_default_enabled())
         apply_preset(kHighMutationPreset);
+    if (const char* e = std::getenv("AURA_SHAPE_TLS_MERGE"))
+        tls_merge_enabled_ = e[0] != '0';
 }
+
+ShapeProfiler::~ShapeProfiler() {
+    tls_drop_owner_();
+}
+
+namespace {
+    // Issue #3357: per-fiber observation bucket. Bounded; no heap.
+    struct TlsMergeSlot {
+        FnKey fn = 0;
+        ShapeID shape = 0;
+        std::uint32_t count = 0;
+        bool last_stable = false;
+    };
+    struct TlsMergeState {
+        ShapeProfiler* owner = nullptr;
+        TlsMergeSlot slots[kShapeTlsRecordSlots]{};
+    };
+    thread_local TlsMergeState g_shape_tls_merge;
+} // namespace
 
 // ── Issue #2141 / #2937: lock helpers (per-shard + config) ───
 std::size_t ShapeProfiler::shard_index(FnKey fn) noexcept {
@@ -464,6 +485,7 @@ std::size_t ShapeProfiler::max_profiles() const noexcept {
 }
 
 std::size_t ShapeProfiler::profile_count() const noexcept {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto locks = shared_lock_all_shards_();
     std::size_t n = 0;
     for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
@@ -511,19 +533,13 @@ ShapeID ShapeProfiler::FnProfile::compute_dominant() const {
     return best;
 }
 
-bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
-    // The pre (shape_id != SHAPE_UNKNOWN) is on the declaration
-    // in shape_profiler.h.
-    aura::core::cpp26::record_hotpath_invariant_hit();
-    contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
-
-    // Issue #2141 / #2937: unique lock on owning shard only; fire hooks after unlock.
+bool ShapeProfiler::record_shape_apply_locked_(FnKey fn, ShapeID shape_id, std::uint32_t n) {
+    if (n == 0)
+        return false;
     bool fire_stability_loss = false;
     std::uint64_t fire_version = 0;
     bool result = false;
 
-    // Issue #2937 lock order: config (shared) before shard unique — never nest
-    // config under a held shard lock on the hot path.
     std::uint32_t win = 0;
     double stab = 0.0;
     {
@@ -535,20 +551,16 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     {
         auto lock = unique_lock_shard_(si);
         auto& profiles = shards_[si].profiles;
-        // Issue #992 / #2937: per-shard cap ≈ max_profiles_/N so total stays near max.
         if (profiles.find(fn) == profiles.end())
             maybe_evict_profiles_(si);
         auto& profile = profiles[fn];
         auto& history = profile.history;
-        const std::uint64_t now = global_time_.fetch_add(1, std::memory_order_relaxed) + 1;
+        const std::uint64_t now = global_time_.fetch_add(n, std::memory_order_relaxed) + 1;
         profile.last_used = now;
-
-        history.push({shape_id, now}, win);
-
-        profile.total_calls++;
-
-        // Issue #1468: history_hit/miss counters.
-        history_hit_count_.fetch_add(1, std::memory_order_relaxed);
+        for (std::uint32_t i = 0; i < n; ++i)
+            history.push({shape_id, now - n + 1 + i}, win);
+        profile.total_calls += n;
+        history_hit_count_.fetch_add(n, std::memory_order_relaxed);
 
         if (history.size() < kStableThreshold)
             return false;
@@ -609,7 +621,118 @@ bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
     return result;
 }
 
+void ShapeProfiler::tls_bind_owner_() {
+    if (g_shape_tls_merge.owner == this)
+        return;
+    if (g_shape_tls_merge.owner)
+        g_shape_tls_merge.owner->flush_tls_records();
+    g_shape_tls_merge.owner = this;
+}
+
+void ShapeProfiler::tls_drop_owner_() noexcept {
+    if (g_shape_tls_merge.owner != this)
+        return;
+    g_shape_tls_merge = {};
+}
+
+void ShapeProfiler::tls_drop_fn_(FnKey fn) noexcept {
+    if (g_shape_tls_merge.owner != this)
+        return;
+    for (auto& s : g_shape_tls_merge.slots) {
+        if (s.fn == fn)
+            s = {};
+    }
+}
+
+bool ShapeProfiler::tls_record_(FnKey fn, ShapeID shape_id, bool& out_stable) {
+    tls_bind_owner_();
+    TlsMergeSlot* slot = nullptr;
+    TlsMergeSlot* empty = nullptr;
+    for (auto& s : g_shape_tls_merge.slots) {
+        if (s.fn == fn) {
+            slot = &s;
+            break;
+        }
+        if (!empty && s.fn == 0)
+            empty = &s;
+    }
+    if (!slot)
+        return false; // first observation this window → unique_lock (AC3 ≤1)
+    if (slot->shape != shape_id) {
+        if (slot->count > 0) {
+            out_stable = record_shape_apply_locked_(fn, slot->shape, slot->count);
+            tls_merge_batches_total_.fetch_add(1, std::memory_order_relaxed);
+        }
+        slot->shape = shape_id;
+        slot->count = 0;
+        slot->last_stable = false;
+        return false; // apply new shape via unique_lock
+    }
+    slot->count++;
+    if (slot->count >= kShapeTlsMergeBatch) {
+        out_stable = record_shape_apply_locked_(fn, shape_id, slot->count);
+        tls_merge_batches_total_.fetch_add(1, std::memory_order_relaxed);
+        slot->count = 0;
+        slot->last_stable = out_stable;
+        return true;
+    }
+    out_stable = slot->last_stable;
+    (void)empty;
+    return true;
+}
+
+void ShapeProfiler::flush_tls_records() noexcept {
+    if (g_shape_tls_merge.owner != this)
+        return;
+    for (auto& s : g_shape_tls_merge.slots) {
+        if (s.fn == 0 || s.count == 0)
+            continue;
+        (void)record_shape_apply_locked_(s.fn, s.shape, s.count);
+        tls_merge_batches_total_.fetch_add(1, std::memory_order_relaxed);
+        s.count = 0;
+    }
+}
+
+bool ShapeProfiler::record_shape(FnKey fn, ShapeID shape_id) {
+    // The pre (shape_id != SHAPE_UNKNOWN) is on the declaration
+    // in shape_profiler.h.
+    aura::core::cpp26::record_hotpath_invariant_hit();
+    contract_assert(is_known_inline_shape_id(shape_id) || shape_id != SHAPE_UNKNOWN);
+
+    // Issue #3357: TLS coalesce on hot FnKey. First observation this
+    // fiber/window unique_locks (≤1 zero extra atomics). Repeats batch
+    // into the shard under one unique_lock at kShapeTlsMergeBatch.
+    if (tls_merge_enabled_ && fn != 0) {
+        bool st = false;
+        if (tls_record_(fn, shape_id, st))
+            return st;
+        st = record_shape_apply_locked_(fn, shape_id, 1);
+        tls_bind_owner_();
+        TlsMergeSlot* slot = nullptr;
+        TlsMergeSlot* empty = nullptr;
+        for (auto& s : g_shape_tls_merge.slots) {
+            if (s.fn == fn) {
+                slot = &s;
+                break;
+            }
+            if (!empty && s.fn == 0)
+                empty = &s;
+        }
+        if (!slot)
+            slot = empty;
+        if (slot) {
+            slot->fn = fn;
+            slot->shape = shape_id;
+            slot->count = 0;
+            slot->last_stable = st;
+        }
+        return st;
+    }
+    return record_shape_apply_locked_(fn, shape_id, 1);
+}
+
 bool ShapeProfiler::is_stable(FnKey fn) const {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
     auto lock = shared_lock_shard_(si);
     auto it = shards_[si].profiles.find(fn);
@@ -617,6 +740,7 @@ bool ShapeProfiler::is_stable(FnKey fn) const {
 }
 
 ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
     auto lock = shared_lock_shard_(si);
     auto it = shards_[si].profiles.find(fn);
@@ -626,6 +750,7 @@ ShapeID ShapeProfiler::dominant_shape(FnKey fn) const {
 }
 
 ShapeSnapshot ShapeProfiler::current_snapshot(FnKey fn) const {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
     auto lock = shared_lock_shard_(si);
     ShapeSnapshot snap;
@@ -670,6 +795,7 @@ bool ShapeProfiler::invalidate_unlocked_(FnKey fn) {
 
 bool ShapeProfiler::invalidate(FnKey fn) {
     // The pre (fn != 0) is on the declaration in shape_profiler.h.
+    tls_drop_fn_(fn);
     bool was_stable = false;
     std::uint64_t version = 0;
     bool found = false;
@@ -698,6 +824,7 @@ bool ShapeProfiler::invalidate(FnKey fn) {
 }
 
 void ShapeProfiler::invalidate_all() noexcept {
+    tls_drop_owner_();
     // Collect keys under shared multi-shard locks, then invalidate each (hook-safe).
     // Issue #2526: mutation pressure counted per-invalidate_unlocked_ (not here)
     // to avoid double-count with the single-fn path.
@@ -735,6 +862,7 @@ void ShapeProfiler::invalidate_all() noexcept {
 // Gate: scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
 // Per-shard unique_lock_shard_ only so disjoint record_shape proceeds.
 std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
+    flush_tls_records();
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
     // Issue #2256: feed Moving-compact observability counters
@@ -859,6 +987,7 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
 // soft-clear storm flag when it was never justified by mutation churn
 // after pure compact pressure (defensive; compact never sets the ring).
 double ShapeProfiler::on_boundary_or_fiber_sync(bool clear_compact_only_storm) noexcept {
+    flush_tls_records();
     boundary_fiber_sync_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_boundary_post_compact_checks.fetch_add(1, std::memory_order_relaxed);
     shape_fiber_steal_sync_total.fetch_add(1, std::memory_order_relaxed);
@@ -998,6 +1127,7 @@ void ShapeProfiler::update_deopt_storm_state_(FnKey fn) noexcept {
 
 // Issue #1468 / #2141 / #2937: ratio accessors under multi-shard shared locks.
 double ShapeProfiler::shape_stable_ratio() const noexcept {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto locks = shared_lock_all_shards_();
     std::uint32_t stable = 0;
     std::size_t n = 0;
@@ -1040,6 +1170,7 @@ double ShapeProfiler::history_hit_rate() const noexcept {
 }
 
 ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     const std::size_t si = shard_index(fn);
     auto lock = shared_lock_shard_(si);
     ShapeFnMetrics m;
@@ -1074,6 +1205,7 @@ ShapeFnMetrics ShapeProfiler::metrics(FnKey fn) const {
 }
 
 void ShapeProfiler::reset() {
+    tls_drop_owner_();
     auto locks = unique_lock_all_shards_();
     for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i)
         shards_[i].profiles.clear();
@@ -1113,6 +1245,7 @@ void ShapeProfiler::maybe_evict_profiles_(std::size_t shard_i) {
 }
 
 std::vector<FnKey> ShapeProfiler::tracked_fns() const {
+    const_cast<ShapeProfiler*>(this)->flush_tls_records();
     auto locks = shared_lock_all_shards_();
     std::vector<FnKey> keys;
     for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
