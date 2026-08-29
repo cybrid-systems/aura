@@ -122,7 +122,15 @@ static void ac4_metrics() {
     const auto hot0 = value_tag_hot_path_total.load(std::memory_order_relaxed);
     note_value_tag_hot_path();
     (void)as_int(make_int(1));
+#ifdef AURA_CONTRACTS_OBSERVE
+    // Soft / observe build: the process atomic is live (#2259).
     CHECK(value_tag_hot_path_total.load(std::memory_order_relaxed) > hot0, "hot path advanced");
+#else
+    // Issue #3391 (I1): under NDEBUG the fetch_add is compiled out —
+    // the note is zero-overhead and the counter stays flat by contract.
+    CHECK(value_tag_hot_path_total.load(std::memory_order_relaxed) == hot0,
+          "hot path zero-overhead under NDEBUG (#3391: counter compiled out)");
+#endif
 
     // Tag stability: consecutive Fixnum samples.
     const auto stab0 = value_tag_stability_run_total.load(std::memory_order_relaxed);

@@ -2996,8 +2996,16 @@ int run_test_moving_densify_fail_closed() {
     std::println("\n=== Issue #3092: production canary wiring ===");
     {
         const auto mut = read_file("src/compiler/evaluator_mutation_boundary.cpp");
-        CHECK(mut.find("note_post_moving_live_ptr_canary_all(*slot)") != std::string::npos,
-              "#3092 AC1: canary injection in Evaluator::register_known_moving_densify_root_slots");
+        // #3368 supersedes the #3092 dual-note: the slot registration is
+        // the cover (slot XOR canary exclusive) — a co-located canary
+        // would hold the pre-rewrite address and false-flag
+        // moving_incomplete_remap after a successful rewrite. Assert the
+        // #3368 do-not-dual-note contract instead.
+        CHECK(mut.find("do NOT note_post_moving_live_ptr_canary_all") != std::string::npos,
+              "#3092 AC1 (#3368): no dual-note canary in "
+              "Evaluator::register_known_moving_densify_root_slots");
+        CHECK(mut.find("Issue #3368") != std::string::npos,
+              "#3092 AC1: #3368 reversal cite present");
     }
     {
         const auto arena = read_file("src/core/arena.ixx");

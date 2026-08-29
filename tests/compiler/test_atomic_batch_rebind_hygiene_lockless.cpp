@@ -69,8 +69,10 @@ int run_test_atomic_batch_rebind_hygiene_lockless() {
         CHECK(contains(efl_after, "#3374"), "AC1: lockless helper cites #3374");
         // Pre-install fail-fast: the walk must precede add_mutation_with_rollback
         // + set_child + mark_dirty_upward_fast in the same function body.
+        // Match the CALL form — a leading order-describing comment also
+        // mentions the bare name and would break a naive find (#3374 note).
         const auto walk_pos = efl_after.find("walk_subtree(new_value");
-        const auto add_mut_pos = efl_after.find("add_mutation_with_rollback");
+        const auto add_mut_pos = efl_after.find("flat.add_mutation_with_rollback(");
         CHECK(walk_pos != std::string::npos && add_mut_pos != std::string::npos,
               "AC1: both walk and add_mutation present");
         CHECK(walk_pos < add_mut_pos,

@@ -3953,6 +3953,9 @@ if(TARGET all_test_issue_targets)
 endif()
 
 # Domain batch: Value-tag hotpath ban/path ACs (Stream A10i) (2 members + driver). Stream S2.
+# Issue #2616 / #3391: hot-path classify_eval_value_tag ban gate is wired
+# via build.py (check_value_tag_hotpath_ban_2616) — comment-fold alias kept
+# here for the #3391 AC3 source-cite needle (batch-rename wave safe).
 add_executable(test_value_tag_hotpath_batch
     tests/compiler/test_value_tag_hotpath_batch.cpp
     tests/compiler/test_value_tag_hot_path.cpp

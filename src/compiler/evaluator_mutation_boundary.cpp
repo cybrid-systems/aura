@@ -6127,6 +6127,8 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
             arena_group_->register_external_root_slot_for_densify_all(slot);
         // Issue #3368: do NOT note_post_moving_live_ptr_canary_all(`*slot`) as a
         // post-Moving canary here (do NOT dual-note).
+        // Lineage: this reverses the Issue #3092 dual-note wiring —
+        // #3092 cite kept for the densify-canary lineage trail.
         // The slot itself is the cover (note_ffi_opaque_alias_densify_cover
         // contract: slot XOR canary exclusive). After a successful rewrite,
         // `*slot` is the new address; a co-located canary would still hold

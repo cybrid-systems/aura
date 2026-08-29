@@ -207,7 +207,11 @@ int run_test_scalar_mutate_record_patch_hygiene() {
         if (end == std::string::npos)
             end = pos + 6000;
         auto win = src.substr(pos, end - pos);
-        auto node_resolve = win.find("auto node = static_cast<aura::ast::NodeId>");
+        // #3399: node resolve routes through the SSOT helper (Issue #489)
+        // instead of a bare static_cast — accept either form.
+        auto node_resolve = win.find("resolve_mutate_node_arg(");
+        if (node_resolve == std::string::npos)
+            node_resolve = win.find("auto node = static_cast<aura::ast::NodeId>");
         auto guard = win.find("reject_structural_macro_hygiene");
         auto add_mutation = win.find("flat.add_mutation(node,");
         auto out_of_range_check = win.find(">= flat size");

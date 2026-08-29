@@ -1382,10 +1382,12 @@ static void ac3037_1_production_torn_after_lazy_align() {
     auto lag = first_non_eager(*ws);
     CHECK(lag != aura::ast::NULL_NODE, "3037 AC1: non-eager node");
     CHECK(!ws->node_eagerly_restamped(lag), "3037 AC1: not eagerly restamped");
-    // Lazy-align must not hide torn: is_valid / make_ref_layout flip node_gen_.
-    CHECK(ws->is_valid(lag), "3037 AC1: lazy-align is_valid still true (#2934)");
+    // #3388: is_valid is observe-only — torn lag reads stale, no
+    // write-up; make_ref_layout is the lazy-align face that flips gen.
+    CHECK(!ws->is_valid(lag), "3037 AC1: observe-only is_valid reads torn lag stale (#3388)");
+    (void)ws->make_ref_layout(lag);
     CHECK(ws->node_generation_is_post_mutate(lag),
-          "3037 AC1: lazy-align made node_gen look post-mutate");
+          "3037 AC1: make_ref_layout lazy-align made node_gen look post-mutate");
     CHECK(!cs.evaluator().allow_query_stable_ref_export(lag),
           "3037 AC1: production still rejects after lazy-align");
     aura::ast::FlatAST::StableNodeRef brace{};
@@ -2518,12 +2520,19 @@ static void ac3192_2_all_structural_primitives_acquire() {
           std::string("mutate:wrap"), std::string("mutate:rename-symbol"),
           std::string("mutate:move-node"), std::string("mutate:inline-call"),
           std::string("mutate:restore-hygiene-checkpoint")}) {
-        const auto needle = std::string("add_mutate(\"") + prim + "\"";
-        const auto pos = mut.find(needle);
+        // #3399: structural prims moved from add_mutate() calls to the
+        // static dispatch table — accept either registration form, and
+        // anchor the acquire window on the body usage-comment.
+        auto pos = mut.find(std::string("add_mutate(\"") + prim + "\"");
+        if (pos == std::string::npos)
+            pos = mut.find(std::string("{\"") + prim + "\",");
         CHECK(pos != std::string::npos, std::format("3192 AC2: {} registered", prim));
         if (pos != std::string::npos) {
+            auto body = mut.find(std::string("(") + prim + " ");
+            if (body == std::string::npos)
+                body = pos;
             // atomic-batch parses kwargs before acquire (~110 lines).
-            const auto block = mut.substr(pos, 16000);
+            const auto block = mut.substr(body, 16000);
             CHECK(block.find("mutate_dispatch_try_acquire") != std::string::npos,
                   std::format("3192 AC2: {} uses mutate_dispatch_try_acquire", prim));
         }

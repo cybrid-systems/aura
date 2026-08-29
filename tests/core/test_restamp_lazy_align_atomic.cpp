@@ -58,7 +58,10 @@ int run_test_restamp_lazy_align_atomic() {
         force_one_wrap(cone);
         cone.restamp_all_node_generations();
         CHECK(cone.restamp_lazy_align_enabled(), "AC4: lazy align on after incremental wrap");
-        CHECK(cone.is_valid(static_cast<aura::ast::NodeId>(100)), "AC4: is_valid lazy-align path");
+        // #3388: is_valid is observe-only — lagging live slot reads
+        // stale; lazy-align lives in make_ref_layout / make_ref only.
+        CHECK(!cone.is_valid(static_cast<aura::ast::NodeId>(100)),
+              "AC4: is_valid observe-only, lagging slot reads stale (#3388)");
         const auto align0 = cone.restamp_lazy_align_total();
         (void)cone.make_ref(static_cast<aura::ast::NodeId>(200));
         CHECK(cone.restamp_lazy_align_total() >= align0, "AC4: make_ref may lazy-align");
