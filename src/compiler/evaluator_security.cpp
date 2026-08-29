@@ -67,27 +67,43 @@ bool Evaluator::has_capability(std::string_view needed) const noexcept {
     if (needed.empty())
         return false;
     using namespace ::aura::core::capability;
-    // Explicit "*" in any layer keeps legacy wildcard-grants-all behavior.
-    const auto wildcard_held = [&]() noexcept {
-        for (const auto& cap : granted_capabilities_) {
-            if (cap == kCapWildcard)
-                return true;
-        }
-        for (const auto& layer : capability_stack_) {
-            for (const auto& cap : layer) {
+    // Issue #3411: compute eff BEFORE the wildcard short-circuit so TA/MSE
+    // bits can be routed through effects_for (#3144 strip). Wildcard-only
+    // must NOT satisfy has_capability("tenant-admin" / "self-evo" /
+    // "capability") — those map to TA / MSE bits and the #3144 effects_for
+    // strip removes TA+MSE from a wildcard-only holder, so the routed
+    // has_effect check returns false. AC1 AC3: mutate / render / etc.
+    // (non-TA/MSE) still wildcard-grant via the existing string + effect
+    // path. AC4: Soft/Off short-circuits at the top (zero extra).
+    const Effect eff = effect_for_cap_name(needed);
+    const bool is_ta_mse_eff =
+        (eff != Effect::None) && ((static_cast<std::uint16_t>(eff) &
+                                   (static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                                    static_cast<std::uint16_t>(Effect::MacroSelfEvo))) != 0);
+    // Explicit "*" in any layer grants non-TA/MSE effect-mapped caps +
+    // string-only caps. TA/MSE queries always fall through to effects_for.
+    if (!is_ta_mse_eff) {
+        const auto wildcard_held = [&]() noexcept {
+            for (const auto& cap : granted_capabilities_) {
                 if (cap == kCapWildcard)
                     return true;
             }
-        }
-        return false;
-    }();
-    if (wildcard_held)
-        return true;
+            for (const auto& layer : capability_stack_) {
+                for (const auto& cap : layer) {
+                    if (cap == kCapWildcard)
+                        return true;
+                }
+            }
+            return false;
+        }();
+        if (wildcard_held)
+            return true;
+    }
     // Delegate to effect matrix when name maps to a known Effect bit.
     // effect_for_cap_name returns the full mask for "*" so an effect-only
     // full-grant (registry has every bit) satisfies individual effect-mapped
-    // cap queries even without an explicit "*" string grant.
-    const Effect eff = effect_for_cap_name(needed);
+    // cap queries even without an explicit "*" string grant. #3144 strip
+    // removes TA+MSE bits from wildcard-only holders.
     if (eff != Effect::None) {
         return has_effect(g_capability_registry().effects_for(capability_tenant_id_), eff);
     }
@@ -1269,9 +1285,14 @@ void Evaluator::set_tenant_principal(std::uint64_t tenant_id, std::string_view /
         if (force_bind) {
             using aura::compiler::security::kCapCapability;
             using aura::compiler::security::kCapTenantAdmin;
-            using aura::compiler::security::kCapWildcard;
-            const bool privileged = has_capability(kCapTenantAdmin) ||
-                                    has_capability(kCapWildcard) || has_capability(kCapCapability);
+            // Issue #3411: drop the standalone has_capability(kCapWildcard)
+            // arm. kCapWildcard持卡不算 TA per #3144 — effects_for strip
+            // removes TA+MSE from a wildcard-only holder, so the corrected
+            // has_capability(kCapTenantAdmin) / has_capability(kCapCapability)
+            // already return false for wildcard-only. Keeping kCapWildcard in
+            // the OR would re-introduce the double-track string/effect gate.
+            const bool privileged =
+                has_capability(kCapTenantAdmin) || has_capability(kCapCapability);
             if (!privileged) {
                 using ::aura::core::security_event::SecurityEventKind;
                 using ::aura::core::security_event_wal::emit_security_event_durable;

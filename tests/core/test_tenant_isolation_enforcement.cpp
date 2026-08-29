@@ -3136,6 +3136,99 @@ int main() {
               "3276 AC4: no docs/design/3276-* per #1655");
     }
 
+    // ── #3411: has_capability("*") string-gate must not short-circuit
+    // TA/MSE bits — close the double-track with #3144 effects_for strip.
+    // set_tenant_principal(allow_cross=true) privileged check drops the
+    // standalone has_capability(kCapWildcard) arm. AC5: #3141/#3363/#3332
+    // regression-guard via source-cite.
+    {
+        std::println("\n--- #3411 AC1: has_capability TA/MSE bypass wildcard short-circuit ---");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        // Issue #3411 marker present (anchors the new block).
+        CHECK(sec.find("Issue #3411") != std::string::npos,
+              "3411 AC1: #3411 marker in evaluator_security.cpp");
+        // eff is computed BEFORE the wildcard short-circuit (otherwise the
+        // is_ta_mse_eff guard cannot steer TA/MSE queries to effects_for).
+        const auto eff_pos = sec.find("const Effect eff = effect_for_cap_name(needed);");
+        const auto wild_pos = sec.find("if (wildcard_held)");
+        CHECK(eff_pos != std::string::npos && wild_pos != std::string::npos && eff_pos < wild_pos,
+              "3411 AC1: eff computed before wildcard short-circuit (TA/MSE routing)");
+        // is_ta_mse_eff guards TA / MSE bits from the wildcard short-circuit.
+        CHECK(sec.find("is_ta_mse_eff") != std::string::npos,
+              "3411 AC1: is_ta_mse_eff guard for TA/MSE routing");
+        CHECK(sec.find("Effect::TenantAdmin") != std::string::npos &&
+                  sec.find("Effect::MacroSelfEvo") != std::string::npos,
+              "3411 AC1: TA + MSE bits routed through effects_for");
+        // TA/MSE queries always reach effects_for (#3144 strip path).
+        CHECK(sec.find(
+                  "has_effect(g_capability_registry().effects_for(capability_tenant_id_), eff)") !=
+                  std::string::npos,
+              "3411 AC1: TA/MSE routed via effects_for (uses #3144 strip)");
+
+        std::println("\n--- #3411 AC2: set_tenant_principal drops kCapWildcard privileged arm ---");
+        // set_tenant_principal must NOT OR has_capability(kCapWildcard) any
+        // more — the corrected has_capability(kCapTenantAdmin) already
+        // routes through effects_for and returns false for wildcard-only.
+        const auto set_tp = sec.find("set_tenant_principal(std::uint64_t tenant_id");
+        CHECK(set_tp != std::string::npos, "3411 AC2: set_tenant_principal present");
+        // The privileged OR no longer contains kCapWildcard arm.
+        const auto priv_block = sec.substr(set_tp, 1200);
+        CHECK(priv_block.find("has_capability(kCapTenantAdmin)") != std::string::npos &&
+                  priv_block.find("has_capability(kCapCapability)") != std::string::npos,
+              "3411 AC2: privileged = has_capability(TA) || has_capability(Capability)");
+        // Wildcard arm must NOT appear in the privileged OR.
+        CHECK(priv_block.find("has_capability(kCapWildcard)") == std::string::npos,
+              "3411 AC2: privileged OR no longer arms has_capability(kCapWildcard)");
+        // Existing SE reason preserved.
+        CHECK(priv_block.find("allow-cross-needs-tenant-admin") != std::string::npos,
+              "3411 AC2: SE reason 'allow-cross-needs-tenant-admin' preserved");
+        // Soft/Off short-circuit intact (zero extra cost — AC4).
+        CHECK(priv_block.find("force_bind = sandbox_mode_") != std::string::npos,
+              "3411 AC2: Soft/Off short-circuit via force_bind intact");
+
+        std::println("\n--- #3411 AC3: wildcard still grants non-TA/MSE + string-only ---");
+        // The wildcard_held lambda + early return must still exist (non-TA/MSE
+        // and string-only caps still wildcard-grant; AC3 mutate / render).
+        CHECK(sec.find("wildcard_held") != std::string::npos &&
+                  sec.find("if (wildcard_held)") != std::string::npos,
+              "3411 AC3: wildcard short-circuit preserved for non-TA/MSE");
+        // string-only legacy caps path still present.
+        CHECK(sec.find("Legacy string-only caps keep the list path.") != std::string::npos,
+              "3411 AC3: string-only caps list path preserved");
+
+        std::println("\n--- #3411 AC4: Soft/Off zero-cost short-circuit ---");
+        // Top of has_capability short-circuits when sandbox fully off.
+        CHECK(sec.find("Sandbox fully off") != std::string::npos &&
+                  sec.find("!sandbox_mode_ && effect_sandbox_mode() == 0") != std::string::npos,
+              "3411 AC4: Soft/Off short-circuit at top of has_capability (zero extra)");
+
+        std::println("\n--- #3411 AC5: #3141/#3363/#3332 don't regress ---");
+        // #3141 string write fence (grant_capability privilege-bearing path).
+        CHECK(sec.find("Issue #3141") != std::string::npos,
+              "3411 AC5: #3141 string write fence preserved");
+        // #3144 effects_for strip in capability_model.hh.
+        const auto cap = read_file("src/core/capability_model.hh");
+        CHECK(cap.find("Issue #3144") != std::string::npos,
+              "3411 AC5: #3144 effects_for strip preserved");
+        // #3363 require_effect TA deny + #3332 isolation read path.
+        CHECK(sec.find("Issue #3363") != std::string::npos ||
+                  read_file("src/compiler/check_and_record_effect.cpp").find("Issue #3363") !=
+                      std::string::npos,
+              "3411 AC5: #3363 require_effect TA deny preserved");
+        CHECK(sec.find("Issue #3332") != std::string::npos,
+              "3411 AC5: #3332 isolation read path preserved");
+        CHECK(sec.find("Issue #3010") != std::string::npos, "3411 AC5: #3010 write gate preserved");
+
+        std::println("\n--- #3411 AC6: no docs/design/3411-*; no test_issue_3411.cpp ---");
+        CHECK(read_file("docs/design/3411-wildcard-ta-string-gate.md").empty() &&
+                  read_file("docs/design/3411-has-capability-string-track.md").empty(),
+              "3411 AC6: no docs/design/3411-* per #1655");
+        CHECK(read_file("tests/issues/test_issue_3411.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3411.cpp").empty() &&
+                  read_file("tests/core/test_issue_3411.cpp").empty(),
+              "3411 AC6: no test_issue_3411.cpp per #81934 (extend existing test)");
+    }
+
     reset_all();
     std::println("\n=== test_tenant_isolation_enforcement: {} passed, {} failed ===", g_passed,
                  g_failed);

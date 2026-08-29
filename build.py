@@ -15325,6 +15325,41 @@ def cmd_dual_fresh_mutate_soft_migrate_3410_coverage():
     return 0
 
 
+def cmd_wildcard_ta_string_gate_3411_coverage():
+    """Issue #3411: has_capability("*") string-gate must not short-circuit
+    TA/MSE bits. Close the double-track with the #3144 effects_for strip.
+    set_tenant_principal(allow_cross=true) privileged check drops the
+    standalone has_capability(kCapWildcard) arm.
+
+    Source-cite linter (scripts/check_wildcard_ta_string_gate_3411.py)
+    verifies:
+      AC1 has_capability computes eff BEFORE wildcard short-circuit;
+         is_ta_mse_eff guard routes TA/MSE queries through effects_for.
+      AC2 set_tenant_principal privileged check drops the
+         has_capability(kCapWildcard) arm. SE reason
+         'allow-cross-needs-tenant-admin' preserved.
+      AC3 Wildcard still grants non-TA/MSE + string-only caps.
+      AC4 Soft/Off zero-cost short-circuit at top of has_capability.
+      AC5 #3141 / #3144 / #3363 / #3010 / #3332 fences preserved
+         (no regression on string write + effects_for strip +
+         require_effect TA deny + write gate + isolation read path).
+      AC6 No docs/design/3411-* (per #1655); no test_issue_3411.cpp
+         (per #81934). Extends test_tenant_isolation_enforcement.cpp.
+      AC7 test markers + build.py registration; no design docs.
+    """
+    print(f"{B}=== wildcard_ta_string_gate coverage (#3411) ==={N}")
+    script = SCRIPTS / "check_wildcard_ta_string_gate_3411.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("wildcard_ta_string_gate (#3411) coverage contract rows failed")
+        return 1
+    ok("wildcard_ta_string_gate (#3411) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22458,6 +22493,8 @@ def main():
         "set-assignment-hygiene-3408-coverage": cmd_set_assignment_hygiene_3408_coverage,
         "grant-ssot-ta-fence-3409": cmd_grant_ssot_ta_fence_3409_coverage,
         "grant-ssot-ta-fence-3409-coverage": cmd_grant_ssot_ta_fence_3409_coverage,
+        "wildcard-ta-string-gate-3411": cmd_wildcard_ta_string_gate_3411_coverage,
+        "wildcard-ta-string-gate-3411-coverage": cmd_wildcard_ta_string_gate_3411_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
