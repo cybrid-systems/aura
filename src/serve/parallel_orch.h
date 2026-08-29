@@ -199,6 +199,25 @@ count_distinct_nonzero_region_keys(std::span<const TaskSpec> tasks) noexcept {
     return false;
 }
 
+// Issue #3353: explicit soak/debug escape. Unset is not Off — production
+// mutate missing-keys deny when the env is absent.
+[[nodiscard]] inline bool parallel_require_region_keys_explicit_off() noexcept {
+    const char* e = std::getenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+    return e != nullptr && e[0] == '0' && e[1] == '\0';
+}
+
+// Issue #3353: production_defaults + !pure missing-keys → structured
+// deny (eval_mu is mutate-capable; same face as env=1). Soft / :pure
+// stay Serialized (#3243). env=0 remains the soak/debug escape.
+[[nodiscard]] inline bool parallel_require_region_keys_deny(bool production,
+                                                            bool mutate_batch) noexcept {
+    if (parallel_require_region_keys_explicit_off())
+        return false;
+    if (parallel_require_region_keys_env())
+        return true;
+    return production && mutate_batch;
+}
+
 enum class BatchStatus : std::uint8_t {
     Ok = 0,            // all tasks succeeded
     Partial = 1,       // some errors, completed without fail-fast abort
@@ -264,6 +283,7 @@ struct ParallelOrchStats {
 };
 
 inline constexpr int kParallelRegionKeyMissingIssue = 3243;
+inline constexpr int kParallelMutateRegionKeysProductionDenyIssue = 3353;
 inline constexpr const char* kSerializedReasonMissingOrOverlapKeys = "missing-or-overlap-keys";
 
 inline ParallelOrchStats g_parallel_orch_stats{};

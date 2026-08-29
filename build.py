@@ -6646,6 +6646,20 @@ def cmd_lint():
             "Issue #3299 parallel mutate region-keys linter failed — run python3 scripts/coverage/checks/check_parallel_mutate_region_keys_3299.py"
         )
         return r
+    # Issue #3353: production_defaults multi-agent mutate batches with
+    # <2 distinct region_keys structured-deny (not Serialized). Soft /
+    # non-mutate stay #3243 Serialized. env=0 soak escape. Extends
+    # test_parallel_intend_pure_contract.cpp after #3299; no docs/design.
+    prk3353_script = COVERAGE_CHECKS / "check_parallel_mutate_region_keys_prod_deny_3353.py"
+    if not prk3353_script.exists():
+        fail(f"missing {prk3353_script}")
+        return 1
+    r = run([sys.executable, str(prk3353_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3353 production mutate region-keys deny linter failed — run python3 scripts/coverage/checks/check_parallel_mutate_region_keys_prod_deny_3353.py"
+        )
+        return r
     # Issue #2887: mailbox BP storm — producer degrade hook on
     # AgentScope::watch_all (on_backpressure Cancel/Throttle/RestartN;
     # default ReportOnly). Complements admit soft-reject of new spawns
@@ -17670,6 +17684,24 @@ def cmd_isolation_decide_2923_coverage():
     return 0
 
 
+def cmd_parallel_mutate_region_keys_prod_deny_3353_coverage():
+    """Issue #3353: production_defaults mutate missing-keys structured deny.
+
+    Soft / non-mutate stay Serialized (#3243). env=0 soak escape.
+    """
+    print(f"{B}=== production mutate region-keys deny coverage (#3353) ==={N}")
+    script = COVERAGE_CHECKS / "check_parallel_mutate_region_keys_prod_deny_3353.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("production mutate region-keys deny (#3353) coverage contract rows failed")
+        return 1
+    ok("production mutate region-keys deny (#3353) coverage clean")
+    return 0
+
+
 def cmd_wait_reclaimed_2924_coverage():
     """Issue #2924: wait_reclaimed_body after JoinStatus::Reclaimed.
 
@@ -21607,6 +21639,8 @@ def main():
         "current-source-roundtrip-2921": cmd_current_source_roundtrip_2921_coverage,
         "ast-unparse-2922": cmd_ast_unparse_2922_coverage,
         "isolation-decide-2923": cmd_isolation_decide_2923_coverage,
+        "parallel-mutate-region-keys-prod-deny-3353": cmd_parallel_mutate_region_keys_prod_deny_3353_coverage,
+        "parallel-mutate-region-keys-prod-deny-3353-coverage": cmd_parallel_mutate_region_keys_prod_deny_3353_coverage,
         "wait-reclaimed-2924": cmd_wait_reclaimed_2924_coverage,
         "producer-bp-budget-2925": cmd_producer_bp_budget_2925_coverage,
         "mailbox-credit-2972": cmd_mailbox_credit_inflight_2972_coverage,
