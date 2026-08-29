@@ -5541,6 +5541,59 @@ public:
         return true;
     }
 
+    // Issue #3349: after remirror, mark this entry's IR blocks that
+    // DeadCoercion persist AST / encoded blocks map to. Soft / empty
+    // persist: caller skips (size 0). Returns true when at least one
+    // block was attributed (CastOp site now dirty — AC mark path).
+    bool mark_entry_from_dead_coercion_persist_(IRCacheEntry& entry) {
+        // Collect (func, block) then one mark_blocks_dirty per function
+        // (#2615 / #2774 — no N× mark_block_dirty fence loop).
+        std::unordered_map<std::size_t, std::vector<std::uint32_t>> per_fn;
+        auto note = [&](std::size_t fi, std::uint32_t bi) {
+            if (fi >= entry.irs.size())
+                return;
+            const auto nblocks = fi < entry.block_dirty_per_func_.size()
+                                     ? entry.block_dirty_per_func_[fi].size()
+                                     : entry.irs[fi].blocks.size();
+            if (bi >= nblocks)
+                return;
+            auto& v = per_fn[fi];
+            for (auto x : v) {
+                if (x == bi)
+                    return;
+            }
+            v.push_back(bi);
+        };
+        for (auto ast : aura::compiler::dirty::residual_castop_persist_ast()) {
+            auto mit = entry.source_to_ir_map.find(ast);
+            if (mit == entry.source_to_ir_map.end())
+                continue;
+            note(mit->second.function_index, mit->second.block_index);
+        }
+        for (auto enc : aura::compiler::dirty::residual_castop_persist_blocks()) {
+            if (enc == 0 || aura::compiler::dirty::is_fn_node(enc) ||
+                aura::compiler::dirty::is_ast_dep_node(enc))
+                continue;
+            std::size_t fi = 0;
+            std::uint32_t bi = 0;
+            if (aura::compiler::dirty::is_block_dep_node(enc)) {
+                const auto d = aura::compiler::dirty::decode_block_dep_node(enc);
+                fi = d.func_idx;
+                bi = d.block_idx;
+            } else {
+                const auto [f, b] = aura::compiler::dirty::decode_block_node(enc);
+                fi = f;
+                bi = b;
+            }
+            note(fi, bi);
+        }
+        if (per_fn.empty())
+            return false;
+        for (auto& [fi, blocks] : per_fn)
+            entry.mark_blocks_dirty(fi, blocks);
+        return true;
+    }
+
     // Issue #3034: upper bound for the partial-relower decision from
     // ImpactScope / hybrid cascade. Reuses the workspace flat +
     // source_to_ir_map + compute_impact_scope walk (same shape as
@@ -7217,10 +7270,20 @@ public:
             // (body-only from #1495 mark). Large dirty surfaces still
             // go through relower_define_blocks which may full-fallback.
             // Issue #2109: always consult should_partial_relower (metrics).
-            const std::size_t dirty_n = it->second.dirty_block_count();
+            std::size_t dirty_n = it->second.dirty_block_count();
             if (dirty_n == 0 && !it->second.dirty) {
-                ++ok;
-                continue;
+                // Issue #3349: persist may be the only dirty signal for a
+                // CastOp site the local mask missed. Soft / empty persist
+                // → 0 extra (size 0).
+                if (aura::compiler::dirty::residual_castop_persist_size() > 0) {
+                    (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
+                    (void)mark_entry_from_dead_coercion_persist_(it->second);
+                    dirty_n = it->second.dirty_block_count();
+                }
+                if (dirty_n == 0 && !it->second.dirty) {
+                    ++ok;
+                    continue;
+                }
             }
             metrics_.should_partial_relower_consult_total.fetch_add(1, std::memory_order_relaxed);
             // Issue #2127: deopt + density adaptive threshold (base #2032/#2112).
@@ -7239,6 +7302,10 @@ public:
             // under-estimate (silent partial peel). Recovered maps
             // keep partial when the bound is still ≤ dirty_n (#2206).
             if (want_partial && dirty_n > 0) {
+                // Issue #3349: re-union DeadCoercion persist into type∪IR
+                // before impact_ub / partial commit (decision-time cone
+                // lag after #3120 / #3228). Soft / empty persist → 0 extra.
+                (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
                 // Issue #3255: Soft dual-graph parity fail-closed before peel.
                 fail_closed_soft_dual_graph_parity_before_partial_(it->second, want_partial);
                 if (want_partial && !prepare_source_to_ir_map_for_partial_(it->second)) {
@@ -7248,6 +7315,12 @@ public:
                     metrics_.partial_forced_full_by_impact_total.fetch_add(
                         1, std::memory_order_relaxed);
                 } else if (want_partial) {
+                    // Issue #3349: mark persist-mapped CastOp blocks dirty
+                    // so partial does not cone-skip a type-changed site.
+                    bool persist_attributed = false;
+                    if (aura::compiler::dirty::residual_castop_persist_size() > 0)
+                        persist_attributed = mark_entry_from_dead_coercion_persist_(it->second);
+                    dirty_n = it->second.dirty_block_count();
                     // Issue #3310: production must fail-closed when
                     // ImpactScope cannot be computed (impact_upper_bound_for_entry_
                     // returns 0 for no-flat / no-root). Soft/Off keeps
@@ -7261,6 +7334,16 @@ public:
                             aura::compiler::typed_audit::AuditStrategy::Full;
                     if (!should_partial_relower_impact_checked_prod(dirty_n, impact_ub,
                                                                     production_consult)) {
+                        want_partial = false;
+                        it->second.mark_all_blocks_dirty();
+                        it->second.dirty = true;
+                        metrics_.partial_forced_full_by_impact_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                    } else if (production_consult &&
+                               aura::compiler::dirty::residual_castop_persist_size() > 0 &&
+                               !persist_attributed && it->second.source_to_ir_map.empty()) {
+                        // Persist nonempty + production + map still empty
+                        // → cone incomplete; fail-closed full.
                         want_partial = false;
                         it->second.mark_all_blocks_dirty();
                         it->second.dirty = true;

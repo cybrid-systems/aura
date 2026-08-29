@@ -1352,6 +1352,10 @@ void CompilerService::invalidate_function(const std::string& name) {
         // gates stay the outer envelope). Zero cost on clean / empty-impact
         // windows (helper returns 0 → no upgrade).
         if (dirty_n > 0 && adaptive.want_partial) {
+            // Issue #3349: re-union DeadCoercion persist before impact_ub
+            // (same decision-time cone as relower_dirty_defines_from_workspace).
+            // Soft / empty persist → 0 extra.
+            (void)aura::compiler::dirty::force_residual_castop_undermark_into_cone();
             const std::size_t impact_ub = impact_upper_bound_for_entry_(fname, vit->second);
             if (!should_partial_relower_impact_checked(dirty_n, impact_ub)) {
                 metrics_.partial_forced_full_by_impact_total.fetch_add(1,
