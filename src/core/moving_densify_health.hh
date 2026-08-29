@@ -68,10 +68,35 @@ inline std::atomic<std::uint8_t> g_last_pin_guard_soft_gate{0};
 // void** slots. Soft fallback path (mark-only) instead of Moving.
 inline std::atomic<std::uint64_t> g_production_auto_arm_no_hook_fallback_total{0};
 inline std::atomic<std::uint8_t> g_last_auto_arm_no_hook_fallback{0};
+// Issue #3404: production auto-arm Moving actually relocated (real
+// success). Distinct from `note_production_auto_arm` (which fires on
+// every auto-arm attempt) and from `note_production_auto_arm_no_hook_
+// fallback` (Soft fallback when no hook is bound). Agent dashboards
+// MUST NOT sum the soft-fallback counters into success — the success
+// rate is `auto_arm_moving_success / auto_arm_moving_attempted`. The
+// `auto_alloc_trigger_count` (arena.ixx) is now gated on this success
+// counter via the `real_reclaim` flag — Soft fallback paths no longer
+// bump the trigger.
+inline std::atomic<std::uint64_t> g_production_auto_arm_moving_success_total{0};
+inline std::atomic<std::uint8_t> g_last_auto_arm_moving_success{0};
 
 inline void note_production_auto_arm() noexcept {
     g_production_auto_arm_moving_total.fetch_add(1, std::memory_order_relaxed);
     g_last_auto_arm_fired.store(1, std::memory_order_relaxed);
+}
+
+// Issue #3404 AC1 / AC3: bump the success counter when Moving
+// actually relocated (objects_moved > 0 || bytes_reclaimed > 0).
+// Soft fallback paths (no hook / pin / soft-gated) do NOT call this —
+// they call `note_production_auto_arm_no_hook_fallback` instead.
+// Agent dashboards distinguish `auto_arm_moving_success_total` vs
+// `auto_arm_no_hook_fallback_total` + `pin_guard_soft_gate_total`:
+// the success rate is computed from the first; the fallback counters
+// are surfaced separately so Agents cannot accidentally sum them into
+// success.
+inline void note_production_auto_arm_moving_success() noexcept {
+    g_production_auto_arm_moving_success_total.fetch_add(1, std::memory_order_relaxed);
+    g_last_auto_arm_moving_success.store(1, std::memory_order_relaxed);
 }
 
 // Issue #3370: separate counter for the Soft-fallback path when the

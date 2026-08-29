@@ -15035,6 +15035,42 @@ def cmd_inline_pass_soa_3403_coverage():
     return 0
 
 
+def cmd_arena_auto_arm_soft_fallback_3404_coverage():
+    """Issue #3404: arena auto-arm Soft fallback must NOT bump
+    auto_alloc_trigger_count — only real Moving success counts.
+
+    Source-cite linter (scripts/check_arena_auto_arm_soft_fallback_3404.py)
+    verifies:
+      AC1 maybe_auto_compact_on_alloc (arena.ixx) tracks a
+         `real_reclaim` flag and ONLY bumps
+         `stats_.auto_alloc_trigger_count` when `real_reclaim == true`.
+         Soft fallback paths (no hook / moving_blocked_precondition /
+         pin-guard) leave `real_reclaim` false — Agent dashboards no
+         longer read Soft mark-only as auto-arm success.
+      AC2 #3370 linter stays green (no Moving without hook).
+      AC3 moving_densify_health distinguishes auto_arm_moving_success_total
+         (real Moving success) vs auto_arm_no_hook_fallback_total +
+         pin_guard_soft_gate_total (Soft fallback).
+      AC4 existing #3370 #3200 #3123 tests green; extend the
+         existing moving-densify health suite (no test_issue_*.cpp).
+      AC5 no scheduler change, no second pin registry.
+      AC6 no tests/core/test_issue_3404.cpp (extends existing tests
+         per #81934); no docs/design/3404-*.md (per #1655).
+      AC7 source-cite #3404 + build.py registration; no design docs.
+    """
+    print(f"{B}=== arena auto-arm Soft fallback coverage (#3404) ==={N}")
+    script = SCRIPTS / "check_arena_auto_arm_soft_fallback_3404.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("arena auto-arm Soft fallback (#3404) coverage contract rows failed")
+        return 1
+    ok("arena auto-arm Soft fallback (#3404) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22156,6 +22192,8 @@ def main():
         "dense-children-columns-3402-coverage": cmd_dense_children_columns_3402_coverage,
         "inline-pass-soa-3403": cmd_inline_pass_soa_3403_coverage,
         "inline-pass-soa-3403-coverage": cmd_inline_pass_soa_3403_coverage,
+        "arena-auto-arm-soft-fallback-3404": cmd_arena_auto_arm_soft_fallback_3404_coverage,
+        "arena-auto-arm-soft-fallback-3404-coverage": cmd_arena_auto_arm_soft_fallback_3404_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,

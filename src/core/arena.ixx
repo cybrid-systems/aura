@@ -3170,6 +3170,18 @@ public:
         // frag + small-pool util + dirty cascade + Shape churn +
         // defrag_req, soft-gated on render hot path, fiber-safe
         // safepoint when a fiber is active.
+        //
+        // Issue #3404: `auto_alloc_trigger_count` (and the
+        // `saved = 1` amortisation bookkeeping) only increments on
+        // REAL Moving success (objects_moved > 0 || bytes_reclaimed
+        // > 0) OR a non-auto-arm `compact()` path OR a real defrag
+        // (freelist holes reclaimed). Soft fallback paths
+        // (no-hook / moving_blocked_precondition / pin-guard) must
+        // NOT bump `auto_alloc_trigger_count` — Agent dashboards
+        // would otherwise read the counter as "auto-arm worked" when
+        // it only Soft-marked and frag stayed. Source-cite anchor
+        // for AC1; the Soft fallback paths branch around
+        // `auto_alloc_trigger_count++` below.
         const bool render_hp = aura::core::arena_policy::in_render_hotpath();
         if (render_hp) {
             aura::core::arena_policy::record_compact_soft_gated_render();
@@ -3211,6 +3223,15 @@ public:
         }
         const double frag_before = snap.fragmentation_ratio();
         std::size_t saved = 0;
+        // Issue #3404 AC1: track whether Moving actually relocated
+        // (or another non-Soft path reclaimed real bytes). Only paths
+        // that produced a real reclaim set this flag; Soft fallback
+        // paths leave it false so the unconditional
+        // `auto_alloc_trigger_count++` at the bottom of this function
+        // is guarded by `real_reclaim`. Agent dashboards distinguish
+        // `auto_arm_moving_success` (g_production_auto_arm_moving_
+        // success_total) vs the Soft fallback counters.
+        bool real_reclaim = false;
         if (decision.prefer_live_defrag || want_defrag) {
             // Issue #1518 / #1621: prefer live_compact (mark + freelist
             // relocate + deopt coord) when freelist holes or tracked
@@ -3232,11 +3253,26 @@ public:
                         invoke_known_roots_hook();
                         const auto r = live_compact(LiveCompactMode::Moving);
                         if (r.moving_blocked_precondition || r.soft_gated) {
+                            // Issue #3404 AC1: Soft fallback after Moving
+                            // blocked — do NOT claim a real reclaim; the
+                            // Soft mark-only below does not relocate
+                            // objects.
                             const auto marked = live_compact(/*force=*/false);
-                            if (marked > 0 || small_pool_.free_slot_count() == 0)
+                            if (marked > 0) {
+                                // Mark-only still frees holes; treat as a
+                                // real reclaim (not auto-arm Moving
+                                // success — just non-zero Soft mark).
+                                real_reclaim = true;
                                 saved = 1;
+                            } else if (small_pool_.free_slot_count() == 0) {
+                                saved = 1;
+                            }
                         } else if (r.slots_recycled > 0 || r.objects_moved > 0 ||
                                    r.bytes_reclaimed > 0) {
+                            // Issue #3404 AC1: real Moving success.
+                            aura::core::moving_densify_health::
+                                note_production_auto_arm_moving_success();
+                            real_reclaim = true;
                             saved = 1;
                         }
                     } else {
@@ -3245,6 +3281,9 @@ public:
                         // live_compact(Moving) when no hook is bound.
                         aura::core::moving_densify_health::
                             note_production_auto_arm_no_hook_fallback();
+                        // Issue #3404 AC1: Soft fallback path — do NOT
+                        // count as auto-arm success even if the mark-only
+                        // pass frees holes (it's the Soft pass, not Moving).
                         const auto marked = live_compact(/*force=*/false);
                         if (marked > 0 || small_pool_.free_slot_count() == 0)
                             saved = 1;
@@ -3255,19 +3294,35 @@ public:
                     // a silent amortisation win.
                     if (production_moving_wanted_but_pin_or_guard(frag_before))
                         arm_production_pin_guard_soft_gate();
+                    // Issue #3404 AC1: pin/guard Soft fallback — do NOT
+                    // count as auto-arm success even if the mark-only
+                    // pass frees holes (it's the Soft pass, not Moving).
                     const auto marked = live_compact(/*force=*/false);
                     if (marked > 0 || small_pool_.free_slot_count() == 0)
                         saved = 1;
                 }
             } else {
                 saved = defrag_no_clear_request();
+                // defrag_no_clear_request is a real reclaim path (reclaims
+                // freelist holes / deopts); count it. Issue #3404 AC1.
+                if (saved > 0)
+                    real_reclaim = true;
             }
             if (saved > 0)
                 stats_.defrag_savings_alloc += saved;
         } else {
             saved = compact();
+            // Explicit compact() call is a real reclaim path; count it.
+            // Issue #3404 AC1.
+            if (saved > 0)
+                real_reclaim = true;
         }
-        stats_.auto_alloc_trigger_count++;
+        // Issue #3404 AC1: gate auto_alloc_trigger_count on real
+        // reclaim. Soft fallback paths (no hook / pin / soft-gated)
+        // no longer bump the counter — Agent dashboards would
+        // otherwise see "auto-arm worked" when it only Soft-marked.
+        if (real_reclaim)
+            stats_.auto_alloc_trigger_count++;
         aura::core::arena_policy::record_auto_compact_trigger();
         aura::gc_hooks::notify_auto_compact_trigger();
         // Issue #1919: false-positive gate — reclaimed 0 bytes ⇒ FP sample.
