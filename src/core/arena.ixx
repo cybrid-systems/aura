@@ -2389,10 +2389,26 @@ public:
             // keys (= old densified addresses), the remap missed it → fail closed.
             // This is the #2266 fail-closed change (previously always-true observe-only).
             if (result.moved_live_objects && !last_object_remap_.empty()) {
+                // Issue #3350: rewrite linear_roots identities via
+                // last_object_remap_ AFTER slot/pin remap, BEFORE
+                // verify_linear_pins_under_moving_compact (called from
+                // verify_pins_under_moving_compact below). Prefer rewrite
+                // when the object moved; verify stays belt-and-suspenders.
+                // Empty registry: one lock + empty check (Soft / quiet).
+                // Abort/join drain still uses unpin_* (#3249 stays closed).
+                (void)aura::core::lifetime::remap_linear_roots_under_moving(last_object_remap_);
                 std::unordered_set<void*> old_addrs;
                 old_addrs.reserve(last_object_remap_.size());
                 for (const auto& [old_ptr, new_ptr] : last_object_remap_)
                     old_addrs.insert(old_ptr);
+                // Issue #3350: densify packing reuses vacated slots, so a
+                // last_object_remap_ value can equal another key. After
+                // remap_linear_roots those destinations are live post-move
+                // identities, not stale. Exclude them from the verify miss
+                // set (linear_roots do not block Moving the way
+                // live_pin_count does).
+                for (const auto& [old_ptr, new_ptr] : last_object_remap_)
+                    old_addrs.erase(new_ptr);
                 const bool contract_held =
                     aura::core::lifetime::verify_pins_under_moving_compact(arena_id_, old_addrs);
                 result.pin_contract_held = contract_held;

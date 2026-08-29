@@ -5044,6 +5044,19 @@ def cmd_lint():
             "Issue #3249 nested abort linear drain linter failed — run python3 scripts/coverage/checks/check_linear_nested_abort_drain_3249.py"
         )
         return r
+    # Issue #3350: densify success rewrites linear_roots via last_object_remap_
+    # before verify. Soft/empty 0 extra. Extends test_linear_pin_moving_compact
+    # + test_moving_compact; no docs/design / invent.
+    lrmr3350_script = COVERAGE_CHECKS / "check_linear_root_moving_remap_3350.py"
+    if not lrmr3350_script.exists():
+        fail(f"missing {lrmr3350_script}")
+        return 1
+    r = run([sys.executable, str(lrmr3350_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3350 linear_roots densify-rewrite linter failed — run python3 scripts/coverage/checks/check_linear_root_moving_remap_3350.py"
+        )
+        return r
     # Issue #3024: production pure-anon bg overflow → MustDeopt
     # (close residual native-hole after #2950/#2850). Soft / budget=0
     # overflow-counter only. Extends
@@ -13079,6 +13092,25 @@ def cmd_linear_nested_abort_drain_3249_coverage():
         fail("nested abort linear drain (#3249) coverage contract rows failed")
         return 1
     ok("nested abort linear drain (#3249) coverage clean")
+    return 0
+
+
+def cmd_linear_root_moving_remap_3350_coverage():
+    """Issue #3350: densify success rewrites linear_roots via last_object_remap_.
+
+    live_compact(Moving) remaps registry identities after slot/pin remap
+    and before verify. Soft/empty 0 extra. Abort/join still unpin_*.
+    """
+    print(f"{B}=== linear_roots densify rewrite coverage (#3350) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_root_moving_remap_3350.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear_roots densify rewrite (#3350) coverage contract rows failed")
+        return 1
+    ok("linear_roots densify rewrite (#3350) coverage clean")
     return 0
 
 
@@ -21583,6 +21615,8 @@ def main():
         "linear-root-abort-release-3023-coverage": cmd_linear_root_abort_release_3023_coverage,
         "linear-nested-abort-drain-3249": cmd_linear_nested_abort_drain_3249_coverage,
         "linear-nested-abort-drain-3249-coverage": cmd_linear_nested_abort_drain_3249_coverage,
+        "linear-root-moving-remap-3350": cmd_linear_root_moving_remap_3350_coverage,
+        "linear-root-moving-remap-3350-coverage": cmd_linear_root_moving_remap_3350_coverage,
         "restart-n-spec-boundary-3250": cmd_restart_n_spec_boundary_3250_coverage,
         "restart-n-spec-boundary-3250-coverage": cmd_restart_n_spec_boundary_3250_coverage,
         "agent-deny-class-3251": cmd_agent_deny_class_3251_coverage,
