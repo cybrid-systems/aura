@@ -1122,6 +1122,13 @@ export std::size_t apply_coercion_map(aura::ast::FlatAST& flat, const CoercionMa
         // CoercionNode; the IR path would only produce a dead CastOp.
         // Also elide Dynamic-target tags (type_tag==3): CastOp default
         // is passthrough; narrow_evidence-only identity when types match.
+        // Issue #3359: Production/Full refuse identity elision while
+        // abort × densify interleave is outstanding (stale CastOp must
+        // not re-grant commit_readiness). Soft still elides.
+        if (aura::compiler::typed_audit::abort_or_mid_abort_blocks_elision()) {
+            ++s.skipped_stale;
+            continue;
+        }
         if (e.type_id != 0 && flat.type_id(e.original_child) == e.type_id) {
             ++s.eliminated;
             if (map_mut)

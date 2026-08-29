@@ -1246,7 +1246,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_coercion_dead_elim_castop_flow_zerooverhead.cpp` (—) [domain_suite, theme_compiler] — test_coercion_dead_elim_castop_flow_zerooverhead.cpp
 - `tests/compiler/test_coercion_dual_require.cpp` (—) [domain_suite, theme_compiler] — AC1: Production / dual-require + incomplete dual → drop, counter++, no node
 - `tests/compiler/test_coercion_evidence_loss_slo.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft + incomplete → skip insert; soft_incomplete_skip advances
-- `tests/compiler/test_coercion_map_abort_rewind.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_coercion_map_abort_rewind.cpp —
+- `tests/compiler/test_coercion_map_abort_rewind.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_coercion_map_abort_rewind.cpp —
 - `tests/compiler/test_coercion_prov_slo.cpp` (—) [domain_suite, theme_compiler] — AC1: production + miss storm → bp < SLO → force pending; consume forces audit
 - `tests/compiler/test_coercion_provenance_fast_strict.cpp` (—) [domain_suite, theme_compiler] — AC1: both fields set at add → chain_walk_total does not increase (fast path)
 - `tests/compiler/test_coercion_provenance_miss_force_audit.cpp` (—) [domain_suite, theme_compiler] — AC1: blank predicate+mutation → miss total; force-audit on boundary exit

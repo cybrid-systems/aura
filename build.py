@@ -4778,6 +4778,20 @@ def cmd_lint():
             "Issue #3347 residual CastOp readiness undermark linter failed — run python3 scripts/coverage/checks/check_residual_castop_readiness_undermark_3347.py"
         )
         return r
+    # Issue #3359: CoercionMap / CastOp identity elision must refuse while
+    # abort-authority or mid-abort is outstanding (densify/steal interleave).
+    # Soft observe; Production/Full refuse. Extends
+    # test_coercion_map_abort_rewind (#3102 home); no docs/design / invent.
+    cae3359_script = COVERAGE_CHECKS / "check_castop_abort_elision_interleave_3359.py"
+    if not cae3359_script.exists():
+        fail(f"missing {cae3359_script}")
+        return 1
+    r = run([sys.executable, str(cae3359_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3359 CastOp abort-elision interleave linter failed — run python3 scripts/coverage/checks/check_castop_abort_elision_interleave_3359.py"
+        )
+        return r
     # Issue #3349: DeadCoercion persist must re-union into type∪IR before
     # partial-relower impact_ub. Soft/empty persist 0 extra. Extends
     # test_dead_coercion_dirty_cone; no docs/design / invent.

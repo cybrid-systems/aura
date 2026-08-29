@@ -436,6 +436,133 @@ void test_ac3281_mid_bound_abort_authority() {
     (void)g_mid_abort_authority_mismatch_total;
 }
 
+// ── Issue #3359 — CastOp identity elision × abort/densify interleave ──
+// mutate → densify/abort-mid: Production refuses elision + readiness;
+// Soft observes. Reuses mid-abort table + #3225 seqlock + #3102 clear.
+void test_ac3359_castop_abort_elision_interleave() {
+    std::print("3359 — CastOp identity elision × abort/densify interleave\n");
+    using aura::compiler::typed_audit::abort_or_mid_abort_blocks_elision;
+    using aura::compiler::typed_audit::begin_abort_authority_hold;
+    using aura::compiler::typed_audit::begin_mid_abort_authority;
+    using aura::compiler::typed_audit::bump_occurrence_persist_seq_for_test;
+    using aura::compiler::typed_audit::clear_type_linear_proof_outcome_for_test;
+    using aura::compiler::typed_audit::end_abort_authority_hold;
+    using aura::compiler::typed_audit::end_mid_abort_authority;
+    using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
+    using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
+    using aura::compiler::typed_audit::kCastopAbortElisionInterleaveIssue;
+    using aura::compiler::typed_audit::linear_move_drop_elision_ok;
+    using aura::compiler::typed_audit::reset_abort_authority_hold_for_test;
+    using aura::compiler::typed_audit::reset_linear_ir_fastpath_counters_for_test;
+    using aura::compiler::typed_audit::reset_mid_abort_authority_for_test;
+    using aura::compiler::typed_audit::reset_occurrence_persist_seq_for_test;
+    using aura::compiler::typed_audit::reset_rehydrate_miss_invalidate_for_test;
+
+    expect_eq_i64("3359 AC0: issue stamp", 3359, kCastopAbortElisionInterleaveIssue);
+
+    reset_for_test();
+    reset_mid_abort_authority_for_test();
+    reset_abort_authority_hold_for_test();
+    reset_occurrence_persist_seq_for_test();
+    reset_coercion_commit_readiness_cleared_on_abort_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    set_strategy(AuditStrategy::Full);
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    expect_true("3359 AC1: quiet depth==0 allows before abort",
+                ir_typed_entry_commit_readiness_ok());
+    expect_true("3359 AC1: no abort → elision not blocked", !abort_or_mid_abort_blocks_elision());
+
+    constexpr std::uint64_t mid = 335901;
+    const auto ver = begin_mid_abort_authority(mid);
+    expect_true("3359 AC1: begin_mid_abort arms under Full", ver != 0);
+    expect_true("3359 AC1: abort/mid blocks elision", abort_or_mid_abort_blocks_elision());
+    expect_true("3359 AC1: ir_typed_entry refuses (readiness false)",
+                !ir_typed_entry_commit_readiness_ok());
+    expect_true("3359 AC1: Move/Drop elision refuses", !linear_move_drop_elision_ok());
+    expect_true("3359 AC1: CoercionMap readiness face cleared on mid-abort enter",
+                coercion_commit_readiness_cleared_on_abort_total_v_read() >= 1);
+
+    end_mid_abort_authority(mid);
+    expect_true("3359 AC1: after end, abort no longer blocks",
+                !abort_or_mid_abort_blocks_elision());
+
+    // Densify persist seqlock odd (write in flight) also refuses.
+    reset_occurrence_persist_seq_for_test();
+    bump_occurrence_persist_seq_for_test(); // odd
+    expect_true("3359 AC1: odd persist seqlock blocks elision",
+                abort_or_mid_abort_blocks_elision());
+    expect_true("3359 AC1: odd seqlock → readiness false", !ir_typed_entry_commit_readiness_ok());
+    bump_occurrence_persist_seq_for_test(); // even
+    expect_true("3359 AC1: even seqlock does not block", !abort_or_mid_abort_blocks_elision());
+
+    reset_coercion_commit_readiness_cleared_on_abort_for_test();
+    expect_true("3359 AC1: begin_abort_authority_hold arms", begin_abort_authority_hold());
+    expect_true("3359 AC1: hold blocks elision", abort_or_mid_abort_blocks_elision());
+    expect_true("3359 AC1: hold clears CoercionMap readiness face",
+                coercion_commit_readiness_cleared_on_abort_total_v_read() >= 1);
+    end_abort_authority_hold();
+
+    // AC2: Soft observe-only — begin no-ops, elision not refused.
+    apply_dev_audit_defaults();
+    set_strategy(AuditStrategy::Sampled);
+    reset_mid_abort_authority_for_test();
+    reset_abort_authority_hold_for_test();
+    reset_occurrence_persist_seq_for_test();
+    expect_eq_i64("3359 AC2: Soft begin_mid no-ops", 0,
+                  static_cast<std::int64_t>(begin_mid_abort_authority(mid)));
+    expect_true("3359 AC2: Soft does not block elision", !abort_or_mid_abort_blocks_elision());
+    expect_true("3359 AC2: Soft ir_typed_entry allows", ir_typed_entry_commit_readiness_ok());
+
+    {
+        std::ifstream h("src/compiler/typed_mutation_audit.h");
+        std::stringstream ss;
+        ss << h.rdbuf();
+        const auto src = ss.str();
+        expect_true("3359 AC3: header cites Issue #3359",
+                    src.find("Issue #3359") != std::string::npos);
+        expect_true("3359 AC3: abort_or_mid_abort_blocks_elision",
+                    src.find("abort_or_mid_abort_blocks_elision") != std::string::npos);
+        expect_true("3359 AC3: linear_move_drop re-samples abort",
+                    src.find("re-sample mid-abort outstanding") != std::string::npos);
+        expect_true("3359 AC3: begin_abort_authority_hold clears coercion face",
+                    src.find("clear CoercionMap commit-readiness at abort enter") !=
+                        std::string::npos);
+    }
+    {
+        std::ifstream cm("src/compiler/coercion_map.ixx");
+        std::stringstream ss;
+        ss << cm.rdbuf();
+        expect_true("3359 AC3: identity elision refuses under abort",
+                    ss.str().find("abort_or_mid_abort_blocks_elision") != std::string::npos);
+    }
+    {
+        std::ifstream lint("scripts/coverage/checks/check_castop_abort_elision_interleave_3359.py");
+        expect_true("3359 AC4: linter present", lint.good());
+    }
+    {
+        std::ifstream bp("build.py");
+        std::stringstream ss;
+        ss << bp.rdbuf();
+        expect_true("3359 AC4: build.py wires linter",
+                    ss.str().find("check_castop_abort_elision_interleave_3359") !=
+                        std::string::npos);
+    }
+    expect_eq_i64(
+        "3359 AC4: no invent test", 0,
+        static_cast<std::int64_t>(std::filesystem::exists("tests/issues/test_issue_3359.cpp")));
+    expect_eq_i64("3359 AC4: no docs/design", 0,
+                  static_cast<std::int64_t>(std::filesystem::exists("docs/design/3359-")));
+
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    reset_mid_abort_authority_for_test();
+    reset_abort_authority_hold_for_test();
+    reset_occurrence_persist_seq_for_test();
+    set_strategy(AuditStrategy::Full);
+}
+
 } // namespace
 
 int main() {
@@ -449,6 +576,7 @@ int main() {
     test_regression_wired();
     test_ac3116_dual_clear_tls_and_counter();
     test_ac3281_mid_bound_abort_authority();
+    test_ac3359_castop_abort_elision_interleave();
     std::print("All #3102 AC tests PASSED\n");
     return 0;
 }
