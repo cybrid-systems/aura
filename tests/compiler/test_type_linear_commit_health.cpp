@@ -1515,6 +1515,17 @@ int run_test_type_linear_commit_health() {
         CHECK(linter_out.find("[OK]") != std::string::npos,
               "#3091 AC6: linter check_type_linear_proof_mid_3091.py stays clean");
     }
+    std::println("\n=== #3418: fingerprint cap overflow ===");
+    {
+        auto cap = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(cap.find("kProofGoalFingerprintOverflowIssue = 3418") != std::string::npos,
+              "3418: issue stamp");
+        CHECK(cap.find("reject_fingerprint_cap_overflow") != std::string::npos,
+              "3418: reject helper");
+        CHECK(cap.find("kProofGoalFingerprintMaxGoals = 16") != std::string::npos,
+              "3418: cap stays 16");
+        CHECK(cap.find("fingerprint_overflow") != std::string::npos, "3418: overflow field");
+    }
     std::println("\n=== #2613 + #2697 + #2717 + #2758 + #2842 + #2897 + #2911 + #2981 + #2984 + "
                  "#2995 + #3030 + #3031 + #3032 + #3091: {} "
                  "passed, {} "

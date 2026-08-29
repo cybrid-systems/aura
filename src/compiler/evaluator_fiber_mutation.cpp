@@ -2671,6 +2671,8 @@ void Evaluator::complete_post_join_linear_enforcement(void* joined_fiber_void) n
             const auto& goals = tc->constraint_system().occurrence_goals_for_test();
             steal_goal_truth_2910.live_goal_count = static_cast<std::uint64_t>(goals.size());
             steal_goal_truth_2910.from_cs = true;
+            steal_goal_truth_2910.fingerprint_overflow =
+                goals.size() > typed_audit::kProofGoalFingerprintMaxGoals;
             if (!goals.empty()) {
                 std::uint64_t hmix = 0xcbf29ce484222325ULL;
                 const std::size_t n = goals.size() < typed_audit::kProofGoalFingerprintMaxGoals

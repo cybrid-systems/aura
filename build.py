@@ -4767,6 +4767,20 @@ def cmd_lint():
             "Issue #3346 stamp last-look densify×steal×mid-abort linter failed — run python3 scripts/coverage/checks/check_stamp_last_look_densify_steal_abort_3346.py"
         )
         return r
+    # Issue #3418: kProofGoalFingerprintMaxGoals=16 overflow is silent-green.
+    # Production/Full refuse stamp/persist (force_reason 16). Soft mix 16.
+    # Extends test_occurrence_goal_persist_rehydrate + commit-health;
+    # linter after #3170; no docs/design / invent / new query key.
+    fpov3418_script = COVERAGE_CHECKS / "check_proof_goal_fingerprint_overflow_3418.py"
+    if not fpov3418_script.exists():
+        fail(f"missing {fpov3418_script}")
+        return 1
+    r = run([sys.executable, str(fpov3418_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3418 fingerprint cap overflow linter failed — run python3 scripts/coverage/checks/check_proof_goal_fingerprint_overflow_3418.py"
+        )
+        return r
     # Issue #3416: last-proof last-writer across steal × dual-Evaluator.
     # Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
     # Green bind eval-scoped. Soft/Off no extra slot. Extends
