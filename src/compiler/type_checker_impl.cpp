@@ -2897,10 +2897,12 @@ SolveResult ConstraintSystem::escalate_if_production(SolveResult prior,
                         1, std::memory_order_relaxed);
             }
         }
-        // Issue #3331: snapshot is the unresolved export above; quarantine
-        // live priority/pending/touched so the next empty solve_delta is
-        // not a residual seed. Persist log stays for Soft observe.
-        // #3169 clear_partial stays Production-only (AC3).
+        // Issue #3331 / #3360: snapshot is the unresolved export above;
+        // quarantine live priority/pending/touched so the next empty
+        // solve_delta is not a residual seed. Discard provisional
+        // OccurrenceGoals and refuse query:type export. Persist log
+        // stays for Soft observe. #3169 clear_partial stays
+        // Production-only (AC3).
         soft_quarantine_partial_goals_after_timeout();
         return SolveResult::TIMEOUT; // AC1: not SOLVED; unresolved already exported
     }
@@ -3066,7 +3068,7 @@ void ConstraintSystem::soft_quarantine_partial_goals_after_timeout() noexcept {
         return;
     const bool have = dirty_count_ != 0 || !touched_roots_.empty() ||
                       !pending_full_solve_roots_.empty() || !occurrence_priority_roots_.empty() ||
-                      !let_poly_dirty_roots_.empty();
+                      !let_poly_dirty_roots_.empty() || !occurrence_goals_.empty();
     if (!have)
         return;
     touched_roots_.clear();
@@ -3074,6 +3076,12 @@ void ConstraintSystem::soft_quarantine_partial_goals_after_timeout() noexcept {
     occurrence_priority_roots_.clear();
     let_poly_dirty_roots_.clear();
     dirty_count_ = 0;
+    // Issue #3360: drop live provisional OccurrenceGoals so query:type
+    // cannot observe half-solved narrowing. Persist snapshot stays
+    // (#3331 observe continuity); discard restores last durable if any.
+    (void)discard_provisional_occurrence_goals();
+    aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
+        1, std::memory_order_relaxed);
     auto& c = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
     c.solve_delta_soft_timeout_quarantine_total.fetch_add(1, std::memory_order_relaxed);
     if (metrics_) {
@@ -4667,10 +4675,15 @@ TypeId InferenceEngine::infer_flat(FlatAST& flat, StringPool& pool, NodeId id, b
     if (!preserve_cs)
         last_type_export_authoritative_ = true;
     if (solve_status != SolveResult::SOLVED) {
-        // Issue #3081: TIMEOUT / CONFLICT (including Soft +
+        // Issue #3081 / #3360: TIMEOUT / CONFLICT (including Soft +
         // allow_timeout_commit) is never query:type authority.
         // One store on this export path (AC4: zero cost when SOLVED).
         last_type_export_authoritative_ = false;
+        if (!aura::compiler::typed_audit::production_defaults_active()) {
+            (void)cs_.discard_provisional_occurrence_goals();
+            aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
         // Build a human-readable summary of the unresolved
         // constraints for the diagnostic. The summary is
         // intentionally short ("T42 ~ T43 (consistent)") to keep
@@ -9596,6 +9609,13 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             last_partial_cs_live_ = false;
             // Issue #3203: no live refined TypeId from a half-solved CS.
             last_occurrence_vars_.clear();
+            // Issue #3360: Soft TIMEOUT must not leave provisional
+            // OccurrenceGoals Agent-visible via query:type.
+            if (!aura::compiler::typed_audit::production_defaults_active()) {
+                (void)engine.constraint_system().discard_provisional_occurrence_goals();
+                aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
+                    1, std::memory_order_relaxed);
+            }
         }
     }
 

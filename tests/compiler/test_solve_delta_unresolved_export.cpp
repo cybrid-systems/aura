@@ -2263,6 +2263,124 @@ static void ac3331_5_source_and_linter() {
           "3331 AC5: no docs/design/");
 }
 
+// ── Issue #3360: Soft TIMEOUT half-solved never becomes query:type authority ──
+// Residual of #3331/#3203/#3237: quarantine roots was not enough —
+// live OccurrenceGoals could still be Agent-visible. Refuse the export
+// face (existing Soft refuse counter) and discard provisional goals.
+// Soft commit for iteration stays; Production fail-closed unchanged.
+static void ac3360_1_soft_timeout_empty_goals_not_authoritative() {
+    std::println("\n--- #3360 AC1: Soft TIMEOUT → empty goals + not query:type authority ---");
+    using aura::compiler::kSoftTimeoutExportRefuseIssue;
+    using aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    using aura::compiler::typed_audit::reset_type_export_soft_refuse_for_test;
+    CHECK(kSoftTimeoutExportRefuseIssue == 3360, "3360 AC1: stamp");
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    reset_type_export_soft_refuse_for_test();
+
+    TypeRegistry reg;
+    ConstraintSystem cs(reg);
+    CompilerMetrics metrics;
+    cs.set_metrics(&metrics);
+    SolverBudget b{};
+    b.allow_timeout_commit = true;
+    cs.set_solver_budget(b);
+    auto v = cs.fresh_var();
+    Constraint eq;
+    eq.kind = Constraint::EQUAL;
+    eq.lhs = v;
+    eq.rhs = reg.int_type();
+    cs.add_delta(std::move(eq));
+    cs.note_occurrence_goal(v, reg.int_type(), 2, 3360, 1);
+    CHECK(cs.occurrence_goals_size() == 1, "3360 AC1: provisional goal live");
+    const auto persist0 = cs.occurrence_persist_log_size();
+    const auto refuse0 = g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed);
+
+    cs.force_next_delta_timeout_for_test(true);
+    std::vector<Constraint> unresolved;
+    auto status = cs.solve_delta(&unresolved);
+    CHECK(status == SolveResult::TIMEOUT, "3360 AC1: solve_delta TIMEOUT");
+    auto post = cs.escalate_if_production(status, &unresolved);
+    CHECK(post == SolveResult::TIMEOUT, "3360 AC1: Soft allow keeps TIMEOUT");
+    CHECK(cs.occurrence_goals_size() == 0, "3360 AC1: provisional OccurrenceGoals discarded");
+    CHECK(cs.occurrence_persist_log_size() == persist0, "3360 AC1: persist log intact");
+    CHECK(g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed) > refuse0,
+          "3360 AC1: Soft refuse observe bumped");
+
+    apply_dev_audit_defaults();
+    CompilerService svc;
+    CHECK(svc.eval("(+ 1 1)").has_value(), "3360 AC1: warm");
+    (void)svc.eval("(set-code \"(define f 1)\")");
+    (void)svc.eval("(eval-current)");
+    (void)svc.eval("(typecheck-current)");
+    svc.evaluator().copy_infer_type_export_authority(false);
+    CHECK(!svc.evaluator().type_export_is_authoritative(),
+          "ac3360_1_soft_timeout_empty_goals_not_authoritative: export refused");
+    auto git = svc.eval("(get-inferred-type 0)");
+    CHECK(git.has_value(), "3360 AC1: get-inferred-type returned");
+    auto qto = svc.eval("(query-type-of \"f\")");
+    CHECK(qto.has_value(), "3360 AC1: query-type-of returned");
+
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    reset_type_export_soft_refuse_for_test();
+}
+
+static void ac3360_2_production_unchanged() {
+    std::println("\n--- #3360 AC2: Production TIMEOUT fail-closed unchanged ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("delta_timeout_fail_closed_total") != std::string::npos,
+          "3360 AC2: #3003 fail-closed retained");
+    CHECK(impl.find("clear_partial_goals_and_unresolved();") != std::string::npos,
+          "3360 AC2: #3169 hard clear retained");
+    const auto helper_pos =
+        impl.find("void ConstraintSystem::soft_quarantine_partial_goals_after_timeout() noexcept");
+    CHECK(helper_pos != std::string::npos, "3360 AC2: Soft helper present");
+    if (helper_pos != std::string::npos) {
+        const auto helper = impl.substr(helper_pos, 2200);
+        CHECK(helper.find("if (aura::compiler::typed_audit::production_defaults_active())") !=
+                  std::string::npos,
+              "3360 AC2: Soft helper still production-gated");
+    }
+}
+
+static void ac3360_3_soft_commit_iteration_ok() {
+    std::println("\n--- #3360 AC3: Soft commit for iteration stays; only export refused ---");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    CHECK(impl.find("return SolveResult::TIMEOUT; // AC1: not SOLVED") != std::string::npos,
+          "3360 AC3: Soft allow still exports TIMEOUT (commit iteration)");
+    CHECK(impl.find("discard_provisional_occurrence_goals") != std::string::npos,
+          "3360 AC3: provisional discard");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(ev.find("Issue #3360") != std::string::npos, "3360 AC3: Evaluator cite");
+    CHECK(ev.find("g_type_export_soft_refuse_observe_total") != std::string::npos,
+          "3360 AC3: reuse Soft refuse counter");
+}
+
+static void ac3360_4_source_and_linter() {
+    std::println("\n--- #3360 AC4: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/compiler/type_checker.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto t = read_file("tests/compiler/test_solve_delta_unresolved_export.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_soft_timeout_export_refuse_3360.py");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("kSoftTimeoutExportRefuseIssue = 3360") != std::string::npos, "3360 AC4: stamp");
+    CHECK(impl.find("Issue #3360") != std::string::npos, "3360 AC4: impl cite");
+    CHECK(aud.find("g_type_export_soft_refuse_observe_total") != std::string::npos,
+          "3360 AC4: reuse refuse counter");
+    CHECK(t.find("ac3360_1_soft_timeout_empty_goals_not_authoritative") != std::string::npos,
+          "3360 AC4: AC1");
+    CHECK(!lint.empty() && lint.find("Issue #3360") != std::string::npos, "3360 AC4: linter");
+    CHECK(build.find("check_soft_timeout_export_refuse_3360") != std::string::npos,
+          "3360 AC4: build.py");
+    CHECK(read_file("tests/compiler/test_issue_3360.cpp").empty(), "3360 AC4: no invent");
+    CHECK(read_file("docs/design/3360-soft-timeout-export-refuse.md").empty(),
+          "3360 AC4: no docs/design");
+}
+
 // ── Issue #3031: pending_full_solve / locality residual before commit ──
 // AC1 production pending/locality → escalate; still dirty → reject
 // AC2 Soft observe allow
@@ -3701,6 +3819,11 @@ int run_test_solve_delta_unresolved_export() {
     ac3331_3_production_unchanged();
     ac3331_4_locality_observe_out_of_scope();
     ac3331_5_source_and_linter();
+    std::println("\n=== Issue #3360: Soft TIMEOUT never becomes query:type authority ===");
+    ac3360_1_soft_timeout_empty_goals_not_authoritative();
+    ac3360_2_production_unchanged();
+    ac3360_3_soft_commit_iteration_ok();
+    ac3360_4_source_and_linter();
     // ── Issue #3307: budget-allow must hard-latch pending residual face
     // (anti SOLVED-with-dirty mid-window after #3190/#3031/#2994)
     std::println("\n=== Issue #3307: budget-allow hard-latch pending residual face ===");
