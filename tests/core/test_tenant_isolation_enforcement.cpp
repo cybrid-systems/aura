@@ -271,6 +271,93 @@ static void ac3126_admin_fence_locked() {
               "AC6: test_grant_epoch_retain_restricted AC1 surface intact");
     }
 
+    // --- AC7: #3409 grant() SSOT TA fence — push #3086/#3029 into grant_locked ---
+    {
+        std::println("\n--- AC7: #3409 grant() SSOT TA fence ---");
+        const auto cm = read_file("src/core/capability_model.hh");
+        // AC7.1: grant_locked has caller_principal parameter.
+        CHECK(contains(cm, "TenantId caller_principal = 0)"),
+              "AC7: grant_locked has caller_principal parameter (default 0)");
+        // AC7.2: grant_locked body has the TA fence with the high-bits mask.
+        const auto gl_pos = cm.find("void grant_locked(TenantId tenant");
+        CHECK(gl_pos != std::string::npos, "AC7: grant_locked signature present");
+        const auto cm_after_gl = (gl_pos == std::string::npos) ? std::string{} : cm.substr(gl_pos);
+        // Scope to the next closing brace of grant_locked body (find `void grant_session`).
+        const auto gs_pos = cm_after_gl.find("void grant_session(");
+        const auto gl_body =
+            (gs_pos == std::string::npos) ? cm_after_gl : cm_after_gl.substr(0, gs_pos);
+        CHECK(contains(gl_body, "Issue #3409"),
+              "AC7: grant_locked cites #3409 (source-cite anchor)");
+        CHECK(contains(gl_body, "Effect::TenantAdmin"),
+              "AC7: grant_locked TA fence checks Effect::TenantAdmin");
+        CHECK(contains(gl_body, "Effect::MacroSelfEvo"),
+              "AC7: grant_locked TA fence includes MacroSelfEvo in high bits");
+        CHECK(contains(gl_body, "Effect::Mutate"),
+              "AC7: grant_locked TA fence includes Mutate in high bits");
+        CHECK(contains(gl_body, "Effect::Syscall"),
+              "AC7: grant_locked TA fence includes Syscall in high bits");
+        CHECK(contains(gl_body, "foreign_tenant"),
+              "AC7: grant_locked TA fence computes foreign_tenant condition");
+        CHECK(contains(gl_body, "effects_for_locked(caller)"),
+              "AC7: grant_locked TA fence uses effects_for_locked (TOCTOU-safe)");
+        CHECK(contains(gl_body, "grant-ssot-needs-tenant-admin"),
+              "AC7: grant_locked TA fence emits new stable SE reason");
+        // AC7.3: reuse existing deny counter (no new metrics fields per issue).
+        CHECK(contains(gl_body, "capability_macro_self_evo_grant_deny_total"),
+              "AC7: grant_locked TA fence reuses capability_macro_self_evo_grant_deny_total");
+        // AC7.4: grant() public wrapper forwards caller_principal to grant_locked.
+        CHECK(contains(cm, "void grant(TenantId tenant, std::string_view name, Effect effects,") &&
+                  contains(cm, "TenantId caller_principal = 0) {"),
+              "AC7: grant() has caller_principal parameter");
+        CHECK(
+            contains(cm, "grant_locked(tenant, name, effects, prov, single_use, session_bound,") &&
+                contains(cm, "caller_principal);"),
+            "AC7: grant() forwards caller_principal to grant_locked");
+        // AC7.5: grant_session + grant_once forward caller_principal.
+        CHECK(
+            contains(
+                cm, "void grant_session(TenantId tenant, std::string_view name, Effect effects,") &&
+                contains(cm, "TenantId caller_principal = 0) {"),
+            "AC7: grant_session has caller_principal parameter");
+        CHECK(contains(cm,
+                       "void grant_once(TenantId tenant, std::string_view name, Effect effects,") &&
+                  contains(cm, "TenantId caller_principal = 0) {"),
+              "AC7: grant_once has caller_principal parameter");
+    }
+
+    // --- AC8: #3409 Evaluator::grant_capability passes caller_principal = capability_tenant_id_
+    // ---
+    {
+        std::println("\n--- AC8: #3409 Evaluator::grant_capability passes caller_principal ---");
+        const auto es = read_file("src/compiler/evaluator_security.cpp");
+        // The Evaluator path must pass capability_tenant_id_ as the caller_principal
+        // to the registry grant() call. Otherwise the SSOT gate falls back to
+        // default_tenant (legacy behavior) and TenantAdmin would not be checked.
+        CHECK(contains(es, "g_capability_registry().grant(capability_tenant_id_,"),
+              "AC8: Evaluator::grant_capability calls grant with capability_tenant_id_");
+        CHECK(contains(es, "/*caller_principal=*/capability_tenant_id_);"),
+              "AC8: Evaluator::grant_capability passes capability_tenant_id_ as caller_principal");
+        // Kernel bootstrap path (security_defaults.hh) keeps tenant=0 Render-only
+        // (gate allows: tenant=0 doesn't trigger foreign-tenant, Render doesn't
+        // intersect high bits). No caller_principal needed.
+        const auto sd = read_file("src/compiler/security_defaults.hh");
+        CHECK(contains(sd, "/*tenant=*/0, \"render-kernel\", Effect::Render"),
+              "AC8: kernel render-kernel bootstrap tenant=0 Render (gate allows)");
+        CHECK(contains(sd, "/*tenant=*/0, \"render\", Effect::Render"),
+              "AC8: kernel render bootstrap tenant=0 Render (gate allows)");
+    }
+
+    // --- AC9: no docs/design/3409-*; no test_issue_3409.cpp ---
+    {
+        std::println("\n--- AC9: no docs/design/3409-*; no test_issue_3409.cpp ---");
+        CHECK(read_file("docs/design/3409-grant-ssot-ta-fence.md").empty(),
+              "AC9: no docs/design/3409-* per #1655");
+        CHECK(read_file("tests/core/test_issue_3409.cpp").empty(),
+              "AC9: no test_issue_3409.cpp per #81934");
+        CHECK(read_file("tests/issues/test_issue_3409.cpp").empty(),
+              "AC9: no tests/issues/test_issue_3409.cpp (R1 abandoned scheme)");
+    }
+
     // Soft/Off behavior preserved — public unlocked effects_for / provenance_ok
     // remain callable (no API break); the existing reset / re-grant cycle
     // used by reset_all() above still works end-to-end (regression check

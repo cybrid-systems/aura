@@ -611,7 +611,7 @@ struct CapabilityRegistry {
     // the legacy synthesis (zero-cost contract, AC5) for session_bound.
     void grant(TenantId tenant, std::string_view name, Effect effects,
                const EffectProvenance& prov = {}, bool single_use = false,
-               bool session_bound = false) {
+               bool session_bound = false, TenantId caller_principal = 0) {
         // Pre-lock refuse (Issue #3090). Reads only sandbox_mode atomic +
         // prov.mutation_id (caller-owned); no registry state needed.
         {
@@ -632,7 +632,7 @@ struct CapabilityRegistry {
             }
         }
         std::lock_guard<std::mutex> lock(mtx);
-        grant_locked(tenant, name, effects, prov, single_use, session_bound);
+        grant_locked(tenant, name, effects, prov, single_use, session_bound, caller_principal);
     }
 
     // Issue #3126: caller MUST hold `mtx`. Body is the post-refuse
@@ -645,7 +645,50 @@ struct CapabilityRegistry {
     // run without the lock).
     void grant_locked(TenantId tenant, std::string_view name, Effect effects,
                       const EffectProvenance& prov = {}, bool single_use = false,
-                      bool session_bound = false) {
+                      bool session_bound = false, TenantId caller_principal = 0) {
+        // Issue #3409: push the #3086/#3029 TenantAdmin fence shape into
+        // grant_locked SSOT. Production Restricted/Strict requires TA on
+        // the caller when (tenant is foreign) OR (effects contain high
+        // bits {TA, MSE, Mutate, Syscall}). Soft/Off: zero-cost (no
+        // fence). Evaluator path passes capability_tenant_id_ as
+        // caller_principal; legacy direct callers default to caller=0
+        // → default_tenant. Caller holds mtx so effects_for_locked is
+        // TOCTOU-safe (same fence shape as grant_cross_tenant /
+        // grant_macro_self_evo). Reuse existing deny counter
+        // (capability_macro_self_evo_grant_deny_total — no new metrics
+        // fields per issue AC4). New stable SE reason
+        // `grant-ssot-needs-tenant-admin` (does not change old reason
+        // strings).
+        {
+            const auto mode = sandbox_mode.load(std::memory_order_acquire);
+            if (mode != EffectSandboxMode::Off) {
+                const auto caller = caller_principal != 0
+                                        ? caller_principal
+                                        : default_tenant.load(std::memory_order_acquire);
+                constexpr std::uint16_t kHighBits =
+                    static_cast<std::uint16_t>(Effect::TenantAdmin) |
+                    static_cast<std::uint16_t>(Effect::MacroSelfEvo) |
+                    static_cast<std::uint16_t>(Effect::Mutate) |
+                    static_cast<std::uint16_t>(Effect::Syscall);
+                const bool foreign_tenant = (tenant != 0 && tenant != caller);
+                const bool high_bits = (static_cast<std::uint16_t>(effects) & kHighBits) != 0;
+                if (foreign_tenant || high_bits) {
+                    if (!has_effect(effects_for_locked(caller), Effect::TenantAdmin)) {
+                        auto& met = g_capability_effect_metrics();
+                        met.capability_macro_self_evo_grant_deny_total.fetch_add(
+                            1, std::memory_order_relaxed);
+                        using ::aura::core::security_event::SecurityEventKind;
+                        using ::aura::core::security_event_wal::emit_security_event_durable;
+                        emit_security_event_durable(
+                            SecurityEventKind::EffectDeny, tenant, prov.mutation_id, prov.epoch,
+                            static_cast<std::uint16_t>(effects), name,
+                            "grant-ssot-needs-tenant-admin", /*denied=*/true,
+                            static_cast<std::int64_t>(prov.fiber_id));
+                        return;
+                    }
+                }
+            }
+        }
         auto& vec = by_tenant[tenant];
         auto apply = [&](CapabilityGrant& g) {
             g.effects = g.effects | effects;
@@ -706,16 +749,18 @@ struct CapabilityRegistry {
     // check_and_record_effect that uses its bits. Equivalent to
     // grant(name, effects, prov, /*single_use=*/true).
     void grant_once(TenantId tenant, std::string_view name, Effect effects,
-                    const EffectProvenance& prov = {}) {
-        grant(tenant, name, effects, prov, /*single_use=*/true);
+                    const EffectProvenance& prov = {}, TenantId caller_principal = 0) {
+        grant(tenant, name, effects, prov, /*single_use=*/true, /*session_bound=*/false,
+              caller_principal);
     }
 
     // Issue #2944: mutation-session grant sugar — mid-bound + session_bound.
     // Equivalent to grant(..., single_use, /*session_bound=*/true).
     // Prefer Evaluator::grant_effect_session for production high-risk force.
     void grant_session(TenantId tenant, std::string_view name, Effect effects,
-                       const EffectProvenance& prov = {}, bool single_use = false) {
-        grant(tenant, name, effects, prov, single_use, /*session_bound=*/true);
+                       const EffectProvenance& prov = {}, bool single_use = false,
+                       TenantId caller_principal = 0) {
+        grant(tenant, name, effects, prov, single_use, /*session_bound=*/true, caller_principal);
     }
 
     // Issue #3207: caller MUST hold `mtx`. Walk/revoke body of

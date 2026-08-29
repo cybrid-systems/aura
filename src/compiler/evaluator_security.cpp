@@ -137,8 +137,9 @@ void Evaluator::grant_capability(std::string cap) {
         // without a real scheduler; production override stays 0.
         const auto fiber = effect_fiber_id_or(static_cast<std::uint32_t>(aura_fiber_current_id()));
         auto prov = make_grant_provenance(/*mutation_id=*/0, force_bind, /*node_id=*/0, fiber);
-        g_capability_registry().grant(capability_tenant_id_, granted_capabilities_.back(), eff,
-                                      prov);
+        g_capability_registry().grant(
+            capability_tenant_id_, granted_capabilities_.back(), eff, prov,
+            /*single_use=*/false, /*session_bound=*/false, capability_tenant_id_);
         // Issue #2136: count Render effect grants for Agent dashboards.
         if (has_effect(eff, Effect::Render)) {
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
