@@ -17,6 +17,8 @@
 //              production_defaults_active=0 alone is still Full (#2818).
 // Issue #3347: single-boundary commit_readiness / grant remirror residual
 //              CastOp persist before auto_partial / type authority.
+// Issue #3349: re-union persist into type∪IR before partial-relower
+//              impact_ub (decision-time cone lag after #3120 / #3228).
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -47,6 +49,7 @@ using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
 using aura::compiler::dirty::force_dead_coercion_elim_into_cone;
 using aura::compiler::dirty::force_residual_castop_undermark_into_cone;
 using aura::compiler::dirty::kDeadCoercionElimConeIssue;
+using aura::compiler::dirty::kDeadCoercionPersistBeforePartialIssue;
 using aura::compiler::dirty::kResidualCastopReadinessUndermarkIssue;
 using aura::compiler::dirty::kResidualCastopTypeTxnRemirrorIssue;
 using aura::compiler::dirty::last_type_cone_ast;
@@ -973,6 +976,111 @@ static void ac3347_4_linter_no_invent() {
     CHECK(read_file("tests/issues/test_issue_3347.cpp").empty(), "3347 AC4: no tests/issues");
 }
 
+// ── Issue #3349: persist re-union before partial-relower impact_ub ──
+static void ac3349_1_relower_remirrors_before_impact_ub() {
+    std::println("\n--- #3349 AC1: remirror before impact_ub / partial commit ---");
+    CHECK(kDeadCoercionPersistBeforePartialIssue == 3349, "3349 AC1: issue stamp");
+    const auto sixx = read_file("src/compiler/service.ixx");
+    const auto dirtyf = read_file("src/compiler/service_dirty.cpp");
+    CHECK(sixx.find("Issue #3349") != std::string::npos, "3349 AC1: service.ixx cites #3349");
+    CHECK(sixx.find("mark_entry_from_dead_coercion_persist_") != std::string::npos,
+          "3349 AC1: persist → block mark helper");
+    CHECK(sixx.find("force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3349 AC1: remirror in relower");
+    auto pos = sixx.find("if (want_partial && dirty_n > 0)");
+    CHECK(pos != std::string::npos, "3349 AC1: partial branch");
+    auto win = sixx.substr(pos, 2800);
+    auto rem = win.find("force_residual_castop_undermark_into_cone");
+    auto iub = win.find("impact_upper_bound_for_entry_");
+    CHECK(rem != std::string::npos, "3349 AC1: remirror in want_partial branch");
+    CHECK(iub != std::string::npos, "3349 AC1: impact_ub still consulted");
+    CHECK(rem < iub, "3349 AC1: remirror precedes impact_ub");
+    CHECK(dirtyf.find("Issue #3349") != std::string::npos, "3349 AC1: try_partial remirror");
+    CHECK(dirtyf.find("force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3349 AC1: service_dirty remirror");
+}
+
+static void ac3349_2_soft_quiet() {
+    std::println("\n--- #3349 AC2: Soft / empty persist → 0 extra ---");
+    SoftAuditScope soft;
+    reset_residual_castop_persist_for_test();
+    constexpr aura::compiler::dirty::NodeId kSoft = 919;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "3349 AC2: Soft does not persist");
+    CHECK(force_residual_castop_undermark_into_cone() == 0, "3349 AC2: Soft remirror 0");
+    const auto sixx = read_file("src/compiler/service.ixx");
+    CHECK(sixx.find("empty persist") != std::string::npos ||
+              sixx.find("Soft / empty persist") != std::string::npos,
+          "3349 AC2: zero-extra documented");
+    reset_residual_castop_persist_for_test();
+}
+
+static void ac3349_3_production_persist_marks_or_force_full() {
+    std::println("\n--- #3349 AC3: production persist remirrors; cone nonempty ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kRes = 1021;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() >= 1, "3349 AC3: persist nonempty");
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3349 AC3: wipe");
+    CHECK(!cone_contains(kRes), "3349 AC3: wipe dropped residual");
+
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define f (lambda (x) x))
+")
+)")
+              .has_value(),
+          "3349 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3349 AC3: eval");
+    cs.public_mark_define_dirty("f");
+    const auto forced0 =
+        cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cone_contains(kRes) || type_ir_union_cone_nonempty(),
+          "3349 AC3: remirror before partial left cone nonempty");
+    CHECK(cs.metrics().partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >=
+              forced0,
+          "3349 AC3: force-full distinguisher non-decreasing");
+    const auto sixx = read_file("src/compiler/service.ixx");
+    CHECK(sixx.find("mark_entry_from_dead_coercion_persist_") != std::string::npos,
+          "3349 AC3: mark-or-full helper");
+    CHECK(sixx.find("partial_forced_full_by_impact_total") != std::string::npos,
+          "3349 AC3: reuse force-full counter (no new query key)");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3349_4_linter_no_invent() {
+    std::println("\n--- #3349 AC4: linter + no invent / no new query keys ---");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_dead_coercion_persist_before_partial_3349.py");
+    const auto build = read_file("build.py");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(t.find("ac3349_1_relower_remirrors_before_impact_ub") != std::string::npos,
+          "3349 AC4: suite");
+    CHECK(!lint.empty() && lint.find("3349") != std::string::npos, "3349 AC4: linter");
+    CHECK(build.find("check_dead_coercion_persist_before_partial_3349") != std::string::npos,
+          "3349 AC4: build.py");
+    CHECK(q.find("schema-3349") == std::string::npos, "3349 AC4: no schema-3349");
+    CHECK(dirty.find("g_3349_") == std::string::npos, "3349 AC4: no g_3349_*");
+    CHECK(read_file("docs/design/3349-dead-coercion-persist-partial.md").empty(),
+          "3349 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3349.cpp").empty(), "3349 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3349.cpp").empty(), "3349 AC4: no tests/issues");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -1003,8 +1111,12 @@ int run_test_dead_coercion_dirty_cone() {
     ac3347_2_soft_quiet();
     ac3347_3_invalidate_gen_success_path();
     ac3347_4_linter_no_invent();
+    ac3349_1_relower_remirrors_before_impact_ub();
+    ac3349_2_soft_quiet();
+    ac3349_3_production_persist_marks_or_force_full();
+    ac3349_4_linter_no_invent();
     reset_residual_castop_persist_for_test();
-    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347: {} passed, {} failed ===",
+    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347/#3349: {} passed, {} failed ===",
                  g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

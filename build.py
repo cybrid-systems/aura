@@ -4706,6 +4706,19 @@ def cmd_lint():
             "Issue #3347 residual CastOp readiness undermark linter failed — run python3 scripts/coverage/checks/check_residual_castop_readiness_undermark_3347.py"
         )
         return r
+    # Issue #3349: DeadCoercion persist must re-union into type∪IR before
+    # partial-relower impact_ub. Soft/empty persist 0 extra. Extends
+    # test_dead_coercion_dirty_cone; no docs/design / invent.
+    dcp3349_script = COVERAGE_CHECKS / "check_dead_coercion_persist_before_partial_3349.py"
+    if not dcp3349_script.exists():
+        fail(f"missing {dcp3349_script}")
+        return 1
+    r = run([sys.executable, str(dcp3349_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3349 DeadCoercion persist-before-partial linter failed — run python3 scripts/coverage/checks/check_dead_coercion_persist_before_partial_3349.py"
+        )
+        return r
     # Issue #3229: hashed-name 6-bit success coverage needs a define-id
     # side set so colliding peers stay residual. Soft skip; quiet 0 extra.
     # Extends test_hot_update_relower_success_coverage; no docs/design.

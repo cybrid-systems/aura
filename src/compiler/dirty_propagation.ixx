@@ -607,6 +607,13 @@ inline void reset_residual_castop_persist_for_test() noexcept {
     return t_residual_castop_ast.size() + t_residual_castop_blocks.size();
 }
 
+[[nodiscard]] inline std::span<const NodeId> residual_castop_persist_ast() noexcept {
+    return t_residual_castop_ast;
+}
+[[nodiscard]] inline std::span<const NodeId> residual_castop_persist_blocks() noexcept {
+    return t_residual_castop_blocks;
+}
+
 [[nodiscard]] inline const std::vector<NodeId>& last_type_cone_ast() noexcept {
     return t_last_type_cone_ast;
 }
@@ -833,6 +840,9 @@ inline constexpr int kResidualCastopUndermarkConeIssue = 3228;
 // Issue #3347: single-boundary / lockless commit_readiness + grant must
 // remirror (via C ABI) before auto_partial / empty_cs / type authority.
 inline constexpr int kResidualCastopReadinessUndermarkIssue = 3347;
+// Issue #3349: re-union persist into type∪IR before partial-relower
+// impact_ub (decision-time cone lag after #3120 / #3228).
+inline constexpr int kDeadCoercionPersistBeforePartialIssue = 3349;
 inline std::size_t force_residual_castop_undermark_into_cone() noexcept {
     return remirror_persisted_residual_castops();
 }
