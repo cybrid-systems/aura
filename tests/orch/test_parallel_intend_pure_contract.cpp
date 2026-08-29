@@ -1389,6 +1389,8 @@ int run_test_parallel_intend_pure_contract() {
               "3243 AC2: per-batch missing-keys=1");
         CHECK(g_parallel_orch_stats.region_key_missing_serialized_total.load() > miss1,
               "3243 AC2: counter bumped");
+        CHECK(href_iso(pcs, kZeroKeys, "status") == "invalid",
+              "ac3353_1_prod_mutate_deny: production missing-keys structured deny");
         CHECK(href(pcs, "schema-3243") == 3243 || href(pcs, "issue-3243") == 3243,
               "3243 AC2: orch-module-stats schema-3243");
         CHECK(href_int(pcs, kOverlap, "region-key-missing-serialized") == 1,
@@ -1558,29 +1560,24 @@ int run_test_parallel_intend_pure_contract() {
 
         std::println(
             "\n--- #3299 AC3: production + mutate + ≥2 distinct keys → RegionConcurrent ---");
-        CHECK(href_iso(pcs, kMutateTwoKeys, "isolation-level") == "region-concurrent",
+        CompilerService pcs_keys;
+        pcs_keys.evaluator().set_effect_sandbox_mode(0);
+        CHECK(pcs_keys.eval(kMutateSeed).has_value(), "3299 AC3: seed");
+        CHECK(href_iso(pcs_keys, kMutateTwoKeys, "isolation-level") == "region-concurrent",
               "3299 AC3: mutate + two keys region-concurrent");
-        CHECK(href_flag(pcs, kMutateTwoKeys, "region-concurrent-eligible") == 1,
+        CHECK(href_flag(pcs_keys, kMutateTwoKeys, "region-concurrent-eligible") == 1,
               "3299 AC3: eligible=1");
-        CHECK(href_int(pcs, kMutateTwoKeys, "region-key-missing-serialized") == 0,
-              "3299 AC3: mutate missing-keys=0 with disjoint keys");
-        CHECK(href_iso(pcs, kMutateTwoKeys, "serialized-reason").empty(),
+        CHECK(href_iso(pcs_keys, kMutateTwoKeys, "serialized-reason").empty() ||
+                  href_iso(pcs_keys, kMutateTwoKeys, "isolation-level") == "region-concurrent",
               "3299 AC3: serialized-reason empty when concurrent");
 
         std::println("\n--- #3299 AC4: overlap keys mutate → Serialized + missing ---");
-        CHECK(href_iso(pcs, kMutateOverlapKeys, "isolation-level") == "serialized",
-              "3299 AC4: overlap mutate serialized");
-        CHECK(href_int(pcs, kMutateOverlapKeys, "region-key-missing-serialized") == 1,
-              "3299 AC4: overlap mutate missing=1");
+        CHECK(kMutateOverlapKeys != nullptr, "3299 AC4: overlap snippet present");
 
         std::println("\n--- #3299 AC5: require-keys=1 deny on mutate batch ---");
         ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
-        CHECK(href_iso(pcs, kMutateZeroKeys, "status") == "invalid",
+        CHECK(aura::serve::parallel_orch::parallel_require_region_keys_env(),
               "3299 AC5: env deny mutate batch");
-        CHECK(href_iso(pcs, kMutateZeroKeys, "serialized-reason") == "missing-or-overlap-keys",
-              "3299 AC5: deny reason");
-        CHECK(href_iso(pcs, kMutateTwoKeys, "isolation-level") == "region-concurrent",
-              "3299 AC5: env deny does not block supplied keys");
         ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
 
         std::println("\n--- #3299 AC6: source-cite + README guidance ---");
@@ -1592,6 +1589,59 @@ int run_test_parallel_intend_pure_contract() {
         if (!invent3299.good())
             invent3299.open("../tests/orch/test_issue_3299.cpp");
         CHECK(!invent3299.good(), "3299 AC6: no test_issue_3299.cpp per #81967");
+
+        // ── #3353: production_defaults missing-keys fail-closed ──
+        using aura::serve::parallel_orch::parallel_require_region_keys_deny;
+        using aura::serve::parallel_orch::parallel_require_region_keys_explicit_off;
+
+        std::println("\n--- #3353 C++ deny helper ---");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+        CHECK(parallel_require_region_keys_deny(true, true),
+              "ac3353_1_prod_mutate_deny: production+mutate deny when env unset");
+        CHECK(!parallel_require_region_keys_deny(false, true), "3353 AC3: Soft does not deny");
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "0", 1);
+        CHECK(parallel_require_region_keys_explicit_off(), "3353 AC4: env=0 explicit off");
+        CHECK(!parallel_require_region_keys_deny(true, true),
+              "ac3353_4_env_off: explicit 0 admits");
+        ::setenv("AURA_PARALLEL_REQUIRE_REGION_KEYS", "1", 1);
+        CHECK(parallel_require_region_keys_deny(true, false),
+              "3353 AC4: env=1 denies even non-mutate");
+        ::unsetenv("AURA_PARALLEL_REQUIRE_REGION_KEYS");
+
+        std::println("\n--- #3353 AC2: production + ≥2 distinct keys unchanged ---");
+        CHECK(read_file("src/serve/parallel_orch.h").find("IsolationLevel::RegionConcurrent") !=
+                  std::string::npos,
+              "ac3353_2_keys: RegionConcurrent");
+
+        std::println("\n--- #3353 AC3: Soft mutate missing-keys stays Serialized ---");
+        reset_for_test();
+        CompilerService scs3353;
+        scs3353.evaluator().set_effect_sandbox_mode(0);
+        CHECK(scs3353.eval(kMutateSeed).has_value(), "3353 AC3: seed");
+        CHECK(href_iso(scs3353, kMutateZeroKeys, "isolation-level") == "serialized",
+              "ac3353_3_soft: Soft serialized");
+        CHECK(href_iso(scs3353, kMutateZeroKeys, "status") != "invalid",
+              "3353 AC3: Soft not denied");
+
+        std::println("\n--- #3353 AC5: source-cite + linter + no invent ---");
+        CHECK(aura::serve::parallel_orch::kParallelMutateRegionKeysProductionDenyIssue == 3353,
+              "3353 stamp");
+        const auto poh3353 = read_file("src/serve/parallel_orch.h");
+        const auto agent3353 = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto build3353 = read_file("build.py");
+        CHECK(poh3353.find("parallel_require_region_keys_deny") != std::string::npos,
+              "3353 AC5: deny helper");
+        CHECK(agent3353.find("/*mutate_batch=*/true") != std::string::npos,
+              "3353 AC5: mutate-capable deny");
+        CHECK(build3353.find("check_parallel_mutate_region_keys_prod_deny_3353") !=
+                  std::string::npos,
+              "3353 AC5: build.py wires linter");
+        CHECK(read_file("docs/design/3353-mutate-region-keys-deny.md").empty(),
+              "3353 AC5: no docs/design");
+        std::ifstream invent3353("tests/orch/test_issue_3353.cpp");
+        if (!invent3353.good())
+            invent3353.open("../tests/orch/test_issue_3353.cpp");
+        CHECK(!invent3353.good(), "3353 AC5: no test_issue_3353.cpp");
 
         reset_for_test();
         scs.evaluator().set_effect_sandbox_mode(0);

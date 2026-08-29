@@ -123,6 +123,7 @@ namespace {
         const auto id = static_cast<std::int64_t>(raw);
         return aura_closure_exists(id) != 0 && aura_closure_is_freed(id) == 0;
     }
+
     void agent_note_closure_freed_tick(Evaluator& ev) {
         if (auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics()))
             m->agent_closure_freed_during_tick.fetch_add(1, std::memory_order_relaxed);
@@ -2760,7 +2761,12 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
         if (region_key_missing) {
             aura::serve::parallel_orch::g_parallel_orch_stats.region_key_missing_serialized_total
                 .fetch_add(1, std::memory_order_relaxed);
-            if (aura::serve::parallel_orch::parallel_require_region_keys_env()) {
+            // Issue #3353: production_defaults + !pure missing-keys → deny
+            // (eval_mu mutate-capable; reuse #3243 hash). Soft / :pure stay
+            // Serialized. env=0 soak escape. env=1 still via
+            // parallel_require_region_keys_env inside deny.
+            if (aura::serve::parallel_orch::parallel_require_region_keys_deny(
+                    prod, /*mutate_batch=*/true)) {
                 aura::serve::parallel_orch::g_parallel_orch_stats.invalid_batches.fetch_add(
                     1, std::memory_order_relaxed);
                 auto iso_sidx = ev.string_heap_.size();
