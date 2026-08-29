@@ -16,8 +16,16 @@ import std;
 import aura.core;
 import aura.core.concepts;
 import aura.diag;
+// Issue #3352: Evaluator* on query_and_fix / run_all. evaluator.ixx does
+// not import query, so this is a one-way interface edge (impl of evaluator
+// already imports query).
+import aura.compiler.evaluator;
 
 namespace aura::compiler {
+
+// Issue #3352: Transform/AutoFix in-process path wraps apply_patches in
+// mutate_dispatch_try_acquire (#3074 sole Guard). nullptr = offline CLI.
+inline constexpr int kTransformEngineGuardIssue = 3352;
 
 // ── Generic AST traversal helpers (re-exports) ─────────────
 //
@@ -354,9 +362,14 @@ public:
     std::vector<aura::ast::Patch> generate_patches(std::span<const aura::ast::NodeId> matches,
                                                    const ReplaceTemplate& replacement);
 
-    // Apply query + replace in one step
+    // Apply query + replace in one step.
+    // Issue #3352: `ev != nullptr` (in-process / production_defaults) wraps
+    // apply_patches in mutate_dispatch_try_acquire so outermost Guard exit
+    // restamps + dirties + invalidates IR. `ev == nullptr` is the offline
+    // CLI throwaway path — do not hand the mutated FlatAST to a live
+    // Evaluator without re-load.
     TransformResult query_and_fix(aura::compiler::QueryEngine& engine, std::string_view query_sexpr,
-                                  std::string_view replace_sexpr);
+                                  std::string_view replace_sexpr, Evaluator* ev = nullptr);
 
 private:
     std::unordered_map<std::string, ReplaceTemplate, aura::core::TransparentStringHash,
@@ -537,27 +550,9 @@ TransformEngine::generate_patches(std::span<const aura::ast::NodeId> matches,
     return patches;
 }
 
-inline TransformResult TransformEngine::query_and_fix(QueryEngine& engine, std::string_view qs,
-                                                      std::string_view rs) {
-    TransformResult r;
-    auto matches = engine.query(qs);
-    r.match_count = matches.size();
-    if (matches.empty()) {
-        r.applied = true;
-        return r;
-    }
-    auto repl = parse_replace(rs);
-    auto patches = generate_patches(matches, repl);
-    r.patch_count = patches.size();
-    if (!patches.empty()) {
-        r.applied = aura::ast::apply_patches(ast_, patches);
-        if (!r.applied)
-            r.error = "patch failed";
-    } else {
-        r.applied = true;
-    }
-    return r;
-}
+// TransformEngine::query_and_fix — Issue #3352: defined in query_impl.cpp
+// so the Guard wrap can import evaluator without pulling it into this
+// interface.
 
 // ── AutoFixEngine — pattern-based automatic fix ────────────────
 //
@@ -581,17 +576,10 @@ public:
     }
 
     // Run all rules against the FlatAST. Returns total patches applied.
-    std::size_t run_all() {
-        std::size_t total = 0;
-        for (auto& rule : rules_) {
-            aura::compiler::QueryEngine engine(ast_, pool_);
-            aura::compiler::TransformEngine xform(ast_, pool_);
-            auto r = xform.query_and_fix(engine, rule.query, rule.replacement);
-            if (r.applied)
-                total += r.patch_count;
-        }
-        return total;
-    }
+    // Issue #3352: optional Evaluator* — when set, acquire Guard once then
+    // run inner query_and_fix(..., nullptr) so N rules are not N nested
+    // Guards. nullptr = offline throwaway (CLI --auto-fix).
+    std::size_t run_all(Evaluator* ev = nullptr);
 
     // Add default optimization rules (Issue #966: comment/code alignment)
     void add_default_rules() {

@@ -33,6 +33,9 @@ import std;
 import aura.compiler.service;
 import aura.compiler.evaluator;
 import aura.compiler.value;
+import aura.compiler.query;
+import aura.parser.parser;
+import aura.core;
 
 namespace {
 
@@ -415,6 +418,133 @@ static void ac3197_5_source_and_linter() {
     CHECK(read_file("tests/issues/test_issue_3197.cpp").empty(), "3197 AC5: no invent issues/");
 }
 
+static void ac3352_1_in_process_guard() {
+    std::println("\n--- #3352 AC1: Transform/AutoFix under Evaluator acquires Guard ---");
+    const auto impl = read_file("src/compiler/query_impl.cpp");
+    const auto qixx = read_file("src/compiler/query.ixx");
+    CHECK(qixx.find("kTransformEngineGuardIssue = 3352") != std::string::npos, "AC1: stamp");
+    CHECK(qixx.find("Evaluator* ev = nullptr") != std::string::npos, "AC1: optional Evaluator*");
+    CHECK(impl.find("mutate_dispatch_try_acquire") != std::string::npos,
+          "AC1: query_impl hits mutate_dispatch_try_acquire");
+    CHECK(impl.find("if (ev)") != std::string::npos, "AC1: Guard only when ev set");
+
+    CompilerService cs;
+    (void)cs.eval("(set-code \"(define x (if 0 1 2))\")");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* pool = ev.workspace_pool();
+    CHECK(flat != nullptr && pool != nullptr, "AC1: workspace after set-code");
+    if (!flat || !pool)
+        return;
+    aura::compiler::QueryEngine qe(*flat, *pool);
+    aura::compiler::TransformEngine xform(*flat, *pool);
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "AC1: metrics");
+    const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    auto result = xform.query_and_fix(
+        qe, "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
+        "(child 2)", &ev);
+    CHECK(result.applied, "AC1: query_and_fix applied");
+    CHECK(result.patch_count > 0, "AC1: patches written");
+    const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    CHECK(t1 >= t0 + 1, "AC1: Guard acquired (try_acquire_total moved)");
+}
+
+static void ac3352_2_cli_offline() {
+    std::println("\n--- #3352 AC2: CLI throwaway FlatAST stays offline ---");
+    const auto main = read_file("src/main.cpp");
+    CHECK(main.find("--query-and-fix") != std::string::npos, "AC2: CLI flag");
+    CHECK(main.find("query_and_fix(engine, argv[2], argv[3])") != std::string::npos,
+          "AC2: CLI does not pass Evaluator");
+    CHECK(main.find("fixer.run_all()") != std::string::npos, "AC2: --auto-fix run_all() no ev");
+    CHECK(main.find("Do not hand this mutated tree to a live") != std::string::npos ||
+              main.find("Do not pass this mutated FlatAST into a live Evaluator") !=
+                  std::string::npos,
+          "AC2: no live Evaluator handoff without re-load");
+
+    aura::ast::ASTArena arena;
+    auto alloc = arena.allocator();
+    aura::ast::StringPool pool(alloc);
+    aura::ast::FlatAST flat(alloc);
+    auto pr = aura::parser::parse_to_flat("(if 0 1 2)", flat, pool);
+    CHECK(pr.success && pr.root != aura::ast::NULL_NODE, "AC2: parse throwaway");
+    if (!pr.success)
+        return;
+    flat.root = pr.root;
+    aura::compiler::QueryEngine engine(flat, pool);
+    aura::compiler::TransformEngine xform(flat, pool);
+    auto result = xform.query_and_fix(
+        engine, "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 0))))",
+        "(child 2)");
+    CHECK(result.applied, "AC2: offline apply still works");
+    CHECK(result.patch_count > 0, "AC2: offline patches");
+}
+
+static void ac3352_3_soft_no_ev_zero_extra() {
+    std::println("\n--- #3352 AC3: no Evaluator → zero extra vs today ---");
+    const auto impl = read_file("src/compiler/query_impl.cpp");
+    CHECK(impl.find("if (ev)") != std::string::npos, "AC3: ev-null skips Guard");
+    CHECK(impl.find("g_3352_") == std::string::npos, "AC3: no g_3352_*");
+    CHECK(impl.find("schema-3352") == std::string::npos, "AC3: no schema-3352");
+
+    CompilerService cs;
+    (void)cs.eval("(set-code \"(define y (if 1 3 4))\")");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* pool = ev.workspace_pool();
+    CHECK(flat != nullptr && pool != nullptr, "AC3: workspace");
+    if (!flat || !pool)
+        return;
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "AC3: metrics");
+    const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    aura::compiler::QueryEngine qe(*flat, *pool);
+    aura::compiler::TransformEngine xform(*flat, *pool);
+    auto result = xform.query_and_fix(
+        qe, "(and (node-type IfExpr) (child 0 (and (node-type LiteralInt) (= int_value 1))))",
+        "(child 1)");
+    CHECK(result.applied, "AC3: nullptr-ev apply");
+    const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    CHECK(t1 == t0, "AC3: no Guard acquire without Evaluator");
+}
+
+static void ac3352_4_run_all_once_and_linter() {
+    std::println("\n--- #3352 AC4: run_all acquires once + linter after #3074 ---");
+    const auto impl = read_file("src/compiler/query_impl.cpp");
+    CHECK(impl.find("query_and_fix(engine, rule.query, rule.replacement, /*ev=*/nullptr)") !=
+              std::string::npos,
+          "AC4: run_all inner query_and_fix nullptr (no nested Guard)");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_transform_engine_guard_3352.py");
+    CHECK(!lint.empty() && lint.find("3352") != std::string::npos, "AC4: linter present");
+    CHECK(build.find("check_transform_engine_guard_3352") != std::string::npos,
+          "AC4: build.py wires linter");
+    const auto i3074 = build.find("check_mutate_dispatch_sole_guard_3074.py");
+    const auto i3352 = build.find("check_transform_engine_guard_3352.py");
+    CHECK(i3074 != std::string::npos && i3352 != std::string::npos && i3352 > i3074,
+          "AC4: #3352 linter after #3074");
+    CHECK(read_file("docs/design/3352-transform-engine-guard.md").empty(), "AC4: no docs/design/");
+    CHECK(read_file("tests/compiler/test_issue_3352.cpp").empty(), "AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3352.cpp").empty(), "AC4: no invent issues/");
+
+    CompilerService cs;
+    (void)cs.eval("(set-code \"(define z (if 0 5 6))\")");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    auto* pool = ev.workspace_pool();
+    CHECK(flat != nullptr && pool != nullptr, "AC4: workspace");
+    if (!flat || !pool)
+        return;
+    auto* m = static_cast<CompilerMetrics*>(ev.compiler_metrics());
+    CHECK(m != nullptr, "AC4: metrics");
+    const auto t0 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    aura::compiler::AutoFixEngine fixer(*flat, *pool);
+    fixer.add_default_rules();
+    (void)fixer.run_all(&ev);
+    const auto t1 = m->mutation_guard_try_acquire_total.load(std::memory_order_relaxed);
+    CHECK(t1 == t0 + 1, "AC4: run_all acquires Guard once (not per rule)");
+}
+
 } // namespace
 
 int run_test_mutation_guard_try_acquire_unit() {
@@ -437,6 +567,10 @@ int run_test_mutation_guard_try_acquire_unit() {
     ac3197_2_token_and_fail_closed();
     ac3197_4_soft_observe();
     ac3197_5_source_and_linter();
+    ac3352_1_in_process_guard();
+    ac3352_2_cli_offline();
+    ac3352_3_soft_no_ev_zero_extra();
+    ac3352_4_run_all_once_and_linter();
 
     std::println("\n=== test_mutation_guard_try_acquire_unit: {} passed, {} failed ===", g_passed,
                  g_failed);

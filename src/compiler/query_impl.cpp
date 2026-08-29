@@ -1,7 +1,20 @@
 module;
+// Issue #3352: parse these in the GMF so mutate_dispatch.hh's <atomic>
+// include is skipped in the purview (does not redeclare std after
+// `import std`). Same pattern as evaluator_primitives_mutate.cpp GMF.
+#include <atomic>
+#include <cstdint>
+#include <memory>
+#include <string_view>
 
 module aura.compiler.query;
 import std;
+import aura.core;
+import aura.compiler.evaluator;
+
+// Issue #3352: include after Evaluator is in scope. mutate_dispatch_try_acquire
+// is the #3074 sole Guard acquire.
+#include "compiler/mutate_dispatch.hh"
 
 namespace aura::compiler {
 
@@ -357,6 +370,66 @@ std::uint64_t QueryEngine::execute_global(const QueryExpr& q) const {
 // pointer; lifetime must outlive the QueryEngine.
 void QueryEngine::set_metrics_provider(MetricsProvider* p) {
     metrics_provider = p;
+}
+
+// Issue #3352: wrap apply_patches in mutate_dispatch_try_acquire when a live
+// Evaluator is attached. nullptr = offline throwaway (CLI --query-and-fix);
+// no extra atomics vs the pre-#3352 body.
+TransformResult TransformEngine::query_and_fix(QueryEngine& engine, std::string_view qs,
+                                               std::string_view rs, Evaluator* ev) {
+    auto apply = [&]() -> TransformResult {
+        TransformResult r;
+        auto matches = engine.query(qs);
+        r.match_count = matches.size();
+        if (matches.empty()) {
+            r.applied = true;
+            return r;
+        }
+        auto repl = parse_replace(rs);
+        auto patches = generate_patches(matches, repl);
+        r.patch_count = patches.size();
+        if (!patches.empty()) {
+            r.applied = aura::ast::apply_patches(ast_, patches);
+            if (!r.applied)
+                r.error = "patch failed";
+        } else {
+            r.applied = true;
+        }
+        return r;
+    };
+    if (ev) {
+        bool ok = true;
+        auto gr = mutate_dispatch_try_acquire(*ev, /*pending=*/1, &ok);
+        if (!gr) {
+            TransformResult r;
+            r.error = "guard-reject";
+            return r;
+        }
+        return apply();
+    }
+    return apply();
+}
+
+std::size_t AutoFixEngine::run_all(Evaluator* ev) {
+    auto apply_rules = [&]() -> std::size_t {
+        std::size_t total = 0;
+        for (auto& rule : rules_) {
+            QueryEngine engine(ast_, pool_);
+            TransformEngine xform(ast_, pool_);
+            auto r = xform.query_and_fix(engine, rule.query, rule.replacement, /*ev=*/nullptr);
+            if (r.applied)
+                total += r.patch_count;
+        }
+        return total;
+    };
+    if (ev) {
+        bool ok = true;
+        auto gr = mutate_dispatch_try_acquire(*ev, /*pending=*/1, &ok);
+        if (!gr)
+            return 0;
+        return apply_rules();
+    }
+    return apply_rules();
 }
 
 } // namespace aura::compiler
