@@ -2404,6 +2404,19 @@ def cmd_lint():
             "Issue #3233 PCV stale-span exclusive linter failed — run python3 scripts/coverage/checks/check_pcv_stale_span_exclusive_3233.py"
         )
         return r
+    # Issue #3429: shared-but-not-stale COW consumes #2406 TLS freelist
+    # before heap. Live span still COWs (no write-through). Extends
+    # test_pcv_exclusive_with_set; no docs/design / invent.
+    pcv3429_script = COVERAGE_CHECKS / "check_pcv_shared_cow_tls_3429.py"
+    if not pcv3429_script.exists():
+        fail(f"missing {pcv3429_script}")
+        return 1
+    r = run([sys.executable, str(pcv3429_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3429 PCV shared-COW TLS linter failed — run python3 scripts/coverage/checks/check_pcv_shared_cow_tls_3429.py"
+        )
+        return r
     # Issue #3328: production children_stable / query re-use of a held
     # SafePCVSpan force_refresh or structured stale-span (across-guard).
     # Soft frozen view. #2906/#3233 mutate exclusive unchanged.
@@ -12380,6 +12393,29 @@ def cmd_pcv_flatast_locked_exclusive_2906_coverage():
         fail("pcv flatast locked exclusive (#2906) coverage contract rows failed")
         return 1
     ok("pcv flatast locked exclusive (#2906) coverage clean")
+    return 0
+
+
+def cmd_pcv_shared_cow_tls_3429_coverage():
+    """Issue #3429: shared-but-not-stale COW consumes TLS before heap.
+
+    Live SafePCVSpan / checkpoint snapshot still COWs (no write-through).
+    New block comes from the #2406 TLS freelist when warm; heap only on
+    miss. Exclusive move-out and stale-exclusive unchanged. Reuse
+    with_set_cow_total / flatast_locked_move_out_cow_total. Extends
+    test_pcv_exclusive_with_set. No docs/design/, no
+    tests/issues/test_issue_3429.cpp.
+    """
+    print(f"{B}=== pcv shared-COW TLS coverage (#3429) ==={N}")
+    script = COVERAGE_CHECKS / "check_pcv_shared_cow_tls_3429.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("pcv shared-COW TLS (#3429) coverage contract rows failed")
+        return 1
+    ok("pcv shared-COW TLS (#3429) coverage clean")
     return 0
 
 
@@ -22694,6 +22730,7 @@ def main():
         "outermost-exit-residual-pin-2975": cmd_outermost_exit_residual_pin_2975_coverage,
         "outermost-exit-residual-pin-2975-coverage": cmd_outermost_exit_residual_pin_2975_coverage,
         "pcv-flatast-locked-exclusive-2906": cmd_pcv_flatast_locked_exclusive_2906,
+        "pcv-shared-cow-tls": cmd_pcv_shared_cow_tls_3429_coverage,
         "pcv-flatast-locked-exclusive-2906-coverage": cmd_pcv_flatast_locked_exclusive_2906_coverage,
         "pcv-span-stale-coverage-3167": cmd_pcv_span_stale_coverage_3167,
         "pcv-span-stale-3167": cmd_pcv_span_stale_coverage_3167,
