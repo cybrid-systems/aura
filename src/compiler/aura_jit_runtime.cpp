@@ -3925,6 +3925,30 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
 
     size_t slow_cid = static_cast<size_t>(closure_id);
 
+    // Issue #3412: production facade early-return leaves g_jit_fns live.
+    // AuraJIT fn_trackers_ already deopt_pending-refuse on CompilerService
+    // lookup, but aura_closure_call slow path dereferences
+    // g_jit_fns[func_id].fn directly. Consult aura_jit_is_deopt_pending(name)
+    // before calling pre-mutate native. AC1: live named closures of F
+    // cannot execute pre-mutate g_jit_fns.fn after production
+    // mark_define_dirty / invalidate_function. AC3: owner-scoped multi-
+    // eval — owner unbound via deopt_pending; peers still use #3300
+    // name soft-stale (do not force-bump g_aot_table_epoch). AC4: no new
+    // query keys; reuses existing deopt_pending_invoke_fallbacks counter
+    // (aura_jit.cpp:3068 / :3385 path). AC2: Soft / Off — aura_jit_is_deopt_
+    // pending returns 0 when batch_deopt not stamped (zero extra cost).
+    if (slow_cid < g_closure_names.size()) {
+        const std::string& slow_cname = g_closure_names[slow_cid];
+        if (!slow_cname.empty() && aura_jit_is_deopt_pending(slow_cname.c_str()) != 0) {
+            if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics())) {
+                m->deopt_pending_invoke_fallbacks.fetch_add(1, std::memory_order_relaxed);
+            }
+            aura_unlock_workspace_read();
+            invalidate_closure_cache_for(closure_id);
+            return 0;
+        }
+    }
+
     // Stack buffer for small locals, fallback to heap for large
     int32_t nlocals = entry.local_count > 0 ? entry.local_count : 16;
     std::array<int64_t, 64> stack_buf;
