@@ -1162,6 +1162,24 @@ struct RequiredPinGuard {
     }
 };
 
+// Issue #3420: factory both-null refuses under required. Tests that
+// still need a live uncovered leftover (pre-move fail-closed) EXEMPT-
+// allocate then note both-null (defense-in-depth inventory).
+[[nodiscard]] Pod16* create_uncovered_leftover(ASTArena& arena, std::int32_t a, std::int32_t b,
+                                               std::int32_t c, std::int32_t d) {
+    Pod16* p = nullptr;
+    p = arena.create_with_cover<Pod16>(nullptr, "test-uncovered-leftover", a, b, c, d);
+    if (p)
+        arena.note_intermediate_create_with_cover_(p, nullptr, nullptr);
+    return p;
+}
+[[nodiscard]] void* try_allocate_uncovered_leftover(ASTArena& arena, std::size_t n) {
+    void* p = arena.try_allocate(n, nullptr, "test-uncovered-leftover");
+    if (p)
+        arena.note_intermediate_create_with_cover_(p, nullptr, nullptr);
+    return p;
+}
+
 static void ac2971_1_production_default_and_create_auto_wire() {
     std::println("\n--- #2971 AC1: production default + create auto-wire ---");
     const auto hh = read_file("src/compiler/security_defaults.hh");
@@ -1194,11 +1212,11 @@ static void ac2971_2_pre_move_densify_gate() {
     const auto block0 =
         aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
     ASTArena arena(64 * 1024);
-    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
-    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
-    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
-    CHECK(p0 && p1 && p2, "AC2: creates succeeded");
-    CHECK(arena.intermediate_create_auto_wire_count() == 3, "AC2: three intermediates auto-wired");
+    auto* p0 = create_uncovered_leftover(arena, 1, 2, 3, 4);
+    auto* p1 = create_uncovered_leftover(arena, 5, 6, 7, 8);
+    auto* p2 = create_uncovered_leftover(arena, 9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC2: leftover creates succeeded");
+    CHECK(arena.intermediate_create_auto_wire_count() == 3, "AC2: three intermediates inventoried");
     // #3156: required + uncovered create inventories intermediates (blocks
     // Moving) without bumping auto_wire_total (that path is value-only).
     CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
@@ -1237,15 +1255,13 @@ static void ac2971_3_slot_covered_allows_densify() {
     const auto block0 =
         aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
     ASTArena arena(64 * 1024);
-    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
-    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
-    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
-    void* s0 = p0;
-    void* s1 = p1;
-    void* s2 = p2;
-    arena.register_external_root_slot_for_densify(&s0);
-    arena.register_external_root_slot_for_densify(&s1);
-    arena.register_external_root_slot_for_densify(&s2);
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    void* s2 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 5, 6, 7, 8);
+    auto* p2 = arena.create_with_cover<Pod16>(&s2, nullptr, 9, 10, 11, 12);
+    CHECK(p0 && p1 && p2, "AC3: covered creates succeeded");
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read() == block0,
           "AC3: pre-move gate does not fire when slots cover creates");
@@ -1708,17 +1724,18 @@ static void ac3053_1_allocate_path_auto_wires_and_blocks() {
         aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
     ASTArena arena(64 * 1024);
     void* raw = arena.try_allocate(16);
-    CHECK(raw != nullptr, "AC1: try_allocate succeeded");
+    CHECK(raw == nullptr, "3420: default try_allocate refuses under required");
     auto checked = arena.allocate_checked(16);
-    CHECK(checked.has_value() && *checked != nullptr, "AC1: allocate_checked succeeded");
-    CHECK(arena.intermediate_create_auto_wire_count() >= 2,
-          "AC1: allocate paths auto-wired under required");
+    CHECK(!checked.has_value(), "3420: default allocate_checked refuses under required");
     CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
-              std::memory_order_relaxed) >= 2 ||
-              aura::core::lifetime::general_object_pin_auto_wire_total_v_read() >= wire0 + 2,
-          "AC1: auto_wire_total rose on allocate");
-    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
-    CHECK(p0, "AC1: create still works");
+              std::memory_order_relaxed) >= 2,
+          "AC1: uncovered metric grew on refuse");
+    void* leftover = try_allocate_uncovered_leftover(arena, 16);
+    CHECK(leftover, "AC1: leftover allocate for fail-closed densify");
+    CHECK(arena.intermediate_create_auto_wire_count() >= 1,
+          "AC1: leftover inventoried under required");
+    auto* p0 = create_uncovered_leftover(arena, 1, 2, 3, 4);
+    CHECK(p0, "AC1: leftover create for fail-closed densify");
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.objects_moved == 0, "AC1: no address movement");
     CHECK(!r.pin_contract_held, "AC1: pin_contract_held=false");
@@ -1735,8 +1752,8 @@ static void ac3053_2_value_only_still_not_cover() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::core::lifetime::clear_general_object_pin_required_breach();
     ASTArena arena(64 * 1024);
-    void* raw = arena.try_allocate(16);
-    CHECK(raw, "AC2: allocate");
+    void* raw = try_allocate_uncovered_leftover(arena, 16);
+    CHECK(raw, "AC2: leftover allocate");
     arena.register_external_root_for_densify(raw); // value-only — not slot
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(!r.pin_contract_held, "AC2: value-only does not cover");
@@ -1767,14 +1784,13 @@ static void ac3053_4_mutate_densify_allocate_soak() {
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::core::lifetime::clear_general_object_pin_required_breach();
     ASTArena arena(64 * 1024);
-    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
-    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
-    void* s0 = p0;
-    void* s1 = p1;
-    arena.register_external_root_slot_for_densify(&s0);
-    arena.register_external_root_slot_for_densify(&s1);
-    void* extra = arena.try_allocate(16);
-    CHECK(extra, "AC5: synthetic allocate");
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 5, 6, 7, 8);
+    CHECK(p0 && p1, "AC5: covered creates");
+    void* extra = try_allocate_uncovered_leftover(arena, 16);
+    CHECK(extra, "AC5: synthetic leftover allocate");
     const auto blocked = arena.live_compact(LiveCompactMode::Moving);
     CHECK(blocked.objects_moved == 0, "AC5: unpinned allocate blocks even if creates slotted");
     CHECK(!blocked.pin_contract_held, "AC5: pin_contract_held=false");
@@ -1835,11 +1851,13 @@ static void ac3214_1_nonsmall_allocate_blocks() {
         aura::core::lifetime::general_object_pin_pre_move_unpinned_block_total_v_read();
     ASTArena arena(64 * 1024);
     void* raw = arena.try_allocate(kAc3214NonsmallBytes);
-    CHECK(raw != nullptr, "AC1: try_allocate(128) succeeded");
+    CHECK(raw == nullptr, "3420: default try_allocate(128) refuses under required");
     auto checked = arena.allocate_checked(kAc3214NonsmallBytes);
-    CHECK(checked.has_value() && *checked != nullptr, "AC1: allocate_checked(128) succeeded");
-    CHECK(arena.intermediate_create_auto_wire_count() >= 2,
-          "AC1: non-small allocate paths inventoried under required");
+    CHECK(!checked.has_value(), "3420: default allocate_checked(128) refuses under required");
+    void* leftover = try_allocate_uncovered_leftover(arena, kAc3214NonsmallBytes);
+    CHECK(leftover, "AC1: leftover non-small allocate");
+    CHECK(arena.intermediate_create_auto_wire_count() >= 1,
+          "AC1: non-small leftover inventoried under required");
     const auto r = arena.live_compact(LiveCompactMode::Moving);
     CHECK(r.objects_moved == 0, "AC1: no address movement");
     CHECK(!r.pin_contract_held, "AC1: pin_contract_held=false");
@@ -1859,9 +1877,9 @@ static void ac3214_2_nonsmall_slot_cover_allows() {
     aura::core::lifetime::clear_general_object_pin_required_breach();
     aura::core::lifetime::reset_general_object_pin_pre_move_block_for_test();
     ASTArena arena(64 * 1024);
-    void* extra = arena.try_allocate(kAc3214NonsmallBytes);
-    CHECK(extra, "AC2: non-small allocate");
-    arena.register_external_root_slot_for_densify(&extra);
+    void* extra = nullptr;
+    extra = arena.try_allocate(kAc3214NonsmallBytes, &extra, nullptr);
+    CHECK(extra, "AC2: covered non-small allocate");
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
     aura::core::lifetime::clear_general_object_pin_required_breach();
     const auto r = arena.live_compact(LiveCompactMode::Moving);
@@ -1912,7 +1930,7 @@ static void ac3214_4_source_cite_no_invent() {
 // EXEMPT at the allocate site so uncovered_under_required does not grow
 // and sticky is not armed solely by that allocate.
 static void ac3326_1_create_without_cover_fail_closed() {
-    std::println("\n--- #3326 AC1: create<T> without cover fail-closes Moving + sticky ---");
+    std::println("\n--- #3326/#3420 AC1: default create refuses under required ---");
     MovingFlagGuard on(1);
     RequiredPinGuard req(1);
     aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
@@ -1923,16 +1941,16 @@ static void ac3326_1_create_without_cover_fail_closed() {
     aura::ast::g_intermediate_create_with_cover_total.store(0, std::memory_order_relaxed);
     ASTArena arena(64 * 1024);
     auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
-    CHECK(p0 != nullptr, "3326 AC1: create succeeded");
+    CHECK(p0 == nullptr, "3420 AC1: factory refuses both-null under required");
     CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
               std::memory_order_relaxed) >= 1,
-          "3326 AC1: uncovered_under_required grew on default create");
+          "3420 AC1: uncovered_under_required grew on refuse");
+    CHECK(arena.intermediate_create_auto_wire_count() == 0,
+          "3420 AC1: no live uncovered object inventoried");
     const auto r = arena.live_compact(LiveCompactMode::Moving);
-    CHECK(r.objects_moved == 0, "3326 AC1: no address movement");
-    CHECK(!r.pin_contract_held, "3326 AC1: pin_contract_held=false");
-    CHECK(r.moving_blocked_precondition, "3326 AC1: pre-move block");
-    CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(), "3326 AC1: sticky densify-off");
-    CHECK(p0->a == 1 && p0->b == 2, "3326 AC1: payload intact after blocked densify");
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3420 AC1: refuse did not arm sticky from a surviving object");
+    (void)r;
 }
 
 static void ac3326_2_create_with_cover_no_uncovered_sticky() {
@@ -2039,6 +2057,89 @@ static void ac3326_4_source_cite_no_invent() {
     CHECK(read_file("tests/core/test_issue_3326.cpp").empty() &&
               read_file("tests/issues/test_issue_3326.cpp").empty(),
           "3326 AC6: no test_issue_3326.cpp per #81967");
+}
+
+// ── Issue #3420: refuse-at-factory under production required ──
+static void ac3420_1_factory_refuses_both_null() {
+    std::println("\n--- #3420 AC1: factory both-null refuses (no live uncovered object) ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+        0, std::memory_order_relaxed);
+    ASTArena arena(64 * 1024);
+    CHECK(arena.create<Pod16>(1, 2, 3, 4) == nullptr, "3420 AC1: create refuses");
+    CHECK(arena.try_allocate(16) == nullptr, "3420 AC1: try_allocate refuses");
+    CHECK(!arena.allocate_checked(16).has_value(), "3420 AC1: allocate_checked refuses");
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) >= 3,
+          "3420 AC1: uncovered metric grew on refuse");
+    CHECK(arena.intermediate_create_auto_wire_count() == 0, "3420 AC1: no inventory");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+          "3420 AC1: sticky not armed solely by refused factory create");
+    (void)r;
+}
+
+static void ac3420_3_cover_compliant_soak() {
+    std::println("\n--- #3420 AC4: cover-compliant mutate×densify soak ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::lifetime::clear_general_object_pin_required_breach();
+    aura::ast::g_intermediate_create_uncovered_under_required_total.store(
+        0, std::memory_order_relaxed);
+    const auto uncovered0 = aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+        std::memory_order_relaxed);
+    for (int i = 0; i < 8; ++i) {
+        ASTArena arena(64 * 1024);
+        void* slot = nullptr;
+        auto* p = arena.create_with_cover<Pod16>(&slot, nullptr, i, i + 1, i + 2, i + 3);
+        CHECK(p != nullptr && slot == p, "3420 AC4: covered create");
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.pin_contract_held, "3420 AC4: pin_contract_held");
+        CHECK(!aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3420 AC4: sticky not armed by covered create");
+    }
+    CHECK(aura::ast::g_intermediate_create_uncovered_under_required_total.load(
+              std::memory_order_relaxed) == uncovered0,
+          "3420 AC4: uncovered stable on cover-compliant traffic");
+}
+
+static void ac3420_5_source_cite_no_invent() {
+    std::println("\n--- #3420 AC5–AC7: source-cite + sites + no invent ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto zc = read_file("src/core/zero_copy_output.hh");
+    const auto t = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto cover = read_file("tests/core/test_arena_required_cover_no_value_only.cpp");
+    const auto build = read_file("build.py");
+    CHECK(arena.find("kFactoryRefuseUncoveredIssue = 3420") != std::string::npos,
+          "3420 AC7: arena stamp");
+    CHECK(lp.find("kFactoryRefuseUncoveredIssue = 3420") != std::string::npos,
+          "3420 AC7: pin stamp");
+    CHECK(arena.find("factory_uncovered_refused_") != std::string::npos, "3420 AC1: refuse helper");
+    CHECK(arena.find("factory_uncovered_refused_(cover_slot, cover_reason)") != std::string::npos,
+          "3420 AC1: allocate_raw_impl refuses both-null");
+    CHECK(svc.find(".create<") == std::string::npos,
+          "3420 AC3: service.ixx migrated off default create");
+    CHECK(mut.find(".create<") == std::string::npos,
+          "3420 AC3: mutate replace-pattern migrated off default create");
+    CHECK(zc.find("Issue #3420 residual") != std::string::npos,
+          "3420 AC3: zero_copy_output listed residual (vector fallback)");
+    CHECK(t.find("ac3420_1_factory_refuses_both_null") != std::string::npos, "3420 AC7: AC1 test");
+    CHECK(cover.find("ac3420_") != std::string::npos, "3420 AC7: required-cover suite cites #3420");
+    CHECK(build.find("check_factory_refuse_uncovered_3420") != std::string::npos,
+          "3420 AC7: build.py wires linter");
+    CHECK(arena.find("g_3420_") == std::string::npos, "3420 AC6: no new g_3420_*");
+    CHECK(read_file("docs/design/3420-factory-refuse.md").empty(),
+          "3420 AC7: no docs/design/3420-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3420.cpp").empty() &&
+              read_file("tests/issues/test_issue_3420.cpp").empty(),
+          "3420 AC7: no test_issue_3420.cpp per #81967");
 }
 
 // ── Issue #3055: post-Moving last_object_remap_ residual ──
@@ -2942,6 +3043,10 @@ int run_test_moving_densify_fail_closed() {
     ac3326_2_create_with_cover_no_uncovered_sticky();
     ac3326_3_try_allocate_cover_and_soft();
     ac3326_4_source_cite_no_invent();
+    // Issue #3420: refuse-at-factory under production required.
+    ac3420_1_factory_refuses_both_null();
+    ac3420_3_cover_compliant_soak();
+    ac3420_5_source_cite_no_invent();
     // Issue #3055: post-Moving last_object_remap_ residual (extends this suite).
     ac3055_1_slot_covered_no_canary_holds();
     ac3055_2_unregistered_canary_fail_closed();

@@ -13222,10 +13222,9 @@ public:
         // Prefer arena typed factory (owner callback → check_arena_quota once).
         if (arena_->has_arena_owner())
             return arena_->allocate_checked(size, alignment);
-        // Issue #3180: caller-supplied cover propagates through the
-        // optional cover_slot/cover_reason params on
-        // ASTArena::allocate_checked. Default (no cover) is the
-        // legacy behavior (uncovered metric bump under required).
+        // Issue #3180 / #3420: caller-supplied cover propagates through
+        // optional cover_slot/cover_reason on ASTArena::allocate_checked.
+        // Default (no cover) is Soft/compat; production required refuses.
         // Orphan / pre-bind path: explicit Evaluator check then try_allocate
         // (try_allocate has no owner so it will not re-check).
         if (auto err = check_arena_quota(static_cast<std::uint64_t>(size)))

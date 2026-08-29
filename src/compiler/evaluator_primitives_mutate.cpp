@@ -4434,8 +4434,12 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
         // 256 KiB is ample for a pattern AST (heap-backed buffer).
         aura::ast::ASTArena pat_arena(/*initial_size=*/256 * 1024);
         auto alloc = pat_arena.allocator();
-        auto* pat_pool = pat_arena.create<aura::ast::StringPool>(alloc);
-        auto* pat_flat = pat_arena.create<aura::ast::FlatAST>(alloc);
+        aura::ast::StringPool* pat_pool = nullptr;
+        aura::ast::FlatAST* pat_flat = nullptr;
+        pat_pool = pat_arena.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pat_pool), nullptr, alloc);
+        pat_flat = pat_arena.create_with_cover<aura::ast::FlatAST>(
+            reinterpret_cast<void**>(&pat_flat), nullptr, alloc);
         if (!pat_pool || !pat_flat) {
             ok = false;
             return mev("internal", "replace-pattern: pattern arena allocate failed");

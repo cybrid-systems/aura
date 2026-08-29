@@ -501,6 +501,17 @@ static void ac3326_factory_cover_surface() {
           "3326: Soft required-active load preserved");
 }
 
+static void ac3420_factory_refuse_surface() {
+    std::println("\n--- #3420: factory refuse-at-required surface ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("kFactoryRefuseUncoveredIssue = 3420") != std::string::npos,
+          "3420: arena stamp");
+    CHECK(arena.find("g_intermediate_create_uncovered_under_required_total.fetch_add") !=
+              std::string::npos,
+          "3420: reuses uncovered metric");
+    CHECK(arena.find("factory_uncovered_refused_") != std::string::npos, "3420: refuse helper");
+}
+
 // AC8: Soft / Off / render-hotpath single-load zero-cost contract preserved.
 // The with_cover_ body keeps the auto_wire_ call for the Soft/Off path
 // (already covered by AC4 ordering check) AND the pre-checks in
@@ -937,6 +948,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3180_hot_path_cover_declarations();
     ac3214_nonsmall_allocate_notes_cover();
     ac3326_factory_cover_surface();
+    ac3420_factory_refuse_surface();
     ac8_soft_off_zero_cost();
     ac9_linter_self_test();
     ac10_no_invent_docs();

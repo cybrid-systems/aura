@@ -103,6 +103,9 @@ inline constexpr int kDensifyTrackedAllocateCoverIssue = 3214;
 // args). Default nullptr remains Soft/compat and still fail-closes
 // Moving when uncovered. No second pin registry.
 inline constexpr int kFactoryDefaultCoverIssue = 3326;
+// Issue #3420: production required refuses factory-default both-null
+// allocate (no live uncovered object). Soft/compat keep default create.
+inline constexpr int kFactoryRefuseUncoveredIssue = 3420;
 
 // ── Object class × required protocol inventory (#2298 AC5 / #2363) ────
 // | Class                         | Protocol                          |

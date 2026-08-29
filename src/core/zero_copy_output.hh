@@ -123,6 +123,9 @@ struct ZeroCopyFramebuffer {
         void* p = nullptr;
         if constexpr (requires { arena.try_allocate(size); }) {
             // ASTArena public seam (wraps allocate_raw).
+            // Issue #3420 residual: default try_allocate is both-null.
+            // Production required refuses → vector fallback below (not a
+            // densify-tracked AST intermediate).
             p = arena.try_allocate(size);
         } else if constexpr (requires { arena.allocate_raw(size, alignof(std::byte)); }) {
             // FrameBumpArena / free-standing Arena-like.

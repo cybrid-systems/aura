@@ -1281,8 +1281,14 @@ public:
 
         // Parse the new source in the temp arena (avoids clobbering workspace)
         auto alloc = temp_arena_.allocator();
-        auto* new_pool = temp_arena_.create<aura::ast::StringPool>(alloc);
-        auto* new_flat = temp_arena_.create<aura::ast::FlatAST>(alloc);
+        aura::ast::StringPool* new_pool = nullptr;
+        aura::ast::FlatAST* new_flat = nullptr;
+        new_pool = temp_arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&new_pool), nullptr, alloc);
+        new_flat = temp_arena_.create_with_cover<aura::ast::FlatAST>(
+            reinterpret_cast<void**>(&new_flat), nullptr, alloc);
+        if (!new_pool || !new_flat)
+            return false;
         auto pr = aura::parser::parse_to_flat(new_source, *new_flat, *new_pool);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return false;
@@ -2770,8 +2776,14 @@ public:
                     // (needed when cached function's inner lambda has stale FlatAST ptr)
                     if (!bd.body_source.empty()) {
                         auto fallback_alloc = arena_.allocator();
-                        auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
-                        auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                        aura::ast::StringPool* f_pool = nullptr;
+                        aura::ast::FlatAST* f_flat = nullptr;
+                        f_pool = arena_.create_with_cover<aura::ast::StringPool>(
+                            reinterpret_cast<void**>(&f_pool), nullptr, fallback_alloc);
+                        f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
+                            reinterpret_cast<void**>(&f_flat), nullptr, fallback_alloc);
+                        if (!f_pool || !f_flat)
+                            return std::nullopt;
                         auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
                         if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
                             f_flat->root = f_pr.root;
@@ -2787,8 +2799,14 @@ public:
                 auto src_it = function_sources_.find(func_name);
                 if (src_it != function_sources_.end()) {
                     auto fallback_alloc = arena_.allocator();
-                    auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
-                    auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                    aura::ast::StringPool* f_pool = nullptr;
+                    aura::ast::FlatAST* f_flat = nullptr;
+                    f_pool = arena_.create_with_cover<aura::ast::StringPool>(
+                        reinterpret_cast<void**>(&f_pool), nullptr, fallback_alloc);
+                    f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
+                        reinterpret_cast<void**>(&f_flat), nullptr, fallback_alloc);
+                    if (!f_pool || !f_flat)
+                        return std::nullopt;
                     auto f_pr = aura::parser::parse_to_flat(src_it->second, *f_flat, *f_pool);
                     if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
                         f_flat->root = f_pr.root;
@@ -2835,8 +2853,16 @@ public:
         // Phase 4: parse directly into FlatAST (bypasses Expr* entirely)
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
-        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        aura::ast::StringPool* pool_ptr = nullptr;
+        aura::ast::FlatAST* flat_ptr = nullptr;
+        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
+                                                                nullptr, alloc);
+        if (!pool_ptr || !flat_ptr) {
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          "eval_ir: arena allocate failed"});
+        }
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -3050,8 +3076,14 @@ public:
                 }
                 if (!bd.body_source.empty()) {
                     auto fallback_alloc = arena_.allocator();
-                    auto* f_pool = arena_.create<aura::ast::StringPool>(fallback_alloc);
-                    auto* f_flat = arena_.create<aura::ast::FlatAST>(fallback_alloc);
+                    aura::ast::StringPool* f_pool = nullptr;
+                    aura::ast::FlatAST* f_flat = nullptr;
+                    f_pool = arena_.create_with_cover<aura::ast::StringPool>(
+                        reinterpret_cast<void**>(&f_pool), nullptr, fallback_alloc);
+                    f_flat = arena_.create_with_cover<aura::ast::FlatAST>(
+                        reinterpret_cast<void**>(&f_flat), nullptr, fallback_alloc);
+                    if (!f_pool || !f_flat)
+                        return std::nullopt;
                     auto f_pr = aura::parser::parse_to_flat(bd.body_source, *f_flat, *f_pool);
                     if (f_pr.success && f_pr.root != aura::ast::NULL_NODE) {
                         f_flat->root = f_pr.root;
@@ -3105,8 +3137,16 @@ public:
         std::shared_lock mutate_read(mutate_mtx_);
         // Parse expression
         auto alloc = arena_.allocator();
-        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        aura::ast::StringPool* pool_ptr = nullptr;
+        aura::ast::FlatAST* flat_ptr = nullptr;
+        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
+                                                                nullptr, alloc);
+        if (!pool_ptr || !flat_ptr) {
+            return std::unexpected(aura::diag::Diagnostic{aura::diag::ErrorKind::InternalError,
+                                                          "exec_jit: arena allocate failed"});
+        }
         auto pr = aura::parser::parse_to_flat(input, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -6484,22 +6524,28 @@ public:
         bool restore_root = false;
         if (!source.empty()) {
             auto alloc = arena_.allocator();
-            auto* tmp_pool = arena_.create<aura::ast::StringPool>(alloc);
-            auto* tmp_flat = arena_.create<aura::ast::FlatAST>(alloc);
-            auto pr = aura::parser::parse_to_flat(source, *tmp_flat, *tmp_pool);
-            if (pr.success && pr.root != aura::ast::NULL_NODE) {
-                tmp_flat->root = pr.root;
-                // Multi-define source strings (legacy set-code): pick named define.
-                const auto defs =
-                    aura::compiler::find_top_level_defines(*tmp_flat, *tmp_pool, pr.root);
-                for (const auto& [n, id] : defs) {
-                    if (n == name) {
-                        tmp_flat->root = id;
-                        break;
+            aura::ast::StringPool* tmp_pool = nullptr;
+            aura::ast::FlatAST* tmp_flat = nullptr;
+            tmp_pool = arena_.create_with_cover<aura::ast::StringPool>(
+                reinterpret_cast<void**>(&tmp_pool), nullptr, alloc);
+            tmp_flat = arena_.create_with_cover<aura::ast::FlatAST>(
+                reinterpret_cast<void**>(&tmp_flat), nullptr, alloc);
+            if (tmp_pool && tmp_flat) {
+                auto pr = aura::parser::parse_to_flat(source, *tmp_flat, *tmp_pool);
+                if (pr.success && pr.root != aura::ast::NULL_NODE) {
+                    tmp_flat->root = pr.root;
+                    // Multi-define source strings (legacy set-code): pick named define.
+                    const auto defs =
+                        aura::compiler::find_top_level_defines(*tmp_flat, *tmp_pool, pr.root);
+                    for (const auto& [n, id] : defs) {
+                        if (n == name) {
+                            tmp_flat->root = id;
+                            break;
+                        }
                     }
+                    lower_flat = tmp_flat;
+                    lower_pool = tmp_pool;
                 }
-                lower_flat = tmp_flat;
-                lower_pool = tmp_pool;
             }
         }
         if (lower_flat == &flat && expanded_root != aura::ast::NULL_NODE &&
@@ -6997,8 +7043,14 @@ public:
                 continue;
             }
             auto alloc = arena_.allocator();
-            auto* tmp_pool = arena_.create<aura::ast::StringPool>(alloc);
-            auto* tmp_flat = arena_.create<aura::ast::FlatAST>(alloc);
+            aura::ast::StringPool* tmp_pool = nullptr;
+            aura::ast::FlatAST* tmp_flat = nullptr;
+            tmp_pool = arena_.create_with_cover<aura::ast::StringPool>(
+                reinterpret_cast<void**>(&tmp_pool), nullptr, alloc);
+            tmp_flat = arena_.create_with_cover<aura::ast::FlatAST>(
+                reinterpret_cast<void**>(&tmp_flat), nullptr, alloc);
+            if (!tmp_pool || !tmp_flat)
+                continue;
             auto pr = aura::parser::parse_to_flat(canonical, *tmp_flat, *tmp_pool);
             if (!pr.success || pr.root == aura::ast::NULL_NODE)
                 continue;
@@ -8042,8 +8094,14 @@ public:
 
         // Arena-allocate flat/pool so pointers survive (bridge data references them)
         auto alloc = arena_.allocator();
-        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        aura::ast::StringPool* pool_ptr = nullptr;
+        aura::ast::FlatAST* flat_ptr = nullptr;
+        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
+                                                                nullptr, alloc);
+        if (!pool_ptr || !flat_ptr)
+            return;
         auto pr = aura::parser::parse_to_flat(content, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE)
             return;
@@ -9507,8 +9565,16 @@ public:
     EvalResult define_function(std::string_view code) {
         // Arena-allocate FlatAST/Pool so closures can reference them across calls.
         auto alloc = arena_.allocator();
-        auto* pool_ptr = arena_.create<aura::ast::StringPool>(alloc);
-        auto* flat_ptr = arena_.create<aura::ast::FlatAST>(alloc);
+        aura::ast::StringPool* pool_ptr = nullptr;
+        aura::ast::FlatAST* flat_ptr = nullptr;
+        pool_ptr = arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&pool_ptr), nullptr, alloc);
+        flat_ptr = arena_.create_with_cover<aura::ast::FlatAST>(reinterpret_cast<void**>(&flat_ptr),
+                                                                nullptr, alloc);
+        if (!pool_ptr || !flat_ptr) {
+            return std::unexpected(aura::diag::Diagnostic{
+                aura::diag::ErrorKind::InternalError, "define_function: arena allocate failed"});
+        }
         auto pr = aura::parser::parse_to_flat(code, *flat_ptr, *pool_ptr);
         if (!pr.success || pr.root == aura::ast::NULL_NODE) {
             return std::unexpected(parse_error_diag(pr));
@@ -9545,8 +9611,15 @@ public:
     // Call set_code() again to replace the program.
     void set_code(std::string_view input) {
         auto alloc = arena_.allocator();
-        current_ast_ = arena_.create<aura::ast::FlatAST>(alloc);
-        current_pool_ = arena_.create<aura::ast::StringPool>(alloc);
+        current_ast_ = arena_.create_with_cover<aura::ast::FlatAST>(
+            reinterpret_cast<void**>(&current_ast_), nullptr, alloc);
+        current_pool_ = arena_.create_with_cover<aura::ast::StringPool>(
+            reinterpret_cast<void**>(&current_pool_), nullptr, alloc);
+        if (!current_ast_ || !current_pool_) {
+            current_ast_ = nullptr;
+            current_pool_ = nullptr;
+            return;
+        }
         auto pr = aura::parser::parse_to_flat(input, *current_ast_, *current_pool_);
         if (pr.success && pr.root != aura::ast::NULL_NODE) {
             current_ast_->root = pr.root;
