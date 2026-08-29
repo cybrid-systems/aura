@@ -1407,7 +1407,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_require_effect_live_mid.cpp` (—) [domain_suite, theme_compiler] — AC1: Grant Mutate bound_mutation_id=M; require_effect outside → deny
 - `tests/core/test_reset_slot_parent_edges.cpp` (—) [domain_suite, theme_core] — AC1: edges empty after every reset, even when index is dirty
 - `tests/compiler/test_residual_gc_defer_assert.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Success path of outermost exit leaves defer_reasons_snapshot()==0
-- `tests/compiler/test_restamp_budget_hard_gate.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_restamp_budget_hard_gate.cpp --
+- `tests/compiler/test_restamp_budget_hard_gate.cpp` (—) [large, domain_suite, theme_compiler] — tests/compiler/test_restamp_budget_hard_gate.cpp --
 - `tests/core/test_restamp_sla_observability.cpp` (—) [large, obs_named, domain_suite, theme_core] — AC1: After forced wrap, query surface reports restamp-us / nodes /
 - `tests/core/test_restricted_unset_principal.cpp` (—) [domain_suite, theme_core] — AC1: Restricted + tenant=0 + Mutate side-effect → deny + IsolationDeny
 - `tests/core/test_sandbox_mode_atomic.cpp` (—) [domain_suite, theme_core] — AC1: sandbox_mode is atomic-backed (AtomicEffectSandboxMode)

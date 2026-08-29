@@ -44,6 +44,7 @@ namespace {
 
 using aura::ast::FlatAST;
 using aura::ast::NodeId;
+using aura::ast::NULL_NODE;
 using aura::compiler::apply_coercion_map;
 using aura::compiler::coerced_nodes_tracker_enter_boundary;
 using aura::compiler::coerced_nodes_tracker_exit_boundary;
@@ -371,6 +372,162 @@ void test_3386_query_stable_hard_reject_torn_latch() {
     }
 }
 
+NodeId first_live_3426(FlatAST& ws) {
+    for (NodeId id = 1; id < ws.size(); ++id) {
+        if (ws.is_live_node(id) && !ws.is_free_slot(id))
+            return id;
+    }
+    return NULL_NODE;
+}
+
+// Issue #3426: held-cap overflow fail-closes the whole held set.
+
+void test_3426_ac1_held_overflow_fail_closed() {
+    std::print("AC3426/AC1 -- held set 65 + over-budget: whole batch stale\n");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::kRestampHotConeHeldCap;
+    using aura::ast::kRestampHotConeHeldOverflowIssue;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::restamp_hot_cone_held_overflow;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::capture_query_epoch;
+    using aura::core::force_query_epoch_stale_from_restamp_budget;
+    using aura::core::query_result_check_fresh;
+    using aura::core::QueryResult;
+    expect_eq_i64("3426 AC1: issue constant", 3426, kRestampHotConeHeldOverflowIssue);
+    expect_eq_i64("3426 AC1: held cap 64", 64, kRestampHotConeHeldCap);
+    apply_dev_audit_defaults();
+    clear_restamp_hot_cone_held_for_test();
+    CompilerService cs;
+    expect_true(
+        "3426 AC1: set-code",
+        cs.eval("(set-code \"(define t3426 (lambda (x) 1)) (define u3426 2)\")").has_value());
+    expect_true("3426 AC1: eval", cs.eval("(eval-current)").has_value());
+    auto* ws = cs.evaluator().workspace_flat();
+    expect_true("3426 AC1: workspace", ws != nullptr);
+    if (!ws)
+        return;
+    const auto held = first_live_3426(*ws);
+    expect_true("3426 AC1: live node", held != NULL_NODE);
+    for (std::uint32_t i = 1; i <= static_cast<std::uint32_t>(kRestampHotConeHeldCap) + 1; ++i)
+        note_restamp_hot_cone_held_node(i);
+    expect_true("3426 AC1: overflow latched", restamp_hot_cone_held_overflow());
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    (void)capture_query_epoch(static_cast<std::uint64_t>(ws->generation()));
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    expect_true("3426 AC1: torn", ws->restamp_over_budget_torn());
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    force_query_epoch_stale_from_restamp_budget();
+    QueryResult qr{};
+    qr.epoch.generation = static_cast<std::uint64_t>(ws->generation());
+    expect_true("3426 AC1: query_result_check_fresh false for held batch",
+                !query_result_check_fresh(qr, static_cast<std::uint64_t>(ws->generation())));
+    expect_true("3426 AC1: allow_query_stable_ref_export false",
+                !cs.evaluator().allow_query_stable_ref_export(held));
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    clear_restamp_hot_cone_held_for_test();
+}
+
+void test_3426_ac2_held_fits_still_exportable() {
+    std::print("AC3426/AC2 -- held ≤64 + node in cone still exportable\n");
+    using aura::ast::clear_restamp_budget_nodes_override_for_test;
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::ast::restamp_hot_cone_budget;
+    using aura::ast::set_restamp_budget_nodes_for_process;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    clear_restamp_hot_cone_held_for_test();
+    CompilerService cs;
+    expect_true(
+        "3426 AC2: set-code",
+        cs.eval("(set-code \"(define a3426 (lambda (x) 1)) (define b3426 2)\")").has_value());
+    expect_true("3426 AC2: eval", cs.eval("(eval-current)").has_value());
+    auto* ws = cs.evaluator().workspace_flat();
+    expect_true("3426 AC2: workspace", ws != nullptr);
+    if (!ws)
+        return;
+    const auto held = first_live_3426(*ws);
+    expect_true("3426 AC2: live node", held != NULL_NODE);
+    note_restamp_hot_cone_held_node(static_cast<std::uint32_t>(held));
+    apply_production_audit_defaults();
+    set_restamp_budget_nodes_for_process(4);
+    ws->bump_generation();
+    ws->restamp_all_node_generations();
+    (void)ws->restamp_hot_cone_after_budget(restamp_hot_cone_budget(4));
+    expect_true("3426 AC2: held node eagerly restamped", ws->node_eagerly_restamped(held));
+    expect_true("3426 AC2: allow export of held-in-cone node",
+                cs.evaluator().allow_query_stable_ref_export(held));
+    apply_dev_audit_defaults();
+    clear_restamp_budget_nodes_override_for_test();
+    clear_restamp_hot_cone_held_for_test();
+}
+
+void test_3426_ac3_soft_zero_extra() {
+    std::print("AC3426/AC3 -- Soft / unlatched: overflow does not fail-close export\n");
+    using aura::ast::clear_restamp_hot_cone_held_for_test;
+    using aura::ast::kRestampHotConeHeldCap;
+    using aura::ast::note_restamp_hot_cone_held_node;
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    clear_restamp_hot_cone_held_for_test();
+    CompilerService cs;
+    expect_true("3426 AC3: set-code",
+                cs.eval("(set-code \"(define s3426 (lambda (x) 1))\")").has_value());
+    expect_true("3426 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto* ws = cs.evaluator().workspace_flat();
+    expect_true("3426 AC3: workspace", ws != nullptr);
+    if (!ws)
+        return;
+    const auto live = first_live_3426(*ws);
+    expect_true("3426 AC3: live", live != NULL_NODE);
+    for (std::uint32_t i = 1; i <= static_cast<std::uint32_t>(kRestampHotConeHeldCap) + 1; ++i)
+        note_restamp_hot_cone_held_node(i);
+    expect_true("3426 AC3: Soft allow still true (overflow not consulted)",
+                cs.evaluator().allow_query_stable_ref_export(live));
+    clear_restamp_hot_cone_held_for_test();
+}
+
+void test_3426_ac4_non_regress() {
+    std::print("AC3426/AC4 -- #3327 union + #3386 probe + #3389 build cap\n");
+    const auto impl = read_repo_source("src/core/ast_impl.cpp");
+    const auto sec = read_repo_source("src/compiler/evaluator_security.cpp");
+    const auto epoch = read_repo_source("src/core/workspace_epoch.hh");
+    const auto restamp = read_repo_source("src/core/flatast_restamp.hh");
+    expect_true("3426 AC4: #3327 held union", impl.find("Issue #3327") != std::string::npos);
+    expect_true("3426 AC4: #3386 torn probe OR",
+                sec.find("restamp_over_budget_torn()") != std::string::npos);
+    expect_true("3426 AC4: #3389 kMaxInlineMatches = 64",
+                epoch.find("kMaxInlineMatches = 64") != std::string::npos);
+    expect_true("3426 AC4: Issue #3426 cite", restamp.find("Issue #3426") != std::string::npos);
+}
+
+void test_3426_ac5_linter_after_3327() {
+    std::print("AC3426/AC5 -- linter after #3327, no invent\n");
+    const auto build = read_repo_source("build.py");
+    expect_true("3426 AC5: linter wired",
+                build.find("check_restamp_hot_cone_held_overflow_3426") != std::string::npos);
+    const auto prev = build.find("check_restamp_hot_cone_agent_held_3327");
+    const auto ours = build.find("check_restamp_hot_cone_held_overflow_3426");
+    expect_true("3426 AC5: linter after #3327", prev != std::string::npos && ours > prev);
+    {
+        std::ifstream f{"docs/design/3426-held-cap-overflow.md"};
+        expect_true("3426 AC5: no docs/design/3426-*", !f.good());
+    }
+    {
+        std::ifstream f{"tests/issues/test_issue_3426.cpp"};
+        expect_true("3426 AC5: no tests/issues/test_issue_3426.cpp", !f.good());
+    }
+}
+
 } // namespace
 
 int main() {
@@ -386,6 +543,11 @@ int main() {
     test_ac11_status_surface_exposes_budget_fields();
     test_3309_unified_restamp_single_entry();
     test_3386_query_stable_hard_reject_torn_latch();
-    std::print("All #3104 + #3138 + #3309 + #3386 AC tests PASSED\n");
+    test_3426_ac1_held_overflow_fail_closed();
+    test_3426_ac2_held_fits_still_exportable();
+    test_3426_ac3_soft_zero_extra();
+    test_3426_ac4_non_regress();
+    test_3426_ac5_linter_after_3327();
+    std::print("All #3104 + #3138 + #3309 + #3386 + #3426 AC tests PASSED\n");
     return 0;
 }
