@@ -3752,6 +3752,10 @@ public:
             }
             grant_type_export_authority();
         } else {
+            // Issue #3360: Soft TIMEOUT / CONFLICT copy refuses the
+            // query:type export face (commit for iteration still allowed).
+            aura::compiler::typed_audit::g_type_export_soft_refuse_observe_total.fetch_add(
+                1, std::memory_order_relaxed);
             clear_type_export_authority();
         }
     }

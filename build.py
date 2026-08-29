@@ -2488,6 +2488,20 @@ def cmd_lint():
             "Issue #3294 type-export outermost-face linter failed — run python3 scripts/coverage/checks/check_type_export_outermost_face_3294.py"
         )
         return r
+    # Issue #3360: Soft TIMEOUT half-solved must not become query:type
+    # authority. Discard provisional OccurrenceGoals + refuse export
+    # face. Soft commit for iteration stays. Extends
+    # test_solve_delta_unresolved_export; no docs/design / invent.
+    ster3360_script = COVERAGE_CHECKS / "check_soft_timeout_export_refuse_3360.py"
+    if not ster3360_script.exists():
+        fail(f"missing {ster3360_script}")
+        return 1
+    r = run([sys.executable, str(ster3360_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3360 Soft TIMEOUT export-refuse linter failed — run python3 scripts/coverage/checks/check_soft_timeout_export_refuse_3360.py"
+        )
+        return r
     # Issue #3295: dirty-only OwnershipEnv re-sim forces full ownership
     # walk under Production/Full when escape gate or densify-pending is
     # present (cross-function / closure-captured linear flows outside the
