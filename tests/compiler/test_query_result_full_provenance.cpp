@@ -48,6 +48,8 @@ namespace {
 using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::set_strategy;
+using aura::compiler::types::as_bool;
+using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
 
 constexpr std::uint64_t kQueryResultFullProvenanceIssue = 3103;
@@ -767,6 +769,74 @@ void test_3395_ac4_non_regress_source_cite() {
     }
 }
 
+void test_3424_ac1_source_cite() {
+    std::print("AC3424/AC1 -- is_hash + query_result_is_fresh_with_refs in both resolvers\n");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::ifstream f_dec("src/compiler/query_result_decode.hh");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    std::string dec((std::istreambuf_iterator<char>(f_dec)), std::istreambuf_iterator<char>());
+    expect_true("3424 AC1: decode header", !dec.empty());
+    expect_true("3424 AC1: kQueryResultHashResolveIssue = 3424",
+                dec.find("kQueryResultHashResolveIssue = 3424") != std::string::npos);
+    expect_true("3424 AC1: shared resolve_query_result_match",
+                dec.find("resolve_query_result_match") != std::string::npos);
+    expect_true("3424 AC1: query_result_is_fresh_with_refs in decode",
+                dec.find("query_result_is_fresh_with_refs") != std::string::npos);
+    expect_true("3424 AC1: decode has no occupancy restamp helper",
+                dec.find("make_stamped_ref") == std::string::npos);
+    expect_true("3424 AC1: mutate helper uses is_hash",
+                mut.find("is_hash(arg)") != std::string::npos);
+    expect_true("3424 AC1: query helper uses is_hash",
+                qws.find("is_hash(arg)") != std::string::npos);
+    expect_true("3424 AC1: mutate cites #3424", mut.find("Issue #3424") != std::string::npos);
+    expect_true("3424 AC1: query cites #3424", qws.find("Issue #3424") != std::string::npos);
+}
+
+void test_3424_ac2_production_hash_to_mutate() {
+    std::print("AC3424/AC2 -- query hash → mutate/query node; stale after Guard\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3424 AC2: set-code",
+                cs.eval("(set-code \"(define t3424 (lambda (x) 1))\")").has_value());
+    expect_true("3424 AC2: eval", cs.eval("(eval-current)").has_value());
+    expect_true("3424 AC2: bind query hash",
+                cs.eval("(define qr (query :find \"t3424\" :as-query-result #t))").has_value());
+    auto qr = cs.eval("qr");
+    expect_true("3424 AC2: qr is QueryResult hash", qr && is_hash(*qr));
+    auto parent = cs.eval("(query :parent qr)");
+    expect_true("3424 AC2: query:parent accepts hash", parent.has_value());
+    auto mut = cs.eval("(mutate:replace-subtree qr \"(lambda (x) 99)\")");
+    expect_true("3424 AC2: mutate:replace-subtree accepts hash", mut.has_value());
+    expect_true("3424 AC2: poison generation",
+                cs.eval("(hash-set! qr \"generation\" 999)").has_value());
+    expect_true(
+        "3424 AC2: bind poisoned mutate",
+        cs.eval("(define r3424 (mutate:replace-subtree qr \"(lambda (x) 3)\"))").has_value());
+    auto eq = cs.eval("(equal? (car r3424) \"stale-ref\")");
+    expect_true("3424 AC2: generation-mismatched hash is stale-ref",
+                eq && is_bool(*eq) && as_bool(*eq));
+}
+
+void test_3424_ac3_soft_unchanged() {
+    std::print("AC3424/AC3 -- Soft bare list / int path unchanged\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3424 AC3: set-code",
+                cs.eval("(set-code \"(define s3424 (lambda (x) 1))\")").has_value());
+    expect_true("3424 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto soft_qr = cs.eval("(query :find \"s3424\")");
+    expect_true("3424 AC3: Soft find returns", soft_qr.has_value());
+    expect_true("3424 AC3: Soft find is NOT a hash", soft_qr && !is_hash(*soft_qr));
+    auto soft_mut = cs.eval("(mutate:replace-value 1 (lambda (x) 2) \"t\")");
+    expect_true("3424 AC3: Soft bare-int mutate returns", soft_mut.has_value());
+}
+
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
@@ -779,6 +849,9 @@ int main() {
     test_ac7_schema2_validator_fresh();
     test_ac8_schema2_validator_stale_on_mutate();
     test_ac3231_schema2_marker_and_source();
+    test_3424_ac1_source_cite();
+    test_3424_ac2_production_hash_to_mutate();
+    test_3424_ac3_soft_unchanged();
     test_ac3231_production_as_query_result();
     test_ac3311_soft_to_production_transition();
     test_ac3311_live_soft_canary_then_prod_requery();
@@ -800,6 +873,7 @@ int main() {
     // the pre-existing eval-current path crash is resolved.
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
-    std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 AC tests PASSED\n");
+    std::print(
+        "All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 AC tests PASSED\n");
     return 0;
 }

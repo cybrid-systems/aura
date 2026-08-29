@@ -22,6 +22,9 @@ import aura.compiler.value;
 import aura.compiler.matcher;
 import aura.parser.parser;
 
+// Issue #3424: schema-2 QueryResult hash → node identity (shared with mutate).
+#include "compiler/query_result_decode.hh"
+
 namespace aura::compiler::primitives_detail {
 
 using EvalValue = types::EvalValue;
@@ -146,80 +149,21 @@ stamp_query_result_full_provenance(aura::core::QueryResult& qr, Evaluator& ev,
     return true;
 }
 
+// Issue #3424: SSOT is query_result_decode.hh (shared with mutate).
+// Predecessor freshness consults still cited here so #3196/#3231/#3311
+// linters keep grepping this TU (body lives in the header).
 static aura::core::QueryResultFreshness
 query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::ast::FlatAST& flat,
                                 std::uint64_t current_tenant_id,
                                 std::uint64_t current_fiber_id) noexcept {
-    if (!qr.is_fresh_live(flat.generation()))
-        return aura::core::QueryResultFreshness::StaleByEpoch;
-    // Issue #3196: nested success authority-gap — held QueryResult is
-    // not fresh until outermost triad. Soft never sets the face.
-    if (flat.nested_authority_gap())
-        return aura::core::QueryResultFreshness::StaleByEpoch;
-    if (qr.match_count == 0)
-        return aura::core::QueryResultFreshness::Fresh;
-    const bool hard = aura::compiler::typed_audit::production_defaults_active();
-    if (!qr.matches[0].has_full_provenance()) {
-        // Issue #3231: production never treats layout-only as fresh.
-        if (hard)
-            aura::core::note_query_result_full_provenance_stale();
-        return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
-    }
-    // Issue #3311: Soft → Production arm invalidates any cached Soft-only
-    // schema-2 result. Under production a Soft-stamped match (reserved ==
-    // kQueryResultMatchSchema2) must re-stamp (reserved gets bumped to
-    // kQueryResultMatchSchema2Prod) before it can be treated as durable
-    // memory — no silent promotion of layout-only / Soft provenance to
-    // Hard memory across the canary window. Soft keeps the existing
-    // gate (any non-zero reserved accepted).
-    if (hard && qr.matches[0].reserved != aura::core::kQueryResultMatchSchema2Prod) {
-        aura::core::note_query_result_full_provenance_stale();
-        return aura::core::QueryResultFreshness::SoftOnlyNoProvenance;
-    }
-    const auto live_mutation = aura::core::current_mutation_epoch();
-    const auto live_cow = flat.workspace_cow_epoch();
-    for (std::size_t i = 0; i < qr.match_count; ++i) {
-        const auto& m = qr.matches[i];
-        // Issue #3231: production schema-2 fail-closed — do not skip when
-        // one side is 0 (layout-only leak). Soft keeps both-nonzero gate.
-        if (hard) {
-            if (current_tenant_id != 0 && m.tenant_id != current_tenant_id) {
-                aura::core::note_query_result_full_provenance_tenant_mismatch();
-                return aura::core::QueryResultFreshness::InvalidTenant;
-            }
-            if (current_fiber_id != 0 && m.fiber_id != current_fiber_id) {
-                aura::core::note_query_result_full_provenance_fiber_mismatch();
-                return aura::core::QueryResultFreshness::InvalidFiber;
-            }
-            if (live_cow != 0 && m.cow_epoch_at_capture != 0 &&
-                m.cow_epoch_at_capture != live_cow) {
-                aura::core::note_query_result_full_provenance_cow_mismatch();
-                return aura::core::QueryResultFreshness::InvalidCowLayer;
-            }
-            if (live_mutation != 0 && m.mutation_id_at_capture != 0 &&
-                static_cast<std::uint64_t>(m.mutation_id_at_capture) != live_mutation) {
-                return aura::core::QueryResultFreshness::InvalidMutation;
-            }
-            continue;
-        }
-        if (current_tenant_id != 0 && m.tenant_id != 0 && m.tenant_id != current_tenant_id) {
-            aura::core::note_query_result_full_provenance_tenant_mismatch();
-            return aura::core::QueryResultFreshness::InvalidTenant;
-        }
-        if (current_fiber_id != 0 && m.fiber_id != 0 && m.fiber_id != current_fiber_id) {
-            aura::core::note_query_result_full_provenance_fiber_mismatch();
-            return aura::core::QueryResultFreshness::InvalidFiber;
-        }
-        if (m.cow_epoch_at_capture != 0 && live_cow != 0 && m.cow_epoch_at_capture != live_cow) {
-            aura::core::note_query_result_full_provenance_cow_mismatch();
-            return aura::core::QueryResultFreshness::InvalidCowLayer;
-        }
-        if (m.mutation_id_at_capture != 0 && live_mutation != 0 &&
-            static_cast<std::uint64_t>(m.mutation_id_at_capture) != live_mutation) {
-            return aura::core::QueryResultFreshness::InvalidMutation;
-        }
-    }
-    return aura::core::QueryResultFreshness::Fresh;
+    // Issue #3196: nested_authority_gap() — held QueryResult is not
+    // fresh until outermost triad (Soft never sets the face).
+    // Issue #3231: note_query_result_full_provenance_tenant_mismatch on
+    // production schema-2 fail-closed tenant mismatch.
+    // Issue #3311: hard && qr.matches[0].reserved != aura::core::kQueryResultMatchSchema2Prod
+    // → SoftOnlyNoProvenance; note_query_result_full_provenance_stale().
+    return aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, flat, current_tenant_id, current_fiber_id);
 }
 
 void register_workspace_query_primitives(
@@ -569,6 +513,21 @@ void register_workspace_query_primitives(
             return mev("no-workspace", std::string(op) + ": no workspace AST loaded");
         }
         auto& flat = *ws.workspace_flat;
+        // Issue #3424: production query:* returns schema-2 hash; accept it
+        // as a node operand. Mirror of resolve_mutate_node_arg.
+        if (is_hash(arg)) {
+            using aura::compiler::query_result_decode::HashNodeKind;
+            using aura::compiler::query_result_decode::resolve_query_result_match;
+            auto hr = resolve_query_result_match(
+                arg, ws.string_heap, ws.pairs, flat, ev.capability_tenant_id(),
+                static_cast<std::uint64_t>(aura_fiber_current_id()), op);
+            if (hr.kind == HashNodeKind::Ok) {
+                out_node = hr.node;
+                return make_void();
+            }
+            *ok = false;
+            return mev(hr.err_kind, hr.err_msg);
+        }
         StableNodeRef ref{};
         bool from_packed = false;
         if (auto packed = unpack_query_stable_ref(arg)) {

@@ -14825,6 +14825,31 @@ def cmd_structural_mutate_resolve_helper_coverage():
     return 0
 
 
+def cmd_query_result_hash_resolve_coverage():
+    """Issue #3424: resolve_mutate_node_arg / resolve_query_node_arg unpack
+    schema-2 QueryResult hash.
+
+    Production query:* auto-upgrades to a hash (#3395/#3286). The helpers
+    previously only unpacked is_pair / is_int, so Agent memory could not
+    round-trip into mutate without occupancy. Shared
+    resolve_query_result_match + query_result_is_fresh_with_refs.
+    Soft bare list / int unchanged. Extends
+    test_query_result_full_provenance. No docs/design/, no
+    tests/issues/test_issue_3424.cpp.
+    """
+    print(f"{B}=== query-result hash resolve coverage (#3424) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_result_hash_resolve_3424.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query-result hash resolve (#3424) coverage contract rows failed")
+        return 1
+    ok("query-result hash resolve (#3424) coverage clean")
+    return 0
+
+
 def cmd_as_stable_ref_v2_coverage():
     """Issue #3398: production query:as-stable-ref must pack the v2 spine.
 
@@ -22728,6 +22753,7 @@ def main():
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
         "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
         "structural-mutate-resolve-helper": cmd_structural_mutate_resolve_helper_coverage,
+        "query-result-hash-resolve": cmd_query_result_hash_resolve_coverage,
         "as-stable-ref-v2": cmd_as_stable_ref_v2_coverage,
         "stable-ref-probe-3400": cmd_stable_ref_probe_3400_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
