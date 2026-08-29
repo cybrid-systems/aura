@@ -582,6 +582,83 @@ static void ac10_no_invent_docs() {
           "AC10: no tests/issues/test_issue_3156.cpp (per #81934 — src/-aligned suite instead)");
 }
 
+// #3404: arena auto-arm Soft fallback must NOT bump
+// auto_alloc_trigger_count — only real Moving success counts. Source-cite
+// via read_file (no new helpers): maybe_auto_compact_on_alloc must
+// track a real_reclaim flag and ONLY bump auto_alloc_trigger_count when
+// real_reclaim is true. Soft fallback paths (no hook /
+// moving_blocked_precondition / pin-guard) leave real_reclaim false.
+// moving_densify_health must distinguish auto_arm_moving_success_total
+// (real Moving success) vs the Soft fallback counters.
+static void ac3404_arena_auto_arm_soft_fallback() {
+    std::println(
+        "\n--- #3404 AC: arena auto-arm Soft fallback must NOT bump auto_alloc_trigger_count ---");
+    const auto arena = read_file("src/core/arena.ixx");
+    const auto health = read_file("src/core/moving_densify_health.hh");
+    const auto build = read_file("build.py");
+
+    // AC1: real_reclaim flag + if(real_reclaim) guard around
+    // auto_alloc_trigger_count++; Soft fallback paths leave real_reclaim
+    // false so the trigger counter is not bumped.
+    CHECK(arena.find("// Issue #3404:") != std::string::npos,
+          "AC1: arena.ixx carries the #3404 no-trigger-on-Soft-fallback "
+          "source-cite anchor");
+    CHECK(arena.find("real_reclaim") != std::string::npos,
+          "AC1: arena.ixx declares real_reclaim flag in maybe_auto_compact_on_alloc");
+    // The guarded pattern: `if (real_reclaim) stats_.auto_alloc_trigger_count++`
+    // (possibly across lines). Accept either single-line or two-line form.
+    const bool has_guarded_incr =
+        arena.find("if (real_reclaim)\n            stats_.auto_alloc_trigger_count++;") !=
+            std::string::npos ||
+        arena.find("if (real_reclaim) stats_.auto_alloc_trigger_count++;") != std::string::npos;
+    CHECK(has_guarded_incr, "AC1: stats_.auto_alloc_trigger_count++ is guarded by "
+                            "`if (real_reclaim)` — Soft fallback paths do NOT bump trigger");
+    CHECK(arena.find("note_production_auto_arm_moving_success") != std::string::npos,
+          "AC1: arena.ixx calls note_production_auto_arm_moving_success() "
+          "on real Moving success");
+
+    // AC2: #3370 linter exists (still present — no Moving without hook).
+    const auto linter_3370_path =
+        std::string("scripts/coverage/checks/check_arena_auto_arm_known_roots_3370.py");
+    const auto linter_3370 = read_file(linter_3370_path.c_str());
+    CHECK(!linter_3370.empty(),
+          "AC2: #3370 linter present "
+          "(scripts/coverage/checks/check_arena_auto_arm_known_roots_3370.py)");
+
+    // AC3: moving_densify_health distinguishes success vs fallback.
+    CHECK(health.find("g_production_auto_arm_moving_success_total") != std::string::npos,
+          "AC3: moving_densify_health.hh declares "
+          "g_production_auto_arm_moving_success_total counter");
+    CHECK(health.find("note_production_auto_arm_moving_success") != std::string::npos,
+          "AC3: moving_densify_health.hh declares "
+          "note_production_auto_arm_moving_success() function");
+    CHECK(health.find("g_production_auto_arm_no_hook_fallback_total") != std::string::npos,
+          "AC3: existing #3370 no-hook fallback counter preserved");
+    CHECK(health.find("g_production_pin_guard_soft_gate_total") != std::string::npos,
+          "AC3: existing #3200 pin-guard soft-gate counter preserved");
+
+    // AC5: no scheduler change, no second pin registry (sanity: the new
+    // moving_success counter lives in moving_densify_health.hh, NOT in
+    // arena.ixx as a new thread_local / atomic).
+    CHECK(arena.find("g_production_auto_arm_moving_success_total") == std::string::npos,
+          "AC5: g_production_auto_arm_moving_success_total lives in "
+          "moving_densify_health.hh, not arena.ixx (no second pin "
+          "registry / no scheduler change)");
+
+    // AC6: no test_issue_3404.cpp, no docs/design/3404-*.md.
+    const auto issue_test_3404 = read_file("tests/core/test_issue_3404.cpp");
+    CHECK(issue_test_3404.empty(),
+          "AC6: no tests/core/test_issue_3404.cpp (extends existing per #81934)");
+
+    // AC7: source-cite #3404 + build.py registration.
+    CHECK(arena.find("#3404") != std::string::npos || health.find("#3404") != std::string::npos,
+          "AC7: source-cite #3404 present in arena.ixx / moving_densify_health.hh");
+    CHECK(build.find("check_arena_auto_arm_soft_fallback_3404") != std::string::npos,
+          "AC7: build.py registers check_arena_auto_arm_soft_fallback_3404");
+    CHECK(build.find("arena-auto-arm-soft-fallback-3404") != std::string::npos,
+          "AC7: build.py dispatch entry present");
+}
+
 // #3403: InlinePass + run_pipeline dual-emit residual — SoA hot entry +
 // hard-zero bridge gate. Source-cite via read_file (no new helpers):
 // InlinePass must declare run_on_dirty_blocks_only(IRModuleV2&,
@@ -789,6 +866,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3401_eval_flat_hot_path_intern();
     ac3402_dense_children_columns();
     ac3403_inline_pass_soa();
+    ac3404_arena_auto_arm_soft_fallback();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);
