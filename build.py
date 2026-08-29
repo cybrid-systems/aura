@@ -14962,6 +14962,43 @@ def cmd_eval_flat_hot_path_3401_coverage():
     return 0
 
 
+def cmd_dense_children_columns_3402_coverage():
+    """Issue #3402: FlatAST dense children columns + columnar walks over contiguous NodeId.
+
+    Source-cite linter (scripts/check_dense_children_columns_3402.py) verifies:
+      AC1 FlatAST declares child_data_ + child_begin_ + child_count_ dense
+         columns (pmr::vector<...> triple) appended at struct END per the
+         #2906/#3314 layout rule. Legacy children_ (vector<PCV>) is kept
+         as edit buffer / snapshot anchor.
+      AC2 walk_children_hot + children_columnar read contiguous NodeId
+         via the dense columns — source-cite forbids children_[id][
+         double-subscript in those functions.
+      AC3 children_columnar(id) lazy-syncs the dense columns from PCV
+         on first call after a structural mutation (controlled by
+         dense_dirty_).
+      AC4 set_child_locked / insert_child_locked / remove_child_locked
+         mark dense_dirty_ = true so the next children_columnar(id)
+         triggers sync_dense_columns_from_pcv().
+      AC5 sync_dense_columns_from_pcv() rebuilds child_data_ /
+         child_begin_ / child_count_ from the legacy children_ vector
+         (O(total children); runs once per structural-mutation batch).
+      AC6 no tests/core/test_issue_3402.cpp (extends existing tests per
+         #81934); no docs/design/3402-*.md (per #1655).
+      AC7 source-cite #3402 + build.py registration; no design docs.
+    """
+    print(f"{B}=== dense children columns coverage (#3402) ==={N}")
+    script = SCRIPTS / "check_dense_children_columns_3402.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("dense children columns (#3402) coverage contract rows failed")
+        return 1
+    ok("dense children columns (#3402) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22079,6 +22116,8 @@ def main():
         "shape-compact-no-global-bump-2908-coverage": cmd_shape_compact_no_global_bump_2908_coverage,
         "eval-flat-hot-path-3401": cmd_eval_flat_hot_path_3401_coverage,
         "eval-flat-hot-path-3401-coverage": cmd_eval_flat_hot_path_3401_coverage,
+        "dense-children-columns-3402": cmd_dense_children_columns_3402_coverage,
+        "dense-children-columns-3402-coverage": cmd_dense_children_columns_3402_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,

@@ -4581,8 +4581,54 @@ public:
     // (query:pattern, mark_dirty_upward children walk, walk_children / walk_children_hot)
     // must use this instead of raw children() spans. Return type is forced
     // ChildColumnar + SoAColumnarFull at compile time (see static_assert below).
+    // Issue #3402: children_columnar returns a SafePCVSpan over the
+    // dense child_data_ / child_begin_ / child_count_ columns
+    // (contiguous NodeId). On first call after a structural mutation
+    // (dense_dirty_ == true), lazy-syncs the dense columns from the
+    // legacy children_ PCV storage. The returned span is backed by
+    // child_data_ directly (no PCV indirection), so walk_children_hot /
+    // walk_children_column read contiguous NodeId without
+    // pointer-chasing the PCV control block.
+    //
+    // Source-cite contract (per #3402 AC2): walk_children_hot /
+    // children_columnar MUST NOT use children_[id][ — the dense
+    // columns are the canonical storage; PCV is an edit buffer only.
     [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
-        return children_safe_view(id);
+        if (id >= child_count_.size())
+            return {};
+        if (dense_dirty_)
+            sync_dense_columns_from_pcv();
+        const auto begin = child_begin_[id];
+        const auto count = child_count_[id];
+        if (begin > child_data_.size() || count > child_data_.size() - begin)
+            return {};
+        // 2-arg SafePCVSpan ctor (legacy, no fingerprint) — dense
+        // columns are part of FlatAST (lifetime tied to FlatAST
+        // reference), so no separate keep is needed. The dense
+        // span is consumed by walk_children_column immediately,
+        // before any structural mutation can invalidate it.
+        return SafePCVSpan<NodeId>(
+            std::span<const NodeId>(child_data_.data() + begin, count),
+            std::shared_ptr<const typename PersistentChildVector<NodeId>::Storage>{});
+    }
+
+    // Issue #3402: lazy-sync helper — rebuilds child_data_ /
+    // child_begin_ / child_count_ from the legacy children_ PCV
+    // vector. Called by children_columnar(id) when dense_dirty_ is
+    // set. O(total children); runs once per structural-mutation
+    // batch.
+    void sync_dense_columns_from_pcv() const {
+        child_data_.clear();
+        child_begin_.assign(children_.size(), 0);
+        child_count_.assign(children_.size(), 0);
+        for (std::size_t i = 0; i < children_.size(); ++i) {
+            const auto& pcv = children_[i];
+            child_begin_[i] = static_cast<std::uint32_t>(child_data_.size());
+            child_count_[i] = static_cast<std::uint32_t>(pcv.size());
+            for (std::size_t j = 0; j < pcv.size(); ++j)
+                child_data_.push_back(pcv[j]);
+        }
+        dense_dirty_ = false;
     }
 
     // Issue #3167: current node_gen_ slot for is_stale / force_refresh.
@@ -5128,6 +5174,7 @@ public:
     // When a snapshot still aliases storage, cow_* falls back to with_* COW
     // and flatast_locked_move_out_cow_total bumps (#2906 AC3 correctness).
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
+        dense_dirty_ = true; // Issue #3402: invalidate dense mirror
         contract_assert(id < children_.size());
         auto list = std::move(children_[id]);
         if (idx >= list.size()) {
@@ -5169,6 +5216,7 @@ public:
         add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
     }
     void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
+        dense_dirty_ = true; // Issue #3402: invalidate dense mirror
         auto pos = std::min(static_cast<std::uint32_t>(children_[id].size()), idx);
         // Issue #1689: shift indices of edges at/after pos before insert
         // (reads children_[id] while still installed).
@@ -5197,6 +5245,7 @@ public:
         structural_mutate_insert_total_.fetch_add(1, std::memory_order_relaxed);
     }
     void remove_child_locked(NodeId id, std::uint32_t idx) {
+        dense_dirty_ = true; // Issue #3402: invalidate dense mirror
         if (idx >= children_[id].size())
             return;
         auto cid = children_[id][idx];
@@ -9515,6 +9564,31 @@ public:
     bool atomic_batch_meta_snap_valid_ = false;
     mutable std::atomic<std::uint64_t> atomic_batch_metadata_restored_total_{0};
     mutable std::atomic<std::uint64_t> atomic_batch_metadata_captured_total_{0};
+    // Issue #3402: dense children columns (child_data_ + child_begin_ +
+    // child_count_) — physical layout for hot-path columnar walks.
+    // Appended at struct END per #2906/#3314 layout rule so the SoA
+    // pmr::vector<...> fields above stay contiguous (load / clear /
+    // mutate paths rely on stable offsets).
+    //   child_data_   — pmr::vector<NodeId>, all per-node child lists
+    //                   concatenated back-to-back; child_begin_[i] is
+    //                   the first index, child_count_[i] is the length.
+    //   child_begin_  — pmr::vector<std::uint32_t>, parallel index
+    //                   vector.
+    //   child_count_  — pmr::vector<std::uint32_t>, parallel length
+    //                   vector.
+    // Legacy children_ (vector<PersistentChildVector<NodeId>>) is kept
+    // as edit buffer / snapshot anchor; children_columnar(id) reads
+    // the dense columns and lazy-syncs from PCV on first call after a
+    // structural mutation (controlled by dense_dirty_, set in
+    // set_child_locked / insert_child_locked / remove_child_locked).
+    std::pmr::vector<NodeId> child_data_{&runtime_resource_};
+    std::pmr::vector<std::uint32_t> child_begin_{&runtime_resource_};
+    std::pmr::vector<std::uint32_t> child_count_{&runtime_resource_};
+    // dense_dirty_: true when children_ has been mutated via PCV but
+    // the dense columns have not yet been re-synced.
+    // children_columnar(id) checks this flag and triggers
+    // sync_dense_columns_from_pcv() before returning the SafePCVSpan.
+    mutable bool dense_dirty_ = true;
 };
 
 // ── StableNodeRef + MutationRecord helpers ───────────────────
