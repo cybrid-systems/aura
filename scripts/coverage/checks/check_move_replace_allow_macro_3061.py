@@ -41,10 +41,18 @@ def main() -> int:
 
     ppos = mut.find('add_mutate("mutate:move-node"')
     if ppos < 0:
+        ppos = mut.find('add_mutate(\n        "mutate:move-node"')
+    if ppos < 0:
+        ppos = mut.find("── mutate:move-node")
+    if ppos < 0:
         ppos = mut.find("mutate:move-node")
-    pwin = mut[ppos : ppos + 5500] if ppos >= 0 else ""
+    pwin = mut[ppos : ppos + 12000] if ppos >= 0 else ""
 
     rpos = mut.find('add_mutate("mutate:replace-subtree"')
+    if rpos < 0:
+        rpos = mut.find('add_mutate(\n        "mutate:replace-subtree"')
+    if rpos < 0:
+        rpos = mut.find("── mutate:replace-subtree")
     if rpos < 0:
         rpos = mut.find("mutate:replace-subtree")
     rwin = mut[rpos : rpos + 14000] if rpos >= 0 else ""

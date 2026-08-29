@@ -99,7 +99,11 @@ def main() -> int:
         rp,
     )
     # Guard must be the FIRST thing after node resolve + out-of-range check.
+    # #3399 routes the occupancy index through resolve_mutate_node_arg
+    # (packed v2 ref / QueryResult) instead of a bare static_cast.
     pos_resolve = rp.find("auto node = static_cast<aura::ast::NodeId>")
+    if pos_resolve < 0:
+        pos_resolve = rp.find("resolve_mutate_node_arg")
     pos_guard = rp.find("reject_structural_macro_hygiene(ev, flat, node, allow_macro_rp")
     pos_add = rp.find("flat.add_mutation(node,")
     if pos_resolve == -1 or pos_guard == -1 or pos_add == -1:

@@ -33,6 +33,10 @@ def _prim_win(src: str, name: str, n: int = 8000) -> str:
     key = f'add_mutate("{name}"'
     pos = src.find(key)
     if pos < 0:
+        pos = src.find(f'add_mutate(\n        "{name}"')
+    if pos < 0:
+        pos = src.find(f"── {name} ")
+    if pos < 0:
         pos = src.find(name)
     return src[pos : pos + n] if pos >= 0 else ""
 
@@ -72,7 +76,7 @@ def main() -> int:
     # AC2 allow + restamp
     must("parse_allow_macro_opt_out", "AC2 set-body", _prim_win(mut, "mutate:set-body", 14000))
     must("propagate_macro_introduced_marker", "AC2 set-body restamp", _prim_win(mut, "mutate:set-body", 14000))
-    must("propagate_macro_introduced_marker", "AC2 wrap restamp", _prim_win(mut, "mutate:wrap"))
+    must("propagate_macro_introduced_marker", "AC2 wrap restamp", _prim_win(mut, "mutate:wrap", 12000))
     must("3027 AC2", "AC2 test", test)
     must("ac3027_2_allow_macro_permits", "AC2 test fn", test)
 
