@@ -34,6 +34,7 @@ using aura::compiler::typed_audit::CommitReadinessInput;
 using aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override;
 using aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok;
 using aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped;
+using aura::compiler::typed_audit::publish_last_proof_face;
 using aura::compiler::typed_audit::publish_type_linear_proof_outcome;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
@@ -265,12 +266,47 @@ static void ac3414_no_tls_default_solved_refused() {
     const auto green = commit_readiness(live);
     CHECK(green.would_allow_commit && green.force_reason == "ok",
           "3414 AC1: Stamped + gen match + clear faces allows");
-    CHECK(ir_typed_entry_commit_readiness_ok(), "3414 AC2: Stamped depth==0 allows");
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA));
+    aura_typed_audit_note_readiness_evaluator(eval_a);
+    publish_last_proof_face(true, true);
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3414 AC2: Stamped depth==0 allows (TLS==stamper)");
 
     apply_dev_audit_defaults();
     clear_type_linear_proof_outcome_for_test();
     CHECK(ir_typed_entry_commit_readiness_ok(), "3414 AC3: Soft depth==0 still allows");
     g_linear_ir_fastpath_boundary_depth_override = -1;
+    aura::compiler::typed_audit::g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    aura_typed_audit_clear_readiness_evaluator();
+}
+
+// ── #3416: last-proof last-writer across dual-Evaluator ──
+static void ac3416_last_proof_eval_identity() {
+    std::println("\n--- #3416: last-proof stamper identity dual-Evaluator ---");
+    apply_production_audit_defaults();
+    aura::compiler::typed_audit::clear_last_proof_face_for_test();
+    aura::compiler::typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    clear_type_linear_proof_outcome_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB));
+    aura_typed_audit_note_readiness_evaluator(eval_a);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC1: stamper A + TLS A allows");
+
+    aura_typed_audit_note_readiness_evaluator(eval_b);
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3416 AC1: eval B cannot ride eval A's last-proof");
+
+    aura_typed_audit_clear_readiness_evaluator();
+    CHECK(!ir_typed_entry_commit_readiness_ok(), "3416 AC1: TLS-cleared last-proof unbound");
+
+    apply_dev_audit_defaults();
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3416 AC4: Soft still allows");
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+    aura::compiler::typed_audit::g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    aura_typed_audit_clear_readiness_evaluator();
 }
 
 } // namespace
@@ -284,6 +320,7 @@ int run_test_commit_readiness_score() {
     ac4_soft_observe();
     ac5_source_schema_live();
     ac3414_no_tls_default_solved_refused();
+    ac3416_last_proof_eval_identity();
     apply_dev_audit_defaults();
     std::println("\n=== #2553: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

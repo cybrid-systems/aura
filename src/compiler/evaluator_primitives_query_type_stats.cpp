@@ -1138,6 +1138,11 @@ void register_query_type_stats_primitives(PrimRegistrar add, std::pmr::vector<Pa
                               std::memory_order_relaxed)));
                 insert_kv("schema-2697", 2697);
                 insert_kv("issue-2697", 2697);
+                // Issue #3416: fold stamper-bound into the existing
+                // query:last-type-linear-commit-proof (no new query key).
+                insert_kv(
+                    "type-linear-commit-proof-stamper-bound",
+                    static_cast<std::int64_t>(typed_audit::last_proof_stamper_bound_v_read()));
                 insert_kv("schema-3091", 3091);
                 insert_kv("issue-3091", 3091);
                 // Issue #2717: stamp TypeLinearCommitProof on

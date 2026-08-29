@@ -273,6 +273,24 @@ int run_test_typed_audit_commit_readiness_live_policy() {
               "3414 AC4: linter wired in build.py");
     }
 
+    // ── #3416: last-proof last-writer eval identity ──
+    {
+        std::println("\n--- #3416 AC: last-proof stamper == TLS eval ---");
+        CHECK(h.find("kLastProofEvalIdentityIssue = 3416") != std::string::npos,
+              "3416 AC1: issue stamp");
+        CHECK(h.find("g_last_proof_stamper_eval") != std::string::npos, "3416 AC1: stamper gauge");
+        CHECK(h.find("last_proof_bound_to_current_eval") != std::string::npos,
+              "3416 AC1: bound helper");
+        CHECK(h.find("reject_stamper_live_goal_linear_root_mismatch") != std::string::npos,
+              "3416 AC3: live_goal vs linear_root mismatch Reject");
+        CHECK(h.find("schema-3416") == std::string::npos, "3416 AC5: no schema-3416");
+        CHECK(read_file("build.py").find("check_last_proof_eval_identity_3416") !=
+                  std::string::npos,
+              "3416 AC6: linter wired after #3346");
+        CHECK(read_file("tests/compiler/test_issue_3416.cpp").empty(),
+              "3416 AC6: no invent test_issue_3416");
+    }
+
     std::println("\n=== Issue #3379 done ===");
     return g_failed == 0 ? 0 : 1;
 }

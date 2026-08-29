@@ -1280,6 +1280,15 @@ int run_test_steal_densify_linear_type_hard_and() {
     ac2854_4_quiet_path_zero_cost_short_circuit();
     ac2854_5_query_schema_2854();
     ac2854_6_source_cite_and_no_design();
+    {
+        std::println("\n--- #3416: last-proof stamper identity (steal densify lineage) ---");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("kLastProofEvalIdentityIssue = 3416") != std::string::npos,
+              "3416: issue stamp");
+        CHECK(tma.find("last_proof_bound_to_current_eval") != std::string::npos,
+              "3416: bound helper");
+        CHECK(tma.find("g_last_proof_stamper_eval") != std::string::npos, "3416: stamper gauge");
+    }
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -331,6 +331,13 @@ int main() {
     ac3262_3_keep_1867_release();
     ac3262_4_quiet_probe_zero_extra();
     ac3262_5_source_and_linter();
+    {
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("kLastProofEvalIdentityIssue = 3416") != std::string::npos,
+              "3416: last-proof stamper identity on steal/GC lineage");
+        CHECK(tma.find("last_proof_bound_to_current_eval") != std::string::npos,
+              "3416: bound helper");
+    }
     if (g_failed)
         return 1;
     std::println("linear provenance steal/GC closed-loop (#2026/#3262): OK ({} passed)", g_passed);
