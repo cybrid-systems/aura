@@ -10901,6 +10901,28 @@ void refresh_adt_constructors_for_dirty_define_types(FlatAST& flat, const String
     refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, dirty_nodes, metrics);
 }
 
+// Issue #3358: cone expansion of 1 for ReplaceType / structural mutate
+// of Match / Variant / constructor. Quiet: not ADT-related → 0 extra.
+std::size_t force_enclosing_match_parent_into_cone(FlatAST& flat, NodeId node) {
+    if (node == NULL_NODE || node >= flat.size())
+        return 0;
+    const NodeId parent = flat.parent_of(node);
+    const bool node_match = flat.has_match_info(node);
+    const bool parent_match =
+        parent != NULL_NODE && parent < flat.size() && flat.has_match_info(parent);
+    const bool node_dt = flat.get(node).tag == NodeTag::DefineType;
+    const bool parent_dt =
+        parent != NULL_NODE && parent < flat.size() && flat.get(parent).tag == NodeTag::DefineType;
+    if (!node_match && !parent_match && !node_dt && !parent_dt)
+        return 0; // Quiet: not Match / Variant / constructor
+    dirty::NodeId sites[2];
+    std::size_t n = 0;
+    sites[n++] = static_cast<dirty::NodeId>(node);
+    if (parent != NULL_NODE && parent != node)
+        sites[n++] = static_cast<dirty::NodeId>(parent); // cone expansion of 1
+    return dirty::force_adt_exhaust_sites_into_cone(std::span<const dirty::NodeId>(sites, n));
+}
+
 // Issue #3045 / #3083: under-mark force. Walk ancestors of dirty
 // constructor / match-arm nodes; refresh DefineType ctor lists;
 // complete-seed every match of the mutated ADT types; seed sites into
@@ -10919,6 +10941,13 @@ std::size_t force_adt_exhaust_undermark_into_cone(FlatAST& flat, const StringPoo
     collect_adt_ancestors_from_dirty(flat, pool, dirty_nodes, define_types, match_lets);
     if (define_types.empty() && match_lets.empty())
         return 0; // Quiet: no ADT ancestor
+    // Issue #3358: cone expansion of 1 — enclosing parent of each dirty
+    // constructor / match-arm so ReplaceType cannot skip the match site.
+    for (auto id : dirty_nodes) {
+        if (id == NULL_NODE || id >= flat.size())
+            continue;
+        (void)dirty::expand_adt_enclosing_parent_into_cone(flat.parent_of(id));
+    }
     if (!define_types.empty())
         refresh_adt_constructors_for_dirty_define_types_impl(flat, pool, reg, define_types,
                                                              metrics);

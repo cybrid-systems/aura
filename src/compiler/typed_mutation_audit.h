@@ -569,6 +569,8 @@ struct TypedMutationAuditCounters {
     //   PostMutateLinear  → force under hard-gate/Full; deny=linear-post-mutate-fail
     //   CrossBatchEscape  → force; deny=linear-cross-batch-escape (#2108)
     //   CrossClosureEscape→ force under hard; deny=linear-cross-closure-escape (#2563)
+    //   AdtNonExhaustive  → force under production/Full when adt_ok=false (#3358);
+    //                       Soft observes adt_non_exhaustive_sites_total only
     //   None              → zero extra force counters (type/prov may still deny)
     // Soft Warning synth never appears as SynthHardFail (#2514 AC retained).
     // Soft cross-closure: observe counters only unless AURA_LINEAR_CROSS_CLOSURE_HARD=1
