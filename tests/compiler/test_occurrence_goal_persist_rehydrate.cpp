@@ -2674,6 +2674,62 @@ static void ac3343_production_weak_abi_commit_readiness() {
     }
 }
 
+static void ac3419_jit_typed_entry_every_function() {
+    std::println("\n--- #3419: JIT typed-entry on every compiled function ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(tma.find("kJitTypedEntryEveryFunctionIssue = 3419") != std::string::npos,
+          "3419 AC1: issue stamp");
+    CHECK(jit.find("can_typed") != std::string::npos, "3419 AC1: typed-entry emit gate");
+    CHECK(jit.find("hard_typed_entry") != std::string::npos, "3419 AC1: production/Full gate");
+    CHECK(jit.find("prologue_name = named ? fn.name : \"<anon>\"") != std::string::npos,
+          "3419 AC1: anonymous functions emit prologue");
+    CHECK(jit.find("fn_ir_typed_entry_commit_readiness_ok") != std::string::npos,
+          "3419 AC1: emit aura_jit_ir_typed_entry_commit_readiness_ok");
+    CHECK(jit.find("deopt_to_interpreter") != std::string::npos, "3419 AC1: deopt on 0");
+    CHECK(jit.find("g_linear_fast_path_elide_blocked_production_total") != std::string::npos ||
+              tma.find("g_linear_fast_path_elide_blocked_production_total") != std::string::npos,
+          "3419 AC4: reuse elide counter");
+
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto fm = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto rah = read_file("src/serve/runtime_production_abi.h");
+    const auto rab = read_file("src/serve/runtime_production_abi.cpp");
+    CHECK(stub.find("aura_abi_strong_ir_typed_entry_v") != std::string::npos,
+          "3419 AC2: stub cites marker (no cross-DSO weak def)");
+    CHECK(stub.find(
+              "extern \"C\" __attribute__((weak, used)) int aura_abi_strong_ir_typed_entry_v") ==
+              std::string::npos,
+          "3419 AC2: stub must not define ABI marker");
+    CHECK(fm.find("aura_abi_strong_ir_typed_entry_v") != std::string::npos,
+          "3419 AC2: strong marker in evaluator_fiber_mutation");
+    CHECK(rah.find("kProductionAbiSelfcheckFailBitTypedEntry") != std::string::npos,
+          "3419 AC2: fail bit 8");
+    CHECK(rab.find("aura_abi_strong_ir_typed_entry_v() == 0") != std::string::npos,
+          "3419 AC2: selfcheck treats stub as fail");
+
+    {
+        apply_dev_audit_defaults();
+        CHECK(jit.find("hard_typed_entry") != std::string::npos,
+              "3419 AC3: Soft omit via hard gate");
+        apply_production_audit_defaults();
+        typed_audit::clear_type_linear_proof_outcome_for_test();
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+        CHECK(!typed_audit::ir_typed_entry_commit_readiness_ok(),
+              "3419: production Quiet last-proof refuses typed execute");
+        typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+        apply_dev_audit_defaults();
+    }
+
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_jit_typed_entry_every_function_3419") != std::string::npos,
+          "3419 AC5: build.py");
+    CHECK(read_file("docs/design/3419-jit-typed-entry.md").empty(), "3419: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3419.cpp").empty(), "3419: no invent");
+    CHECK(stub.find("schema-3419") == std::string::npos, "3419 AC4: no new query key");
+    CHECK(stub.find("g_3419_") == std::string::npos, "3419 AC4: no g_3419_*");
+}
+
 // ── Issue #3225: persist seqlock so concurrent outermost write × densify/steal
 // rehydrate cannot freeze a mixed fingerprint.
 //   AC1: production in-flight (odd seq) rehydrate is miss → empty, no green
@@ -3185,6 +3241,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3186_jit_linear_move_drop_elision_probe();
     ac3224_ir_typed_entry_commit_readiness();
     ac3343_production_weak_abi_commit_readiness();
+    ac3419_jit_typed_entry_every_function();
     ac3225_occurrence_persist_seqlock();
     // Issue #3170: outermost-success occurrence persist fingerprint guard
     // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -

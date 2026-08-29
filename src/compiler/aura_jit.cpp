@@ -739,6 +739,9 @@ struct LLVMBuilder {
         auto linear_safety_probe = [&]() -> llvm::Value* {
             if (inst.linear_ownership_state == 0)
                 return nullptr; // Issue #3270: quiet path — zero extra IR
+            // Issue #3419: typed-entry for every compiled function lives on
+            // the Apply prologue (anonymous included). This probe stays
+            // linear-state only (no extra call when state==0).
             if (inst.narrow_evidence != 0)
                 aura::compiler::jit_typed_mutation::record_linear_state_optimized();
             aura::compiler::typed_audit::capture_jit_hotpath_audit("jit-linear-optimized");
@@ -3172,42 +3175,58 @@ struct AuraJIT::Impl {
         //   br %unsafe, deopt, cont
         //   deopt: ret call @aura_jit_deopt_to_interpreter(name)
         //   cont:  <function body>
+        // Issue #3419: production/Full also emit typed-entry on anonymous
+        // functions (named path already did via #3224). Soft/Off omit that
+        // call. Deopt reuses linear_post_mutate_force_rollback_total /
+        // g_linear_fast_path_elide_blocked_production_total (no new key).
         builder.entry_body_bb = nullptr;
-        if (fn.name && fn.name[0] && builder.fn_get_current_bridge_epoch &&
-            builder.fn_is_fn_epoch_stale && builder.fn_deopt_to_interpreter) {
+        const bool named = fn.name && fn.name[0];
+        const bool hard_typed_entry = aura::compiler::typed_audit::production_defaults_active() ||
+                                      aura::compiler::typed_audit::get_strategy() ==
+                                          aura::compiler::typed_audit::AuditStrategy::Full;
+        const bool can_epoch = named && builder.fn_get_current_bridge_epoch &&
+                               builder.fn_is_fn_epoch_stale && builder.fn_deopt_to_interpreter;
+        const bool can_typed = hard_typed_entry && builder.fn_ir_typed_entry_commit_readiness_ok &&
+                               builder.fn_deopt_to_interpreter;
+        if (can_epoch || can_typed) {
             auto* entry_bb = builder.block_map[fn.entry_block];
             auto* parent = builder.func;
             auto* bb_deopt = llvm::BasicBlock::Create(ctx, "epoch_prologue_deopt", parent);
             auto* bb_cont = llvm::BasicBlock::Create(ctx, "epoch_prologue_cont", parent);
             builder.irb->SetInsertPoint(entry_bb);
-            auto* name_gv = builder.irb->CreateGlobalString(fn.name, "prologue_fn_name");
+            const char* prologue_name = named ? fn.name : "<anon>";
+            auto* name_gv = builder.irb->CreateGlobalString(prologue_name, "prologue_fn_name");
             auto* zero32 = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0);
             auto* name_ptr = llvm::ConstantExpr::getInBoundsGetElementPtr(
                 name_gv->getValueType(), name_gv, llvm::ArrayRef<llvm::Constant*>{zero32, zero32});
-            auto* cur_epoch = builder.irb->CreateCall(
-                llvm::FunctionCallee(builder.fn_get_current_bridge_epoch), {});
-            auto* stale_i =
-                builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
-                                        llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
-            // UINT32_MAX → use g_linear_env_id (host sets context before Apply).
-            auto* env_max = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0xFFFFFFFFu);
-            llvm::Value* lin_i = zero32;
-            if (builder.fn_linear_post_mutate_enforce) {
-                lin_i = builder.irb->CreateCall(
-                    llvm::FunctionCallee(builder.fn_linear_post_mutate_enforce),
-                    llvm::ArrayRef<llvm::Value*>{env_max});
+            llvm::Value* is_unsafe = nullptr;
+            if (can_epoch) {
+                auto* cur_epoch = builder.irb->CreateCall(
+                    llvm::FunctionCallee(builder.fn_get_current_bridge_epoch), {});
+                auto* stale_i =
+                    builder.irb->CreateCall(llvm::FunctionCallee(builder.fn_is_fn_epoch_stale),
+                                            llvm::ArrayRef<llvm::Value*>{name_ptr, cur_epoch});
+                // UINT32_MAX → use g_linear_env_id (host sets context before Apply).
+                auto* env_max = llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), 0xFFFFFFFFu);
+                llvm::Value* lin_i = zero32;
+                if (builder.fn_linear_post_mutate_enforce) {
+                    lin_i = builder.irb->CreateCall(
+                        llvm::FunctionCallee(builder.fn_linear_post_mutate_enforce),
+                        llvm::ArrayRef<llvm::Value*>{env_max});
+                }
+                auto* unsafe_i = builder.irb->CreateOr(stale_i, lin_i);
+                is_unsafe = builder.irb->CreateICmpNE(unsafe_i, zero32);
             }
-            auto* unsafe_i = builder.irb->CreateOr(stale_i, lin_i);
-            auto* is_unsafe = builder.irb->CreateICmpNE(unsafe_i, zero32);
-            // Issue #3224: Apply prologue also deopts when production +
-            // active mutation + !commit_readiness.would_allow_commit.
-            if (builder.fn_ir_typed_entry_commit_readiness_ok) {
+            if (can_typed) {
                 auto* entry_ok_i = builder.irb->CreateCall(
                     llvm::FunctionCallee(builder.fn_ir_typed_entry_commit_readiness_ok),
                     llvm::ArrayRef<llvm::Value*>{});
                 auto* entry_blocked = builder.irb->CreateICmpEQ(entry_ok_i, zero32);
-                is_unsafe = builder.irb->CreateOr(is_unsafe, entry_blocked);
+                is_unsafe =
+                    is_unsafe ? builder.irb->CreateOr(is_unsafe, entry_blocked) : entry_blocked;
             }
+            if (!is_unsafe)
+                is_unsafe = llvm::ConstantInt::getFalse(ctx);
             builder.irb->CreateCondBr(is_unsafe, bb_deopt, bb_cont);
             // Deopt path: return interpreter-fallback sentinel.
             builder.irb->SetInsertPoint(bb_deopt);

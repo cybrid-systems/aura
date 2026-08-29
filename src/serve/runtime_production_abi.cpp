@@ -55,16 +55,21 @@ bool aura_runtime_require_production_abi() noexcept {
     // (weak empty body would skip ownership probe + escape clear).
     if (aura_abi_strong_probe_linear_on_steal_v() == 0)
         fail_bits |= kProductionAbiSelfcheckFailBitProbeLinear;
+    // Issue #3419: JIT typed-entry must be the strong wrapper (weak stub
+    // returning OK is not production).
+    if (aura_abi_strong_ir_typed_entry_v() == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitTypedEntry;
 
     if (fail_bits != 0) {
         g_production_abi_selfcheck_last_fail_bits.store(fail_bits, std::memory_order_relaxed);
         g_production_abi_selfcheck_fail_total.fetch_add(1, std::memory_order_relaxed);
-        std::fprintf(stderr,
-                     "FATAL: production ABI self-check failed (#2955/#3275/#3343) fail_bits=0x%llx "
-                     "— multi-worker must link strong steal-complete / fiber evaluator_id / "
-                     "mutation boundary held / depth-from-ptr / tenant-scope resume / "
-                     "probe-linear-on-steal (not fiber_bridge weak no-ops)\n",
-                     static_cast<unsigned long long>(fail_bits));
+        std::fprintf(
+            stderr,
+            "FATAL: production ABI self-check failed (#2955/#3275/#3343/#3419) fail_bits=0x%llx "
+            "— multi-worker must link strong steal-complete / fiber evaluator_id / "
+            "mutation boundary held / depth-from-ptr / tenant-scope resume / "
+            "probe-linear-on-steal / ir-typed-entry (not fiber_bridge / JIT stub weaks)\n",
+            static_cast<unsigned long long>(fail_bits));
         std::fflush(stderr);
         std::abort();
     }
@@ -118,6 +123,10 @@ bool aura_runtime_require_production_multi_worker() noexcept {
     // probe + escape clear + invalidate_gen on steal).
     if (aura_abi_strong_probe_linear_on_steal_v() == 0)
         fail_bits |= kProductionAbiSelfcheckFailBitProbeLinear;
+    // Issue #3419: JIT typed-entry strong wrapper required under
+    // multi-worker production (weak stub returning OK is not production).
+    if (aura_abi_strong_ir_typed_entry_v() == 0)
+        fail_bits |= kProductionAbiSelfcheckFailBitTypedEntry;
 
     // Issue #3195: residual-zero sticky wiring must be present. Header
     // sentinels are 1 unless a mis-link / test store(0) wiped them.
