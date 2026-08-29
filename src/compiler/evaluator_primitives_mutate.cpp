@@ -44,6 +44,8 @@ import aura.compiler.macro_expansion; // Issue #3215: note_hygiene_last_limit_re
 #include "compiler/mutation_guard_helpers.hh"
 // Issue #1964 cycle 4: unified mutate dispatch metrics (header-only).
 #include "compiler/mutate_dispatch.hh"
+// Issue #3424: schema-2 QueryResult hash → node identity (no occupancy).
+#include "compiler/query_result_decode.hh"
 // Issue #1964 cycle 2: WorkspaceEpoch accessors.
 // Issue #2555: TransactionGuard via import aura.core (module; no .hh include —
 // avoids dual type identity with evaluator.ixx interface).
@@ -1263,6 +1265,22 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                                     safe_str](aura::ast::FlatAST& flat, const EvalValue& arg,
                                               const char* op, bool* ok,
                                               aura::ast::NodeId& out_node) -> EvalValue {
+        // Issue #3424: production query:* returns schema-2 hash; accept it
+        // as a node operand. Freshness via query_result_is_fresh_with_refs.
+        // Do not hash → int → make_stamped_ref (occupancy).
+        if (is_hash(arg)) {
+            using aura::compiler::query_result_decode::HashNodeKind;
+            using aura::compiler::query_result_decode::resolve_query_result_match;
+            auto hr = resolve_query_result_match(
+                arg, ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
+                static_cast<std::uint64_t>(aura_fiber_current_id()), op);
+            if (hr.kind == HashNodeKind::Ok) {
+                out_node = hr.node;
+                return make_void();
+            }
+            *ok = false;
+            return mev(hr.err_kind, hr.err_msg);
+        }
         if (auto packed = unpack_stable_ref_arg(arg)) {
             // Issue #3415 AC7: packed / stamped ref keeps tenant. Do not
             // make_stamped_ref (occupancy restamp as caller). add_mutate
