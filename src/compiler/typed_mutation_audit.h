@@ -2259,6 +2259,9 @@ inline constexpr int kCastopAbortElisionInterleaveIssue = 3359;
 // (depth==0): one depth load, no commit_readiness. Reuses
 // g_linear_fast_path_elide_blocked_production_total — no new counter.
 inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
+// Issue #3419: every JIT-emitted function (anonymous included) must
+// call aura_jit_ir_typed_entry_commit_readiness_ok under production/Full.
+inline constexpr int kJitTypedEntryEveryFunctionIssue = 3419;
 // Issue #3414: residual of #3379 — Production/Full + no live commit TC
 // must not treat default solve_status=0 as authority. depth==0 IR/JIT
 // refuses Quiet / unbound last-proof (not only Reject). Soft/Off

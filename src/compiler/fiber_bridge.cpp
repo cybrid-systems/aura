@@ -182,6 +182,10 @@ aura_abi_strong_mutation_depth_from_ptr_v(void) noexcept {
 extern "C" __attribute__((weak, used)) int aura_abi_strong_probe_linear_on_steal_v(void) noexcept {
     return 0;
 }
+// Issue #3419: weak marker for JIT typed-entry ABI (0 = stub / not strong).
+extern "C" __attribute__((weak, used)) int aura_abi_strong_ir_typed_entry_v(void) noexcept {
+    return 0;
+}
 
 // Issue #2310 / #2372: fail-closed force-deopt on steal snapshot
 // inconsistency. Strong def in evaluator_fiber_mutation.cpp (with

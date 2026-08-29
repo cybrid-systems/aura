@@ -3259,6 +3259,12 @@ extern "C" int aura_jit_linear_move_drop_elision_ok(void) {
 extern "C" int aura_jit_ir_typed_entry_commit_readiness_ok(void) {
     return aura::compiler::typed_audit::ir_typed_entry_commit_readiness_ok() ? 1 : 0;
 }
+// Issue #3419: ABI identity lives in evaluator_fiber_mutation.cpp
+// (aura_abi_strong_ir_typed_entry_v) — same home as #3343 probe-linear
+// so light-link test batches that compile this wrapper via
+// aura_jit_test_objects AND aura_test_objects do not ODR-clash, and
+// batches that only link the JIT stub still fail self-check unless the
+// strong fiber-mutation TU is present.
 
 // Issue #972: prefer stderr with fixed prefix so --serve / agent log
 // scrapers can filter (structured logger not available in this TU).

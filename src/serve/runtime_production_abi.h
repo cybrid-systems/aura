@@ -46,6 +46,11 @@ inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitTenantScope = 1ull 
 // (weak empty aura_evaluator_probe_linear_on_steal resolved). Production
 // steal must link the strong probe (ownership + escape clear + invalidate).
 inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitProbeLinear = 1ull << 7;
+// Issue #3419: bit 8 set when the JIT typed-entry ABI is missing
+// (weak aura_jit_ir_typed_entry_commit_readiness_ok stub resolved).
+// Production must link the strong marker in evaluator_fiber_mutation.cpp
+// (same pattern as #3343 probe-linear).
+inline constexpr std::uint64_t kProductionAbiSelfcheckFailBitTypedEntry = 1ull << 8;
 // Issue #3195: set when aura_runtime_require_production_multi_worker
 // succeeds. residual_zero / sticky-fail consult this so a later Soft
 // flip cannot wipe readiness (I3/I6). Not a metric — process latch.
@@ -118,6 +123,9 @@ extern "C" int aura_abi_strong_tenant_scope_resume_v(void) noexcept;
 // Issue #3343: steal linear-probe ABI strong marker (1 = strong
 // aura_evaluator_probe_linear_on_steal linked).
 extern "C" int aura_abi_strong_probe_linear_on_steal_v(void) noexcept;
+// Issue #3419: JIT typed-entry ABI strong marker (1 = strong
+// aura_jit_ir_typed_entry_commit_readiness_ok linked).
+extern "C" int aura_abi_strong_ir_typed_entry_v(void) noexcept;
 
 // C ABI entry for hosts that cannot attach aura::serve.
 extern "C" int aura_runtime_require_production_abi_c(void) noexcept;

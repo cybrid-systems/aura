@@ -3545,6 +3545,14 @@ extern "C" int aura_abi_strong_tenant_scope_resume_v(void) noexcept {
 extern "C" int aura_abi_strong_probe_linear_on_steal_v(void) noexcept {
     return 1;
 }
+// Issue #3419: JIT typed-entry ABI is defined strong in this TU (same
+// home as #3343 probe-linear). Weak stubs in fiber_bridge /
+// aura_jit_bridge_stub return 0; production self-check requires this
+// marker == 1 so a link set that resolves only the stub fails at
+// startup instead of silently treating a weak OK-return as production.
+extern "C" int aura_abi_strong_ir_typed_entry_v(void) noexcept {
+    return 1;
+}
 
 extern "C" void aura_evaluator_on_steal_complete(void* fiber_ptr) noexcept {
     // Always count the steal-complete entry (even with null fiber).

@@ -4737,6 +4737,19 @@ def cmd_lint():
             "Issue #3343 production weak-ABI commit_readiness linter failed — run python3 scripts/coverage/checks/check_production_weak_abi_commit_readiness_3343.py"
         )
         return r
+    # Issue #3419: JIT typed-entry on every compiled function (anonymous
+    # included). Stub typed-entry is not production (ABI bit 8). Soft omit.
+    # Extends persist-rehydrate + steal-complete; linter after #3343.
+    jte3419_script = COVERAGE_CHECKS / "check_jit_typed_entry_every_function_3419.py"
+    if not jte3419_script.exists():
+        fail(f"missing {jte3419_script}")
+        return 1
+    r = run([sys.executable, str(jte3419_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3419 JIT typed-entry every-function linter failed — run python3 scripts/coverage/checks/check_jit_typed_entry_every_function_3419.py"
+        )
+        return r
     # Issue #3225: occurrence persist seqlock so concurrent outermost
     # write × densify/steal rehydrate cannot freeze a mixed fingerprint.
     # Soft/quiet skip seq. Reuses miss + empty-after-fence. Extends

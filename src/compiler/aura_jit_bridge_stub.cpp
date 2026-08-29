@@ -387,6 +387,12 @@ extern "C" __attribute__((weak)) int aura_jit_ir_typed_entry_commit_readiness_ok
         return 0;
     return 1;
 }
+// Issue #3419: do NOT define aura_abi_strong_ir_typed_entry_v here.
+// Light-link puts this TU in a separate DSO searched before
+// aura_test_objects; a weak marker in that DSO wins over the strong
+// T in evaluator_fiber_mutation.cpp (ELF first-definition). Weak 0
+// lives in fiber_bridge.cpp (same DSO as the strong T, so strong
+// wins). #3343 probe-linear follows the same split.
 extern "C" __attribute__((weak)) void
 aura_jit_set_linear_env_context(std::uint32_t /*env_id*/, std::uint64_t /*frame_version*/) {}
 extern "C" __attribute__((weak)) void aura_jit_clear_linear_env_context(void) {}

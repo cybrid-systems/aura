@@ -466,6 +466,14 @@ int run_test_steal_complete_strong_entry() {
               "3343 AC2: header bit 7");
         CHECK(cpp.find("aura_abi_strong_probe_linear_on_steal_v() == 0") != std::string::npos,
               "3343 AC2: self-check requires probe marker");
+        CHECK(aura::serve::kProductionAbiSelfcheckFailBitTypedEntry == (1ull << 8),
+              "3419 AC2: fail bit 8");
+        CHECK(hh.find("kProductionAbiSelfcheckFailBitTypedEntry") != std::string::npos,
+              "3419 AC2: header bit 8");
+        CHECK(cpp.find("aura_abi_strong_ir_typed_entry_v() == 0") != std::string::npos,
+              "3419 AC2: self-check requires typed-entry marker");
+        CHECK(aura_abi_strong_ir_typed_entry_v() == 1,
+              "3419 AC2: this link unit has strong typed-entry marker");
         CHECK(stub.find("Issue #3343") != std::string::npos, "3343 AC4: JIT stub cites #3343");
         {
             auto& pda = aura::compiler::typed_audit::g_typed_mutation_audit_counters
