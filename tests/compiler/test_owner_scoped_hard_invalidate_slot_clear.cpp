@@ -161,8 +161,12 @@ int run_test_owner_scoped_hard_invalidate_slot_clear() {
             (impl_pos == std::string::npos) ? std::string{} : bridge.substr(impl_pos);
         CHECK(contains(bridge_after, "slot_gen == cur_epoch"),
               "AC4: generation-behind skip predicate intact");
-        CHECK(contains(bridge_after, "if (slot_gen == cur_epoch) continue;"),
-              "AC4: skip predicate is the early-continue guard");
+        // clang-format may split the guard across two lines — accept both
+        // the single-line and brace-wrapped forms.
+        const bool guard_single = contains(bridge_after, "if (slot_gen == cur_epoch) continue;");
+        const bool guard_split =
+            contains(bridge_after, "if (slot_gen == cur_epoch)\n            continue;");
+        CHECK(guard_single || guard_split, "AC4: skip predicate is the early-continue guard");
     }
 
     // \u2500\u2500 AC5: no docs/design/3377-*; no test_issue_3377.cpp \u2500\u2500

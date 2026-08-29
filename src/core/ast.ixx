@@ -4629,6 +4629,9 @@ public:
     // If the owner is gone, returns a default span (no fingerprint);
     // the query path surfaces structured stale-span / across-guard.
     // Happy path (not stale): original span, no re-pin.
+    // Issue #3397: `production` is the caller-side
+    // typed_audit::production_defaults_active() gate (Soft short-circuit
+    // below keeps the frozen view — zero extra).
     [[nodiscard]] SafePCVSpan<NodeId> pcv_span_for_agent_export(const SafePCVSpan<NodeId>& safe,
                                                                 NodeId id, bool production) const {
         if (!production)
@@ -7354,8 +7357,8 @@ public:
             return false;
         }
         // Issue #3388 (I2): is_valid(NodeId) is now an observe-only oracle.
-        // Pre-#3388 it mutated node_gen_[id] = generation_ on gen mismatch
-        // and returned true (the lazy-align from #2122). An Agent holding an
+        // Pre-#3388 it wrote the slot gen up to the workspace gen on gen
+        // mismatch and returned true (the lazy-align from #2122). An Agent holding an
         // expired bare NodeId got a "live" verdict on a different generation
         // of the same index, then get() / mutate:* hit that other generation
         // with no stale-ref signal. Refresh moves to make_ref_layout — the

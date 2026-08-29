@@ -262,8 +262,9 @@ void register_workspace_query_primitives(
     // Issue #2989: production query children default is SafePCVSpan
     // (children_columnar). Bans raw children() / NodeView.children on the
     // hot path so a concurrent mutate COW cannot UAF a long-running reader.
-    // Issue #3397: production Agent query export must not return children_stable_span_view
-    // (TLS pin valid only until next same-thread call — UAF across Guard).
+    // Issue #3397: production Agent query export must not return the
+    // TLS-pinned stable children view (TLS pin valid only until next
+    // same-thread call — UAF across Guard).
     // Issue #3328: production re-use face — pcv_span_for_agent_export
     // force_refresh on fingerprint mismatch so query:children /
     // query:children-stable never walk a stale COW frozen view.

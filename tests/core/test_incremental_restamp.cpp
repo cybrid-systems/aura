@@ -189,9 +189,11 @@ int run_test_incremental_restamp() {
         cone.restamp_all_node_generations();
         // wrap_epoch fence: must not be silently valid with wrong gen.
         CHECK(!untouched.is_valid_in(cone), "pre-wrap ref invalid after wrap (epoch fence)");
-        // Live node still accessible via is_valid(NodeId) through lazy align.
-        CHECK(cone.is_valid(static_cast<aura::ast::NodeId>(500)),
-              "untouched live NodeId valid via lazy align");
+        // #3388: is_valid(NodeId) is observe-only — a lagging live slot
+        // reads stale (no write-up). Accessibility goes through make_ref
+        // lazy-align (asserted by the fresh-ref row below).
+        CHECK(!cone.is_valid(static_cast<aura::ast::NodeId>(500)),
+              "untouched live NodeId reads stale under observe-only is_valid (#3388)");
         // Fresh ref works after lazy align.
         const auto fresh = cone.make_ref(500);
         CHECK(fresh.is_valid_in(cone), "fresh ref on untouched node valid after wrap");
@@ -311,8 +313,10 @@ int run_test_incremental_restamp() {
         cone.restamp_all_node_generations();
         CHECK(!untouched.is_valid_in(cone),
               "#2402 AC3: pre-wrap StableNodeRef invalid (wrap_epoch)");
-        CHECK(cone.is_valid(static_cast<aura::ast::NodeId>(400)),
-              "#2402 AC3: live NodeId valid via lazy align");
+        // #3388: observe-only oracle — lagging slot reads stale; the
+        // fresh make_ref row below carries the lazy-align accessibility.
+        CHECK(!cone.is_valid(static_cast<aura::ast::NodeId>(400)),
+              "#2402 AC3: lagging live NodeId reads stale (#3388 observe-only)");
         const auto fresh = cone.make_ref(400);
         CHECK(fresh.is_valid_in(cone), "#2402 AC3: fresh ref valid after incremental restamp");
     }
