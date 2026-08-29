@@ -71,6 +71,11 @@ extern "C" std::uint64_t aura_clear_occurrence_persist_snapshot_tc(void* tc_hand
 // still link. Soft/Off never calls this (header early-return).
 extern "C" int aura_stamp_last_look_cs_matches(void* tc_handle, std::uint64_t expected_goals,
                                                std::uint64_t expected_fp) noexcept;
+// Issue #3347: residual CastOp undermark remirror before commit_readiness
+// / grant. Strong def in dirty_propagation.ixx. Weak stub in
+// test_concurrent_stubs.cpp returns 0 (no persist in light-link).
+extern "C" std::size_t aura_force_residual_castop_undermark_into_cone() noexcept;
+extern "C" int aura_residual_castop_undermark_pending() noexcept;
 // Issue #3379: TLS slot for the current commit-readiness Evaluator.
 // Caller (boundary enter / outermost Guard) sets it; the fill bridge
 // reads it. Forward declarations for the bridges live further down
@@ -3329,6 +3334,16 @@ inline void clear_occurrence_empty_after_fence_for_test() noexcept;
 // Issue #2716 / #2750 recover counters + hook live above commit_readiness.
 [[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept {
     CommitReadinessInput in;
+    // Issue #3347: remirror residual CastOp persist BEFORE auto_partial /
+    // empty_cs faces. Single-boundary / lockless readiness skipped the
+    // #3228 force (only composite + selective dirty-txn). Soft / empty
+    // persist → 0 extra. Pending latch (C ABI n>0, not yet re-inferred)
+    // drives auto_partial so empty CS hard-rejects until infer_flat_partial
+    // clears it. Last cone staying nonempty after infer must not latch
+    // forever — remirror n==0 once nodes are already in cone.
+    (void)aura_force_residual_castop_undermark_into_cone();
+    if (aura_residual_castop_undermark_pending())
+        in.auto_partial_from_cone = true;
     const bool prod = production_defaults_active();
     const bool full = get_strategy() == AuditStrategy::Full;
     in.empty_cs_hard = composite_empty_cs_hard_reject_enabled();

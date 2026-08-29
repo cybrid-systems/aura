@@ -15,6 +15,8 @@
 // Issue #3228: empty cone + residual persist must remirror (columnar
 //              under-mark). Soft uses apply_dev_audit_defaults (Sampled);
 //              production_defaults_active=0 alone is still Full (#2818).
+// Issue #3347: single-boundary commit_readiness / grant remirror residual
+//              CastOp persist before auto_partial / type authority.
 
 #include "test_harness.hpp"
 #include "compiler/typed_mutation_audit.h"
@@ -39,10 +41,13 @@ import aura.core.ast;
 namespace {
 
 using aura::compiler::CompilerService;
+using aura::compiler::dirty::clear_residual_castop_undermark_pending;
+using aura::compiler::dirty::dead_coercion_decision_invalidate_gen;
 using aura::compiler::dirty::dead_coercion_elim_cone_force_total;
 using aura::compiler::dirty::force_dead_coercion_elim_into_cone;
 using aura::compiler::dirty::force_residual_castop_undermark_into_cone;
 using aura::compiler::dirty::kDeadCoercionElimConeIssue;
+using aura::compiler::dirty::kResidualCastopReadinessUndermarkIssue;
 using aura::compiler::dirty::kResidualCastopTypeTxnRemirrorIssue;
 using aura::compiler::dirty::last_type_cone_ast;
 using aura::compiler::dirty::mirror_type_affected_to_cascade;
@@ -50,6 +55,7 @@ using aura::compiler::dirty::note_residual_castop_sites;
 using aura::compiler::dirty::remirror_persisted_residual_castops;
 using aura::compiler::dirty::reset_residual_castop_persist_for_test;
 using aura::compiler::dirty::residual_castop_persist_size;
+using aura::compiler::dirty::residual_castop_undermark_pending;
 using aura::compiler::dirty::type_ir_union_cone_nonempty;
 using aura::compiler::dirty::type_ir_union_cone_size;
 using aura::compiler::opt_registry::count_identity_castops;
@@ -832,6 +838,141 @@ static void ac3228_4_linter_suites() {
     CHECK(read_file("tests/issues/test_issue_3228.cpp").empty(), "3228 AC4: no tests/issues");
 }
 
+// ── Issue #3347: single-boundary commit_readiness remirrors before grant ──
+static void ac3347_1_live_policy_remirrors_before_auto_partial() {
+    std::println("\n--- #3347 AC1: live_policy remirror before auto_partial / empty_cs ---");
+    using aura::compiler::typed_audit::commit_readiness;
+    using aura::compiler::typed_audit::commit_readiness_live_policy;
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kRes = 717;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() >= 1, "3347 AC1: persist nonempty");
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3347 AC1: empty cone wipe");
+    CHECK(!cone_contains(kRes), "3347 AC1: wipe dropped residual from last cone");
+
+    const auto gen0 = dead_coercion_decision_invalidate_gen();
+    auto in = commit_readiness_live_policy();
+    CHECK(in.auto_partial_from_cone, "3347 AC1: pending drives auto_partial");
+    CHECK(cone_contains(kRes), "3347 AC1: remirror before auto_partial");
+    CHECK(type_ir_union_cone_nonempty(), "3347 AC1: cone nonempty until re-typecheck");
+    CHECK(aura_residual_castop_undermark_pending() != 0, "3347 AC1: C ABI pending latch");
+    CHECK(residual_castop_undermark_pending(), "3347 AC1: dirty pending latch");
+    CHECK(dead_coercion_decision_invalidate_gen() > gen0, "3347 AC1: bump on remirror n>0");
+
+    in.empty_cs_hard = true;
+    in.cs_has_work = false;
+    in.solve_status = 0;
+    const auto r = commit_readiness(in);
+    CHECK(!r.would_allow_commit, "3347 AC1: empty_cs hard-reject until re-infer");
+
+    const auto aud = read_file("src/compiler/typed_mutation_audit.h");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    CHECK(aud.find("aura_force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3347 AC1: live_policy C ABI");
+    CHECK(ev.find("aura_force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3347 AC1: grant remirror");
+    CHECK(ev.find("aura_residual_castop_undermark_pending") != std::string::npos,
+          "3347 AC1: grant refuse pending");
+
+    clear_residual_castop_undermark_pending();
+    auto in2 = commit_readiness_live_policy();
+    CHECK(!in2.auto_partial_from_cone, "3347 AC1: pending clear → no auto_partial");
+    CHECK(aura_residual_castop_undermark_pending() == 0, "3347 AC1: second remirror n=0");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3347_2_soft_quiet() {
+    std::println("\n--- #3347 AC2/AC4: Soft observe; quiet empty persist ---");
+    SoftAuditScope soft;
+    reset_residual_castop_persist_for_test();
+    constexpr aura::compiler::dirty::NodeId kSoft = 818;
+    const aura::compiler::dirty::NodeId one[] = {kSoft};
+    note_residual_castop_sites(one, {});
+    CHECK(residual_castop_persist_size() == 0, "3347 AC4: Soft does not persist");
+    const auto union0 = type_ir_union_cone_size();
+    const auto gen0 = dead_coercion_decision_invalidate_gen();
+    CHECK(aura_force_residual_castop_undermark_into_cone() == 0, "3347 AC4: Soft C ABI 0");
+    CHECK(aura_residual_castop_undermark_pending() == 0, "3347 AC4: Soft no pending");
+    CHECK(type_ir_union_cone_size() == union0, "3347 AC4: Soft union unchanged");
+    CHECK(dead_coercion_decision_invalidate_gen() == gen0, "3347 AC4: Soft no invalidate bump");
+    reset_residual_castop_persist_for_test();
+    CHECK(aura_force_residual_castop_undermark_into_cone() == 0, "3347 AC4: quiet empty persist 0");
+    CHECK(aura_residual_castop_undermark_pending() == 0, "3347 AC4: quiet no pending");
+}
+
+static void ac3347_3_invalidate_gen_success_path() {
+    std::println("\n--- #3347 AC3: success-path invalidate; post-infer remirror no bump ---");
+    using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    reset_residual_castop_persist_for_test();
+
+    constexpr aura::compiler::dirty::NodeId kRes = 919;
+    const aura::compiler::dirty::NodeId one[] = {kRes};
+    note_residual_castop_sites(one, {});
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3347 AC3: wipe");
+    const auto gen0 = dead_coercion_decision_invalidate_gen();
+    CHECK(remirror_persisted_residual_castops() >= 1, "3347 AC3: keep-alive remirror");
+    CHECK(dead_coercion_decision_invalidate_gen() == gen0,
+          "3347 AC3: post-infer remirror does not bump");
+    CHECK(!residual_castop_undermark_pending(), "3347 AC3: keep-alive does not latch pending");
+
+    CHECK(mirror_type_affected_to_cascade({}) == 0, "3347 AC3: wipe again");
+    const auto gen1 = dead_coercion_decision_invalidate_gen();
+    CHECK(aura_force_residual_castop_undermark_into_cone() >= 1, "3347 AC3: C ABI remirror");
+    CHECK(dead_coercion_decision_invalidate_gen() > gen1, "3347 AC3: C ABI n>0 bumps gen");
+    CHECK(residual_castop_undermark_pending(), "3347 AC3: C ABI latches pending");
+
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(dirty.find("bump_dead_coercion_decision_invalidate") != std::string::npos,
+          "3347 AC3: abort bump retained");
+    CHECK(dirty.find("note_residual_castop_undermark_pending") != std::string::npos,
+          "3347 AC3: success-path latch");
+    CHECK(kResidualCastopReadinessUndermarkIssue == 3347, "3347 AC3: issue stamp");
+
+    reset_residual_castop_persist_for_test();
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+}
+
+static void ac3347_4_linter_no_invent() {
+    std::println("\n--- #3347 AC4: linter + no invent / no new query keys ---");
+    const auto t = read_file("tests/compiler/test_dead_coercion_dirty_cone.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_residual_castop_readiness_undermark_3347.py");
+    const auto build = read_file("build.py");
+    const auto q = read_file("src/compiler/evaluator_primitives_query.cpp") +
+                   read_file("src/compiler/evaluator_primitives_query_type_stats.cpp");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    const auto impl = read_file("src/compiler/type_checker_impl.cpp");
+    const auto stubs = read_file("src/compiler/test_concurrent_stubs.cpp");
+    CHECK(t.find("ac3347_1_live_policy_remirrors_before_auto_partial") != std::string::npos,
+          "3347 AC4: suite");
+    CHECK(!lint.empty() && lint.find("3347") != std::string::npos, "3347 AC4: linter");
+    CHECK(build.find("check_residual_castop_readiness_undermark_3347") != std::string::npos,
+          "3347 AC4: build.py");
+    CHECK(impl.find("clear_residual_castop_undermark_pending") != std::string::npos,
+          "3347 AC4: infer clears pending");
+    CHECK(stubs.find("aura_force_residual_castop_undermark_into_cone") != std::string::npos,
+          "3347 AC4: light-link stub");
+    CHECK(q.find("schema-3347") == std::string::npos, "3347 AC4: no schema-3347");
+    CHECK(dirty.find("g_3347_") == std::string::npos, "3347 AC4: no g_3347_*");
+    CHECK(read_file("docs/design/3347-residual-castop-readiness.md").empty(),
+          "3347 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3347.cpp").empty(), "3347 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3347.cpp").empty(), "3347 AC4: no tests/issues");
+}
+
 } // namespace
 
 int run_test_dead_coercion_dirty_cone() {
@@ -858,9 +999,13 @@ int run_test_dead_coercion_dirty_cone() {
     ac3228_2_soft_quiet();
     ac3228_3_no_regression_3065_3120();
     ac3228_4_linter_suites();
+    ac3347_1_live_policy_remirrors_before_auto_partial();
+    ac3347_2_soft_quiet();
+    ac3347_3_invalidate_gen_success_path();
+    ac3347_4_linter_no_invent();
     reset_residual_castop_persist_for_test();
-    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    std::println("\n=== #2556/#3007/#3046/#3065/#3120/#3228/#3347: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

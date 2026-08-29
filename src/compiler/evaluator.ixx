@@ -3692,10 +3692,15 @@ public:
         // Issue #3316: acquire fence + re-sample face under the persist
         // seqlock (#3225) used by drain / densify residual latch. Face
         // flip or odd seq under the fence → refuse (same as residual).
+        // Issue #3347: remirror residual CastOp persist before grant so
+        // single-boundary success cannot stamp query:type over an
+        // under-marked empty cone. Soft / empty persist → 0 extra.
+        (void)aura_force_residual_castop_undermark_into_cone();
         if (!last_type_solve_solved_ ||
             !aura::compiler::typed_audit::type_export_residual_faces_clear() ||
             aura::compiler::typed_audit::pending_full_solve_residual_face_hit() ||
-            !aura::compiler::typed_audit::type_export_residual_faces_stable()) {
+            !aura::compiler::typed_audit::type_export_residual_faces_stable() ||
+            aura_residual_castop_undermark_pending()) {
             type_export_authoritative_ = false;
             type_export_inflight_ = false;
             type_export_outermost_success_face_ = false;

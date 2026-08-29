@@ -563,6 +563,10 @@ inline thread_local std::vector<NodeId> t_last_type_cone_ast{};
 inline constexpr int kResidualCastopTypeTxnRemirrorIssue = 3120;
 inline thread_local std::vector<NodeId> t_residual_castop_ast{};
 inline thread_local std::vector<NodeId> t_residual_castop_blocks{};
+// Issue #3347: C ABI remirror latches this when n>0 (cone was missing
+// persist). infer_flat_partial clears after re-typecheck or empty-affected.
+// Not set by remirror_persisted_residual_castops (post-infer keep-alive).
+inline thread_local bool t_residual_castop_undermark_pending = false;
 
 [[nodiscard]] inline bool residual_castop_persist_active() noexcept {
     using aura::compiler::typed_audit::AuditStrategy;
@@ -596,6 +600,7 @@ inline void note_residual_castop_sites(std::span<const NodeId> ast,
 inline void reset_residual_castop_persist_for_test() noexcept {
     t_residual_castop_ast.clear();
     t_residual_castop_blocks.clear();
+    t_residual_castop_undermark_pending = false;
 }
 
 [[nodiscard]] inline std::size_t residual_castop_persist_size() noexcept {
@@ -825,6 +830,9 @@ inline std::size_t remirror_persisted_residual_castops() noexcept {
 // the next mutate re-typechecks; Soft / empty persist → 0 extra.
 // Reuses #3065/#3120 force_* (no new query key).
 inline constexpr int kResidualCastopUndermarkConeIssue = 3228;
+// Issue #3347: single-boundary / lockless commit_readiness + grant must
+// remirror (via C ABI) before auto_partial / empty_cs / type authority.
+inline constexpr int kResidualCastopReadinessUndermarkIssue = 3347;
 inline std::size_t force_residual_castop_undermark_into_cone() noexcept {
     return remirror_persisted_residual_castops();
 }
@@ -864,6 +872,22 @@ inline void bump_dead_coercion_decision_invalidate() noexcept {
 inline void reset_dead_coercion_decision_invalidate_for_test() noexcept {
     g_dead_coercion_decision_invalidate_gen.store(0, std::memory_order_relaxed);
     g_dead_coercion_decision_invalidate_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3347: latch when the C ABI remirror added persist nodes (cone
+// was under-marked). Bumps decision invalidate so success-path readiness
+// cannot consult stale DeadCoercion decisions. added==0 → no-op.
+inline void note_residual_castop_undermark_pending(std::size_t added) noexcept {
+    if (added == 0)
+        return;
+    t_residual_castop_undermark_pending = true;
+    bump_dead_coercion_decision_invalidate();
+}
+inline void clear_residual_castop_undermark_pending() noexcept {
+    t_residual_castop_undermark_pending = false;
+}
+[[nodiscard]] inline bool residual_castop_undermark_pending() noexcept {
+    return t_residual_castop_undermark_pending;
 }
 
 // Sync multi-function block dirty matrix [func][block] into DirtySet.
@@ -1052,4 +1076,20 @@ extern "C" void aura_set_dual_dep_graph_strict(int strict_mode) noexcept {
 
 extern "C" void aura_test_set_dual_dep_graph_strict(int v) noexcept {
     aura::compiler::dirty::set_dual_dep_graph_strict(v);
+}
+
+// Issue #3347: C ABI for commit_readiness_live_policy / grant (header
+// stays TypeChecker- and dirty-module-free). Remirror then latch pending
+// when nodes were added; bump decision invalidate so stale DeadCoercion
+// decisions cannot be consulted after a readiness grant. Soft / empty
+// persist → 0 extra (force returns 0, no latch). Weak stub in
+// test_concurrent_stubs.cpp for light-link binaries.
+extern "C" std::size_t aura_force_residual_castop_undermark_into_cone() noexcept {
+    const auto n = aura::compiler::dirty::force_residual_castop_undermark_into_cone();
+    aura::compiler::dirty::note_residual_castop_undermark_pending(n);
+    return n;
+}
+
+extern "C" int aura_residual_castop_undermark_pending() noexcept {
+    return aura::compiler::dirty::residual_castop_undermark_pending() ? 1 : 0;
 }

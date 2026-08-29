@@ -69,6 +69,16 @@ aura_clear_occurrence_persist_snapshot_tc(void* /*tc_handle*/) noexcept {
     return 0;
 }
 
+// Issue #3347: live_policy / grant remirror residual CastOp persist.
+// Strong def: dirty_propagation.ixx. Light-link: no persist, no pending.
+extern "C" __attribute__((weak)) std::size_t
+aura_force_residual_castop_undermark_into_cone() noexcept {
+    return 0;
+}
+extern "C" __attribute__((weak)) int aura_residual_castop_undermark_pending() noexcept {
+    return 0;
+}
+
 // Stamp builders also instantiate commit_readiness_live_policy /
 // commit_readiness (header-inline). Strong defs live in
 // evaluator_mutation_boundary.cpp. Fail-closed: no live TC, no recover.

@@ -8704,6 +8704,10 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         last_partial_cone_truncated_ = false;
         last_partial_cone_dropped_ = 0;
         aura::compiler::typed_audit::publish_partial_cone_truncate(false, 0, 0);
+        // Issue #3347: empty affected after remirror — persist IDs are
+        // out of this AST or the mutation is a no-op. Drop the pending
+        // latch so grant is not stuck (C ABI remirror already seeded cone).
+        dirty::clear_residual_castop_undermark_pending();
         return 0;
     }
 
@@ -9474,6 +9478,11 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
         // when the post-infer cone is empty (columnar under-mark). Soft
         // persist is empty → remirror no-ops. Reuses #3065 force_*.
         (void)dirty::remirror_persisted_residual_castops();
+        // Issue #3347: re-infer consumed residual undermark; drop the
+        // pending latch so commit_readiness / grant can succeed after
+        // typecheck. Post-wipe remirror keeps persist in cone without
+        // re-latching pending (only the C ABI force path latches).
+        dirty::clear_residual_castop_undermark_pending();
         if (metrics_) {
             auto* m = static_cast<struct CompilerMetrics*>(metrics_);
             m->type_dirty_txn_phase3_mirror_total.fetch_add(1, std::memory_order_relaxed);

@@ -4678,6 +4678,20 @@ def cmd_lint():
             "Issue #3228 residual CastOp under-mark cone linter failed — run python3 scripts/coverage/checks/check_residual_castop_undermark_cone_3228.py"
         )
         return r
+    # Issue #3347: residual CastOp persist must remirror on every
+    # commit_readiness / grant path (single-boundary / lockless), not
+    # only composite + selective dirty-txn. Soft/quiet 0 extra.
+    # Extends test_dead_coercion_dirty_cone; no docs/design / invent.
+    rcu3347_script = COVERAGE_CHECKS / "check_residual_castop_readiness_undermark_3347.py"
+    if not rcu3347_script.exists():
+        fail(f"missing {rcu3347_script}")
+        return 1
+    r = run([sys.executable, str(rcu3347_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3347 residual CastOp readiness undermark linter failed — run python3 scripts/coverage/checks/check_residual_castop_readiness_undermark_3347.py"
+        )
+        return r
     # Issue #3229: hashed-name 6-bit success coverage needs a define-id
     # side set so colliding peers stay residual. Soft skip; quiet 0 extra.
     # Extends test_hot_update_relower_success_coverage; no docs/design.
