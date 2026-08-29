@@ -140,6 +140,67 @@ int run_test_outermost_persist_fail_closed() {
               "AC4: no tests/issues/test_issue_3376.cpp (R1 abandoned scheme)");
     }
 
+    // AC5: #3406 recover-fail branch clears persist buffer + bumps mismatch.
+    {
+        std::println("\n--- AC5: #3406 recover-fail branch clears persist buffer ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto fn_pos =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+        const auto recover_pos = emb_after.find("if (!tc->ensure_occurrence_commit_or_recover())");
+        CHECK(recover_pos != std::string::npos,
+              "AC5: ensure_occurrence_commit_or_recover check present");
+        const auto return_pos = emb_after.find(
+            "return; // skip grant; recover face stamps via publish_occurrence_commit_health",
+            recover_pos);
+        CHECK(return_pos != std::string::npos, "AC5: recover-fail return line present");
+        const auto branch = emb_after.substr(recover_pos, return_pos - recover_pos);
+        CHECK(contains(branch, "clear_occurrence_persist_buffer(tc)"),
+              "AC5: recover-fail branch calls clear_occurrence_persist_buffer(tc)");
+        CHECK(contains(branch, "bump_occurrence_persist_fingerprint_mismatch"),
+              "AC5: recover-fail branch bumps mismatch counter");
+        CHECK(contains(branch, "#3406"),
+              "AC5: recover-fail branch cites #3406 (source-cite anchor)");
+    }
+
+    // AC6: clear_occurrence_persist_buffer count >= 6 (5 existing + #3406 recover-fail).
+    {
+        std::println("\n--- AC6: clear_occurrence_persist_buffer count >= 6 ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto fn_pos =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+        const auto count = [](const std::string& s, const char* needle) -> std::size_t {
+            std::size_t c = 0, pos = 0;
+            while ((pos = s.find(needle, pos)) != std::string::npos) {
+                ++c;
+                pos += std::strlen(needle);
+            }
+            return c;
+        };
+        const std::size_t n = count(emb_after, "clear_occurrence_persist_buffer(tc)");
+        CHECK(n >= 6, "AC6: clear_occurrence_persist_buffer(tc) called >= 6 times "
+                      "(5 existing reject paths + #3406 recover-fail)");
+        const auto recover_pos = emb_after.find("if (!tc->ensure_occurrence_commit_or_recover())");
+        const auto before_recover =
+            (recover_pos == std::string::npos) ? emb_after : emb_after.substr(0, recover_pos);
+        const std::size_t n_before = count(before_recover, "clear_occurrence_persist_buffer(tc)");
+        CHECK(n_before >= 5,
+              "AC6: existing 5 reject paths still call clear_occurrence_persist_buffer "
+              "(#3376 contract unchanged)");
+    }
+
+    // AC7: no docs/design/3406-*; no test_issue_3406.cpp.
+    {
+        std::println("\n--- AC7: no docs/design/3406-*; no test_issue_3406.cpp ---");
+        CHECK(read_file("docs/design/3406-recover-fail-clear-persist.md").empty(),
+              "AC7: no docs/design/3406-* per #1655");
+        CHECK(read_file("tests/compiler/test_issue_3406.cpp").empty(),
+              "AC7: no test_issue_3406.cpp per #81967");
+        CHECK(read_file("tests/issues/test_issue_3406.cpp").empty(),
+              "AC7: no tests/issues/test_issue_3406.cpp (R1 abandoned scheme)");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

@@ -15107,6 +15107,52 @@ def cmd_pure_wrap_dirty_entry_3405_coverage():
     return 0
 
 
+def cmd_recover_fail_clear_persist_3406_coverage():
+    """Issue #3406: outermost persist recover-fail must clear persist buffer + bump mismatch.
+
+    Residual from #3376. The recover-fail branch in
+    `aura_outermost_success_persist_occurrence` (after
+    `!tc->ensure_occurrence_commit_or_recover()`) was the odd arm: drain,
+    fingerprint, mid-abort, pending-face, and ADT-exhaust reject paths all
+    called `clear_occurrence_persist_buffer(tc)` + bumped the mismatch
+    counter; recover-fail only stamped the proof + cleared authority.
+    Without the buffer clear, a concurrent densify/steal rehydrate copies
+    the just-written snapshot and a later outermost merge freezes the
+    narrowing that `ensure_*` already declared unrecoverable (I4
+    "过期窄化仍能用" at the persist/rehydrate face, not the query face).
+
+    Source-cite linter (scripts/check_recover_fail_clear_persist_3406.py)
+    verifies:
+      AC1 recover-fail branch calls clear_occurrence_persist_buffer(tc)
+         AFTER clear_type_linear_commit_proof_on_abort() and BEFORE
+         the `return; // skip grant...` line.
+      AC2 same branch calls
+         ev->bump_occurrence_persist_fingerprint_mismatch() (matches
+         the other reject arms).
+      AC3 source-cite #3406 anchor present in the branch comment.
+      AC4 existing 5 reject paths still call
+         clear_occurrence_persist_buffer(tc) (count invariant
+         >= 6 inside the helper, 5 existing + 1 from #3406).
+      AC5 no new query key, no new force_reason family. Reuse
+         force_reason 16 + the existing mismatch counter.
+      AC6 no tests/compiler/test_issue_3406.cpp (extends existing
+         test_outermost_persist_fail_closed.cpp per #81934);
+         no docs/design/3406-*.md (per #1655).
+      AC7 source-cite #3406 + build.py registration; no design docs.
+    """
+    print(f"{B}=== recover-fail clear persist coverage (#3406) ==={N}")
+    script = SCRIPTS / "check_recover_fail_clear_persist_3406.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("recover-fail clear persist (#3406) coverage contract rows failed")
+        return 1
+    ok("recover-fail clear persist (#3406) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22232,6 +22278,8 @@ def main():
         "arena-auto-arm-soft-fallback-3404-coverage": cmd_arena_auto_arm_soft_fallback_3404_coverage,
         "pure-wrap-dirty-entry-3405": cmd_pure_wrap_dirty_entry_3405_coverage,
         "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
+        "recover-fail-clear-persist-3406": cmd_recover_fail_clear_persist_3406_coverage,
+        "recover-fail-clear-persist-3406-coverage": cmd_recover_fail_clear_persist_3406_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,

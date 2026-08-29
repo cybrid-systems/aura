@@ -603,6 +603,19 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
         aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+        // Issue #3406: residual from #3376 — recover-fail is the odd arm.
+        // Drain/fingerprint/mid-abort/pending-face/ADT-exhaust reject paths
+        // already clear the persist buffer + bump the mismatch counter;
+        // recover-fail only stamped the proof + cleared authority. Without
+        // clearing the buffer, a concurrent densify/steal rehydrate copies
+        // the just-written snapshot and a later outermost merge freezes the
+        // narrowing that ensure_* already declared unrecoverable (I4
+        // «过期窄化仍能用» at the persist/rehydrate face, not the query
+        // face). Clear buffer + bump mismatch to match the other arms.
+        // Soft / Off: production_defaults_active() false → both helpers
+        // early-out, zero extra atomics on quiet SOLVED.
+        (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+        ev->bump_occurrence_persist_fingerprint_mismatch();
         return; // skip grant; recover face stamps via publish_occurrence_commit_health
     }
     // Issue #3004: query:type authority only after persist + Full
