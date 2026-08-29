@@ -4492,31 +4492,21 @@ public:
                 block_dirty_per_func_.resize(func_idx + 1);
             }
             auto& fb = block_dirty_per_func_[func_idx];
-            if (block_idx >= fb.size()) {
+            if (block_idx >= fb.size())
                 fb.resize(block_idx + 1, 1);
-                if (cascade_instrs)
-                    cascade_block_to_instructions(func_idx, block_idx);
-                if (func_idx < soa_mod.functions.size()) {
-                    if (cascade_instrs)
-                        soa_mod.functions[func_idx].mark_block_dirty(block_idx);
-                    else {
-                        // Issue #2615: single-block bit-only via batch of 1 (one fence).
-                        const std::uint32_t one[] = {block_idx};
-                        soa_mod.functions[func_idx].mark_blocks_dirty_bits_only(one);
-                    }
-                }
-                return;
-            }
-            fb[block_idx] = 1;
+            else
+                fb[block_idx] = 1;
             if (cascade_instrs)
                 cascade_block_to_instructions(func_idx, block_idx);
             if (func_idx < soa_mod.functions.size()) {
+                // Issue #3355: production dual-emit uses batch-of-1 so residual
+                // SoA single-mark is unreachable in this TU (same face as
+                // #3293 abort). Soft/test keep IRFunctionSoA::mark_block_dirty.
+                const std::uint32_t one[] = {block_idx};
                 if (cascade_instrs)
-                    soa_mod.functions[func_idx].mark_block_dirty(block_idx);
-                else {
-                    const std::uint32_t one[] = {block_idx};
+                    soa_mod.functions[func_idx].mark_blocks_dirty(one);
+                else
                     soa_mod.functions[func_idx].mark_blocks_dirty_bits_only(one);
-                }
             }
         }
 
@@ -7695,7 +7685,10 @@ public:
             (void)entry.soa_mod.add_instruction(0, aura::ir::IROpcode::ConstI64);
             fn.blocks_[0].end_idx = static_cast<std::uint32_t>(fn.size());
         }
-        fn.mark_block_dirty(0);
+        // Issue #3355: test helper uses batch-of-1 (production TU must not
+        // call IRFunctionSoA::mark_block_dirty).
+        const std::uint32_t one[] = {0};
+        fn.mark_blocks_dirty(one);
         // Also keep AoS bit set so force_soa mirrors the dirty story.
         if (entry.block_dirty_per_func_.empty())
             entry.block_dirty_per_func_.resize(1);
