@@ -14876,6 +14876,30 @@ def cmd_as_stable_ref_v2_coverage():
     return 0
 
 
+def cmd_as_stable_ref_prod_int_reject_coverage():
+    """Issue #3425: production query:as-stable-ref rejects bare int.
+
+    #3395 closed occupancy on resolve helpers; as-stable-ref was the
+    remaining Agent converter that restamped the current occupant.
+    Production inbound is packed v2 / schema-2 QueryResult (freshness
+    via query_result_is_fresh_with_refs / get_safe, no auto-refresh).
+    Soft int → v1 pair unchanged. Extends
+    test_stable_ref_provenance_fiber_cow. No docs/design/, no
+    tests/issues/test_issue_3425.cpp.
+    """
+    print(f"{B}=== as-stable-ref production int reject coverage (#3425) ==={N}")
+    script = COVERAGE_CHECKS / "check_as_stable_ref_prod_int_reject_3425.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("as-stable-ref production int reject (#3425) coverage contract rows failed")
+        return 1
+    ok("as-stable-ref production int reject (#3425) coverage clean")
+    return 0
+
+
 def cmd_stable_ref_probe_3400_coverage():
     """Issue #3400: mutate:check-stable-ref probes the node_gen_ domain.
 
@@ -22755,6 +22779,7 @@ def main():
         "structural-mutate-resolve-helper": cmd_structural_mutate_resolve_helper_coverage,
         "query-result-hash-resolve": cmd_query_result_hash_resolve_coverage,
         "as-stable-ref-v2": cmd_as_stable_ref_v2_coverage,
+        "as-stable-ref-prod-int-reject": cmd_as_stable_ref_prod_int_reject_coverage,
         "stable-ref-probe-3400": cmd_stable_ref_probe_3400_coverage,
         "query-result-soft-prod-transition": cmd_query_result_soft_prod_transition_coverage,
         "partial-cone-commit-gate": cmd_partial_cone_commit_gate_coverage,

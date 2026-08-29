@@ -2923,41 +2923,57 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             return make_string(static_cast<std::int32_t>(pidx));
         });
 
-    // Issue #489: (query:as-stable-ref node-id) — capture (id . gen) for EDSL loops.
-    // Issue #3398: production + query:as-stable-ref must pack the v2 spine
+    // Issue #489: (as-stable-ref node-id) — capture (id . gen) for EDSL loops.
+    // Issue #3398: production pack is the v2 spine
     // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary))))) so the
     // Agent-visible pair carries wrap + tenant + cow (the fields that
     // #3396 inbound unpack now requires under production). Soft keeps the
     // historical v1 (id . gen) pair (Issue #2186 compat). One SSOT spine
     // for both pack (this fn) and unpack (#3396 walk_v2) — same field
     // order, same nested-pair shape.
-    add("query:as-stable-ref", [&ev, mev](const auto& a) -> EvalValue {
-        if (a.empty() || !is_int(a[0]) || !ev.workspace_flat_)
+    add("query:as-stable-ref", [&ev, mev, unpack_stable_ref_arg](const auto& a) -> EvalValue {
+        if (a.empty() || !ev.workspace_flat_)
             return make_void();
-        const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
-        // Issue #3058 / #3121: over-budget torn must not silently stamp a
-        // pre-restamp gen (same gate as query:stable-ref). Soft
-        // observe-only (allow returns true). Production: structured
+        // Issue #3058 / Issue #3230 / Issue #3121: over-budget torn must
+        // not silently stamp a pre-restamp gen (same gate as query:stable-ref).
+        // Soft observe-only (allow returns true). Production: structured
         // restamp-lag + budget-exceeded (never silent void).
-        if (!ev.allow_query_stable_ref_export(id))
+        auto restamp_lag = [&] {
             return mev("restamp-lag",
                        "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
-                       "generation torn for export (Issue #3121 / #3058); ; // Issue #3138: Agent "
-                       "recovery hint recovery: re-query after budget window or force full restamp "
-                       "before reusing refs");
-        // Issue #2224: route Agent-facing ref through export_ref so
-        // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
-        // required_effects; primary outbound surface for ast: / query: /
-        // mutate return paths).
-        const auto ref = ev.export_ref(id);
-        // Issue #3198: export_ref now fail-closes on torn; do not pack (0 . 0).
-        if (ref.id == aura::ast::NULL_NODE)
-            return mev("restamp-lag",
-                       "budget-exceeded: query:as-stable-ref: restamp budget exceeded; "
-                       "generation torn for export (Issue #3198 / #3121 / #3058); ; // Issue "
-                       "#3138: Agent recovery hint recovery: re-query after budget window or force "
-                       "full restamp before reusing refs");
-        if (aura::compiler::typed_audit::production_defaults_active()) {
+                       "generation torn for export (Issue #3121 / #3058 / #3198 / #3230); ; // "
+                       "Issue #3138: Agent recovery hint recovery: re-query after budget window or "
+                       "force full restamp before reusing refs");
+        };
+        const bool hard = aura::compiler::typed_audit::production_defaults_active();
+        if (is_int(a[0])) {
+            const auto id = static_cast<aura::ast::NodeId>(as_int(a[0]));
+            if (!ev.allow_query_stable_ref_export(id))
+                return restamp_lag();
+            // Issue #3425: production rejects bare int (occupancy remake of
+            // the current occupant via export_ref). Same kind as #3395.
+            // Soft/Off keeps Issue #2186 v1 stamp.
+            if (hard) {
+                ev.bump_raw_nodeid_usage_in_primitives_count();
+                return mev("stale-ref",
+                           "query:as-stable-ref: raw node-id rejected under production; "
+                           "pass packed v2 StableNodeRef or QueryResult match");
+            }
+            // Issue #2224: route Agent-facing ref through export_ref so
+            // tenant + fiber stamp is guaranteed (parity with #2152 dispatch
+            // required_effects; primary outbound surface for ast: / query: /
+            // mutate return paths).
+            const auto ref = ev.export_ref(id);
+            // Issue #3198: export_ref now fail-closes on torn; do not pack (0 . 0).
+            if (ref.id == aura::ast::NULL_NODE)
+                return restamp_lag();
+            // Soft (or sandbox=off): historical v1 (id . gen) pair.
+            const auto pid = ev.pairs_.size();
+            ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
+                                 make_int(static_cast<std::int64_t>(ref.gen))});
+            return make_pair(pid);
+        }
+        auto pack_v2 = [&](const StableNodeRef& ref) -> EvalValue {
             // Issue #3398: v2 spine packer. Builds the nested pair
             // (id . (gen . (wrap . (tenant . (cow . (fiber . boundary)))))
             // — same shape as the #3396 v2 unpacker reads, so the
@@ -3005,12 +3021,36 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             // (id . (gen . (wrap . (tenant . (cow . ...))) ← (gen . ...)
             ev.pairs_[p_id].cdr = make_pair(p_gen);
             return make_pair(p_id);
+        };
+        if (!hard)
+            return make_void();
+        auto& flat = *ev.workspace_flat_;
+        if (is_hash(a[0])) {
+            using aura::compiler::query_result_decode::HashNodeKind;
+            using aura::compiler::query_result_decode::resolve_query_result_match;
+            auto hr = resolve_query_result_match(
+                a[0], ev.string_heap_, ev.pairs_, flat, ev.capability_tenant_id(),
+                static_cast<std::uint64_t>(aura_fiber_current_id()), "query:as-stable-ref");
+            if (hr.kind != HashNodeKind::Ok)
+                return mev(hr.err_kind, hr.err_msg);
+            if (!ev.allow_query_stable_ref_export(hr.node))
+                return restamp_lag();
+            const auto ref = ev.export_ref(hr.node);
+            if (ref.id == aura::ast::NULL_NODE)
+                return restamp_lag();
+            return pack_v2(ref);
         }
-        // Soft (or sandbox=off): historical v1 (id . gen) pair.
-        const auto pid = ev.pairs_.size();
-        ev.pairs_.push_back({make_int(static_cast<std::int64_t>(ref.id)),
-                             make_int(static_cast<std::int64_t>(ref.gen))});
-        return make_pair(pid);
+        if (auto packed = unpack_stable_ref_arg(a[0])) {
+            StableNodeRef ref = *packed;
+            if (!ev.allow_query_stable_ref_export(ref.id))
+                return restamp_lag();
+            // Issue #3425: validate identity; no occupancy auto-refresh.
+            if (!flat.get_safe(ref).has_value() ||
+                !ev.ensure_valid_or_refresh(ref, /*auto_refresh=*/false).has_value())
+                return mev("stale-ref", "query:as-stable-ref: packed StableNodeRef not fresh");
+            return pack_v2(ref);
+        }
+        return make_void();
     });
 
     // Issue #439: (mutate:request-gc-safepoint

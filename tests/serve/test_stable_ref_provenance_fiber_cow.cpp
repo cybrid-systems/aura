@@ -29,6 +29,7 @@
 //     AC9: regression — workspace_flat() readable after COW
 
 #include "test_harness.hpp"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <chrono>
@@ -688,6 +689,114 @@ static void ac3398_5_no_docs_no_test_issue_cite_present() {
           "3398 AC5: cmd_as_stable_ref_v2_coverage function in build.py");
 }
 
+// Issue #3425: production query:as-stable-ref rejects bare int (occupancy
+// remake after #3395/#3398). Inbound is packed v2 or schema-2 QueryResult.
+// Soft int → v1 pair unchanged.
+
+static void ac3425_1_source_cite() {
+    std::println("\n=== #3425 AC1: production as-stable-ref does not as_int → make_ref_layout ===");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(!mut.empty(), "3425 AC1: mutate.cpp readable");
+    const auto start = mut.find("add(\"query:as-stable-ref\"");
+    CHECK(start != std::string::npos, "3425 AC1: as-stable-ref present");
+    const auto win = start == std::string::npos ? std::string{} : mut.substr(start, 9000);
+    CHECK(win.find("Issue #3425") != std::string::npos, "3425 AC1: Issue #3425 cite");
+    CHECK(win.find("raw node-id rejected under production") != std::string::npos,
+          "3425 AC1: production int reject");
+    CHECK(win.find("make_ref_layout") == std::string::npos,
+          "3425 AC1: no occupancy layout remake on as-stable-ref");
+    const auto rej = win.find("raw node-id rejected under production");
+    const auto exp = win.find("export_ref(");
+    CHECK(rej != std::string::npos && exp != std::string::npos && rej < exp,
+          "3425 AC1: int reject before export_ref occupancy remake");
+}
+
+static void ac3425_2_production_int_reject_v2_and_hash() {
+    std::println("\n=== #3425 AC2: production int reject; live v2/hash; stale v2 ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::compiler::types::as_bool;
+    using aura::compiler::types::is_bool;
+    using aura::compiler::types::is_hash;
+    using aura::compiler::types::is_pair;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define t3425 (lambda (x) 1))\")").has_value(),
+          "3425 AC2: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3425 AC2: eval");
+    CHECK(cs.eval("(define r3425i (query:as-stable-ref 1))").has_value(), "3425 AC2: bind int");
+    auto eq_int = cs.eval("(equal? (car r3425i) \"stale-ref\")");
+    CHECK(eq_int && is_bool(*eq_int) && as_bool(*eq_int),
+          "3425 AC2: production + bare int → stale-ref");
+    CHECK(cs.eval("(define qr3425 (query :find \"t3425\" :as-query-result #t))").has_value(),
+          "3425 AC2: bind hash");
+    auto qr = cs.eval("qr3425");
+    CHECK(qr && is_hash(*qr), "3425 AC2: QueryResult hash");
+    CHECK(cs.eval("(define p3425 (query:as-stable-ref qr3425))").has_value(),
+          "3425 AC2: pack hash");
+    auto packed = cs.eval("p3425");
+    auto packed_ok = cs.eval("(integer? (car p3425))");
+    CHECK(packed && is_pair(*packed) && packed_ok && is_bool(*packed_ok) && as_bool(*packed_ok),
+          "3425 AC2: production + hash → v2 pair");
+    CHECK(cs.eval("(define p3425b (query:as-stable-ref p3425))").has_value(),
+          "3425 AC2: re-export");
+    auto again_ok = cs.eval("(integer? (car p3425b))");
+    CHECK(again_ok && is_bool(*again_ok) && as_bool(*again_ok),
+          "3425 AC2: production + live v2 → v2 pair");
+    CHECK(cs.eval("(mutate:replace-subtree qr3425 \"(lambda (x) 99)\")").has_value(),
+          "3425 AC2: mutate identity");
+    CHECK(cs.eval("(define r3425s (query:as-stable-ref p3425))").has_value(),
+          "3425 AC2: bind stale");
+    auto eq_stale = cs.eval("(or (equal? (car r3425s) \"stale-ref\") "
+                            "(equal? (car r3425s) \"restamp-lag\"))");
+    CHECK(eq_stale && is_bool(*eq_stale) && as_bool(*eq_stale),
+          "3425 AC2: stale v2 → stale-ref/restamp-lag (never reminted pair)");
+    apply_dev_audit_defaults();
+}
+
+static void ac3425_3_soft_int_v1_unchanged() {
+    std::println("\n=== #3425 AC3: Soft int → v1 pair unchanged ===");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::types::is_pair;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define s3425 (lambda (x) 1))\")").has_value(),
+          "3425 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3425 AC3: eval");
+    auto soft = cs.eval("(query:as-stable-ref 1)");
+    CHECK(soft && is_pair(*soft), "3425 AC3: Soft int → v1 pair");
+}
+
+static void ac3425_4_non_regress_3398_3396_3230() {
+    std::println("\n=== #3425 AC4: #3398 packer + #3396 walk_v2 + #3230 torn gate ===");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    CHECK(mut.find("Issue #3398: v2 spine packer") != std::string::npos, "3425 AC4: #3398 packer");
+    CHECK(mut.find("walk_v2") != std::string::npos, "3425 AC4: #3396 walk_v2");
+    CHECK(mut.find("Issue #3230") != std::string::npos, "3425 AC4: #3230 torn gate");
+}
+
+static void ac3425_5_no_docs_linter_after_3398() {
+    std::println("\n=== #3425 AC5: no docs/design/, linter after #3398 ===");
+    {
+        std::ifstream f("docs/design/3425-as-stable-ref-prod-int-reject.md");
+        CHECK(!f.good(), "3425 AC5: no docs/design/3425-*");
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3425.cpp");
+        CHECK(!f.good(), "3425 AC5: no tests/issues/test_issue_3425.cpp");
+    }
+    std::ifstream f_build("build.py");
+    std::string build((std::istreambuf_iterator<char>(f_build)), std::istreambuf_iterator<char>());
+    CHECK(build.find("check_as_stable_ref_prod_int_reject_3425") != std::string::npos,
+          "3425 AC5: linter wired into build.py");
+    const auto prev = build.find("check_as_stable_ref_v2_3398");
+    const auto ours = build.find("check_as_stable_ref_prod_int_reject_3425");
+    CHECK(prev != std::string::npos && ours != std::string::npos && ours > prev,
+          "3425 AC5: linter after #3398");
+}
+
 
 // Issue #3399: structural mutate:* prims must route their workspace-node
 // operand through resolve_mutate_node_arg (the SSOT helper from #489)
@@ -842,6 +951,12 @@ int main() {
     ac3398_3_soft_v1_unchanged();
     ac3398_4_wire_v2_stamp_unpack_non_regress();
     ac3398_5_no_docs_no_test_issue_cite_present();
+    // #3425 ACs — production as-stable-ref rejects bare int
+    ac3425_1_source_cite();
+    ac3425_2_production_int_reject_v2_and_hash();
+    ac3425_3_soft_int_v1_unchanged();
+    ac3425_4_non_regress_3398_3396_3230();
+    ac3425_5_no_docs_linter_after_3398();
     // #3399 ACs (4) — structural mutate:* call-site coverage
     ac3399_1_all_structural_mutate_use_resolve_helper();
     ac3399_2_resolve_helper_has_3395_production_reject();
