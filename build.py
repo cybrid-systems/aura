@@ -3515,6 +3515,20 @@ def cmd_lint():
             "Issue #3040 compile NodeId-only entry linter failed — run python3 scripts/coverage/checks/check_compile_node_id_entry_3040.py"
         )
         return r
+    # Issue #3415: occupancy NodeId must not restamp a foreign owner as
+    # the caller under Restricted+MT. Extends require_effect_auto_isolation
+    # + tenant_isolation_enforcement (#81967); no docs/design/ (#1655);
+    # no new query key.
+    se3415_script = COVERAGE_CHECKS / "check_bare_nodeid_foreign_stamp_3415.py"
+    if not se3415_script.exists():
+        fail(f"missing {se3415_script}")
+        return 1
+    r = run([sys.executable, str(se3415_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3415 occupancy NodeId foreign-stamp linter failed — run python3 scripts/coverage/checks/check_bare_nodeid_foreign_stamp_3415.py"
+        )
+        return r
     # Issue #2882: production default single-use for high-risk grants
     # (Mutate / MacroSelfEvo / TenantAdmin / Syscall) under Restricted/Strict.
     # grant_effect_capability force-promotes single_use=true; explicit

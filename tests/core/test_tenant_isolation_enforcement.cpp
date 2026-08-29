@@ -96,6 +96,10 @@ static std::string read_file(const char* path) {
     return {};
 }
 
+static bool contains(std::string_view hay, std::string_view needle) {
+    return hay.find(needle) != std::string_view::npos;
+}
+
 static NodeId first_live(FlatAST& ws) {
     for (NodeId id = 1; id < ws.size(); ++id) {
         if (ws.is_live_node(id) && !ws.is_free_slot(id))
@@ -116,6 +120,8 @@ void reset_all() {
     aura::core::provenance::set_hard_capture_tenant(false);
     aura::core::provenance::set_isolation_capture_tenant(0);
     aura::core::provenance::set_stable_ref_export_hard_reject(false);
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    aura::core::provenance::clear_last_stamped_node_for_test();
 }
 
 // #3090: Restricted/Strict refuse grants when prov.mutation_id==0.
@@ -2458,6 +2464,121 @@ int main() {
                       std::string("ac3040_5: no docs/design/") + name + " (forbidden per #1655)");
             }
         }
+    }
+
+    // ── #3415: occupancy NodeId must not restamp a foreign owner ──
+    {
+        std::println("\n--- #3415 AC1: Restricted+MT occupancy of B's NodeId IsolationDeny ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(99);
+        ev.grant_effect_capability(/*tenant=*/99, "mut-3415-b", kEffectMutate, /*mid=*/1);
+        ev.grant_effect_capability(/*tenant=*/7, "mut-3415-a", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3415 x) x)\")").has_value(), "3415 AC1 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC1 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3415 AC1 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3415 AC1 live node");
+        auto stamped = ev.make_stamped_ref(id);
+        CHECK(stamped.tenant_id == 99, "3415 AC1: B stamp slot tenant 99");
+        const auto before_bumps = ws->subtree_bump_count();
+        ev.set_capability_tenant_id(7);
+        CHECK(!ev.require_effect_for_node_id(kEffectMutate, "mutate:replace-type", id),
+              "ac3415_1_occupancy_denies");
+        CHECK(ws->subtree_bump_count() == before_bumps, "ac3415_1_no_write");
+        auto edsl = cs.eval(std::format("(mutate:replace-type {} \"Int\")", id));
+        CHECK(edsl.has_value(), "ac3415_1_edsl_returns");
+        CHECK(edsl && is_error(*edsl), "ac3415_1_edsl_isolation_deny");
+        CHECK(ws->subtree_bump_count() == before_bumps, "ac3415_1_edsl_no_write");
+    }
+
+    {
+        std::println("\n--- #3415 AC2: stamped foreign on_ref still denies ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        aura::core::provenance::set_multi_tenant_env_active(true);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        ev.grant_effect_capability(/*tenant=*/7, "mut-3415-ac2", kEffectMutate, /*mid=*/1);
+        CHECK(cs.eval("(set-code \"(define (n3415b x) x)\")").has_value(), "3415 AC2 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC2 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3415 AC2 workspace");
+        const auto id = first_live(*ws);
+        CHECK(id != NULL_NODE, "3415 AC2 live node");
+        const auto before_bumps = ws->subtree_bump_count();
+        auto foreign = ev.make_stamped_ref(id);
+        foreign.tenant_id = 99;
+        CHECK(!ev.require_effect_on_ref(kEffectMutate, "mutate:replace-type", foreign),
+              "ac3415_2_on_ref_foreign_denies");
+        CHECK(ws->subtree_bump_count() == before_bumps, "ac3415_2_no_write");
+    }
+
+    {
+        std::println("\n--- #3415 AC3: same-tenant stamped ref allows ---");
+        reset_all();
+        aura::core::bump_mutation_epoch(1);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        const auto me = aura::core::current_mutation_epoch();
+        ev.grant_effect_capability(/*tenant=*/7, "mut-3415-ac3", kEffectMutate, me == 0 ? 1 : me);
+        auto own = ev.make_stamped_ref(/*node_id=*/1);
+        CHECK(own.tenant_id == 7, "ac3415_3_stamp_caller");
+        CHECK(ev.check_workspace_isolation(7, own.tenant_id, kEffectMutate, "3415-ac3-iso"),
+              "ac3415_3_same_tenant_isolation_allows");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        CHECK(sec.find("ref = make_stamped_ref(node_id)") != std::string::npos,
+              "ac3415_3_same_tenant_still_stamps_caller");
+    }
+
+    {
+        std::println("\n--- #3415 AC4: Soft occupancy unchanged ---");
+        reset_all();
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        CHECK(ev.require_effect_for_node_id(kEffectMutate, "3415-ac4-soft", /*node_id=*/1),
+              "ac3415_4_soft_allows");
+    }
+
+    {
+        std::println("\n--- #3415 AC5: no Mutate grant denies with zero write ---");
+        reset_all();
+        set_mode(SandboxMode::Restricted);
+        CompilerService cs;
+        auto& ev = cs.evaluator();
+        ev.set_effect_sandbox_mode(1);
+        ev.set_capability_tenant_id(7);
+        CHECK(cs.eval("(set-code \"(define (n3415c x) x)\")").has_value(), "3415 AC5 set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "3415 AC5 eval");
+        auto* ws = ev.workspace_flat();
+        CHECK(ws != nullptr, "3415 AC5 workspace");
+        const auto before_bumps = ws->subtree_bump_count();
+        CHECK(!ev.require_effect_for_node_id(kEffectMutate, "mutate:replace-type", /*node_id=*/1),
+              "ac3415_5_no_grant_denies");
+        CHECK(ws->subtree_bump_count() == before_bumps, "ac3415_5_no_write");
+    }
+
+    {
+        std::println("\n--- #3415 AC6: source-cite + linter + no invent ---");
+        const auto sec = read_file("src/compiler/evaluator_security.cpp");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto build = read_file("build.py");
+        CHECK(sec.find("Issue #3415") != std::string::npos, "ac3415_6_security_cite");
+        CHECK(mut.find("Issue #3415") != std::string::npos, "ac3415_6_mutate_cite");
+        CHECK(build.find("check_bare_nodeid_foreign_stamp_3415") != std::string::npos,
+              "ac3415_6_linter");
+        CHECK(aura::compiler::kBareNodeIdIsolationIssue == 3415, "ac3415_6_issue_const");
+        CHECK(read_file("tests/core/test_issue_3415.cpp").empty(), "ac3415_6_no_invent");
+        CHECK(read_file("docs/design/3415-bare-nodeid.md").empty(), "ac3415_6_no_design");
     }
 
     // ── #3041: production restamp budget exceed forces QueryEpoch stale ──

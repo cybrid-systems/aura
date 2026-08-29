@@ -441,7 +441,13 @@ bool Evaluator::require_effect(std::uint16_t req_bits, std::string_view op, ast:
         ::aura::core::sandbox::is_strict())
         return false;
     if (req_bits != 0) {
-        if (!check_workspace_isolation(/*target=*/capability_tenant_id_,
+        // Issue #3415: foreign stamped tenant is the isolation target
+        // (align with resolve_stamped). Same-tenant / unset keep caller so
+        // Soft + cur==target fall-through is unchanged.
+        const auto iso_target = (ref_tenant != 0 && ref_tenant != capability_tenant_id_)
+                                    ? ref_tenant
+                                    : capability_tenant_id_;
+        if (!check_workspace_isolation(/*target=*/iso_target,
                                        /*ref_tenant=*/ref_tenant, req_bits, op))
             return false; // IsolationDeny emitted (single-count, #2388)
     }
@@ -509,7 +515,37 @@ bool Evaluator::require_effect_for_node_id(std::uint16_t req_bits, std::string_v
     // make_stamped_ref stamps capability_tenant_id_ + fiber so ref_tenant
     // matches principal — isolation auto-gate (#2490) then runs with a
     // non-zero ref_tenant (closes 3-arg default ref_tenant=0 window).
-    const auto ref = make_stamped_ref(node_id);
+    // Issue #3415: Restricted+MT / Strict must not overwrite an existing
+    // foreign stamp (last export / query-stable / stamp slot) with the
+    // caller — occupancy int would otherwise pass cur==target. Soft /
+    // single-tenant Restricted still stamp the caller (#2056).
+    ast::FlatAST::StableNodeRef ref{};
+    const auto mode = effect_sandbox_mode();
+    const bool strict = mode == 2 || ::aura::core::sandbox::is_strict();
+    const bool restricted = mode == 1;
+    const bool mt = ::aura::core::provenance::hard_capture_tenant_active() ||
+                    ::aura::core::provenance::multi_tenant_env_active();
+    const bool consult = strict || (restricted && mt);
+    std::uint64_t existing = 0;
+    if (consult) {
+        existing =
+            ::aura::core::provenance::existing_stamp_for_node(static_cast<std::uint32_t>(node_id));
+        if (existing == 0) {
+            const auto& hs = ::aura::core::provenance::g_provenance_tracker().last_hygiene;
+            if (hs.tenant_id != 0 && hs.node_id == static_cast<std::uint32_t>(node_id))
+                existing = hs.tenant_id;
+        }
+    }
+    const auto caller = static_cast<std::uint64_t>(capability_tenant_id_);
+    if (consult && existing != 0 && existing != caller) {
+        if (workspace_flat_)
+            ref = workspace_flat_->make_ref_layout(node_id);
+        else
+            ref.id = node_id;
+        ref.tenant_id = existing;
+    } else {
+        ref = make_stamped_ref(node_id);
+    }
     const bool ok = require_effect_on_ref(req_bits, op, ref);
     if (!ok) {
         using ::aura::core::workspace_isolation::g_tenant_isolation_metrics;
@@ -1460,6 +1496,11 @@ void Evaluator::stamp_stable_ref(ast::FlatAST::StableNodeRef& ref) const noexcep
     ::aura::core::provenance::g_isolation_capture_stamp_local_total_atomic().fetch_add(
         1, std::memory_order_relaxed);
     ::aura::core::provenance::stamp_stable_ref_fields(ref, capability_tenant_id_, fiber);
+    // Issue #3415: record stamp slot under Restricted/Strict so occupancy
+    // NodeId cannot overwrite a foreign owner. Soft/Off: skip (zero extra).
+    if (sandbox_mode_ || effect_sandbox_mode() != 0)
+        ::aura::core::provenance::note_stamped_node(static_cast<std::uint32_t>(ref.id),
+                                                    capability_tenant_id_);
 }
 
 // Issue #3000 / #3037 / #3121: production query:*-stable must not export a

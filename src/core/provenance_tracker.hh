@@ -860,6 +860,11 @@ struct ProvenanceTracker {
     // Issue #1877: last hygiene stamp lives on the process-wide tracker so
     // module TUs (type_checker) and non-module TUs (tests/audit) share it.
     HygieneProvenanceStamp last_hygiene{};
+    // Issue #3415: last Evaluator stamp of a workspace NodeId. Occupancy
+    // `require_effect_for_node_id` consults this so Restricted+MT cannot
+    // restamp a foreign owner as the caller. Soft/Off does not write.
+    std::uint32_t last_stamped_node_id = 0;
+    std::uint64_t last_stamped_node_tenant = 0;
 
     void record_mutation() noexcept { ++records; }
     void set_policy(AutoRefreshPolicy p) noexcept { policy = p; }
@@ -893,6 +898,26 @@ inline ProvenanceTracker& g_provenance_tracker() noexcept {
 // Alias onto process-wide tracker (module-safe shared state).
 inline HygieneProvenanceStamp& g_last_hygiene_provenance_stamp() noexcept {
     return g_provenance_tracker().last_hygiene;
+}
+
+// Issue #3415: stamp-slot for occupancy NodeId isolation. Write only from
+// Evaluator::stamp_stable_ref under Restricted/Strict (Soft/Off skip).
+inline constexpr int kBareNodeIdIsolationIssue = 3415;
+inline void note_stamped_node(std::uint32_t node_id, std::uint64_t tenant_id) noexcept {
+    auto& t = g_provenance_tracker();
+    t.last_stamped_node_id = node_id;
+    t.last_stamped_node_tenant = tenant_id;
+}
+[[nodiscard]] inline std::uint64_t existing_stamp_for_node(std::uint32_t node_id) noexcept {
+    if (node_id == 0)
+        return 0;
+    const auto& t = g_provenance_tracker();
+    return t.last_stamped_node_id == node_id ? t.last_stamped_node_tenant : 0;
+}
+inline void clear_last_stamped_node_for_test() noexcept {
+    auto& t = g_provenance_tracker();
+    t.last_stamped_node_id = 0;
+    t.last_stamped_node_tenant = 0;
 }
 
 // Stamp hygiene violation into process-wide provenance tracker + last stamp.
@@ -953,6 +978,8 @@ inline void reset_provenance_enforcement_for_test() noexcept {
     m.linear_provenance_steal_checks_total.store(0, std::memory_order_relaxed);
     m.linear_provenance_gc_checks_total.store(0, std::memory_order_relaxed);
     g_provenance_tracker().last_hygiene = {};
+    g_provenance_tracker().last_stamped_node_id = 0;
+    g_provenance_tracker().last_stamped_node_tenant = 0;
 }
 
 } // namespace aura::core::provenance
