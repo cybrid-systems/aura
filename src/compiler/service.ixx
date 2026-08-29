@@ -7170,8 +7170,14 @@ public:
         // non-stale path doesn't take cascade_decision_mtx_ (only
         // dep_graph_mtx_), so without a snapshot it could add edges
         // mid-peel that under-count impact_ub for the next iteration.
+        // Issue #3348: also snapshot block-dep mirror — record_block_dependency
+        // non-stale can grow dep_graph_block_mirror_edges_total without
+        // bumping the fn-level NodeId counter (string/fn edge already
+        // exists). Same critical section as gen0 / deferred size.
         const auto initial_node_mirror_edges =
             metrics_.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+        const auto initial_block_mirror_edges =
+            metrics_.dep_graph_block_mirror_edges_total.load(std::memory_order_relaxed);
         bool rearm_observed_mid_loop = false;
         for (const auto& name : dirty_names) {
             auto it = ir_cache_v2_.find(name);
@@ -7272,13 +7278,16 @@ public:
             // peel. Non-stale path only takes dep_graph_mtx_ (not the
             // cascade_decision_mtx_ we hold), so impact_ub snapshotted
             // for the next iteration may under-count these new callee
-            // edges. Either signal: force full for THIS define + set
-            // rearm_observed_mid_loop so remaining iterations also force
-            // full (break/continue with full per Option A).
+            // edges. Issue #3348: also observe block-dep mirror growth
+            // (record_block_dependency non-stale). Either signal: force
+            // full for THIS define + set rearm_observed_mid_loop so
+            // remaining iterations also force full (Option A).
             const bool re_armed_now = deferred_hybrid_armed_.load(std::memory_order_acquire) != 0;
             const bool graph_grew_mid_loop =
                 metrics_.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed) >
-                initial_node_mirror_edges;
+                    initial_node_mirror_edges ||
+                metrics_.dep_graph_block_mirror_edges_total.load(std::memory_order_relaxed) >
+                    initial_block_mirror_edges;
             if (re_armed_now || graph_grew_mid_loop) {
                 rearm_observed_mid_loop = true;
             }
@@ -7405,6 +7414,29 @@ public:
                     }
                 }
                 if (cone_hit) {
+                    want_partial = false;
+                    it->second.mark_all_blocks_dirty();
+                    it->second.dirty = true;
+                    metrics_.partial_forced_full_by_impact_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+            }
+            // Issue #3348: last-look NodeId / block-dep mirror growth
+            // immediately before committing partial. Non-stale
+            // record_dependency / record_block_dependency take only
+            // dep_graph_mtx_ (not cascade_decision_mtx_), so they can
+            // add live edges after #3168 / #3257 / #3283 re-checks.
+            // Deferred-queue attribution cannot see these edges →
+            // fail-closed full (reuse partial_forced_full_by_impact_total;
+            // no new query key). Soft + counters flat: one acquire each,
+            // zero extra (no mark, no bump).
+            if (want_partial) {
+                const auto node_now =
+                    metrics_.dep_graph_node_mirror_edges_total.load(std::memory_order_acquire);
+                const auto block_now =
+                    metrics_.dep_graph_block_mirror_edges_total.load(std::memory_order_acquire);
+                if (node_now > initial_node_mirror_edges ||
+                    block_now > initial_block_mirror_edges) {
                     want_partial = false;
                     it->second.mark_all_blocks_dirty();
                     it->second.dirty = true;

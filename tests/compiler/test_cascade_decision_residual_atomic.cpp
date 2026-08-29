@@ -180,6 +180,12 @@ static void ac3283_2_gen_recheck_fail_closed();
 static void ac3283_3_concurrent_rearm_soak();
 static void ac3283_4_linter_wiring();
 
+// Issue #3348: non-stale NodeId / block-dep mirror growth last-look.
+static void ac3348_1_last_look_source();
+static void ac3348_2_soft_quiet();
+static void ac3348_3_concurrent_nonstale_soak();
+static void ac3348_4_linter_no_invent();
+
 int run_test_cascade_decision_residual_atomic_3135() {
     std::println("=== Issue #3135: cascade-decision residual atomic ===");
     CHECK(true, "ac3135: issue stamp");
@@ -286,7 +292,9 @@ int run_test_cascade_decision_residual_atomic_3135() {
     {
         std::println("\n--- AC4: existing #3067 + #3097 + re-check force-full ---");
         auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
-        auto end = pos + 12000; // #3310 moved the consult deeper into the fn
+        // #3310 moved the consult deeper; #3381 caller-union + #3348
+        // last-look grew the body past 12000.
+        auto end = pos + 20000;
         auto block = ixx.substr(pos, end - pos);
         // #3067: drain at entry (still present).
         must_inline(block, "drain_deferred_hybrid_cascade_()", "AC4 #3067 drain preserved");
@@ -350,6 +358,12 @@ int run_test_cascade_decision_residual_atomic_3135() {
     ac3283_2_gen_recheck_fail_closed();
     ac3283_3_concurrent_rearm_soak();
     ac3283_4_linter_wiring();
+
+    std::println("\n=== Issue #3348: non-stale mirror growth last-look before partial ===");
+    ac3348_1_last_look_source();
+    ac3348_2_soft_quiet();
+    ac3348_3_concurrent_nonstale_soak();
+    ac3348_4_linter_no_invent();
 
     std::println("\n=== Final: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
@@ -594,5 +608,110 @@ static void ac3283_4_linter_wiring() {
           "3283 AC4: no test_issue_3283.cpp");
     CHECK(read_file("tests/issues/test_issue_3283.cpp").empty(),
           "3283 AC4: no tests/issues/test_issue_3283.cpp");
+}
+
+// ── Issue #3348: non-stale NodeId / block-dep mirror last-look ──
+// Residual of #3283: the non-stale success path of record_dependency /
+// record_block_dependency takes only dep_graph_mtx_ (not cascade_decision_mtx_).
+// Mid-loop graph_grew_mid_loop / #3168 / #3257 / #3283 were built around
+// the deferred queue; a pure non-stale mirror growth after those re-checks
+// can complete a partial peel with a lagging caller dirty mask.
+static void ac3348_1_last_look_source() {
+    std::println("\n--- #3348 AC1: last-look mirror counters before partial ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("std::size_t relower_dirty_defines_from_workspace()");
+    CHECK(pos != std::string::npos, "3348 AC1: relower def");
+    auto rel = ixx.substr(pos, 28000);
+    CHECK(rel.find("Issue #3348") != std::string::npos, "3348 AC1: relower cites #3348");
+    must_inline(rel, "initial_block_mirror_edges", "3348 AC1: block-dep snapshot with gen0");
+    must_inline(rel, "dep_graph_block_mirror_edges_total",
+                "3348 AC1: observe block-dep mirror growth");
+    must_inline(rel, "node_now > initial_node_mirror_edges", "3348 AC1: last-look NodeId counter");
+    must_inline(rel, "block_now > initial_block_mirror_edges",
+                "3348 AC1: last-look block-dep counter");
+    must_inline(rel, "partial_forced_full_by_impact_total",
+                "3348 AC1: reuse force-full distinguisher (no new query key)");
+    CHECK(rel.find("g_3348_") == std::string::npos, "3348 AC1: no g_3348_*");
+}
+
+static void ac3348_2_soft_quiet() {
+    std::println("\n--- #3348 AC2: Soft + counters flat → acquire only ---");
+    auto ixx = read_file("src/compiler/service.ixx");
+    auto pos = ixx.find("Issue #3348: last-look NodeId / block-dep mirror growth");
+    CHECK(pos != std::string::npos, "3348 AC2: last-look cite");
+    auto win = ixx.substr(pos, 1600);
+    CHECK(win.find("memory_order_acquire") != std::string::npos, "3348 AC2: acquire last-look");
+    CHECK(win.find("counters flat") != std::string::npos ||
+              win.find("zero extra") != std::string::npos,
+          "3348 AC2: zero extra when counters flat");
+    CHECK(ixx.find("const bool need_lock =") != std::string::npos,
+          "3348 AC2: need_lock Soft-skip of cascade lock preserved");
+}
+
+static void ac3348_3_concurrent_nonstale_soak() {
+    std::println("\n--- #3348 AC3: concurrent non-stale record during peel ---");
+    CompilerService cs;
+    CHECK(cs.eval(R"(
+(set-code "
+(define B (lambda () 1))
+(define A (lambda () (B)))
+(define C (lambda () (B)))
+")
+)")
+              .has_value(),
+          "3348 AC3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "3348 AC3: eval");
+    cs.public_record_dependency("A", "B");
+    cs.public_record_dependency("C", "B");
+    auto& m = cs.metrics();
+    const auto forced0 = m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed);
+    const auto node0 = m.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed);
+    std::atomic<int> stop{0};
+    std::thread bumper([&] {
+        int n = 0;
+        for (int i = 0; i < 80 && !stop.load(std::memory_order_relaxed); ++i) {
+            // Non-stale path only: new (caller, callee) pairs grow NodeId /
+            // block-dep mirrors without the deferred-hybrid queue.
+            cs.public_record_dependency("C", "A");
+            cs.public_record_block_dependency("C", "A", 0, 0);
+            cs.public_record_dependency(std::format("X{}", n % 8), "A");
+            ++n;
+        }
+    });
+    for (int i = 0; i < 16; ++i) {
+        cs.public_mark_define_dirty("A");
+        cs.public_mark_define_dirty("B");
+        cs.public_mark_define_dirty("C");
+        (void)cs.public_relower_dirty_defines_from_workspace();
+    }
+    stop.store(1, std::memory_order_relaxed);
+    bumper.join();
+    (void)cs.public_relower_dirty_defines_from_workspace();
+    CHECK(cs.public_graphs_consistent(), "3348 AC3: graphs consistent after soak");
+    auto ra = cs.eval("(A)");
+    CHECK(ra.has_value(), "3348 AC3: (A) evals after soak (never silent under-cascade)");
+    CHECK(m.dep_graph_node_mirror_edges_total.load(std::memory_order_relaxed) >= node0,
+          "3348 AC3: NodeId mirror counter non-decreasing");
+    CHECK(m.partial_forced_full_by_impact_total.load(std::memory_order_relaxed) >= forced0,
+          "3348 AC3: forced-full distinguisher non-decreasing (fail-closed)");
+}
+
+static void ac3348_4_linter_no_invent() {
+    std::println("\n--- #3348 AC4: linter + no invent / no new query keys ---");
+    const auto t = read_file("tests/compiler/test_cascade_decision_residual_atomic.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_nonstale_mirror_growth_force_full_3348.py");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(t.find("ac3348_1_last_look_source") != std::string::npos, "3348 AC4: AC1");
+    CHECK(t.find("ac3348_3_concurrent_nonstale_soak") != std::string::npos, "3348 AC4: soak");
+    CHECK(!lint.empty() && lint.find("Issue #3348") != std::string::npos, "3348 AC4: linter");
+    CHECK(build.find("check_nonstale_mirror_growth_force_full_3348") != std::string::npos,
+          "3348 AC4: build.py");
+    CHECK(q.find("schema-3348") == std::string::npos, "3348 AC4: no schema-3348");
+    CHECK(read_file("docs/design/3348-nonstale-mirror-growth.md").empty(),
+          "3348 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3348.cpp").empty(), "3348 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3348.cpp").empty(), "3348 AC4: no tests/issues");
 }
 #endif
