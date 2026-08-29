@@ -861,6 +861,19 @@ def cmd_lint():
             "Issue #3106 harden-armed hot-contract linter failed — run python3 scripts/coverage/checks/check_hot_contract_harden_3106.py"
         )
         return r
+    # Issue #3428: view_at HARDEN-armed AURA_HOT_CHECK (I1 residual of
+    # #3106 — RECORD-only was Quiet OOB). Extends
+    # test_hot_contract_placement; no docs/design / invent.
+    hc3428_script = COVERAGE_CHECKS / "check_hot_contract_view_at_harden_3428.py"
+    if not hc3428_script.exists():
+        fail(f"missing {hc3428_script}")
+        return 1
+    r = run([sys.executable, str(hc3428_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3428 view_at harden-armed HOT_CHECK linter failed — run python3 scripts/coverage/checks/check_hot_contract_view_at_harden_3428.py"
+        )
+        return r
     # Issue #3313: production_defaults arms Soft-observe+Harden for NDEBUG
     # OFF macros (I1 residual of #2435/#3043/#3106). Soft/unit stay no-op.
     # Extends test_hot_contract_placement; no docs/design / invent.
@@ -15752,6 +15765,29 @@ def cmd_hot_contract_placement_coverage():
     return 0
 
 
+def cmd_hot_contract_view_at_harden_3428_coverage():
+    """Issue #3428: view_at HARDEN-armed AURA_HOT_CHECK.
+
+    #3106 named view_at as a harden site; the call site only RECORD'd.
+    Production NDEBUG strips pre; CHECK_CONSTEXPR is Enforce-only.
+    HARDEN armed now traps OOB via the existing abort path. Soft / Off:
+    zero extra. Reuse hot-contract-harden-trap-total / armed. Extends
+    test_hot_contract_placement. No docs/design/, no
+    tests/issues/test_issue_3428.cpp.
+    """
+    print(f"{B}=== hot contract view_at harden coverage (#3428) ==={N}")
+    script = COVERAGE_CHECKS / "check_hot_contract_view_at_harden_3428.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("hot contract view_at harden (#3428) coverage contract rows failed")
+        return 1
+    ok("hot contract view_at harden (#3428) coverage clean")
+    return 0
+
+
 def cmd_post_compact_lifecycle_coverage():
     """Issue #2436: post-compact Arena × IR SoA × Shape × fiber lifecycle.
 
@@ -22835,6 +22871,7 @@ def main():
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
         "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-find-prod-no-scan": cmd_query_find_prod_no_scan_coverage,
+        "hot-contract-view-at-harden": cmd_hot_contract_view_at_harden_3428_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,
         "unpack-stable-ref-arg-v2": cmd_unpack_stable_ref_arg_v2_coverage,
         "structural-mutate-resolve-helper": cmd_structural_mutate_resolve_helper_coverage,
