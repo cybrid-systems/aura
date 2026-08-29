@@ -15071,6 +15071,42 @@ def cmd_arena_auto_arm_soft_fallback_3404_coverage():
     return 0
 
 
+def cmd_pure_wrap_dirty_entry_3405_coverage():
+    """Issue #3405: PureWrapPass concept tightening — DirtyAware production
+    members must offer run_on_dirty_blocks_only.
+
+    Source-cite linter (scripts/check_pure_wrap_dirty_entry_3405.py) verifies:
+      AC1 ProductionPureWrapPass concept (concept_constraints.ixx)
+         requires PureWrapPass<P> + SoAViewAwarePass<P> +
+         DirtyAwarePass<P> AND a `run_on_dirty_blocks_only` entry
+         (either the new SoA `(IRFunctionSoA&, BlockDirtyPred)`
+         signature OR the legacy `(IRFunction&)` signature).
+         Source-cite anchor #3405 documents the migration plan.
+      AC2 check_pass_dod_compliance (pass_pipeline_core.ixx) still
+         exists (no regression to existing concept enforcement).
+      AC3 existing Wraps with kPureWrap = true in
+         optimization_passes.ixx expose run_on_dirty_blocks_only
+         (count invariant: every kPureWrap must have a matching
+         run_on_dirty_blocks_only declaration).
+      AC4 no std::function pred regression
+         (kPureWrapNoStdFunctionDirtyIssue = 3042 invariant stays).
+      AC5 no tests/core/test_issue_3405.cpp (extends existing tests
+         per #81934); no docs/design/3405-*.md (per #1655).
+      AC6 source-cite #3405 + build.py registration; no design docs.
+    """
+    print(f"{B}=== PureWrapPass concept tightening coverage (#3405) ==={N}")
+    script = SCRIPTS / "check_pure_wrap_dirty_entry_3405.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("PureWrapPass concept tightening (#3405) coverage contract rows failed")
+        return 1
+    ok("PureWrapPass concept tightening (#3405) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22194,6 +22230,8 @@ def main():
         "inline-pass-soa-3403-coverage": cmd_inline_pass_soa_3403_coverage,
         "arena-auto-arm-soft-fallback-3404": cmd_arena_auto_arm_soft_fallback_3404_coverage,
         "arena-auto-arm-soft-fallback-3404-coverage": cmd_arena_auto_arm_soft_fallback_3404_coverage,
+        "pure-wrap-dirty-entry-3405": cmd_pure_wrap_dirty_entry_3405_coverage,
+        "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,

@@ -582,6 +582,76 @@ static void ac10_no_invent_docs() {
           "AC10: no tests/issues/test_issue_3156.cpp (per #81934 — src/-aligned suite instead)");
 }
 
+// #3405: PureWrapPass concept tightening — DirtyAware production
+// members must offer run_on_dirty_blocks_only. Source-cite via
+// read_file (no new helpers): concept_constraints.ixx must declare
+// the ProductionPureWrapPass concept + #3405 source-cite anchor;
+// existing Wraps in optimization_passes.ixx with kPureWrap = true
+// must expose run_on_dirty_blocks_only (count invariant: every
+// kPureWrap must have a matching run_on_dirty_blocks_only).
+static void ac3405_pure_wrap_dirty_entry() {
+    std::println("\n--- #3405 AC: PureWrapPass concept tightening — DirtyAware production members "
+                 "must offer run_on_dirty_blocks_only ---");
+    const auto concepts = read_file("src/core/concept_constraints.ixx");
+    const auto opt_passes = read_file("src/compiler/optimization_passes.ixx");
+    const auto pipeline_core = read_file("src/compiler/pass_pipeline_core.ixx");
+    const auto build = read_file("build.py");
+
+    // AC1: ProductionPureWrapPass concept exists + #3405 source-cite anchor.
+    CHECK(concepts.find("concept ProductionPureWrapPass") != std::string::npos,
+          "AC1: concept_constraints.ixx declares ProductionPureWrapPass concept");
+    CHECK(concepts.find("Issue #3405") != std::string::npos,
+          "AC1: concept_constraints.ixx carries the #3405 source-cite anchor");
+    CHECK(concepts.find("IRFunctionSoA") != std::string::npos &&
+              concepts.find("BlockDirtyPred") != std::string::npos,
+          "AC1: ProductionPureWrapPass concept declares the new SoA "
+          "per-function signature (IRFunctionSoA&, BlockDirtyPred)");
+    CHECK(concepts.find("kPureWrap = true") != std::string::npos,
+          "AC1: ProductionPureWrapPass concept references the kPureWrap flag");
+
+    // AC2: existing check_pass_dod_compliance still exists (no regression).
+    CHECK(pipeline_core.find("check_pass_dod_compliance") != std::string::npos,
+          "AC2: pass_pipeline_core.ixx still has check_pass_dod_compliance");
+    CHECK(pipeline_core.find("HotPassDodCompliant") != std::string::npos,
+          "AC2: pass_pipeline_core.ixx still references HotPassDodCompliant");
+
+    // AC3: existing Wraps with kPureWrap = true expose run_on_dirty_blocks_only
+    // (count invariant: every kPureWrap must have a matching run_on_dirty_blocks_only).
+    // Source-cite via read_file (no new helpers). Lightweight substring counts.
+    auto count_substr = [](const std::string& s, const std::string& needle) {
+        std::size_t count = 0;
+        std::size_t pos = 0;
+        while ((pos = s.find(needle, pos)) != std::string::npos) {
+            ++count;
+            pos += needle.size();
+        }
+        return count;
+    };
+    const auto kpurewrap_count = count_substr(opt_passes, "kPureWrap = true");
+    const auto rdo_count = count_substr(opt_passes, "run_on_dirty_blocks_only");
+    CHECK(kpurewrap_count > 0,
+          "AC3: at least one `kPureWrap = true` Wrap exists in optimization_passes.ixx");
+    CHECK(rdo_count >= kpurewrap_count,
+          "AC3: every `kPureWrap = true` Wrap must expose `run_on_dirty_blocks_only` "
+          "(count invariant: run_on_dirty_blocks_only >= kPureWrap)");
+
+    // AC4: no std::function pred regression.
+    CHECK(pipeline_core.find("kPureWrapNoStdFunctionDirtyIssue") != std::string::npos,
+          "AC4: pass_pipeline_core.ixx preserves the #3042 kPureWrapNoStdFunctionDirtyIssue "
+          "invariant");
+
+    // AC5: no test_issue_3405.cpp, no docs/design/3405-*.md.
+    const auto issue_test_3405 = read_file("tests/core/test_issue_3405.cpp");
+    CHECK(issue_test_3405.empty(),
+          "AC5: no tests/core/test_issue_3405.cpp (extends existing per #81934)");
+
+    // AC6: source-cite #3405 + build.py registration.
+    CHECK(build.find("check_pure_wrap_dirty_entry_3405") != std::string::npos,
+          "AC6: build.py registers check_pure_wrap_dirty_entry_3405");
+    CHECK(build.find("pure-wrap-dirty-entry-3405") != std::string::npos,
+          "AC6: build.py dispatch entry present");
+}
+
 // #3404: arena auto-arm Soft fallback must NOT bump
 // auto_alloc_trigger_count — only real Moving success counts. Source-cite
 // via read_file (no new helpers): maybe_auto_compact_on_alloc must
@@ -867,6 +937,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3402_dense_children_columns();
     ac3403_inline_pass_soa();
     ac3404_arena_auto_arm_soft_fallback();
+    ac3405_pure_wrap_dirty_entry();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);

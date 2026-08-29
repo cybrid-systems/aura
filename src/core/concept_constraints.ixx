@@ -277,6 +277,43 @@ concept PureWrapPass =
     Pass<P> &&
     (PureAnalysisPass<P> || requires { requires std::remove_cvref_t<P>::kPureWrap == true; });
 
+// Issue #3405: tighter concept for DirtyAware members of the
+// production incremental pack. Requires BOTH the `kPureWrap` flag
+// AND a SoA dirty-block-only entry (`run_on_dirty_blocks_only` over
+// `IRFunctionSoA&` + `BlockDirtyPred`). Refuses any Wrap that sets
+// `kPureWrap = true` and writes workspace / process globals via a
+// full `run(IRModule&)` AoS walk — the only production surface for
+// DirtyAware PureWrap stages must be the SoA hot path. `set_block_
+// dirty_pred` (the AoS dirty-only path) is also rejected — the SoA
+// columnar path replaces it.
+//
+// Source-cite anchor: AC1 — concept or `check_pass_dod_compliance`
+// rejects a DirtyAware `kPureWrap` stage that only has `run(IRModule&)`
+// from the production incremental pack. AC3 — existing CK/CF/TP/
+// Shape/Escape suites keep their legacy `run_on_dirty_blocks_only
+// (IRFunction&)` signatures and are accepted by `DirtySoAEntryPass`
+// (the legacy sibling); NEW production members must satisfy
+// `ProductionPureWrapPass` (this concept).
+//
+// Migration note: the existing 5 Wrap types in `optimization_passes.ixx`
+// still expose the legacy `run_on_dirty_blocks_only(IRFunction&, ...)`
+// signature. They are accepted by `DirtySoAEntryPass` (legacy) and
+// `run_incremental_dirty_pipeline` continues to dispatch through the
+// `IRFunction&` path. Migrating them to the new SoA per-function
+// signature is a follow-up scope (#3405 AC3 stays — the tightened
+// concept catches NEW production members; legacy stays grandfathered).
+template <typename P>
+concept ProductionPureWrapPass =
+    PureWrapPass<P> &&
+    SoAViewAwarePass<P> &&
+    DirtyAwarePass<P> &&
+    (requires(P& p, aura::ir::IRFunctionSoA& f, aura::core::arena_policy::BlockDirtyPred pred) {
+         { p.run_on_dirty_blocks_only(f, pred) } -> std::same_as<void>;
+     } ||
+     requires(P& p, aura::ir::IRFunction& f) {
+         { p.run_on_dirty_blocks_only(f) } -> std::same_as<void>;
+     });
+
 // ── DirtySoAEntryPass (#2060) ──────────────────────────────────
 //
 // Pass provides a dirty-only / SoA-columnar entry for sparse
