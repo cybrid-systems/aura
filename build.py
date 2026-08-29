@@ -15360,6 +15360,50 @@ def cmd_wildcard_ta_string_gate_3411_coverage():
     return 0
 
 
+def cmd_deopt_pending_closure_call_3412_coverage():
+    """Issue #3412: aura_closure_call slow path must consult
+    aura_jit_is_deopt_pending before calling pre-mutate g_jit_fns.fn.
+
+    Production facade early-return leaves g_jit_fns + AuraJIT module live;
+    AuraJIT fn_trackers_ already refuses via deopt_pending on
+    CompilerService lookup, but aura_closure_call slow path dereferences
+    g_jit_fns[func_id].fn directly. AC1: live named closures of F
+    cannot execute pre-mutate native after production mark_define_dirty
+    / invalidate_function. AC3: owner-scoped multi-eval — owner unbound
+    via deopt_pending; peers still use #3300 name soft-stale (no
+    force-bump g_aot_table_epoch). AC4: no new query keys; reuses
+    existing deopt_pending_invoke_fallbacks counter. AC2: Soft / Off —
+    aura_jit_is_deopt_pending returns 0 when batch_deopt not stamped
+    (zero extra cost).
+
+    Source-cite linter (scripts/check_deopt_pending_closure_call_3412.py)
+    verifies:
+      AC1 aura_closure_call slow path consults aura_jit_is_deopt_pending
+         BEFORE the entry.fn() call. Refuse + bump reuse counter.
+      AC2 Soft / Off zero-cost (g_batch_deopt_jit nullptr path).
+      AC3 Owner-scoped multi-eval — #3300 peer anchor in
+         hot_update_registry.cpp / aura_jit_bridge.h /
+         aura_jit_runtime.cpp. No force-bump g_aot_table_epoch.
+      AC4 No new metric field. Reuses deopt_pending_invoke_fallbacks
+         counter (lives in aura_jit.h AuraJIT class).
+      AC5 Non-duplicative vs #3188 / #3345 / #3300 / #3377 / #3410.
+      AC6 No docs/design/3412-* (per #1655); no test_issue_3412.cpp
+         (per #81934). Extends test_aot_incremental_reemit.cpp.
+      AC7 test markers + build.py registration; no design docs.
+    """
+    print(f"{B}=== deopt_pending_closure_call coverage (#3412) ==={N}")
+    script = SCRIPTS / "check_deopt_pending_closure_call_3412.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("deopt_pending_closure_call (#3412) coverage contract rows failed")
+        return 1
+    ok("deopt_pending_closure_call (#3412) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22495,6 +22539,8 @@ def main():
         "grant-ssot-ta-fence-3409-coverage": cmd_grant_ssot_ta_fence_3409_coverage,
         "wildcard-ta-string-gate-3411": cmd_wildcard_ta_string_gate_3411_coverage,
         "wildcard-ta-string-gate-3411-coverage": cmd_wildcard_ta_string_gate_3411_coverage,
+        "deopt-pending-closure-call-3412": cmd_deopt_pending_closure_call_3412_coverage,
+        "deopt-pending-closure-call-3412-coverage": cmd_deopt_pending_closure_call_3412_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

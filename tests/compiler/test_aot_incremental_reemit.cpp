@@ -1785,6 +1785,83 @@ int main() {
         CompilerService cs;
         ac2297_structural_cell_remap(cs);
     }
+
+    // ── #3412: aura_closure_call slow path deopt_pending gate.
+    // Production facade early-return leaves g_jit_fns + AuraJIT module live;
+    // AuraJIT fn_trackers_ refuses via deopt_pending on CompilerService
+    // lookup, but aura_closure_call slow path dereferences
+    // g_jit_fns[func_id].fn directly. Slow path now consults
+    // aura_jit_is_deopt_pending(name) before calling pre-mutate native.
+    // Source-cite verification (extend existing per #81934).
+    {
+        std::println("\n--- #3412 AC1: aura_closure_call slow path deopt_pending gate ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt.find("Issue #3412") != std::string::npos,
+              "3412 AC1: Issue #3412 marker in aura_jit_runtime.cpp");
+        // The check sits between entry resolution (have_entry || entry.fn
+        // return 0) and the locals allocation / fn() call site.
+        const auto slow_path_pos = rt.find("Slow path: full dispatch + cache update");
+        const auto deopt_check_pos = rt.find("aura_jit_is_deopt_pending(slow_cname.c_str())");
+        const auto fn_call_pos = rt.find("entry.fn(locals, static_cast<uint32_t>(argc))");
+        CHECK(slow_path_pos != std::string::npos && deopt_check_pos != std::string::npos &&
+                  fn_call_pos != std::string::npos && slow_path_pos < deopt_check_pos &&
+                  deopt_check_pos < fn_call_pos,
+              "3412 AC1: deopt_pending gate between entry resolution and fn() call");
+        // cname lookup uses g_closure_names[slow_cid] (closure's name).
+        CHECK(rt.find("g_closure_names[slow_cid]") != std::string::npos,
+              "3412 AC1: closure name looked up from g_closure_names");
+        // Counter reuse — no new metric field per AC4.
+        CHECK(rt.find("deopt_pending_invoke_fallbacks") != std::string::npos,
+              "3412 AC4: reuses existing deopt_pending_invoke_fallbacks counter");
+
+        std::println("\n--- #3412 AC2/AC3: Soft/Off zero-cost + non-force-bump ---");
+        const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+        const auto wiso = read_file("src/core/workspace_isolation.hh");
+        const auto jit = read_file("src/compiler/aura_jit.cpp");
+        // AC2: aura_jit_is_deopt_pending is the consult path; on Soft/Off
+        // when batch_deopt never stamped it, the consult returns 0 so the
+        // gate is zero-cost on Soft.
+        CHECK(bridge.find("aura_jit_is_deopt_pending") != std::string::npos,
+              "3412 AC2: aura_jit_is_deopt_pending C ABI in bridge");
+        // AC3: owner-scoped multi-eval — owner unbound via deopt_pending;
+        // peers still use #3300 name soft-stale. No force-bump of
+        // g_aot_table_epoch on owner-scoped path.
+        CHECK(wiso.find("#3300") != std::string::npos || wiso.find("3300") != std::string::npos,
+              "3412 AC3: #3300 peer name soft-stale anchor in workspace_isolation.hh");
+
+        std::println("\n--- #3412 AC5: non-duplicative vs #3188/#3345/#3300/#3377/#3410 ---");
+        // #3188 IR dirty, #3345 hybrid dirty, #3300 peer JIT name soft-stale,
+        // #3377 owner AOT slot clear, #3410 soft-migrate wash. All are
+        // upstream of #3412's deopt_pending gate; #3412 closes the runtime
+        // g_jit_fns catalog gap they left open.
+        CHECK(jit.find("Issue #3345") != std::string::npos ||
+                  read_file("src/compiler/service_dirty.cpp").find("Issue #3345") !=
+                      std::string::npos,
+              "3412 AC5: #3345 hybrid dirty preserved");
+        CHECK(jit.find("Issue #3377") != std::string::npos ||
+                  read_file("src/compiler/hot_update_registry.cpp").find("Issue #3377") !=
+                      std::string::npos,
+              "3412 AC5: #3377 owner AOT slot clear preserved");
+        CHECK(rt.find("Issue #3410") != std::string::npos,
+              "3412 AC5: #3410 soft-migrate wash preserved (same window)");
+
+        std::println("\n--- #3412 AC6: no docs/design/3412-*; no test_issue_3412.cpp ---");
+        CHECK(read_file("docs/design/3412-deopt-pending-closure-call.md").empty() &&
+                  read_file("docs/design/3412-g-jit-fns-facade-leak.md").empty(),
+              "3412 AC6: no docs/design/3412-* per #1655");
+        CHECK(read_file("tests/issues/test_issue_3412.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3412.cpp").empty() &&
+                  read_file("tests/core/test_issue_3412.cpp").empty(),
+              "3412 AC6: no test_issue_3412.cpp per #81934 (extend existing test)");
+
+        std::println("\n--- #3412 AC7: build.py wiring ---");
+        const auto build = read_file("build.py");
+        CHECK(build.find("cmd_deopt_pending_closure_call_3412_coverage") != std::string::npos,
+              "3412 AC7: cmd_deopt_pending_closure_call_3412_coverage in build.py");
+        CHECK(build.find("check_deopt_pending_closure_call_3412") != std::string::npos,
+              "3412 AC7: linter script registered");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
