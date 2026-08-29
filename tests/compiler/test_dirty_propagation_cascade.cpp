@@ -11,6 +11,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+
 #include <atomic>
 #include <cstdint>
 #include <fstream>
@@ -27,6 +29,7 @@ namespace {
 
 using aura::compiler::dirty::cascade_mark_dirty;
 using aura::compiler::dirty::cascade_mark_dirty_many;
+using aura::compiler::dirty::cascade_skip_subtree_visible;
 using aura::compiler::dirty::DepGraph;
 using aura::compiler::dirty::dirty_cascade_depth_avg;
 using aura::compiler::dirty::DirtySet;
@@ -38,6 +41,8 @@ using aura::compiler::dirty::push_to_global;
 using aura::compiler::dirty::push_to_ir_dirty;
 using aura::compiler::dirty::sync_from_block_dirty_matrix;
 using aura::compiler::dirty::sync_from_ir_dirty;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -286,6 +291,52 @@ static void run_3264_source() {
           "empty zero extra");
 }
 
+static void ac3417_production_full_cone() {
+    std::println("\n--- #3417: production skip_subtree is not 1-hop ---");
+    apply_production_audit_defaults();
+    DepGraph g;
+    g.add_edge(0, 1); // R → A
+    g.add_edge(1, 2); // A → B
+    g.add_edge(2, 3); // B → C
+    DirtySet set;
+    set.mark(1);
+    set.mark(2);
+    CHECK(!set.is_dirty(3), "3417 C starts clean");
+    (void)cascade_mark_dirty(set, /*root=*/0, g);
+    CHECK(set.is_dirty(0) && set.is_dirty(1) && set.is_dirty(2) && set.is_dirty(3),
+          "3417 AC1: production cascade(R) marks grandchild C");
+    apply_dev_audit_defaults();
+
+    DepGraph g2;
+    g2.add_edge(0, 1);
+    g2.add_edge(1, 2);
+    g2.add_edge(2, 3);
+    DirtySet set2;
+    set2.mark(1);
+    set2.mark(2);
+    const auto skip0 = load_u64(aura::compiler::dirty::dirty_skip_subtree);
+    const auto vis0 = cascade_skip_subtree_visible();
+    (void)cascade_mark_dirty(set2, /*root=*/0, g2);
+    CHECK(!set2.is_dirty(3), "3417 AC3: Soft 1-hop skip may leave C clean");
+    CHECK(load_u64(aura::compiler::dirty::dirty_skip_subtree) > skip0 ||
+              cascade_skip_subtree_visible() > vis0,
+          "3417 AC3: Soft skip observed");
+}
+
+static void ac3417_source() {
+    std::println("\n--- #3417: source-cite ---");
+    const auto dirty = read_file("src/compiler/dirty_propagation.ixx");
+    CHECK(dirty.find("kCascadeSkipSubtreeFullConeIssue = 3417") != std::string::npos,
+          "3417 issue stamp");
+    CHECK(dirty.find("!hard && set.is_dirty(nxt)") != std::string::npos,
+          "3417 skip gated off production/Full");
+    CHECK(dirty.find("cascade_skip_subtree_total") != std::string::npos,
+          "3417 reuse cascade_skip_subtree_total");
+    CHECK(dirty.find("cascade_roots_dropped_no_dep_graph_total") != std::string::npos,
+          "3417 reuse cascade_roots_dropped_no_dep_graph_total");
+    CHECK(dirty.find("schema-3417") == std::string::npos, "3417 no new query key");
+}
+
 } // namespace
 
 int main() {
@@ -299,6 +350,8 @@ int main() {
     ac6_instruction_level();
     ac_phase();
     run_3264_source();
+    ac3417_production_full_cone();
+    ac3417_source();
     std::println("\n=== {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

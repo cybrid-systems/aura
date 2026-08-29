@@ -4047,6 +4047,10 @@ aura_issue_test_link_light(test_blame_stamp_on_degrade)
 aura_add_issue_test(test_dirty_cascade_optimize)
 aura_issue_test_link_light(test_dirty_cascade_optimize)
 
+# Issue #1575 / #3417: DirtyPropagation BFS cascade + full-cone skip gate.
+aura_add_issue_test(test_dirty_propagation_cascade)
+aura_issue_test_link_light(test_dirty_propagation_cascade)
+
 # Issue #2062: StringPool thread-safe intern + ASTArena integration (concurrent fibers).
 aura_add_issue_test(test_stringpool_concurrent_intern)
 aura_issue_test_link_light(test_stringpool_concurrent_intern)

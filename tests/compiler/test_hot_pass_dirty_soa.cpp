@@ -14,6 +14,7 @@
 #include "test_harness.hpp"
 
 #include <cstdint>
+#include <fstream>
 #include <print>
 #include <string>
 #include <vector>
@@ -237,6 +238,25 @@ static void ac7_mutate_stress() {
     CHECK(cs.eval("(+ 1 2)").has_value(), "eval after stress");
 }
 
+static void ac3417_cascade_skip_full_cone() {
+    std::println("\n--- #3417: cascade skip_subtree is not 1-hop under production ---");
+    std::string dirty;
+    for (const auto& p : {std::string("src/compiler/dirty_propagation.ixx"),
+                          std::string("../src/compiler/dirty_propagation.ixx"),
+                          std::string("../../src/compiler/dirty_propagation.ixx")}) {
+        std::ifstream in(p);
+        if (!in)
+            continue;
+        dirty.assign((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        break;
+    }
+    CHECK(!dirty.empty(), "3417: dirty_propagation.ixx readable");
+    CHECK(dirty.find("kCascadeSkipSubtreeFullConeIssue = 3417") != std::string::npos,
+          "3417: issue stamp");
+    CHECK(dirty.find("!hard && set.is_dirty(nxt)") != std::string::npos,
+          "3417: production/Full drop 1-hop skip");
+}
+
 static void ac8_lineage() {
     std::println("\n--- AC8: #1918 / #1619 lineage retained ---");
     CompilerService cs;
@@ -258,6 +278,7 @@ int run_test_hot_pass_dirty_soa() {
     ac6_production_sweep();
     ac7_mutate_stress();
     ac8_lineage();
+    ac3417_cascade_skip_full_cone();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
