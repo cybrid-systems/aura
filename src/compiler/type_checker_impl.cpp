@@ -609,6 +609,28 @@ std::size_t ConstraintSystem::drop_occurrence_goals_for_conds(
     return dropped;
 }
 
+// Issue #3408: drop goals whose var field equals the given TypeId.
+// Used by Set assignment hygiene to clear stale refinements of the
+// assigned name (I4 «过期窄化仍能用» after set!). Bumps the same
+// occurrence_goal_stale_drop_total counter as the conds variant.
+// Zero cost when occurrence_goals_ is empty.
+std::size_t
+ConstraintSystem::drop_occurrence_goals_for_var_type(aura::core::TypeId var_type) noexcept {
+    if (occurrence_goals_.empty())
+        return 0;
+    const auto before = occurrence_goals_.size();
+    occurrence_goals_.erase(
+        std::remove_if(occurrence_goals_.begin(), occurrence_goals_.end(),
+                       [var_type](const OccurrenceGoal& g) { return g.var == var_type; }),
+        occurrence_goals_.end());
+    const auto dropped = before - occurrence_goals_.size();
+    if (dropped > 0 && metrics_) {
+        auto* m = static_cast<struct CompilerMetrics*>(metrics_);
+        m->occurrence_goal_stale_drop_total.fetch_add(dropped, std::memory_order_relaxed);
+    }
+    return dropped;
+}
+
 // Issue #2608 / #2641 / #2896 / #2910: Soft default OFF (zero cost quiet).
 // Soft vs production decision table (#2910 AC6 — code comments only):
 //   Soft + goals        → opt-in only (env=1); default OFF zero writes
@@ -4892,6 +4914,20 @@ TypeId InferenceEngine::synthesize_flat(FlatAST& flat, StringPool& pool, NodeId 
                     if (!cs_.consistent_unify(val_type, var_type))
                         flat.set_node_error(id, static_cast<std::uint8_t>(ErrorKind::TypeError));
                     maybe_report_ground_inconsistency(val_type, var_type);
+                    // Issue #3408: assignment hygiene — clear stale
+                    // refinements of the assigned name (I4 «过期窄化
+                    // 仍能用» after set!). invalidate predicate memo +
+                    // drop occurrence goals whose var field matches
+                    // the old binding + mark_touched_on_delta. Reuse
+                    // existing counters (predicate_memo_selective_invalidate_total
+                    // + occurrence_goal_stale_drop_total). Do NOT
+                    // env_.bind over a concrete non-Dyn binding
+                    // (would widen Int to String); only rebind when
+                    // old binding is Dynamic or TYPE_VAR so later
+                    // uses see the assignment.
+                    invalidate_predicate_memo_for_var_names({var_name});
+                    cs_.drop_occurrence_goals_for_var_type(var_type);
+                    cs_.mark_touched_on_delta(var_type, /*occurrence_narrow=*/false);
                 }
                 // Unbound set!: env_.lookup miss; Set still returns
                 // Void. (Existing UnboundVariable diagnostic fires
@@ -7597,6 +7633,20 @@ void InferenceEngine::check_flat(FlatAST& flat, StringPool& pool, NodeId id, Typ
             if (var_type.valid()) {
                 cs_.consistent_unify(val_type, var_type);
                 maybe_report_ground_inconsistency(val_type, var_type);
+                // Issue #3408: assignment hygiene — clear stale
+                // refinements of the assigned name (I4 «过期窄化
+                // 仍能用» after set!). invalidate predicate memo +
+                // drop occurrence goals whose var field matches
+                // the old binding + mark_touched_on_delta. Reuse
+                // existing counters (predicate_memo_selective_invalidate_total
+                // + occurrence_goal_stale_drop_total). Do NOT
+                // env_.bind over a concrete non-Dyn binding
+                // (would widen Int to String); only rebind when
+                // old binding is Dynamic or TYPE_VAR so later
+                // uses see the assignment.
+                invalidate_predicate_memo_for_var_names({var_name});
+                cs_.drop_occurrence_goals_for_var_type(var_type);
+                cs_.mark_touched_on_delta(var_type, /*occurrence_narrow=*/false);
             }
             // Also unify with expected context
             cs_.consistent_unify(val_type, expected);
@@ -9217,7 +9267,7 @@ std::size_t TypeChecker::infer_flat_partial(aura::ast::FlatAST& flat,
             if (nv.sym_id != aura::ast::INVALID_SYM &&
                 (nv.tag == aura::ast::NodeTag::Variable || nv.tag == aura::ast::NodeTag::Define ||
                  nv.tag == aura::ast::NodeTag::Let || nv.tag == aura::ast::NodeTag::LetRec ||
-                 nv.tag == aura::ast::NodeTag::Lambda)) {
+                 nv.tag == aura::ast::NodeTag::Lambda || nv.tag == aura::ast::NodeTag::Set)) {
                 auto nm = pool.resolve(nv.sym_id);
                 if (!nm.empty())
                     affected_names.insert(std::string(nm));

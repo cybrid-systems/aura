@@ -15197,6 +15197,58 @@ def cmd_synthesize_set_walks_rhs_3407_coverage():
     return 0
 
 
+def cmd_set_assignment_hygiene_3408_coverage():
+    """Issue #3408: Set assignment hygiene — drop stale OccurrenceGoal /
+    invalidate predicate memo / mark touched on delta.
+
+    Sibling of #3407 (Set synthesize walks RHS). Even after RHS is
+    walked + unified, assignment still does not touch the occurrence
+    table or TypeEnv binding. The Set node carries the assigned name
+    in v.sym_id but NodeTag::Set is absent from `infer_flat_partial`
+    affected_names tag list, so `invalidate_predicate_memo_for_var_names`
+    + goal drop never see the assigned identifier unless some other
+    node in the cone happens to be a Variable use of the same name.
+
+    Reuse existing counters (`occurrence_goal_stale_drop_total`,
+    `predicate_memo_selective_invalidate_total`). No new query key,
+    no new OccurrenceGoal kind, no env_.bind over a concrete non-Dyn
+    binding.
+
+    Source-cite linter (scripts/check_set_assignment_hygiene_3408.py)
+    verifies:
+      AC1 synthesize_flat Set case (after #3407) calls
+         invalidate_predicate_memo_for_var_names + drop_occurrence_goals_for_var_type
+         + mark_touched_on_delta(occurrence_narrow=false).
+      AC2 check_flat Set case (after #3407) calls the same three
+         hygiene calls + still unifies with expected.
+      AC3 `infer_flat_partial` affected_names tag list includes
+         NodeTag::Set alongside Variable / Define / Let / LetRec /
+         Lambda.
+      AC4 Production+Strict mismatch still fails via #3407 (this ticket
+         does not weaken that reject — reuse consistent_unify +
+         set_node_error).
+      AC5 Soft/Off: no new query key; reuse stale-drop /
+         selective-invalidate counters. Reuse
+         `ConstraintSystem::drop_occurrence_goals_for_var_type`
+         helper (new in this ticket, declared in type_checker.ixx,
+         defined in type_checker_impl.cpp).
+      AC6 no docs/design/3408-* (per #1655); no test_issue_3408.cpp
+         (per #81934). Extends test_synthesize_set_walks_rhs.cpp.
+      AC7 source-cite #3408 + build.py registration; no design docs.
+    """
+    print(f"{B}=== set_assignment_hygiene coverage (#3408) ==={N}")
+    script = SCRIPTS / "check_set_assignment_hygiene_3408.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("set_assignment_hygiene (#3408) coverage contract rows failed")
+        return 1
+    ok("set_assignment_hygiene (#3408) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22326,6 +22378,8 @@ def main():
         "recover-fail-clear-persist-3406-coverage": cmd_recover_fail_clear_persist_3406_coverage,
         "synthesize-set-walks-rhs-3407": cmd_synthesize_set_walks_rhs_3407_coverage,
         "synthesize-set-walks-rhs-3407-coverage": cmd_synthesize_set_walks_rhs_3407_coverage,
+        "set-assignment-hygiene-3408": cmd_set_assignment_hygiene_3408_coverage,
+        "set-assignment-hygiene-3408-coverage": cmd_set_assignment_hygiene_3408_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,

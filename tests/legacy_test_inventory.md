@@ -16,8 +16,8 @@ Categorize legacy per-issue regression tests so we can migrate them in batches i
 |----------|------:|-------|
 | `tests/issues/test_issue_*.cpp` | 0 | Legacy per-issue mains / bundle members |
 | `tests/test_*.cpp` (issue-oriented) | 0 | Numbered root tests + `*_batch` drivers |
-| `tests/core/test_*.cpp` | 876 | Preferred destination suites |
-| **Total scanned** | **876** | |
+| `tests/core/test_*.cpp` | 877 | Preferred destination suites |
+| **Total scanned** | **877** | |
 
 ### Related artifacts
 
@@ -40,7 +40,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
 | `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
-| `uncategorized` | Uncategorized / mixed | 0 | 0 | 57 | 57 | P3 — review case-by-case |
+| `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
 
@@ -990,6 +990,7 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 - `tests/core/test_summary_recompute_sym.cpp`
 - `tests/compiler/test_symbol_eq.cpp`
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp`
+- `tests/compiler/test_synthesize_set_walks_rhs.cpp`
 - `tests/compiler/test_sys_open_path_harden.cpp`
 - `tests/core/test_tag_arity_index_lock.cpp`
 - `tests/core/test_tag_arity_key_hash.cpp`
@@ -1985,13 +1986,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_verify_parse_shared_helper.cpp` (—) [domain_suite, theme_compiler] — Issue #1771 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_workspace_mtx_contention.cpp` (—) [domain_suite, theme_compiler] — AC1: Source cites #2523; residual strategy documented
 
-### `uncategorized` — Uncategorized / mixed (57)
+### `uncategorized` — Uncategorized / mixed (58)
 
 **Target:** manual triage before domain placement
 
 **Priority:** P3 — review case-by-case
 
-#### domain/ (57)
+#### domain/ (58)
 
 - `tests/compiler/test_arithmetic_int64_safety.cpp` (—) [small, domain_suite, theme_compiler] — test_arithmetic_int64_safety.cpp — Issues #1150–#1156 Phase 1
 - `tests/compiler/test_ast_workspace_modules.cpp` (—) [domain_suite, theme_compiler] — test_ast_workspace_modules.cpp — Issue #563:
@@ -2039,6 +2040,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/stdlib/test_stdlib_infrastructure.cpp` (—) [domain_suite, theme_stdlib] — test_stdlib_infrastructure.cpp — Issue #565:
 - `tests/core/test_stringpool_concurrent_intern.cpp` (—) [domain_suite, theme_core] — Issue #2062 — StringPool thread-safe intern test.
 - `tests/stdlib/test_synthesize_namespace_demotion.cpp` (—) [domain_suite, theme_stdlib] — test_synthesize_namespace_demotion.cpp — Issue #561:
+- `tests/compiler/test_synthesize_set_walks_rhs.cpp` (—) [domain_suite, theme_compiler] — (the intended contract); mirror it in synthesize_flat Set. Soft/Off:
 - `tests/compiler/test_sys_open_path_harden.cpp` (—) [domain_suite, theme_compiler] — AC1: (sys-open "/proc/self/mem") → -1 (path_is_denied)
 - `tests/compiler/test_truncate_commit_gate.cpp` (—) [domain_suite, theme_compiler] — AC1: Soft Sampled + truncated → observe; commit_ok allows; no reject
 - `tests/compiler/test_try_catch_bind.cpp` (—) [domain_suite, theme_compiler] — AC1: (try (no-such-fn …) (catch (e) (string? e))) → #t; list/cons usable
