@@ -278,6 +278,12 @@ bool test_quote() {
 }
 
 int main() {
+    // Full is the cold-start default (#2818). IR execute refuses unstamped
+    // depth-0 under Full (#3224/#3414), so `(+ 1 2)` becomes
+    // commit-readiness-refused and ubsan-smoke / asan-verify unit die.
+    // Unit smoke is Soft: apply_dev (Sampled) before any IR/eval.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+
     aura::ast::ASTArena arena;
     aura::compiler::Evaluator evaluator;
     evaluator.set_arena(&arena);
