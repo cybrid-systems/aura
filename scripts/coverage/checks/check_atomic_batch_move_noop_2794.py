@@ -73,11 +73,17 @@ def main() -> int:
     must("Issue #2794", "AC2", flat)
     if "cur_parent == new_parent" not in flat and "already at" not in flat.lower():
         fails.append("AC2: lockless move-node missing same-position no-op")
-    # EDSL path
+    # EDSL path. #3399 wraps add_mutate(\n        "mutate:move-node"
+    # so a one-line add_mutate("…") search misses and falls through to
+    # the dispatch-table cite.
     mpos = mut.find('add_mutate("mutate:move-node"')
     if mpos < 0:
+        mpos = mut.find('add_mutate(\n        "mutate:move-node"')
+    if mpos < 0:
+        mpos = mut.find("── mutate:move-node")
+    if mpos < 0:
         mpos = mut.find("mutate:move-node")
-    mwin = mut[mpos : mpos + 4000] if mpos >= 0 else ""
+    mwin = mut[mpos : mpos + 12000] if mpos >= 0 else ""
     must("Issue #2794", "AC2", mwin)
     if "cur_parent == new_parent" not in mwin:
         fails.append("AC2: EDSL move-node missing same-position no-op")

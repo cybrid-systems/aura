@@ -44,8 +44,12 @@ def main() -> int:
 
     ppos = mut.find('add_mutate("mutate:move-node"')
     if ppos < 0:
+        ppos = mut.find('add_mutate(\n        "mutate:move-node"')
+    if ppos < 0:
+        ppos = mut.find("── mutate:move-node")
+    if ppos < 0:
         ppos = mut.find("mutate:move-node")
-    pwin = mut[ppos : ppos + 4000] if ppos >= 0 else ""
+    pwin = mut[ppos : ppos + 8000] if ppos >= 0 else ""
 
     lpos = flat.find("eval_flat_apply_mutate_move_node")
     lwin = flat[lpos : lpos + 2500] if lpos >= 0 else ""
