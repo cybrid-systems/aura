@@ -494,8 +494,89 @@ int run_test_hot_contract_placement() {
         CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3313 AC4: cold unchanged");
     }
 
-    std::println("\n=== #2435/#3043/#3106/#3139/#3313 results: {} passed, {} failed ===", g_passed,
-                 g_failed);
+    // ── #3428: view_at HARDEN-armed AURA_HOT_CHECK (I1 residual of #3106) ──
+    {
+        std::println("\n--- #3428 AC1: view_at calls AURA_HOT_CHECK ---");
+        auto soa = read_file("src/compiler/ir_soa.ixx");
+        auto hh = read_file("src/core/cpp26_contract_stats.h");
+        const auto vat = soa.find("IRInstructionView view_at(");
+        CHECK(vat != std::string::npos, "3428 AC1: view_at present");
+        const auto nxt = soa.find("add_block", vat);
+        const auto win =
+            (vat != std::string::npos && nxt > vat) ? soa.substr(vat, nxt - vat) : std::string{};
+        CHECK(win.find("AURA_HOT_CHECK") != std::string::npos,
+              "3428 AC1: view_at body contains AURA_HOT_CHECK");
+        CHECK(win.find("AURA_HOT_RECORD") != std::string::npos, "3428 AC1: RECORD still present");
+        CHECK(win.find("pre(func_idx < functions.size())") != std::string::npos,
+              "3428 AC1: language pre cold edge kept");
+        CHECK(win.find("Issue #3428") != std::string::npos, "3428 AC1: issue cite");
+        CHECK(hh.find("record_hotpath_contract_harden_trap") != std::string::npos,
+              "3428 AC1: trap helper reused");
+        CHECK(hh.find("std::abort();") != std::string::npos, "3428 AC1: abort reused");
+        const auto ht0 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        aura::core::cpp26::record_hotpath_contract_harden_trap();
+        CHECK(aura::core::cpp26::hotpath_contract_harden_trap_total.load(
+                  std::memory_order_relaxed) > ht0,
+              "3428 AC1: trap helper bumps counter");
+        IRModuleV2 mod;
+        auto fi = mod.add_function("f3428", 1);
+        auto bi = mod.add_block(fi);
+        mod.add_instruction(fi, IROpcode::ConstI64, {0, 7, 0, 0}, 0, 1, 0, 0);
+        mod.seal_block(fi, bi);
+        auto view = mod.view_at(fi, 0);
+        CHECK(view.opcode() == IROpcode::ConstI64, "3428 AC1: happy-path view_at");
+
+        std::println("\n--- #3428 AC2: OFF/Soft no extra atomic beyond RECORD ---");
+        CHECK(hh.find("hot_contract_harden_armed()") != std::string::npos,
+              "3428 AC2: CHECK runtime-gated");
+        CHECK(hh.find("expr not evaluated") != std::string::npos, "3428 AC2: Soft skips expr");
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+#if defined(NDEBUG) && !defined(AURA_HOT_MODE_HARDEN) && !defined(AURA_HOT_MODE_ENFORCE)
+        CHECK(!aura::core::cpp26::hot_contract_harden_armed(), "3428 AC2: Soft disarmed");
+        const auto h0 = hotpath_invariant_hits_total.load(std::memory_order_relaxed);
+        const auto t0 =
+            aura::core::cpp26::hotpath_contract_harden_trap_total.load(std::memory_order_relaxed);
+        (void)mod.view_at(fi, 0);
+        CHECK(hotpath_invariant_hits_total.load(std::memory_order_relaxed) == h0,
+              "3428 AC2: OFF RECORD no extra atomic");
+        CHECK(aura::core::cpp26::hotpath_contract_harden_trap_total.load(
+                  std::memory_order_relaxed) == t0,
+              "3428 AC2: OFF no trap bump");
+#endif
+
+        std::println("\n--- #3428 AC3: #3106/#3043 suites stay green ---");
+        CHECK(hh.find("Issue #3106") != std::string::npos, "3428 AC3: #3106 policy");
+        CHECK(hh.find("Issue #3043") != std::string::npos, "3428 AC3: #3043 policy");
+        CHECK(soa.find("AURA_HOT_CHECK_CONSTEXPR") != std::string::npos,
+              "3428 AC3: CHECK_CONSTEXPR kept on constexpr getters");
+        auto build = read_file("build.py");
+        CHECK(build.find("check_hot_contract_harden_3106") != std::string::npos,
+              "3428 AC3: 3106 linter still wired");
+
+        std::println("\n--- #3428 AC4: placement test + linter, no invent ---");
+        CHECK(build.find("check_hot_contract_view_at_harden_3428") != std::string::npos,
+              "3428 AC4: build.py wires linter");
+        CHECK(read_file("tests/compiler/test_issue_3428.cpp").empty(), "3428 AC4: no invent");
+        CHECK(read_file("tests/issues/test_issue_3428.cpp").empty(), "3428 AC4: no issues invent");
+
+        std::println("\n--- #3428 AC5: no new query key / docs / Arena policy ---");
+        auto q = read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+        CHECK(q.find("hot-contract-harden-trap-total") != std::string::npos,
+              "3428 AC5: reuse trap-total");
+        CHECK(q.find("hot-contract-harden-armed") != std::string::npos, "3428 AC5: reuse armed");
+        CHECK(q.find("schema-3428") == std::string::npos, "3428 AC5: no schema-3428");
+        CHECK(soa.find("g_3428_") == std::string::npos, "3428 AC5: no g_3428_*");
+        CHECK(read_file("docs/design/3428-view-at-harden.md").empty(), "3428 AC5: no docs/design");
+        CHECK(hh.find("AURA_COLD_CONTRACT") != std::string::npos, "3428 AC5: cold unchanged");
+        CompilerService cs3428;
+        CHECK(cs3428.eval("(+ 1 2)").has_value(), "3428 eval ok");
+        CHECK(href(cs3428, "hot-contract-harden-trap-total") >= 0, "3428 AC5: trap-total readable");
+        CHECK(href(cs3428, "hot-contract-harden-armed") >= 0, "3428 AC5: armed readable");
+    }
+
+    std::println("\n=== #2435/#3043/#3106/#3139/#3313/#3428 results: {} passed, {} failed ===",
+                 g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 
