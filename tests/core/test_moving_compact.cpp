@@ -36,9 +36,11 @@
 
 #include <cstdint>
 #include <fstream>
+#include <mutex>
 #include <print>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 
 import std;
 import aura.core.arena;
@@ -57,7 +59,12 @@ using aura::compiler::CompilerService;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_int;
 using aura::core::lifetime::LifetimePin;
+using aura::core::lifetime::linear_root_snapshot;
+using aura::core::lifetime::linear_roots;
+using aura::core::lifetime::linear_roots_mtx;
 using aura::core::lifetime::live_pin_count;
+using aura::core::lifetime::pin_linear_root;
+using aura::core::lifetime::reset_linear_roots_for_test;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -685,6 +692,49 @@ int run_test_moving_compact() {
         CHECK(pin_c.pinned(), "Issue #2374: pin_c still pinned (arena 9)");
     }
 
+    // ── Issue #3350: densify success rewrites linear_roots identities ──
+    {
+        std::println("\n--- #3350 AC1/AC2: live_compact(Moving) rewrites linear_roots ---");
+        reset_linear_roots_for_test();
+        MovingFlagGuard on(1);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(10, 20, 30, 40);
+        auto* p1 = arena.create<Pod16>(11, 21, 31, 41);
+        auto* p2 = arena.create<Pod16>(12, 22, 32, 42);
+        CHECK(p0 && p1 && p2, "ac3350_3: create");
+        void* old0 = p0;
+        void* old1 = p1;
+        void* old2 = p2;
+        pin_linear_root(old0);
+        pin_linear_root(old1);
+        pin_linear_root(old2);
+        CHECK(linear_root_snapshot().live_count == 3, "ac3350_3: three linear roots");
+        CHECK(live_pin_count() == 0, "ac3350_3: linear roots are not LifetimePins");
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(!r.moving_blocked_precondition, "ac3350_3: Moving not blocked");
+        if (r.objects_moved > 0) {
+            std::unordered_set<void*> expected;
+            std::size_t rewritten = 0;
+            for (void* old : {old0, old1, old2}) {
+                void* neu = arena.resolve_object_remap(old);
+                if (neu) {
+                    expected.insert(neu);
+                    if (neu != old)
+                        ++rewritten;
+                } else {
+                    expected.insert(old);
+                }
+            }
+            {
+                std::lock_guard<std::mutex> lock(linear_roots_mtx());
+                CHECK(linear_roots() == expected, "ac3350_3: registry holds post-remap identities");
+            }
+            CHECK(rewritten > 0, "ac3350_3: at least one linear identity rewritten");
+            CHECK(r.pin_contract_held, "ac3350_3: verify after rewrite holds");
+        }
+        reset_linear_roots_for_test();
+    }
+
     // ── Source contract ──
     {
         const auto ar = read_file("src/core/arena.ixx");
@@ -697,6 +747,12 @@ int run_test_moving_compact() {
         // Issue #2374: densify selective-invalidate is sharded, not legacy pin_registry().
         CHECK(ar.find("invalidate_pins_not_in_new_addrs") != std::string::npos,
               "Issue #2374: sharded selective invalidate helper");
+        CHECK(ar.find("remap_linear_roots_under_moving") != std::string::npos,
+              "ac3350_3: live_compact rewrites linear_roots");
+        const auto rp = ar.find("lifetime::remap_linear_roots_under_moving");
+        const auto vp = ar.find("lifetime::verify_pins_under_moving_compact");
+        CHECK(rp != std::string::npos && vp != std::string::npos && rp < vp,
+              "ac3350_3: remap precedes verify");
         CHECK(ar.find("Issue #2374") != std::string::npos, "arena cites #2374");
         CHECK(ar.find("pin_registry_mtx()") == std::string::npos,
               "Issue #2374: no legacy pin_registry_mtx densify walk");

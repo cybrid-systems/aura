@@ -38,6 +38,7 @@
 #include <iterator>
 #include <print>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 
 import std;
@@ -50,9 +51,11 @@ using aura::core::lifetime::g_linear_pin_miss_total;
 using aura::core::lifetime::g_linear_pin_total;
 using aura::core::lifetime::g_linear_unpin_total;
 using aura::core::lifetime::linear_root_abort_release_total_v_read;
+using aura::core::lifetime::linear_root_remap_total_v_read;
 using aura::core::lifetime::linear_root_snapshot;
 using aura::core::lifetime::linear_roots;
 using aura::core::lifetime::pin_linear_root;
+using aura::core::lifetime::remap_linear_roots_under_moving;
 using aura::core::lifetime::reset_linear_roots_for_test;
 using aura::core::lifetime::unpin_all_linear_roots;
 using aura::core::lifetime::unpin_linear_root;
@@ -82,6 +85,7 @@ void* const kRootC = reinterpret_cast<void*>(0x3000);
 void* const kRootD = reinterpret_cast<void*>(0x4000);
 void* const kOldAddr1 = reinterpret_cast<void*>(0x9000);
 void* const kOldAddr2 = reinterpret_cast<void*>(0xA000);
+void* const kNewAddr1 = reinterpret_cast<void*>(0xD000);
 
 } // namespace
 
@@ -565,8 +569,104 @@ int run_test_linear_pin_moving_compact() {
         CHECK(schema.has_value(), "AC3023: schema-3023 reachable");
     }
 
+    // ── Issue #3350: densify success rewrites linear_roots via last_object_remap_ ──
+    {
+        std::println("\n--- #3350 AC1: rewrite then verify holds ---");
+        reset_linear_roots_for_test();
+        pin_linear_root(kOldAddr1);
+        pin_linear_root(kRootA); // unrelated live root stays
+        std::unordered_map<void*, void*> remap;
+        remap[kOldAddr1] = kNewAddr1;
+        CHECK(remap_linear_roots_under_moving(remap) == 1, "ac3350_1: rewrote 1 identity");
+        CHECK(linear_root_remap_total_v_read() == 1, "ac3350_1: remap counter");
+        CHECK(linear_root_snapshot().live_count == 2, "ac3350_1: live_count unchanged");
+        {
+            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            auto& roots = aura::core::lifetime::linear_roots();
+            CHECK(roots.count(kOldAddr1) == 0, "ac3350_1: old address not registered");
+            CHECK(roots.count(kNewAddr1) == 1, "ac3350_1: post-remap address registered");
+            CHECK(roots.count(kRootA) == 1, "ac3350_1: unrelated root stays");
+        }
+        std::unordered_set<void*> old_addresses;
+        old_addresses.insert(kOldAddr1);
+        CHECK(verify_linear_pins_under_moving_compact(old_addresses),
+              "ac3350_1: verify holds after rewrite");
+        CHECK(unpin_all_linear_roots() == 2, "ac3350_1: fail-path drain still unpin_all");
+
+        reset_linear_roots_for_test();
+        pin_linear_root(kOldAddr1);
+        pin_linear_root(kOldAddr2);
+        pin_linear_root(kRootA);
+        std::unordered_map<void*, void*> pack;
+        pack[kOldAddr1] = kOldAddr2; // packing reuses vacated slot
+        pack[kOldAddr2] = kNewAddr1;
+        CHECK(remap_linear_roots_under_moving(pack) == 2, "ac3350_1: packing rewrite 2");
+        {
+            std::lock_guard<std::mutex> lock(aura::core::lifetime::linear_roots_mtx());
+            auto& roots = aura::core::lifetime::linear_roots();
+            CHECK(roots.count(kOldAddr1) == 0, "ac3350_1: vacated source gone");
+            CHECK(roots.count(kOldAddr2) == 1, "ac3350_1: reused slot is live dest");
+            CHECK(roots.count(kNewAddr1) == 1, "ac3350_1: chain dest registered");
+            CHECK(roots.count(kRootA) == 1, "ac3350_1: unmoved root stays");
+        }
+
+        std::println("\n--- #3350 AC2: Soft/empty persist 0 extra ---");
+        reset_linear_roots_for_test();
+        const auto pin0 = g_linear_pin_total.load();
+        const auto unpin0 = g_linear_unpin_total.load();
+        const auto miss0 = g_linear_pin_miss_total.load();
+        const auto remap0 = linear_root_remap_total_v_read();
+        std::unordered_map<void*, void*> empty_roots_map;
+        empty_roots_map[kOldAddr1] = kNewAddr1;
+        CHECK(remap_linear_roots_under_moving(empty_roots_map) == 0,
+              "ac3350_2_soft_quiet: empty registry → 0");
+        std::unordered_map<void*, void*> empty_map;
+        pin_linear_root(kRootA);
+        CHECK(remap_linear_roots_under_moving(empty_map) == 0,
+              "ac3350_2_soft_quiet: empty remap → 0");
+        CHECK(g_linear_pin_total.load() == pin0 + 1, "ac3350_2_soft_quiet: no extra pin");
+        CHECK(g_linear_unpin_total.load() == unpin0, "ac3350_2_soft_quiet: no extra unpin");
+        CHECK(g_linear_pin_miss_total.load() == miss0, "ac3350_2_soft_quiet: no miss");
+        CHECK(linear_root_remap_total_v_read() == remap0, "ac3350_2_soft_quiet: no remap bump");
+        CHECK(linear_root_snapshot().live_count == 1, "ac3350_2_soft_quiet: root intact");
+
+        std::println("\n--- #3350 AC3/AC4: stamp + fail paths + no invent ---");
+        auto read_src = [](const char* path) -> std::string {
+            for (const auto& p :
+                 {std::string(path), std::string("../") + path, std::string("../../") + path}) {
+                std::ifstream in(p);
+                if (!in)
+                    continue;
+                return std::string((std::istreambuf_iterator<char>(in)),
+                                   std::istreambuf_iterator<char>());
+            }
+            return {};
+        };
+        const auto lp = read_src("src/core/lifetime_pin.hh");
+        const auto ar = read_src("src/core/arena.ixx");
+        const auto ixx = read_src("src/core/lifetime_pin.ixx");
+        CHECK(lp.find("kLinearRootMovingRemapIssue = 3350") != std::string::npos,
+              "ac3350_4_linter_no_invent: stamp 3350");
+        CHECK(lp.find("remap_linear_roots_under_moving") != std::string::npos,
+              "ac3350_4_linter_no_invent: helper");
+        CHECK(ixx.find("remap_linear_roots_under_moving") != std::string::npos,
+              "ac3350_4_linter_no_invent: ixx export");
+        const auto remap_pos = ar.find("lifetime::remap_linear_roots_under_moving");
+        const auto verify_pos = ar.find("lifetime::verify_pins_under_moving_compact");
+        CHECK(remap_pos != std::string::npos && verify_pos != std::string::npos &&
+                  remap_pos < verify_pos,
+              "ac3350_1: remirror precedes verify in live_compact");
+        CHECK(lp.find("this verify never unpins") != std::string::npos,
+              "ac3350_4: densify never owns unpin");
+        CHECK(lp.find("unpin_all_linear_roots") != std::string::npos,
+              "ac3350_4: abort/join drain retained");
+        CHECK(lp.find("schema-3350") == std::string::npos, "ac3350_4: no schema-3350");
+        CHECK(lp.find("g_3350_") == std::string::npos, "ac3350_4: no g_3350_*");
+    }
+
     reset_linear_roots_for_test();
-    std::println("=== #2280 + #3023 done: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("=== #2280 + #3023 + #3249 + #3350 done: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 

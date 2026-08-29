@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <mutex>
 #include <string_view>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -112,7 +113,9 @@ inline constexpr int kFactoryDefaultCoverIssue = 3326;
 // |                               | cell remap (#2297) / RootRemap    |
 // | Render / FFI present buffers  | LifetimePin + PinOwner (#2265/    |
 // |                               | #2270) + PresentGuard / RenderPin |
-// | Linear roots (Move/Drop)      | pin_linear_root (#2280)           |
+// | Linear roots (Move/Drop)      | pin_linear_root (#2280) +         |
+// |                               | remap_linear_roots_under_moving   |
+// |                               | (#3350) after slot/pin remap      |
 // | Intermediate general buffers  | pin_or_fail / GeneralObjectPin    |
 // | (mutate/agent/scratch create) | (#2298/#2337/#2363) — pin-or-     |
 // |                               | remap under Moving densify;       |
@@ -1012,7 +1015,9 @@ verify_pins_under_moving_compact(std::uint64_t arena_id,
 // OpDropOp) and the env frame binding paths (evaluator_env.cpp).
 // verify_linear_pins_under_moving_compact iterates the registry and
 // checks each root. Issue #3023: this verify never unpins — abort /
-// reclaim (unpin_all_linear_roots) own leftover drain.
+// reclaim (unpin_all_linear_roots) own leftover drain. Issue #3350:
+// densify success rewrites registry identities via last_object_remap_
+// first (remap_linear_roots_under_moving); verify is belt-and-suspenders.
 //
 // AC3 (zero extra atomics when no linear pins): the linear_roots
 // registry is a no-op when empty (early-return below), and the
@@ -1087,12 +1092,16 @@ inline LinearRootSnapshot linear_root_snapshot() noexcept {
 //   post-abort:   enforce_linear_post_failure (outermost Guard fail)
 //                 + unpin_linear_roots_except (nested Guard abort)
 //   steal hard-fail: same unpin_all as post-join (abandoned mid-Guard)
-//   post-densify: verify_linear_pins_under_moving_compact only
-//                 verifies pin-or-remap; it NEVER unpins.
+//   post-densify: remap_linear_roots_under_moving then
+//                 verify_linear_pins_under_moving_compact
+//                 (this verify never unpins). Rewrite is identity
+//                 fixup, not drain. Leftover drain stays abort/join.
 // Soft: empty registry is one lock + empty check (no extra pin walks).
 inline std::atomic<std::uint64_t> g_linear_root_abort_release_total{0};
+inline std::atomic<std::uint64_t> g_linear_root_remap_total{0};
 inline constexpr int kLinearRootAbortReleaseIssue = 3023;
 inline constexpr int kLinearNestedAbortDrainIssue = 3249;
+inline constexpr int kLinearRootMovingRemapIssue = 3350;
 
 // Reset for tests only. Production leaves linear_roots alone (the
 // live linear bindings are the source of truth).
@@ -1103,6 +1112,7 @@ inline void reset_linear_roots_for_test() noexcept {
     g_linear_unpin_total.store(0, std::memory_order_relaxed);
     g_linear_pin_miss_total.store(0, std::memory_order_relaxed);
     g_linear_root_abort_release_total.store(0, std::memory_order_relaxed);
+    g_linear_root_remap_total.store(0, std::memory_order_relaxed);
 }
 
 inline std::size_t unpin_all_linear_roots() noexcept {
@@ -1148,6 +1158,44 @@ inline std::size_t unpin_linear_roots_except(const std::unordered_set<void*>& ke
 
 [[nodiscard]] inline std::uint64_t linear_root_abort_release_total_v_read() noexcept {
     return g_linear_root_abort_release_total.load(std::memory_order_relaxed);
+}
+
+// Issue #3350: densify success rewrites linear_roots identities via
+// last_object_remap_ (old→new) under linear_roots_mtx. Called from
+// live_compact(Moving) after slot/pin remap, before
+// verify_linear_pins_under_moving_compact. Prefer rewrite when the
+// object moved; verify stays belt-and-suspenders. Abort / nested /
+// steal / post-join still drain via unpin_* (#3249 stays closed).
+// Empty registry or empty remap: one lock + empty check (no extra
+// atomics). No second pin registry.
+[[nodiscard]] inline std::uint64_t linear_root_remap_total_v_read() noexcept {
+    return g_linear_root_remap_total.load(std::memory_order_relaxed);
+}
+
+inline std::size_t remap_linear_roots_under_moving(
+    const std::unordered_map<void*, void*>& last_object_remap) noexcept {
+    std::lock_guard<std::mutex> lock(linear_roots_mtx());
+    auto& roots = linear_roots();
+    if (roots.empty() || last_object_remap.empty())
+        return 0;
+    std::vector<void*> to_erase;
+    std::vector<void*> to_insert;
+    to_erase.reserve(roots.size());
+    for (auto* r : roots) {
+        auto it = last_object_remap.find(r);
+        if (it == last_object_remap.end() || !it->second || it->second == r)
+            continue;
+        to_erase.push_back(r);
+        to_insert.push_back(it->second);
+    }
+    if (to_erase.empty())
+        return 0;
+    for (auto* r : to_erase)
+        roots.erase(r);
+    for (auto* n : to_insert)
+        roots.insert(n);
+    g_linear_root_remap_total.fetch_add(to_erase.size(), std::memory_order_relaxed);
+    return to_erase.size();
 }
 
 // ── Issue #2298: pin-or-fail for non-render general objects ─────────
@@ -1332,6 +1380,8 @@ inline std::uint64_t general_object_pin_adopt_site_count() noexcept {
 // every live linear root is either remapped (not in old_addresses) or
 // already removed from the registry. Bumps g_linear_pin_miss_total on
 // miss. AC3: empty linear_roots() → no atomic ops, O(1) early-return.
+// Issue #3350: callers rewrite linear_roots via last_object_remap_
+// (remap_linear_roots_under_moving) immediately before this check.
 inline bool
 verify_linear_pins_under_moving_compact(const std::unordered_set<void*>& old_addresses) noexcept {
     std::lock_guard<std::mutex> lock(linear_roots_mtx());
