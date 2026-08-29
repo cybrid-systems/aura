@@ -26,6 +26,11 @@ using NodeId = std::uint32_t;
 // cascade_skip_subtree_total); flush_dirty_skip_subtree_to_metrics
 // exchanges the file-scope counter into that sink so nested
 // cascades never double-count (exchange zeros the source).
+// Issue #3417: Production/Full must not take the 1-hop skip — the
+// skip predicate only inspects immediate dependents, so a dirty
+// frontier can hide a clean grandchild (densify remount / ADT arm
+// add / incomplete prior cascade). Soft/Off keep the 1-hop skip.
+inline constexpr int kCascadeSkipSubtreeFullConeIssue = 3417;
 inline std::atomic<std::uint64_t> dirty_skip_subtree{0};
 inline std::atomic<std::uint64_t> dirty_propagation_bfs_hits{0};
 inline std::atomic<std::uint64_t> manual_propagate_deprecated_count{0};
@@ -312,6 +317,12 @@ inline std::size_t cascade_mark_dirty(DirtySet& set, NodeId root, const DepGraph
 
     std::size_t marked = root_was_clean ? 1 : 0;
     std::uint32_t max_depth = 0;
+    // Issue #3417: Production/Full drop skip_subtree (1-hop all-dirty is
+    // not a full-cone proof). Soft/Off keep the #2063 1-hop skip and
+    // dirty_skip_subtree observe (AC3 zero-cost contract).
+    const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                      aura::compiler::typed_audit::get_strategy() ==
+                          aura::compiler::typed_audit::AuditStrategy::Full;
 
     while (!q.empty()) {
         auto [cur, depth] = q.front();
@@ -339,8 +350,11 @@ inline std::size_t cascade_mark_dirty(DirtySet& set, NodeId root, const DepGraph
             // cascade has fully marked its subtree, so re-visiting those
             // nodes produces zero new marks). The skip_count metric makes
             // this observable to the Agent.
+            // Issue #3417: 1-hop all-dirty is not sufficient under
+            // production/Full — grandchildren / new DepGraph edges
+            // reachable only through nxt would never be visited.
             bool skip_subtree = false;
-            if (set.is_dirty(nxt) && depth + 1 > 0) {
+            if (!hard && set.is_dirty(nxt) && depth + 1 > 0) {
                 const auto* sub_deps = g.dependents(nxt);
                 bool all_dirty = sub_deps && !sub_deps->empty();
                 if (all_dirty) {

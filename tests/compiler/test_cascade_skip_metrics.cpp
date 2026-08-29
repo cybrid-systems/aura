@@ -17,6 +17,8 @@
 
 #include "test_harness.hpp"
 
+#include "compiler/typed_mutation_audit.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -84,7 +86,10 @@ static std::uint64_t load_u64(std::atomic<std::uint64_t>& a) {
 
 // Graph that triggers summary-dirty skip: root → mid → leaves, second cascade
 // re-enters mid whose dependents are already dirty.
+// Issue #3417: Soft/Off keep the 1-hop skip; production/Full drop it, so
+// skip-metric ACs must run under apply_dev_audit_defaults.
 static void run_skip_cascade(DirtySet& set, DepGraph& g) {
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     g.clear();
     set.clear();
     // 0 → 1 → 2, 1 → 3; 2 → 4, 3 → 4  (diamond under mid)
@@ -314,6 +319,21 @@ static void ac3264_5_source_and_linter() {
     }
 }
 
+static void ac3417_production_marks_grandchild() {
+    std::println("\n--- #3417: production cascade marks grandchild past 1-hop dirty ---");
+    aura::compiler::typed_audit::apply_production_audit_defaults();
+    DepGraph g;
+    g.add_edge(0, 1);
+    g.add_edge(1, 2);
+    g.add_edge(2, 3);
+    DirtySet set;
+    set.mark(1);
+    set.mark(2);
+    (void)cascade_mark_dirty(set, /*root=*/0, g);
+    CHECK(set.is_dirty(3), "3417: production cascade(R) marks C (A,B pre-dirty)");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
+}
+
 } // namespace
 
 int run_test_cascade_skip_metrics() {
@@ -330,6 +350,7 @@ int run_test_cascade_skip_metrics() {
     ac3264_3_dropped_counter();
     ac3264_4_quiet_empty_zero_extra();
     ac3264_5_source_and_linter();
+    ac3417_production_marks_grandchild();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

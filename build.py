@@ -4835,6 +4835,20 @@ def cmd_lint():
             "Issue #3347 residual CastOp readiness undermark linter failed — run python3 scripts/coverage/checks/check_residual_castop_readiness_undermark_3347.py"
         )
         return r
+    # Issue #3417: cascade_mark_dirty skip_subtree is 1-hop, not full cone.
+    # Production/Full drop the skip so grandchildren are marked. Soft keep
+    # 1-hop + dirty_skip_subtree. Extends test_dirty_propagation_cascade +
+    # test_hot_pass_dirty_soa; no docs/design / invent.
+    csfc3417_script = COVERAGE_CHECKS / "check_cascade_skip_subtree_full_cone_3417.py"
+    if not csfc3417_script.exists():
+        fail(f"missing {csfc3417_script}")
+        return 1
+    r = run([sys.executable, str(csfc3417_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3417 cascade skip_subtree full-cone linter failed — run python3 scripts/coverage/checks/check_cascade_skip_subtree_full_cone_3417.py"
+        )
+        return r
     # Issue #3359: CoercionMap / CastOp identity elision must refuse while
     # abort-authority or mid-abort is outstanding (densify/steal interleave).
     # Soft observe; Production/Full refuse. Extends
