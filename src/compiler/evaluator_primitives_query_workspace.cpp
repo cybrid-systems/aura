@@ -85,6 +85,21 @@ struct WorkspaceQueryState {
     std::function<void()> build_tag_arity_index;
 };
 
+// Issue #3354: shared query skip face with mutate default-reject
+// (reject_structural_macro_hygiene). include_kw true if
+// :include-macro-introduced / :allow-macro-introduced / :allow-macro?
+// already parsed. Global hygiene:set-allow-macro-mutate! and
+// :allow-macro? (mutate keyword) both unlock. Soft extra parse is
+// skipped when include_kw or the global flag is already true.
+[[nodiscard]] inline bool
+query_hygiene_allow_macro(Evaluator& ev, std::span<const types::EvalValue> args, bool include_kw) {
+    if (include_kw)
+        return true;
+    if (ev.get_allow_macro_mutate())
+        return true;
+    return ev.parse_allow_macro_opt_out(args);
+}
+
 // Issue #3175: diagnostic / low-frequency query: names stay compiled
 // but are not registered. SlimSurface scans add() only.
 template <typename... Ts> void sink_query_prim(std::string_view name, Ts&&...) {
@@ -622,18 +637,23 @@ void register_workspace_query_primitives(
     };
 
     // (query :find name) — Find all node IDs with matching symbol name
-    (*q_impls)["query:find"] = PrimFn{[ws, mev, begin_query_epoch,
+    (*q_impls)["query:find"] = PrimFn{[ws, mev, &ev, begin_query_epoch,
                                        end_query_epoch_maybe_result](const auto& a) -> EvalValue {
         std::shared_lock<std::shared_mutex> rlock(ws.workspace_mtx);
         if (a.empty() || !is_string(a[0]))
-            return mev("bad-arg", "usage: (query :find name [:as-query-result|#:query-result #t])");
+            return mev("bad-arg",
+                       "usage: (query :find name [:allow-macro?|#:include-macro-introduced #t] "
+                       "[:as-query-result|#:query-result #t])");
         auto idx = as_string_idx(a[0]);
         if (idx >= ws.string_heap.size())
             return mev("bad-arg", "name string index out of range");
         if (!ws.workspace_flat || !ws.workspace_pool)
             return mev("no-workspace", "no workspace AST loaded");
         // Issue #2933: optional :as-query-result / :query-result (default off).
+        // Issue #3354: :allow-macro? / :include-macro-introduced unlocks
+        // MacroIntroduced hits (parity with mutate). Production default skip.
         bool as_query_result = false;
+        bool include_macro = false;
         for (std::size_t ai = 1; ai < a.size(); ++ai) {
             if (!is_keyword(a[ai]))
                 continue;
@@ -641,23 +661,44 @@ void register_workspace_query_primitives(
             if (kidx >= ws.keyword_table.size())
                 continue;
             auto kw = ws.keyword_table[kidx];
-            if (kw == ":as-query-result" || kw == ":query-result") {
-                as_query_result = true;
+            auto consume_bool = [&](bool& target) {
+                target = true;
                 if (ai + 1 < a.size() && (is_bool(a[ai + 1]) || is_int(a[ai + 1]))) {
                     if (is_bool(a[ai + 1]))
-                        as_query_result = as_bool(a[ai + 1]);
+                        target = as_bool(a[ai + 1]);
                     else
-                        as_query_result = (as_int(a[ai + 1]) != 0);
+                        target = (as_int(a[ai + 1]) != 0);
                     ++ai;
                 }
+            };
+            if (kw == ":as-query-result" || kw == ":query-result") {
+                consume_bool(as_query_result);
+            } else if (kw == ":allow-macro?" || kw == ":include-macro-introduced" ||
+                       kw == ":allow-macro-introduced") {
+                consume_bool(include_macro);
             }
         }
+        // Soft / Off: no skip (today's include). Production: skip unless allow
+        // (same default-reject face as reject_structural_macro_hygiene).
+        if (aura::compiler::typed_audit::production_defaults_active())
+            include_macro = query_hygiene_allow_macro(ev, a, include_macro);
+        const bool skip_macro =
+            !include_macro && aura::compiler::typed_audit::production_defaults_active();
         auto& flat = *ws.workspace_flat;
         const auto qe = begin_query_epoch(&flat); // Issue #2192
         auto name = ws.string_heap[idx];
         // Phase 2.5.0: route via ws.canonical_pool() (== workspace_pool, explicit).
         auto sym = ws.canonical_pool()->intern(name);
         EvalValue result = make_void();
+        auto emit_find = [&](aura::ast::NodeId id) {
+            if (skip_macro && flat.is_macro_introduced(id)) {
+                ev.bump_macro_introduced_skipped_in_query();
+                return;
+            }
+            auto pid = ws.pairs.size();
+            ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
+            result = make_pair(pid);
+        };
         // Issue #3390 (I3): try the existing find_define_by_name index
         // before the size() walk — index hit avoids O(n) SoA scan for
         // Define names (the Agent-hottest locator). On miss, fall back
@@ -668,9 +709,7 @@ void register_workspace_query_primitives(
         if (auto found = flat.find_define_by_name(*ws.canonical_pool(), name)) {
             auto id = *found;
             if (!flat.is_free_slot(id)) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), make_void()});
-                result = make_pair(pid);
+                emit_find(id);
                 return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
             }
         }
@@ -684,11 +723,8 @@ void register_workspace_query_primitives(
             if (flat.is_free_slot(id))
                 continue;
             auto v = flat.get(id);
-            if (v.sym_id == sym) {
-                auto pid = ws.pairs.size();
-                ws.pairs.push_back({make_int(static_cast<std::int64_t>(id)), result});
-                result = make_pair(pid);
-            }
+            if (v.sym_id == sym)
+                emit_find(id);
         }
         // Issue #2933: optional QueryResult binding (default bare list).
         return end_query_epoch_maybe_result(qe, &flat, result, as_query_result);
@@ -1407,7 +1443,7 @@ void register_workspace_query_primitives(
             if (a.empty())
                 return mev("bad-arg", "usage: (query:filter predicate ... "
                                       "[:hygiene #t|#f] [:include-macro-introduced #t] "
-                                      "[:exclude-macro-introduced #t|#f] "
+                                      "[:allow-macro? #t] [:exclude-macro-introduced #t|#f] "
                                       "[:as-query-result|#:query-result #t|#f])");
             // Issue #3395: opt-in :as-query-result / :query-result keyword.
             // Mirrors the auto-upgrade gate inside end_query_epoch_maybe_result
@@ -1430,7 +1466,8 @@ void register_workspace_query_primitives(
             //
             // Keywords:
             //   :hygiene / :skip-macro-introduced  — bool (default #t under #2525)
-            //   :include-macro-introduced / :allow-macro-introduced — opt-in include
+            //   :include-macro-introduced / :allow-macro-introduced / :allow-macro?
+            //       — opt-in include (#3354 mutate keyword alias)
             //   :exclude-macro-introduced #t|#f — explicit exclude (default true)
             //
             // The gate runs BEFORE the predicate loop, so any (where ...)
@@ -1464,8 +1501,9 @@ void register_workspace_query_primitives(
                     if (kw == ":hygiene" || kw == ":skip-macro-introduced") {
                         hygiene_skip_macro = consume_bool_kw(true);
                     } else if (kw == ":include-macro-introduced" ||
-                               kw == ":allow-macro-introduced") {
+                               kw == ":allow-macro-introduced" || kw == ":allow-macro?") {
                         // Issue #2525: opt-in restore previous "include macro" behaviour.
+                        // Issue #3354: :allow-macro? is the mutate keyword (parity).
                         hygiene_skip_macro = !consume_bool_kw(true);
                     } else if (kw == ":exclude-macro-introduced") {
                         hygiene_skip_macro = consume_bool_kw(true);
@@ -1495,6 +1533,10 @@ void register_workspace_query_primitives(
                     }
                 }
             }
+            // Issue #3354: global hygiene:set-allow-macro-mutate! unlocks
+            // filter the same as mutate (query_hygiene_allow_macro).
+            if (query_hygiene_allow_macro(ev, a, !hygiene_skip_macro))
+                hygiene_skip_macro = false;
 
             // Collect predicates from arguments (each is a (where ...) pair)
             struct Predicate {
@@ -2053,6 +2095,10 @@ void register_workspace_query_primitives(
     //     e.g. (query:by-marker "User" :where "Define")
     //   :limit N — keyword form of limit
     //   :as-query-result / :query-result — Issue #2933 QueryResult binding
+    //
+    // Issue #3354: by-marker is the explicit-allow path — requesting
+    // "MacroIntroduced" is the Agent opt-in (same face as :allow-macro?).
+    // Other markers never return MacroIntroduced (marker != target).
     add("query:by-marker",
         [ws, mev, &ev, begin_query_epoch, end_query_epoch_maybe_result,
          pin_query_children](const auto& a) -> EvalValue {
@@ -2663,9 +2709,10 @@ void register_workspace_query_primitives(
     // The pattern is parsed as an S-expression. A Variable named "..." acts as
     // wildcard and matches any single node or subtree.
     //
-    // Optional keywords (Issue #267 / #486 / #922 / #2123):
+    // Optional keywords (Issue #267 / #486 / #922 / #2123 / #3354):
     //   :include-macro-introduced [#t|#f]
     //   :allow-macro-introduced [#t|#f]  — discoverable alias (#486)
+    //   :allow-macro? [#t|#f]            — mutate keyword alias (#3354)
     //   :exclude-macro-introduced [#t|#f] — Issue #922 explicit hygiene
     //     predicate (default #t = safe self-evolution; opposite of include)
     //
@@ -2674,9 +2721,10 @@ void register_workspace_query_primitives(
     //   subtrees are skipped (QueryMatcher skip_macro_introduced=true +
     //   tag_arity user-only bucket). Agents that must inspect expansion
     //   residue pass :include-macro-introduced #t / :allow-macro-introduced
-    //   #t (or :exclude-macro-introduced #f). This is the "code as memory"
-    //   contract: structural self-modify must not match macro residue by
-    //   default. Index rebuild defaults to delta under low dirty ratio
+    //   #t / :allow-macro? #t (or :exclude-macro-introduced #f). This is the
+    //   "code as memory" contract: structural self-modify must not match
+    //   macro residue by default. Index rebuild defaults to delta under
+    //   low dirty ratio
     //   (#1503/#2763); full only on high dirty fraction or cold index.
     //   Metrics: pattern_hygiene_filtered_total +
     //   query-pattern-delta-rebuild-total (query:pattern-hygiene-stats /
@@ -2712,7 +2760,8 @@ void register_workspace_query_primitives(
             if (a.empty())
                 return mev("bad-arg",
                            "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                           " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                           " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
+                           " [:exclude-macro-introduced [#t|#f]]"
                            " [:respect-hygiene [#t|#f]]"
                            " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
                            " [:as-query-result|#:query-result #t])");
@@ -2771,7 +2820,9 @@ void register_workspace_query_primitives(
                             ++ai;
                         }
                     };
-                    if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced") {
+                    if (kw == ":include-macro-introduced" || kw == ":allow-macro-introduced" ||
+                        kw == ":allow-macro?") {
+                        // Issue #3354: :allow-macro? is the mutate keyword (parity).
                         consume_bool(include_macro_introduced);
                     } else if (kw == ":exclude-macro-introduced") {
                         // Issue #922: explicit hygiene predicate for safe
@@ -2832,11 +2883,15 @@ void register_workspace_query_primitives(
                 } else {
                     return mev("bad-arg",
                                "usage: (query:pattern expr [:include-macro-introduced [#t]]"
-                               " [:allow-macro-introduced [#t]] [:exclude-macro-introduced [#t|#f]]"
+                               " [:allow-macro-introduced [#t]] [:allow-macro? [#t]]"
+                               " [:exclude-macro-introduced [#t|#f]]"
                                " [:nested-arity [#t|#f]] [:strict-arity [#t]] [:with-markers [#t]]"
                                " [:as-query-result])");
                 }
             }
+            // Issue #3354: global hygiene:set-allow-macro-mutate! unlocks
+            // query:pattern the same as mutate (query_hygiene_allow_macro).
+            include_macro_introduced = query_hygiene_allow_macro(ev, a, include_macro_introduced);
             if (!have_pattern)
                 return mev("bad-arg", "query:pattern: missing pattern string");
             auto idx = pattern_string_idx;

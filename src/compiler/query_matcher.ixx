@@ -10,12 +10,13 @@
 //  primitives agree on which nodes match, regardless of
 //  `:nested-arity` mode.
 //
-//  Issue #2123 / #2763 / #2989 — default MacroIntroduced hygiene policy (production):
+//  Issue #2123 / #2763 / #2989 / #3354 — default MacroIntroduced hygiene:
 //    QueryMatcher constructed with skip_macro_introduced=true (the
 //    query:pattern default) hard-skips SyntaxMarker::MacroIntroduced
 //    at every recursive match_subtree step. Agents must opt in via
-//    :include-macro-introduced / :allow-macro-introduced #t (or
-//    :exclude-macro-introduced #f) to inspect expansion residue.
+//    :allow-macro? / :include-macro-introduced / :allow-macro-introduced #t
+//    (or :exclude-macro-introduced #f) to inspect expansion residue.
+//    Same default-reject face as mutate (#2037/#3191/#3344).
 //    This prevents silent wrong-edit of macro bodies under self-evo.
 //    Workspace children walks pin via children_safe_view (SafePCVSpan)
 //    so concurrent mutate COW cannot UAF a long-running match.
@@ -40,6 +41,10 @@ import aura.core.mutation;
 using namespace aura::ast;
 
 namespace aura::compiler {
+
+// Issue #3354: query:pattern / query:find default-skip MacroIntroduced
+// unless :allow-macro? (same face as reject_structural_macro_hygiene).
+export inline constexpr int kQueryPatternFindHygieneAlignIssue = 3354;
 
 // Per-match state. The captures vector is insertion-ordered; the
 // matcher uses savepoint / resize-back for backtracking. Linear

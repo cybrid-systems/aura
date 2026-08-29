@@ -21,10 +21,17 @@
 //   #2763 AC4: quiet path (no dirty) → zero extra rebuild cost
 //   #2763 AC5: query-pattern-delta-rebuild-total + hygiene-filtered + schema-2763
 //   #2763 AC6: source-cite + coverage linter green; no docs/design/*
+//
+//   #3354 AC1: production find/pattern skip MacroIntroduced unless allow
+//   #3354 AC2: :allow-macro? unlocks (same face as mutate)
+//   #3354 AC3: Soft find include unchanged (no forced skip)
+//   #3354 AC4: query match set ⊆ mutate-admissible; shared helper cite
+//   #3354 AC5: linter after #3344; no docs/design; no test_issue_*.cpp
 
 #include "test_harness.hpp"
 
 #include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
 
 #include <atomic>
 #include <cstdint>
@@ -45,7 +52,11 @@ namespace {
 
 using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
+using aura::compiler::typed_audit::production_defaults_active;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_hash;
 using aura::compiler::types::is_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -93,6 +104,42 @@ static std::int64_t result_len(CompilerService& cs, const std::string& expr) {
     if (!r || !is_int(*r))
         return -1;
     return as_int(*r);
+}
+
+// Production auto-upgrades query:* to a QueryResult hash (#3395); Soft
+// still returns a bare list. Count matches from either face.
+static std::int64_t query_match_count(CompilerService& cs, const std::string& expr) {
+    auto r = cs.eval(expr);
+    if (!r)
+        return -1;
+    if (is_hash(*r)) {
+        auto len = cs.eval("(length (hash-ref " + expr + " \"matches\"))");
+        if (!len || !is_int(*len))
+            return -1;
+        return as_int(*len);
+    }
+    return result_len(cs, expr);
+}
+
+static std::string first_macro_sym(CompilerService& cs) {
+    auto* flat = cs.evaluator().workspace_flat();
+    auto* pool = cs.evaluator().workspace_pool();
+    if (!flat || !pool)
+        return {};
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_free_slot(id))
+            continue;
+        if (!flat->is_macro_introduced(id))
+            continue;
+        auto v = flat->get(id);
+        if (!v.has_name())
+            continue;
+        auto n = pool->resolve(v.sym_id);
+        // Skip define names — query:find early-returns on find_define_by_name.
+        if (!n.empty() && n != "dbl" && n != "base")
+            return std::string(n);
+    }
+    return {};
 }
 
 static bool setup_macro_ws(CompilerService& cs) {
@@ -550,6 +597,158 @@ static void ac2763_6_source_and_linter() {
           "AC6: no docs/design/2763-* per #1655");
 }
 
+// ── Issue #3354: query pattern / find default-skip MacroIntroduced ──
+// Same face as reject_structural_macro_hygiene. Prefer-existing
+// #2123/#2763/#2989 suite per #81967. Soft find keeps today's include.
+
+static void ac3354_1_production_find_skip() {
+    std::println("\n--- #3354 AC1: production find/pattern skip MacroIntroduced ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto matcher = read_file("src/compiler/query_matcher.ixx");
+    CHECK(qws.find("query_hygiene_allow_macro") != std::string::npos,
+          "AC1: shared query_hygiene_allow_macro helper");
+    CHECK(qws.find("kQueryPatternFindHygieneAlignIssue") != std::string::npos ||
+              matcher.find("kQueryPatternFindHygieneAlignIssue = 3354") != std::string::npos,
+          "AC1: issue stamp 3354");
+    CHECK(qws.find(":allow-macro?") != std::string::npos, "AC1: :allow-macro? on query surface");
+    CHECK(qws.find("production_defaults_active()") != std::string::npos,
+          "AC1: find skip gated on production_defaults_active");
+    CHECK(qws.find("skip_macro && flat.is_macro_introduced(id)") != std::string::npos,
+          "AC1: find skip MacroIntroduced");
+    CHECK(qws.find("include_macro_introduced = query_hygiene_allow_macro") != std::string::npos,
+          "AC1: pattern reuses query_hygiene_allow_macro");
+
+    apply_production_audit_defaults();
+    CHECK(production_defaults_active(), "AC1: production_defaults_active");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC1: macro workspace");
+    const auto macro_n = query_match_count(cs, "(query:by-marker \"MacroIntroduced\")");
+    CHECK(macro_n >= 1, "AC1: MacroIntroduced nodes present");
+    auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
+    auto sym = first_macro_sym(cs);
+    if (sym.empty())
+        sym = "*";
+    auto find_expr = std::format("(query :find \"{}\")", sym);
+    auto def_cnt = query_match_count(cs, find_expr);
+    auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
+    if (skips1 <= skips0) {
+        sym = "*";
+        skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
+        find_expr = std::format("(query :find \"{}\")", sym);
+        def_cnt = query_match_count(cs, find_expr);
+        skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
+    }
+    const auto allow_expr = std::format("(query :find \"{}\" :allow-macro? #t)", sym);
+    const auto allow_cnt = query_match_count(cs, allow_expr);
+    std::println("  sym={} default={} allow={} skips {} -> {}", sym, def_cnt, allow_cnt, skips0,
+                 skips1);
+    CHECK(def_cnt >= 0 && allow_cnt >= 0, "AC1: find lengths");
+    CHECK(allow_cnt >= def_cnt, "AC1: :allow-macro? find >= default (macro skip)");
+    CHECK(skips1 > skips0, "AC1: production find skipped MacroIntroduced");
+    const auto pat_def = query_match_count(cs, "(query:pattern \"*\")");
+    const auto pat_allow = query_match_count(cs, "(query:pattern \"*\" :allow-macro? #t)");
+    CHECK(pat_def >= 0 && pat_allow >= pat_def, "AC1: pattern default ⊆ allow");
+    apply_dev_audit_defaults();
+}
+
+static void ac3354_2_allow_macro_unlock() {
+    std::println("\n--- #3354 AC2: :allow-macro? unlocks macro nodes ---");
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC2: macro workspace");
+    CHECK(cs.eval("(query:pattern \"*\" :allow-macro? #t)").has_value(),
+          "AC2: query:pattern :allow-macro? accepted");
+    CHECK(cs.eval("(query :find \"base\" :allow-macro? #t)").has_value(),
+          "AC2: query:find :allow-macro? accepted");
+    auto* m = static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+    CHECK(m != nullptr, "AC2: metrics");
+    const auto opt0 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
+    CHECK(cs.eval("(query:pattern \"*\" :allow-macro? #t)").has_value(),
+          "AC2: second :allow-macro? pattern");
+    const auto opt1 = m->pattern_include_macro_opt_in_total.load(std::memory_order_relaxed);
+    CHECK(opt1 > opt0, "AC2: :allow-macro? bumps include opt-in (same as mutate unlock)");
+    auto sym = first_macro_sym(cs);
+    if (!sym.empty()) {
+        const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
+        CHECK(cs.eval(std::format("(query :find \"{}\" :allow-macro? #t)", sym)).has_value(),
+              "AC2: find :allow-macro? on macro sym");
+        const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
+        CHECK(skips1 == skips0, "AC2: find :allow-macro? does not skip MacroIntroduced");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3354_3_soft_find_include() {
+    std::println("\n--- #3354 AC3: Soft / Off find include unchanged ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    CHECK(qws.find("Soft / Off: no skip (today's include)") != std::string::npos,
+          "AC3: Soft find include comment");
+    apply_dev_audit_defaults();
+    CHECK(!production_defaults_active(), "AC3: production_defaults off");
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC3: macro workspace");
+    auto sym = first_macro_sym(cs);
+    if (sym.empty())
+        sym = "*";
+    const auto skips0 = cs.evaluator().get_macro_introduced_skipped_in_query();
+    const auto def_cnt = query_match_count(cs, std::format("(query :find \"{}\")", sym));
+    const auto skips1 = cs.evaluator().get_macro_introduced_skipped_in_query();
+    const auto allow_cnt =
+        query_match_count(cs, std::format("(query :find \"{}\" :allow-macro? #t)", sym));
+    std::println("  Soft find sym={} default={} allow={} skips {} -> {}", sym, def_cnt, allow_cnt,
+                 skips0, skips1);
+    CHECK(def_cnt >= 0 && allow_cnt >= 0, "AC3: Soft find lengths");
+    CHECK(def_cnt == allow_cnt, "AC3: Soft find include == :allow-macro? (no forced skip)");
+    CHECK(skips1 == skips0, "AC3: Soft find does not bump skip counter");
+}
+
+static void ac3354_4_match_subset_mutate() {
+    std::println("\n--- #3354 AC4: query match set ⊆ mutate-admissible ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(qws.find("query_hygiene_allow_macro") != std::string::npos, "AC4: query helper present");
+    CHECK(qws.find("reject_structural_macro_hygiene") != std::string::npos,
+          "AC4: query source-cites reject_structural_macro_hygiene");
+    CHECK(mut.find("reject_structural_macro_hygiene") != std::string::npos,
+          "AC4: mutate gate present");
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_macro_ws(cs), "AC4: macro workspace");
+    const auto pat_def = result_len(cs, "(query:pattern \"*\")");
+    const auto pat_allow = result_len(cs, "(query:pattern \"*\" :allow-macro? #t)");
+    CHECK(pat_def >= 0 && pat_allow >= pat_def, "AC4: default pattern ⊆ allow (hygiene skip)");
+    auto rebind = cs.eval("(mutate:rebind \"base\" \"11\")");
+    CHECK(rebind.has_value(), "AC4: mutate:rebind user node (query-admissible) succeeds");
+}
+
+static void ac3354_5_source_and_linter() {
+    std::println("\n--- #3354 AC5: source-cite + linter ---");
+    const auto qws = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    const auto matcher = read_file("src/compiler/query_matcher.ixx");
+    const auto t = read_file("tests/compiler/test_query_pattern_default_hygiene.cpp");
+    const auto build = read_file("build.py");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_query_pattern_find_hygiene_align_3354.py");
+    CHECK(qws.find("#3354") != std::string::npos, "AC5: workspace cites #3354");
+    CHECK(matcher.find("#3354") != std::string::npos, "AC5: matcher cites #3354");
+    CHECK(t.find("ac3354_1_production_find_skip") != std::string::npos, "AC5: AC1 test");
+    CHECK(t.find("ac3354_3_soft_find_include") != std::string::npos, "AC5: AC3 test");
+    CHECK(build.find("check_query_pattern_find_hygiene_align_3354") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(!lint.empty(), "AC5: linter present");
+    const auto p3344 = build.find("check_mutate_hygiene_continuous_gate_3344");
+    const auto p3354 = build.find("check_query_pattern_find_hygiene_align_3354");
+    CHECK(p3344 != std::string::npos && p3354 != std::string::npos && p3354 > p3344,
+          "AC5: linter AFTER #3344");
+    CHECK(qws.find("schema-3354") == std::string::npos, "AC5: no schema-3354");
+    CHECK(qws.find("g_3354_") == std::string::npos, "AC5: no g_3354_*");
+    CHECK(read_file("docs/design/3354-query-pattern-find-hygiene.md").empty(),
+          "AC5: no docs/design/3354-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3354.cpp").empty(), "AC5: no test_issue_3354.cpp");
+    CHECK(read_file("tests/issues/test_issue_3354.cpp").empty(),
+          "AC5: no tests/issues/test_issue_3354.cpp");
+}
+
 } // namespace
 
 int run_test_query_pattern_default_hygiene() {
@@ -575,6 +774,13 @@ int run_test_query_pattern_default_hygiene() {
     ac2989_4_concurrent_query_mutate();
     ac2989_5_observability();
     ac2989_6_source_and_linter();
+
+    std::println("\n=== Issue #3354: query pattern/find hygiene align ===");
+    ac3354_1_production_find_skip();
+    ac3354_2_allow_macro_unlock();
+    ac3354_3_soft_find_include();
+    ac3354_4_match_subset_mutate();
+    ac3354_5_source_and_linter();
 
     std::println("\n=== test_query_pattern_default_hygiene: {} passed, {} failed ===", g_passed,
                  g_failed);
