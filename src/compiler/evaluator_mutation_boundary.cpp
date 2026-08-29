@@ -412,6 +412,31 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             return;
         }
     }
+    // Issue #3431: unstaged expected (0) is abort under Production/Full
+    // when live goals exist. Soft keeps expected==0 skip (0==0). Residual
+    // of #3170: `expected != 0 && live != expected` never fired when
+    // staging never ran (expected stays 0) so persist wrote anyway.
+    {
+        const bool hard = aura::compiler::typed_audit::production_defaults_active() ||
+                          aura::compiler::typed_audit::get_strategy() ==
+                              aura::compiler::typed_audit::AuditStrategy::Full;
+        const auto expected = ev->expected_occurrence_snapshot_fp();
+        if (hard && expected == 0 && live_truth.live_goal_count > 0) {
+            (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
+            ev->bump_occurrence_persist_fingerprint_mismatch();
+            const auto unstaged_mid = aura::compiler::typed_audit::join_audit_and_se_mid(0);
+            (void)
+                aura::compiler::typed_audit::build_type_linear_commit_proof_from_live_with_outcome(
+                    unstaged_mid, /*would_allow_commit=*/false, /*linear_ok=*/false,
+                    aura::compiler::typed_audit::kProofLiveGoalCountHintAuto,
+                    /*goal_fingerprint=*/0, /*from_cs=*/false, /*force_reason=*/16);
+            aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+                aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+            aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
+            ev->clear_type_export_authority();
+            return;
+        }
+    }
     if (aura::compiler::typed_audit::production_defaults_active() &&
         ev->expected_occurrence_snapshot_fp() != 0 &&
         live_fp != ev->expected_occurrence_snapshot_fp()) {
