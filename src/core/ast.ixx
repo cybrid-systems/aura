@@ -9581,9 +9581,15 @@ public:
     // the dense columns and lazy-syncs from PCV on first call after a
     // structural mutation (controlled by dense_dirty_, set in
     // set_child_locked / insert_child_locked / remove_child_locked).
-    std::pmr::vector<NodeId> child_data_{&runtime_resource_};
-    std::pmr::vector<std::uint32_t> child_begin_{&runtime_resource_};
-    std::pmr::vector<std::uint32_t> child_count_{&runtime_resource_};
+    // Issue #3402: mutable so children_columnar(id) const accessor can
+    // trigger sync_dense_columns_from_pcv() on first read after a
+    // structural mutation. Pattern matches the other FlatAST cache
+    // columns (incoming_parent_index_*, verify_dirty_, binding_gens_,
+    // tag_arity_index_*, etc.) which are all `mutable` for the same
+    // reason — const reader triggers lazy rebuild.
+    mutable std::pmr::vector<NodeId> child_data_{&runtime_resource_};
+    mutable std::pmr::vector<std::uint32_t> child_begin_{&runtime_resource_};
+    mutable std::pmr::vector<std::uint32_t> child_count_{&runtime_resource_};
     // dense_dirty_: true when children_ has been mutated via PCV but
     // the dense columns have not yet been re-synced.
     // children_columnar(id) checks this flag and triggers
