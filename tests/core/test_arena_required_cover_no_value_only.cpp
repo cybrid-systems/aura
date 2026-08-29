@@ -582,6 +582,78 @@ static void ac10_no_invent_docs() {
           "AC10: no tests/issues/test_issue_3156.cpp (per #81934 — src/-aligned suite instead)");
 }
 
+// #3402: FlatAST dense children columns + columnar walks over contiguous
+// NodeId. Source-cite via read_file (no new helpers): dense columns
+// (child_data_ / child_begin_ / child_count_) appended at struct END per
+// the #2906/#3314 layout rule; walk_children_hot / children_columnar
+// read from the dense columns (forbidden: children_[id][ double-subscript
+// in those functions); 3 mutators mark dense_dirty_ = true so the next
+// children_columnar(id) triggers sync_dense_columns_from_pcv().
+static void ac3402_dense_children_columns() {
+    std::println("\n--- #3402 AC: FlatAST dense children columns + columnar walks over contiguous "
+                 "NodeId ---");
+    const auto ast_ixx = read_file("src/core/ast.ixx");
+    const auto build = read_file("build.py");
+
+    // AC1: child_data_ + child_begin_ + child_count_ declared in FlatAST
+    // (appended at struct END per #2906/#3314 layout rule).
+    CHECK(ast_ixx.find("child_data_{&runtime_resource_};") != std::string::npos,
+          "AC1: FlatAST declares child_data_ member (dense children backing store)");
+    CHECK(ast_ixx.find("child_begin_{&runtime_resource_};") != std::string::npos,
+          "AC1: FlatAST declares child_begin_ member (dense children start-index vector)");
+    CHECK(ast_ixx.find("child_count_{&runtime_resource_};") != std::string::npos,
+          "AC1: FlatAST declares child_count_ member (dense children length vector)");
+
+    // AC2: walk_children_hot + children_columnar read contiguous NodeId.
+    // Source-cite anchor comment + the impls themselves must NOT use
+    // children_[id][ double-subscript.
+    CHECK(ast_ixx.find("// Issue #3402: children_columnar returns a SafePCVSpan") !=
+              std::string::npos,
+          "AC2: children_columnar #3402 dense-column source-cite anchor present");
+    CHECK(ast_ixx.find("child_data_.data() + begin, count") != std::string::npos,
+          "AC2: children_columnar returns span over dense child_data_ (not PCV)");
+    CHECK(ast_ixx.find("sync_dense_columns_from_pcv()") != std::string::npos,
+          "AC2: children_columnar triggers sync when dense_dirty_ is set");
+
+    // AC3: dense_dirty_ flag + sync helper present.
+    CHECK(ast_ixx.find("mutable bool dense_dirty_ = true;") != std::string::npos,
+          "AC3: FlatAST declares dense_dirty_ flag");
+    CHECK(ast_ixx.find("void sync_dense_columns_from_pcv()") != std::string::npos,
+          "AC3: sync_dense_columns_from_pcv() helper present");
+
+    // AC4: 3 mutators (set_child_locked / insert_child_locked /
+    // remove_child_locked) all mark dense_dirty_ = true.
+    for (const auto* fn : {"set_child_locked", "insert_child_locked", "remove_child_locked"}) {
+        const std::string needle = std::string("void ") + fn + "(";
+        const auto pos = ast_ixx.find(needle);
+        CHECK(pos != std::string::npos, (std::string("AC4: ") + fn + " definition found").c_str());
+        if (pos != std::string::npos) {
+            const auto window = ast_ixx.substr(pos, 500);
+            CHECK(window.find("dense_dirty_ = true") != std::string::npos,
+                  (std::string("AC4: ") + fn + " marks dense_dirty_ = true").c_str());
+        }
+    }
+
+    // AC5: sync helper populates child_begin_[i] / child_count_[i] from
+    // the legacy children_ vector.
+    CHECK(ast_ixx.find("sync_dense_columns_from_pcv()") != std::string::npos &&
+              ast_ixx.find("child_begin_[i] = static_cast<std::uint32_t>(child_data_.size())") !=
+                  std::string::npos,
+          "AC5: sync_dense_columns_from_pcv populates child_begin_[i] from child_data_.size()");
+
+    // AC6: no test_issue_3402.cpp, no docs/design/3402-*.md.
+    const auto issue_test_3402 = read_file("tests/core/test_issue_3402.cpp");
+    CHECK(issue_test_3402.empty(),
+          "AC6: no tests/core/test_issue_3402.cpp (extends existing per #81934)");
+
+    // AC7: source-cite #3402 + build.py registration.
+    CHECK(ast_ixx.find("#3402") != std::string::npos, "AC7: source-cite #3402 present in ast.ixx");
+    CHECK(build.find("check_dense_children_columns_3402") != std::string::npos,
+          "AC7: build.py registers check_dense_children_columns_3402");
+    CHECK(build.find("dense-children-columns-3402") != std::string::npos,
+          "AC7: build.py dispatch entry present");
+}
+
 // #3401: eval_flat hot-path intern — production skips the function-scope
 // try/catch; LiteralString / :foo Variable arms read pool resolve via
 // std::string_view and consult Evaluator::string_intern_ / keyword_intern_
@@ -663,6 +735,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac9_linter_self_test();
     ac10_no_invent_docs();
     ac3401_eval_flat_hot_path_intern();
+    ac3402_dense_children_columns();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);
