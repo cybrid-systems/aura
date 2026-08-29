@@ -10774,11 +10774,24 @@ public:
                                                               shape_profiler_.deopt_storm_active(),
                                                               shape_profiler_.shape_stable_ratio());
         aura::core::arena_policy::record_shape_inval_on_compact();
-        for (auto& [_, entry] : ir_cache_v2_) {
-            entry.dirty = true;
-            entry.mark_all_blocks_dirty();
-            (void)entry.force_soa_instruction_dirty_sync();
+        // Issue #3356: densify success + dirty-cone-limited IR rewrite.
+        // Pins / EnvFrame known-root slots already remapped in live_compact
+        // via last_object_remap_ (objects_moved>0). Do NOT mark_all_blocks_dirty
+        // the whole cache (O(module) deopt). objects_moved==0 (empty remap)
+        // or empty dirty cone → zero extra IR restamp (AC2). Non-empty cone:
+        // finish_dirty_sync only already-dirty entries (AC1). Production pin
+        // rewrite-miss stays fail-closed in verify_pins_under_moving_compact.
+        const bool moved = arena_.object_remap_size() > 0;
+        std::uint64_t cone_n = 0;
+        if (moved) {
+            for (auto& [_, entry] : ir_cache_v2_) {
+                if (!entry.any_block_dirty())
+                    continue; // outside cone: leave alone (no global restamp)
+                ++cone_n;
+                (void)entry.force_soa_instruction_dirty_sync();
+            }
         }
+        aura::core::post_compact_lifecycle::note_densify_cone_rewrite(cone_n);
         aura::core::post_compact_lifecycle::note_lifecycle_ir_sync();
     }
 

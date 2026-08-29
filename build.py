@@ -5115,6 +5115,21 @@ def cmd_lint():
             "Issue #3350 linear_roots densify-rewrite linter failed — run python3 scripts/coverage/checks/check_linear_root_moving_remap_3350.py"
         )
         return r
+    # Issue #3356: densify success rewrites pin/EnvFrame/JIT in the dirty
+    # cone only (no wholesale mark_all_blocks_dirty). Empty cone /
+    # objects_moved==0 → zero extra IR restamp. Extends
+    # test_moving_densify_fail_closed (#81967); no docs/design/; no new
+    # query keys.
+    dcr3356_script = COVERAGE_CHECKS / "check_densify_cone_rewrite_3356.py"
+    if not dcr3356_script.exists():
+        fail(f"missing {dcr3356_script}")
+        return 1
+    r = run([sys.executable, str(dcr3356_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3356 densify cone-rewrite linter failed — run python3 scripts/coverage/checks/check_densify_cone_rewrite_3356.py"
+        )
+        return r
     # Issue #3024: production pure-anon bg overflow → MustDeopt
     # (close residual native-hole after #2950/#2850). Soft / budget=0
     # overflow-counter only. Extends
