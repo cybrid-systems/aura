@@ -2239,7 +2239,22 @@ def cmd_lint():
             "Issue #3344 mutate hygiene continuous-gate linter failed — run python3 scripts/coverage/checks/check_mutate_hygiene_continuous_gate_3344.py"
         )
         return r
-    # Issue #3213: lockless atomic-batch dual-track :allow-macro? (parity
+    # Issue #3354: query:pattern / query:find default-skip MacroIntroduced
+    # unless :allow-macro? (same face as reject_structural_macro_hygiene).
+    # Soft find keeps today's include. Extends
+    # test_query_pattern_default_hygiene (#81967); no docs/design/; no
+    # new query keys.
+    qhyg3354_script = COVERAGE_CHECKS / "check_query_pattern_find_hygiene_align_3354.py"
+    if not qhyg3354_script.exists():
+        fail(f"missing {qhyg3354_script}")
+        return 1
+    r = run([sys.executable, str(qhyg3354_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3354 query pattern/find hygiene-align linter failed — run python3 scripts/coverage/checks/check_query_pattern_find_hygiene_align_3354.py"
+        )
+        return r
+    # Issue #3213: lockless atomic-batch dual-track :allow-macro? (parity)
     # with public mutate prims). Every eval_flat_apply_mutate_* MacroIntroduced
     # gate honors get_allow_macro_mutate() || parse_allow_macro_opt_out.
     # Default-deny unchanged. Soft/Off: no extra parse unless MacroIntroduced
