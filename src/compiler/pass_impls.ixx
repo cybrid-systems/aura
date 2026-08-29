@@ -3264,6 +3264,33 @@ export inline constexpr int kPassSccNoStdFunctionIssue = 3234;
 
 export class InlinePass {
 public:
+    // Issue #3403 AC1: SoA dirty-block-only entry for the InlinePass
+    // hot path. Walks `opcodes_[start,end)` via `func.for_each_block`
+    // (columnar SoA access — no AoS conversion, no `block.instructions`
+    // range-for). Production incremental pack dispatches through this
+    // entry when `DefineDirtyMaskView::any()` is sparse; the AoS
+    // `run(IRModule&)` below is reserved for tests / debug print
+    // (issue #2520 / #2907 dual-emit residual). The
+    // `g_soa_dual_emit_bridge_count` hard-zero gate in
+    // production_defaults (soa_view.ixx) tracks the AoS fallback usage.
+    void run_on_dirty_blocks_only(aura::ir::IRModuleV2& module,
+                                  const aura::compiler::DefineDirtyMaskView* mask_ptr = nullptr) {
+        aura::compiler::ir_soa_migration::record_consumer_pass();
+        for (auto& func : module.functions) {
+            for_each_block_dirty(func, mask_ptr, [&](BasicBlockSoA& block) {
+                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                    (void)func.opcodes_[i];
+                }
+            });
+        }
+    }
+
+    // Issue #3403: AoS `run(IRModule&)` is the cold / tests / debug
+    // print path only. Production incremental pack calls
+    // `run_on_dirty_blocks_only(IRModuleV2&, DefineDirtyMaskView*)`
+    // above instead. The AoS walk is preserved for fingerprint tests
+    // (#2520 / #2907 ban covers only the *production* dual-emit
+    // path; the AoS fallback itself remains first-class).
     void run(aura::ir::IRModule& module) {
         inlined_count_ = 0;
         // Issue #197: bump the global per-run stats

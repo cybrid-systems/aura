@@ -55,6 +55,43 @@ inline void record_soa_view_miss() noexcept {
 }
 inline void record_soa_dual_emit_bridge() noexcept {
     g_soa_dual_emit_bridge_count.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3403 AC2: production_defaults mode makes this counter a
+    // Hard zero (abort on bump). Soft / Off keeps it as a dashboard
+    // vanity. The InlinePass SoA hot path
+    // (`run_on_dirty_blocks_only(IRModuleV2&, ...)`) is the production
+    // entry — the AoS `InlinePass::run(IRModule&)` fallback stays
+    // first-class for tests / debug print but must NOT bump this
+    // counter under production_defaults. The hard-zero check below
+    // catches a regression where the AoS fallback is taken from a
+    // production hot path.
+    if (production_defaults_active()) {
+        std::fprintf(stderr,
+                     "[#3403 AC2] HARD ZERO VIOLATED: "
+                     "g_soa_dual_emit_bridge_count bumped to %llu "
+                     "under production_defaults (InlinePass::run AoS "
+                     "fallback taken from production hot path)\n",
+                     static_cast<unsigned long long>(
+                         g_soa_dual_emit_bridge_count.load(std::memory_order_relaxed)));
+        std::abort();
+    }
+}
+
+// Issue #3403 AC2: Hard-zero gate assertion — callable from tests
+// / production entry points to verify `g_soa_dual_emit_bridge_count`
+// is zero after a production-defaults dirty re-lower. Aborts in
+// production if the counter is non-zero. No-op in Soft / Off.
+inline void hard_zero_dual_emit_bridge_in_production() noexcept {
+    if (production_defaults_active()) {
+        const auto observed = g_soa_dual_emit_bridge_count.load(std::memory_order_relaxed);
+        if (observed != 0) {
+            std::fprintf(stderr,
+                         "[#3403 AC2] HARD ZERO VIOLATED: "
+                         "g_soa_dual_emit_bridge_count=%llu "
+                         "under production_defaults\n",
+                         static_cast<unsigned long long>(observed));
+            std::abort();
+        }
+    }
 }
 inline void record_soa_dirty_short_circuit() noexcept {
     g_soa_dirty_short_circuit.fetch_add(1, std::memory_order_relaxed);

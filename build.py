@@ -14999,6 +14999,42 @@ def cmd_dense_children_columns_3402_coverage():
     return 0
 
 
+def cmd_inline_pass_soa_3403_coverage():
+    """Issue #3403: InlinePass + run_pipeline dual-emit residual — SoA
+    hot entry + hard-zero bridge gate.
+
+    Source-cite linter (scripts/check_inline_pass_soa_3403.py) verifies:
+      AC1 InlinePass declares `run_on_dirty_blocks_only(IRModuleV2&,
+         DefineDirtyMaskView*)` SoA hot entry with #3403 source-cite
+         anchor; `run(IRModule&)` carries the cold / tests / debug
+         print path source-cite anchor (production incremental pack
+         must call the SoA entry, not the AoS walk).
+      AC2 soa_view.ixx carries `hard_zero_dual_emit_bridge_in_
+         production()` abort gate AND `record_soa_dual_emit_bridge()`
+         aborts under `production_defaults_active()` (Hard zero, not
+         a dashboard vanity).
+      AC3 `run_incremental_dirty_pass_suite_` routed through
+         `run_production_soa_dirty_hot_pack` (no new InlinePass::run
+         AoS call sites in the production incremental pack).
+      AC4 existing dirty / fold / DCE suites green; #3355 single-mark
+         ban preserved (mark_block_dirty loops still banned).
+      AC5 no tests/core/test_issue_3403.cpp (extends existing tests
+         per #81934); no docs/design/3403-*.md (per #1655).
+      AC6 source-cite #3403 + build.py registration; no design docs.
+    """
+    print(f"{B}=== InlinePass SoA hot entry coverage (#3403) ==={N}")
+    script = SCRIPTS / "check_inline_pass_soa_3403.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("InlinePass SoA hot entry (#3403) coverage contract rows failed")
+        return 1
+    ok("InlinePass SoA hot entry (#3403) coverage clean")
+    return 0
+
+
 def cmd_shape_compact_no_global_bump_2908():
     """Issue #2908: harden PerEval — compact must never advance process-global shape_version.
 
@@ -22118,6 +22154,8 @@ def main():
         "eval-flat-hot-path-3401-coverage": cmd_eval_flat_hot_path_3401_coverage,
         "dense-children-columns-3402": cmd_dense_children_columns_3402_coverage,
         "dense-children-columns-3402-coverage": cmd_dense_children_columns_3402_coverage,
+        "inline-pass-soa-3403": cmd_inline_pass_soa_3403_coverage,
+        "inline-pass-soa-3403-coverage": cmd_inline_pass_soa_3403_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
         "soa-sunset-bridge-2907": cmd_soa_sunset_bridge_2907,
         "soa-sunset-bridge-2907-coverage": cmd_soa_sunset_bridge_2907_coverage,
