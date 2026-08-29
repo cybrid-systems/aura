@@ -805,6 +805,15 @@ std::uint64_t peer_jit_name_soft_stale_mark_total_v_read(void);
 std::uint64_t peer_jit_name_soft_stale_clear_total_v_read(void);
 std::uint64_t peer_jit_name_soft_stale_deopt_total_v_read(void);
 std::uint32_t peer_jit_name_soft_stale_live_v_read(void);
+// Issue #3351: name-level peer IR-cache soft-stale generation. Same
+// owner-scoped fanout as #3300 (no g_aot_table_epoch bump). IR cache is
+// per-CompilerService so each entry acks gen on local restamp; lookup
+// must not return clean while live gen > ack. Empty table: one acquire.
+void aura_aot_mark_peer_ir_name_soft_stale(const char* name);
+std::uint64_t aura_aot_peer_ir_name_stale_gen(const char* name);
+int aura_aot_peer_ir_name_is_soft_stale(const char* name);
+std::uint64_t peer_ir_name_soft_stale_mark_total_v_read(void);
+std::uint32_t peer_ir_name_soft_stale_live_v_read(void);
 
 // Issue #2304 / #2366: epoch invariant mode (process-level).
 //   0 = off (production default; single relaxed load, zero walk cost)
