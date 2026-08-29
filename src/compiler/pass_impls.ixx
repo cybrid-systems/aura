@@ -3273,15 +3273,22 @@ public:
     // (issue #2520 / #2907 dual-emit residual). The
     // `g_soa_dual_emit_bridge_count` hard-zero gate in
     // production_defaults (soa_view.ixx) tracks the AoS fallback usage.
-    void run_on_dirty_blocks_only(aura::ir::IRModuleV2& module,
+    void run_on_dirty_blocks_only(IRModuleV2& module,
                                   const aura::compiler::DefineDirtyMaskView* mask_ptr = nullptr) {
         aura::compiler::ir_soa_migration::record_consumer_pass();
+        (void)mask_ptr; // function dirty bits via for_each_block(dirty_only)
         for (auto& func : module.functions) {
-            for_each_block_dirty(func, mask_ptr, [&](BasicBlockSoA& block) {
-                for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
-                    (void)func.opcodes_[i];
-                }
-            });
+            auto [runs, skips] = func.for_each_block(
+                [&](std::uint32_t /*bid*/, BasicBlockSoA& block) {
+                    for (std::uint32_t i = block.start_idx; i < block.end_idx; ++i) {
+                        (void)func.opcodes_[i];
+                    }
+                },
+                /*dirty_only=*/true);
+            if (skips)
+                aura::compiler::ir_soa_migration::record_dirty_block_skip(skips);
+            if (runs)
+                aura::compiler::ir_soa_migration::record_dirty_block_run(runs);
         }
     }
 

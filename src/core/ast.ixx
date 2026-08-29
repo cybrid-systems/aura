@@ -3298,6 +3298,12 @@ public:
             root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+            // Issue #3402: dest keeps its own runtime_resource_. Never
+            // move pmr dense columns that alias the source arena.
+            child_data_.clear();
+            child_begin_.clear();
+            child_count_.clear();
+            dense_dirty_ = true;
         }
         return *this;
     }
@@ -3491,6 +3497,13 @@ public:
             root = other.root;
             bump_generation_suppressed_ = other.bump_generation_suppressed_;
             atomic_batch_bumps_saved_ = other.atomic_batch_bumps_saved_;
+            // Issue #3402: dest keeps its own runtime_resource_. Never
+            // copy pmr dense columns that alias another arena; rebuild
+            // from children_ on the next children_columnar call.
+            child_data_.clear();
+            child_begin_.clear();
+            child_count_.clear();
+            dense_dirty_ = true;
         }
         return *this;
     }
@@ -4594,22 +4607,22 @@ public:
     // children_columnar MUST NOT use children_[id][ — the dense
     // columns are the canonical storage; PCV is an edit buffer only.
     [[nodiscard]] SafePCVSpan<NodeId> children_columnar(NodeId id) const {
-        if (id >= child_count_.size())
-            return {};
+        // Sync first: a never-synced / post-copy tree has empty
+        // child_count_ with dense_dirty_ == true. Bounding on the
+        // empty column before rebuild would return {} for every id.
         if (dense_dirty_)
             sync_dense_columns_from_pcv();
+        if (id >= child_count_.size())
+            return {};
         const auto begin = child_begin_[id];
         const auto count = child_count_[id];
         if (begin > child_data_.size() || count > child_data_.size() - begin)
             return {};
-        // 2-arg SafePCVSpan ctor (legacy, no fingerprint) — dense
-        // columns are part of FlatAST (lifetime tied to FlatAST
-        // reference), so no separate keep is needed. The dense
-        // span is consumed by walk_children_column immediately,
-        // before any structural mutation can invalidate it.
-        return SafePCVSpan<NodeId>(
-            std::span<const NodeId>(child_data_.data() + begin, count),
-            std::shared_ptr<const typename PersistentChildVector<NodeId>::Storage>{});
+        // 1-arg SafePCVSpan ctor — dense columns are part of FlatAST
+        // (lifetime tied to FlatAST reference), so no PCV Storage keep
+        // is needed. The dense span is consumed by walk_children_column
+        // immediately, before any structural mutation can invalidate it.
+        return SafePCVSpan<NodeId>(std::span<const NodeId>(child_data_.data() + begin, count));
     }
 
     // Issue #3402: lazy-sync helper — rebuilds child_data_ /
@@ -5416,6 +5429,7 @@ public:
             snapshot.resize(children_.size());
         }
         children_ = std::move(snapshot);
+        dense_dirty_ = true; // Issue #3402: PCV snapshot is the source of truth
         if (post_size > pre_size)
             free_orphan_nodes_from(static_cast<NodeId>(pre_size));
         // Issue #1281: every PCV topology restore is a fidelity event.
@@ -5817,6 +5831,7 @@ public:
         float_val_ = std::move(new_float_val);
         sym_id_ = std::move(new_sym_id);
         children_ = std::move(new_children);
+        dense_dirty_ = true; // Issue #3402: compact remaps NodeIds
         parent_ = std::move(new_parent);
         param_begin_ = std::move(new_param_begin);
         param_count_ = std::move(new_param_count);
@@ -5967,6 +5982,12 @@ public:
         float_val_.clear();
         sym_id_.clear();
         children_.clear();
+        // Issue #3402: drop the dense mirror; next children_columnar
+        // rebuilds from children_ (now empty).
+        child_data_.clear();
+        child_begin_.clear();
+        child_count_.clear();
+        dense_dirty_ = true;
         parent_.clear();
         param_begin_.clear();
         param_count_.clear();
@@ -9569,6 +9590,12 @@ public:
     // Appended at struct END per #2906/#3314 layout rule so the SoA
     // pmr::vector<...> fields above stay contiguous (load / clear /
     // mutate paths rely on stable offsets).
+    //   runtime_resource_ — pmr resource for the three dense columns.
+    //                   Declared immediately before the vectors so
+    //                   `&runtime_resource_` is valid in their NSDMIs.
+    //                   Copy/move leave dest on its own resource and
+    //                   mark dense_dirty_ (never move a pmr vector that
+    //                   aliases another FlatAST's monotonic arena).
     //   child_data_   — pmr::vector<NodeId>, all per-node child lists
     //                   concatenated back-to-back; child_begin_[i] is
     //                   the first index, child_count_[i] is the length.
@@ -9587,6 +9614,7 @@ public:
     // columns (incoming_parent_index_*, verify_dirty_, binding_gens_,
     // tag_arity_index_*, etc.) which are all `mutable` for the same
     // reason — const reader triggers lazy rebuild.
+    std::pmr::monotonic_buffer_resource runtime_resource_;
     mutable std::pmr::vector<NodeId> child_data_{&runtime_resource_};
     mutable std::pmr::vector<std::uint32_t> child_begin_{&runtime_resource_};
     mutable std::pmr::vector<std::uint32_t> child_count_{&runtime_resource_};

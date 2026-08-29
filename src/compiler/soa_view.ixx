@@ -6,8 +6,11 @@ module;
 #include <atomic>
 #include <contracts>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
-#include "jit_typed_mutation_stats.h" // ir_soa_migration Phase 2 counters (#1920)
+#include "compiler/typed_mutation_audit.h" // #3403 production_defaults_active
+#include "jit_typed_mutation_stats.h"      // ir_soa_migration Phase 2 counters (#1920)
 
 export module aura.compiler.soa_view;
 
@@ -64,7 +67,7 @@ inline void record_soa_dual_emit_bridge() noexcept {
     // counter under production_defaults. The hard-zero check below
     // catches a regression where the AoS fallback is taken from a
     // production hot path.
-    if (production_defaults_active()) {
+    if (aura::compiler::typed_audit::production_defaults_active()) {
         std::fprintf(stderr,
                      "[#3403 AC2] HARD ZERO VIOLATED: "
                      "g_soa_dual_emit_bridge_count bumped to %llu "
@@ -81,7 +84,7 @@ inline void record_soa_dual_emit_bridge() noexcept {
 // is zero after a production-defaults dirty re-lower. Aborts in
 // production if the counter is non-zero. No-op in Soft / Off.
 inline void hard_zero_dual_emit_bridge_in_production() noexcept {
-    if (production_defaults_active()) {
+    if (aura::compiler::typed_audit::production_defaults_active()) {
         const auto observed = g_soa_dual_emit_bridge_count.load(std::memory_order_relaxed);
         if (observed != 0) {
             std::fprintf(stderr,

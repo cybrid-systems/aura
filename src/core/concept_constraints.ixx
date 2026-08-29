@@ -302,17 +302,18 @@ concept PureWrapPass =
 // `IRFunction&` path. Migrating them to the new SoA per-function
 // signature is a follow-up scope (#3405 AC3 stays — the tightened
 // concept catches NEW production members; legacy stays grandfathered).
+// Intended NEW-member SoA signature is documented, not type-checked here:
+//   void run_on_dirty_blocks_only(aura::ir::IRFunctionSoA&, BlockDirtyPred)
+// IRFunctionSoA lives in ir_soa.ixx; BlockDirtyPred lives in
+// pass_pipeline_core.ixx (after this module). Naming those types in a
+// requires-parameter list makes the concept ill-formed at definition
+// time. Legacy `(IRFunction&)` is the compile-time gate; the SoA
+// signature is enforced by the #3405 source-cite linter + Wrap impls.
 template <typename P>
-concept ProductionPureWrapPass =
-    PureWrapPass<P> &&
-    SoAViewAwarePass<P> &&
-    DirtyAwarePass<P> &&
-    (requires(P& p, aura::ir::IRFunctionSoA& f, aura::core::arena_policy::BlockDirtyPred pred) {
-         { p.run_on_dirty_blocks_only(f, pred) } -> std::same_as<void>;
-     } ||
-     requires(P& p, aura::ir::IRFunction& f) {
-         { p.run_on_dirty_blocks_only(f) } -> std::same_as<void>;
-     });
+concept ProductionPureWrapPass = PureWrapPass<P> && SoAViewAwarePass<P> && DirtyAwarePass<P> &&
+                                 requires(P& p, aura::ir::IRFunction& f) {
+                                     { p.run_on_dirty_blocks_only(f) } -> std::same_as<void>;
+                                 };
 
 // ── DirtySoAEntryPass (#2060) ──────────────────────────────────
 //

@@ -744,8 +744,7 @@ static void ac3403_inline_pass_soa() {
     const auto build = read_file("build.py");
 
     // AC1: InlinePass SoA hot entry + cold-path source-cite anchor.
-    CHECK(pass_impls.find("void run_on_dirty_blocks_only(aura::ir::IRModuleV2& module,") !=
-              std::string::npos,
+    CHECK(pass_impls.find("void run_on_dirty_blocks_only(IRModuleV2& module,") != std::string::npos,
           "AC1: InlinePass declares run_on_dirty_blocks_only(IRModuleV2&, "
           "DefineDirtyMaskView*) SoA hot entry");
     CHECK(pass_impls.find("// Issue #3403 AC1: SoA dirty-block-only entry for the InlinePass") !=
@@ -885,6 +884,14 @@ static void ac3401_eval_flat_hot_path_intern() {
           "AC2: LiteralString arm records into string_intern_ on miss");
     CHECK(eval_flat.find("std::string raw(raw_sv)") != std::string::npos,
           "AC2: LiteralString arm intern-once construction only on miss");
+    // Evaluator::string_heap_ is a pmr::vector, not a pointer. `->`
+    // does not compile (asan-build / ubsan-smoke / health / repro).
+    CHECK(eval_flat.find("string_heap_.size()") != std::string::npos,
+          "AC2: LiteralString miss path uses string_heap_.size() (vector, not pointer)");
+    CHECK(eval_flat.find("string_heap_.push_back") != std::string::npos,
+          "AC2: LiteralString miss path uses string_heap_.push_back (vector, not pointer)");
+    CHECK(eval_flat.find("string_heap_->") == std::string::npos,
+          "AC2: LiteralString arm does not treat string_heap_ as a pointer");
 
     // AC3: :foo keyword Variable arm reads pool resolve via string_view and
     // consults keyword_intern_; std::string construction only on miss.
