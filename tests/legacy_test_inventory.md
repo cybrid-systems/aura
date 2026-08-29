@@ -1345,7 +1345,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/serve/test_mutation_boundary_guard.cpp` (—) [domain_suite, theme_serve] — Issue #1747/#1897/#1931/#1950 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_mutation_concurrency_health.cpp` (—) [domain_suite, theme_compiler] — AC1: Query returns health-bp + force-reason + components + schema/wired
 - `tests/serve/test_mutation_guard_try_acquire.cpp` (—) [domain_suite, theme_serve] — Issue #1547/#1556/#1590/#1628 (#1978 renamed): issue# moved from filename to header.
-- `tests/compiler/test_mutation_guard_try_acquire_unit.cpp` (—) [domain_suite, theme_compiler] — AC1: check_mutation_guard_coverage.py --strict → 0 legacy ctor residual
+- `tests/compiler/test_mutation_guard_try_acquire_unit.cpp` (—) [large, domain_suite, theme_compiler] — AC1: check_mutation_guard_coverage.py --strict → 0 legacy ctor residual
 - `tests/compiler/test_mutation_guard_unit_batch.cpp` (—) [large, batch_driver, domain_suite, theme_compiler] — test_mutation_guard_unit_batch.cpp — consolidated mutation-theme drivers
 - `tests/compiler/test_mutation_hold_boundary_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_mutation_hold_boundary_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_mutation_hold_estimate.cpp` (—) [domain_suite, theme_compiler] — AC1: Query returns budget/slo + recent hold distribution (no side effects)

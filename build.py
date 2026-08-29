@@ -1257,6 +1257,20 @@ def cmd_lint():
             "Issue #3074 mutate_dispatch sole-guard linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py"
         )
         return r
+    # Issue #3352: TransformEngine / AutoFixEngine apply_patches under a
+    # live Evaluator must acquire via mutate_dispatch_try_acquire (#3074
+    # sole Guard). CLI throwaway FlatAST stays ev=nullptr. Extends
+    # test_mutation_guard_try_acquire_unit; no docs/design / invent.
+    teg3352_script = COVERAGE_CHECKS / "check_transform_engine_guard_3352.py"
+    if not teg3352_script.exists():
+        fail(f"missing {teg3352_script}")
+        return 1
+    r = run([sys.executable, str(teg3352_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3352 TransformEngine Guard linter failed — run python3 scripts/coverage/checks/check_transform_engine_guard_3352.py"
+        )
+        return r
     # Issue #3075: production_defaults arms QueryEpoch strict so
     # Agents cannot re-query green after mutate / restamp-lag.
     # Soft/dev stays off (no extra acquire). Extends query-epoch
@@ -17181,6 +17195,25 @@ def cmd_mutate_dispatch_sole_guard_3074():
     return cmd_mutate_dispatch_sole_guard_3074_coverage()
 
 
+def cmd_transform_engine_guard_3352_coverage():
+    """Issue #3352: TransformEngine / AutoFixEngine Guard wrap (static).
+
+    Optional Evaluator* on query_and_fix / run_all. CLI throwaway stays
+    ev=nullptr. In-process uses mutate_dispatch_try_acquire (#3074).
+    """
+    print(f"{B}=== TransformEngine Guard wrap coverage (#3352) ==={N}")
+    script = COVERAGE_CHECKS / "check_transform_engine_guard_3352.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("TransformEngine Guard wrap (#3352) coverage contract rows failed")
+        return 1
+    ok("TransformEngine Guard wrap (#3352) coverage clean")
+    return 0
+
+
 def cmd_query_epoch_production_strict_3075_coverage():
     """Issue #3075: production defaults arm QueryEpoch strict (static)."""
     print(f"{B}=== query-epoch production strict coverage (#3075) ==={N}")
@@ -21823,6 +21856,8 @@ def main():
         "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
         "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
+        "transform-engine-guard-3352": cmd_transform_engine_guard_3352_coverage,
+        "transform-engine-guard-3352-coverage": cmd_transform_engine_guard_3352_coverage,
         "query-epoch-production-strict-3075": cmd_query_epoch_production_strict_3075,
         "query-epoch-production-strict-3075-coverage": cmd_query_epoch_production_strict_3075_coverage,
         "soft-observe-not-hard-3076": cmd_soft_observe_not_hard_3076,

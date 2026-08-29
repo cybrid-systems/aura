@@ -1474,6 +1474,9 @@ int main(int argc, char* argv[]) {
     }
 
     // ── --query-and-fix: query + transform on parsed AST ─────────
+    // Issue #3352: offline throwaway FlatAST — no Evaluator is attached
+    // (query_and_fix ev=nullptr). Do not hand this mutated tree to a live
+    // Evaluator without full re-bind / re-load; in-process hosts pass &ev.
     if (argc > 3 && std::string_view(argv[1]) == "--query-and-fix") {
         aura::ast::ASTArena arena;
         auto alloc = arena.allocator();
@@ -1519,6 +1522,9 @@ int main(int argc, char* argv[]) {
     }
 
     // ── --auto-fix: run built-in optimization fixes ──────────────
+    // Issue #3352: offline throwaway FlatAST — run_all(ev=nullptr).
+    // Subsequent lower_to_ir is a fresh IR build, not an Evaluator handoff.
+    // Do not pass this mutated FlatAST into a live Evaluator without re-load.
     if (argc > 1 && std::string_view(argv[1]) == "--auto-fix") {
         aura::ast::ASTArena arena;
         auto alloc = arena.allocator();
