@@ -3635,6 +3635,19 @@ def cmd_lint():
             "Issue #3420 factory-refuse uncovered linter failed — run python3 scripts/coverage/checks/check_factory_refuse_uncovered_3420.py"
         )
         return r
+    # Issue #3421: production apply_closure hard-refuses densify-stale
+    # closures (#2569 restamp is not a remap). Soft / no-move keep
+    # recover. Extends test_setcode_rebind_survive; linter after #3420.
+    acd3421_script = COVERAGE_CHECKS / "check_apply_closure_densify_hard_refuse_3421.py"
+    if not acd3421_script.exists():
+        fail(f"missing {acd3421_script}")
+        return 1
+    r = run([sys.executable, str(acd3421_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3421 apply_closure densify hard-refuse linter failed — run python3 scripts/coverage/checks/check_apply_closure_densify_hard_refuse_3421.py"
+        )
+        return r
     # Issue #3181: clone walk in_quote boundary (binding/ref split
     # residual of #3154). pre_scan #3154 stops at NodeTag::Quote; clone
     # walk now mirrors it via `in_quote` parameter (NodeTag::Quote OR

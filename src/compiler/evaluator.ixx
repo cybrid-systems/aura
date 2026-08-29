@@ -1768,6 +1768,8 @@ public:
 
     // Look up a closure and apply it with given args.
     // Tries closures_ first, then IR bridge.
+    // Issue #3421: production + last Moving objects_moved>0 + densify-old
+    // (remap key / LCP deny) hard-refuses — #2569 restamp is not a remap.
     std::optional<EvalValue> apply_closure(ClosureId cid, std::span<const EvalValue> args);
     // Issue #3021: apply/use-site lifetime protocol. Freed or
     // tombstone → reject (same skip as Guard dtor scan_skip_freed).

@@ -7,12 +7,14 @@ module;
 #include "observability_metrics.h"
 #include "reflect/hygiene_validate.hh" // Issue #1611: MutationReflectHealth
 #include "core/transparent_string_hash.hh" // C++20 heterogeneous-lookup hash for std::unordered_map<std::string, V>
-#include "compiler/value_tags.h"       // Issue #2259: pure tag hot path + metrics
-#include "core/cpp26_contract_stats.h" // Issue #2259: AURA_HOT_RECORD on apply_closure
-#include "serve/fiber.h"               // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
-#include "typed_mutation_audit.h"      // Issue #3066: pin composite/batch join mid
-#include "core/capability_model.hh"    // Issue #3132: check_macro_self_evo
-#include "core/sandbox.hh"             // Issue #3132: is_sandbox_active
+#include "compiler/value_tags.h"         // Issue #2259: pure tag hot path + metrics
+#include "core/cpp26_contract_stats.h"   // Issue #2259: AURA_HOT_RECORD on apply_closure
+#include "serve/fiber.h"                 // Issue #2650: aura_eval_c_stack_depth_slot (fiber-local)
+#include "typed_mutation_audit.h"        // Issue #3066: pin composite/batch join mid
+#include "core/capability_model.hh"      // Issue #3132: check_macro_self_evo
+#include "core/sandbox.hh"               // Issue #3132: is_sandbox_active
+#include "core/moving_densify_health.hh" // Issue #3421: g_last_objects_moved
+#include "core/lifetime_consistency_proof.hh" // Issue #3421: last_lifetime_consistency_would_allow
 
 module aura.compiler.evaluator;
 
@@ -280,6 +282,40 @@ static bool closure_needs_safe_fallback(const Evaluator& ev, const Closure& cl,
     return stale;
 }
 
+// Issue #3421: production apply_closure hard-refuses densify-stale closures.
+// #2569 restamp is not a remap — it does not rewrite EnvFrame / capture
+// cells via last_object_remap_, and must not eval_flat a densify-old
+// flat*/pool*. Soft / no-Moving / objects_moved==0 keep #2569 recover.
+// Quiet path: one production load + one objects_moved load; remap/LCP
+// only when densify actually moved.
+inline constexpr int kApplyClosureDensifyHardRefuseIssue = 3421;
+
+static bool production_apply_closure_densify_hard_refuse(ast::ASTArena* arena,
+                                                         const Closure& cl) noexcept {
+    if (!aura::compiler::typed_audit::production_defaults_active())
+        return false;
+    if (aura::core::moving_densify_health::g_last_objects_moved.load(std::memory_order_relaxed) ==
+        0)
+        return false;
+    if (!aura::core::lifetime_consistency_proof::last_lifetime_consistency_would_allow())
+        return true;
+    ast::ASTArena* ar = arena ? arena : cl.owner_arena;
+    if (!ar)
+        return false;
+    if (cl.flat && ar->resolve_object_remap(static_cast<void*>(cl.flat)))
+        return true;
+    if (cl.pool && ar->resolve_object_remap(static_cast<void*>(cl.pool)))
+        return true;
+    return false;
+}
+
+static void note_apply_closure_densify_hard_refuse(CompilerMetrics* metrics,
+                                                   Evaluator& ev) noexcept {
+    if (metrics)
+        metrics->closure_stale_returns.fetch_add(1, std::memory_order_relaxed);
+    ev.bump_compiler_root_dangling_prevented();
+}
+
 // Issue #1511: dual-check gate for every closure_bridge_ dispatch.
 // Covers (1) local-map stale recovery and (2) local-miss IR bridge.
 // When provenance is available (local Closure copy), enforces the same
@@ -545,6 +581,15 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
         // instead of poisoning bridge_epoch=0 (which emptied capture Env
         // and unbound private free-vars e.g. orch-yield-safe).
         if (cl_copy.must_deopt_before_next_call) {
+            // Issue #3421: densify-old + production → MustDeopt refuse.
+            // Do not #2569-style restamp and do not remount onto native.
+            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy)) {
+                if (metrics)
+                    metrics->compiler_closure_safe_fallbacks.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                note_apply_closure_densify_hard_refuse(metrics, *this);
+                return std::nullopt;
+            }
             const bool body_live_md = cl_copy.flat && cl_copy.pool &&
                                       cl_copy.body_id != aura::ast::NULL_NODE &&
                                       cl_copy.body_id < cl_copy.flat->size();
@@ -635,6 +680,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
             // often have none). Missing flat still goes through bridge/refuse.
             // Do not require flat->is_valid(gen): workspace COW gen bumps must
             // not kill unrelated eval-arena closures.
+            // Issue #3421: production + densify-old is not recoverable —
+            // restamp is not remap. Soft / no-move keep the recover below.
+            if (production_apply_closure_densify_hard_refuse(arena_, cl_copy)) {
+                note_apply_closure_densify_hard_refuse(metrics, *this);
+                return std::nullopt;
+            }
             const bool body_live = cl_copy.flat && cl_copy.pool &&
                                    cl_copy.body_id != aura::ast::NULL_NODE &&
                                    cl_copy.body_id < cl_copy.flat->size();
@@ -792,6 +843,12 @@ std::optional<EvalValue> Evaluator::apply_closure(ClosureId cid, std::span<const
                     bump_compiler_live_closure_stale_prevented();
                     // Issue #2569: race-window soft-recover when body AST still live
                     // (same policy as pre-materialize path).
+                    // Issue #3421: production densify-old must not restamp here
+                    // either — race recover would re-enter eval_flat.
+                    if (production_apply_closure_densify_hard_refuse(arena_, cl_copy)) {
+                        note_apply_closure_densify_hard_refuse(metrics, *this);
+                        return std::nullopt;
+                    }
                     const bool race_body_live = cl_copy.flat && cl_copy.pool &&
                                                 cl_copy.body_id != aura::ast::NULL_NODE &&
                                                 cl_copy.body_id < cl_copy.flat->size();

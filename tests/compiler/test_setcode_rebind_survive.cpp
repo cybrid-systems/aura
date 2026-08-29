@@ -8,24 +8,80 @@
 //   AC4: source-cite + cmake + gate
 
 #include "test_harness.hpp"
+#include "compiler/observability_metrics.h"
+#include "compiler/typed_mutation_audit.h"
+#include "core/lifetime_consistency_proof.hh"
+#include "core/moving_densify_health.hh"
 
+#include <array>
 #include <fstream>
 #include <print>
 #include <string>
 #include <string_view>
 
 import std;
+import aura.compiler.evaluator;
 import aura.compiler.service;
 import aura.compiler.value;
 
 namespace {
 
+using aura::compiler::ClosureId;
+using aura::compiler::CompilerMetrics;
 using aura::compiler::CompilerService;
+using aura::compiler::types::as_closure_id;
 using aura::compiler::types::as_int;
+using aura::compiler::types::is_closure;
 using aura::compiler::types::is_int;
 using aura::compiler::types::is_void;
+using aura::compiler::types::make_int;
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+// Issue #3421: inject production + last densify window, restore on scope exit.
+struct ProdDensifyWindowGuard {
+    std::uint32_t prev_prod;
+    std::uint64_t prev_moved;
+    std::uint8_t prev_lcp;
+    ProdDensifyWindowGuard(bool prod, std::uint64_t moved, bool lcp_allow) {
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
+        using aura::core::moving_densify_health::g_last_objects_moved;
+        prev_prod = g_typed_mutation_audit_counters.production_defaults_active.load(
+            std::memory_order_relaxed);
+        prev_moved = g_last_objects_moved.load(std::memory_order_relaxed);
+        prev_lcp = g_lcp_last_would_allow_commit().load(std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.production_defaults_active.store(prod ? 1u : 0u,
+                                                                         std::memory_order_relaxed);
+        g_last_objects_moved.store(moved, std::memory_order_relaxed);
+        g_lcp_last_would_allow_commit().store(lcp_allow ? 1 : 0, std::memory_order_relaxed);
+    }
+    ~ProdDensifyWindowGuard() {
+        using aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        using aura::core::lifetime_consistency_proof::g_lcp_last_would_allow_commit;
+        using aura::core::moving_densify_health::g_last_objects_moved;
+        g_typed_mutation_audit_counters.production_defaults_active.store(prev_prod,
+                                                                         std::memory_order_relaxed);
+        g_last_objects_moved.store(prev_moved, std::memory_order_relaxed);
+        g_lcp_last_would_allow_commit().store(prev_lcp, std::memory_order_relaxed);
+    }
+};
+
+static CompilerMetrics* metrics_of(CompilerService& cs) {
+    return static_cast<CompilerMetrics*>(cs.evaluator().compiler_metrics());
+}
+
+// Unimpacted lambda + rebind of a *different* define so #2569 fallback fires.
+static ClosureId make_stale_unimpacted_lambda(CompilerService& cs) {
+    CHECK(cs.eval("(require \"std/mutate\" all:)").has_value(), "require mutate");
+    CHECK(cs.eval("(define score (lambda (x) (* x 2)))").has_value(), "define score");
+    auto r = cs.eval("(lambda (x) (+ x 1))");
+    CHECK(r && is_closure(*r), "unimpacted lambda");
+    CHECK(cs.eval("(mutate:rebind \"score\" \"(lambda (x) (* x 3))\" \"t\")").has_value(),
+          "rebind other define");
+    CHECK(cs.eval("(eval-current)").has_value(), "eval-current after rebind");
+    return r && is_closure(*r) ? as_closure_id(*r) : 0;
+}
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -122,6 +178,81 @@ static void ac4_source_gate() {
     CHECK(build.find("cmd_setcode_rebind_coverage") != std::string::npos, "AC4: gate cmd");
 }
 
+static void ac5_3421_production_hard_refuse() {
+    std::println("\n--- #3421 AC1/AC2: production densify-stale hard-refuse; Soft recover ---");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(flat.find("kApplyClosureDensifyHardRefuseIssue = 3421") != std::string::npos,
+          "3421 helper stamp");
+    CHECK(flat.find("production_apply_closure_densify_hard_refuse") != std::string::npos,
+          "3421 helper");
+    CHECK(flat.find("resolve_object_remap") != std::string::npos, "3421 consults remap");
+    CHECK(flat.find("last_lifetime_consistency_would_allow") != std::string::npos,
+          "3421 consults LCP");
+    CHECK(flat.find("g_last_objects_moved") != std::string::npos, "3421 last-window moved");
+    CHECK(flat.find("g_3421_") == std::string::npos, "no invented g_3421_* counter");
+
+    std::array<aura::compiler::types::EvalValue, 1> args{make_int(1)};
+
+    // AC2 Soft: production off + moved + LCP deny → #2569 recover still allowed.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/false, /*moved=*/1, /*lcp_allow=*/false);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "AC2 Soft: #2569 recover still allowed");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) >= restamp0,
+              "AC2 Soft restamp may grow");
+    }
+
+    // AC1 production + objects_moved>0 + LCP deny → hard-refuse, no restamp.
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        const auto stale0 = m->closure_stale_returns.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(!got.has_value(), "AC1 production densify-stale hard-refuse");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+              "AC1 must not #2569 restamp");
+        CHECK(m->closure_stale_returns.load(std::memory_order_relaxed) > stale0,
+              "AC1 reuses closure_stale_returns");
+    }
+
+    // AC2 production + objects_moved==0 → #2569 recover (quiet skip of remap/LCP).
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/0, /*lcp_allow=*/false);
+        auto got = cs.evaluator().apply_closure(cid, args);
+        CHECK(got.has_value() && is_int(*got) && as_int(*got) == 2,
+              "AC2 production + objects_moved==0 still recover");
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) >= restamp0,
+              "AC2 no-move restamp allowed");
+    }
+
+    // Soak: production refuse stays refuse across rounds (no apply on densify-old).
+    {
+        CompilerService cs;
+        auto* m = metrics_of(cs);
+        const auto cid = make_stale_unimpacted_lambda(cs);
+        ProdDensifyWindowGuard g(/*prod=*/true, /*moved=*/1, /*lcp_allow=*/false);
+        const auto restamp0 = m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed);
+        for (int i = 0; i < 8; ++i) {
+            auto got = cs.evaluator().apply_closure(cid, args);
+            CHECK(!got.has_value(), "3421 soak: refuse holds");
+        }
+        CHECK(m->live_closure_epoch_restamp_total.load(std::memory_order_relaxed) == restamp0,
+              "3421 soak: no restamp");
+    }
+}
+
 } // namespace
 
 int run_test_setcode_rebind_survive() {
@@ -130,7 +261,8 @@ int run_test_setcode_rebind_survive() {
     ac2_hash_survive();
     ac3_hash_ref_default();
     ac4_source_gate();
-    std::println("\n=== #2569: {} passed, {} failed ===", g_passed, g_failed);
+    ac5_3421_production_hard_refuse();
+    std::println("\n=== #2569/#3421: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

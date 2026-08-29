@@ -33,13 +33,13 @@ Classification uses the **filename + first 50 lines** (keywords and filename tok
 | Theme | Title | Issues | Root | Domain | Total | Migration priority |
 |-------|-------|-------:|-----:|-------:|------:|--------------------|
 | `arena_compaction` | Arena / compaction / GC | 0 | 0 | 88 | 88 | P0 — well-contained, batch drivers already exist |
-| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 263 | 263 | P0 — high volume; strong domain suite foothold |
+| `mutation_dirty` | Mutation / dirty propagation / provenance | 0 | 0 | 262 | 262 | P0 — high volume; strong domain suite foothold |
 | `fiber_orch` | Fiber / orchestration / steal / Guard | 0 | 0 | 108 | 108 | P1 — domain suite already collapses many obs gates |
 | `linear_ownership` | Linear ownership / borrow / consume | 0 | 0 | 24 | 24 | P1 — small, already partially batched |
 | `edsl_hygiene` | EDSL / macro hygiene / reflect | 0 | 0 | 59 | 59 | P1 — domain hygiene suite exists |
 | `jit_incremental` | JIT / AOT / incremental relower | 0 | 0 | 86 | 86 | P2 — link-profile heavy; migrate AC smoke first |
 | `shape_soa` | Shape / SoA / column layout | 0 | 0 | 55 | 55 | P2 — small-medium; soa_batch precedent |
-| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 136 | 136 | P2 — often thin schema probes; collapse into obs matrix |
+| `observability` | Observability / metrics / query:*-stats | 0 | 0 | 137 | 137 | P2 — often thin schema probes; collapse into obs matrix |
 | `uncategorized` | Uncategorized / mixed | 0 | 0 | 58 | 58 | P3 — review case-by-case |
 
 ## Patterns, harness usage, coupling
@@ -1192,13 +1192,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_type_dep_epoch_prune.cpp` (—) [domain_suite, theme_compiler] — AC1: After set_cache_epoch(e+1), edges stamped at epoch e (e>0) drop;
 - `tests/compiler/test_workspace_switch.cpp` (—) [domain_suite, theme_compiler] — AC1: switch binds flat/pool + set_workspace_cow_epoch in one block
 
-### `mutation_dirty` — Mutation / dirty propagation / provenance (263)
+### `mutation_dirty` — Mutation / dirty propagation / provenance (262)
 
 **Target:** tests/core/test_mutation_boundary_batch (domain/ pilot abandoned in R1)
 
 **Priority:** P0 — high volume; strong domain suite foothold
 
-#### domain/ (263)
+#### domain/ (262)
 
 - `tests/compiler/test_abort_ir_cache_fence_first.cpp` (—) [large, domain_suite, theme_compiler] — AC1: All 3 abort entry points in evaluator_mutation_boundary.cpp
 - `tests/core/test_add_node_builder_contract.cpp` (—) [domain_suite, theme_core] — AC1: single-threaded add_* path unchanged (builders work)
@@ -1417,7 +1417,6 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_security_audit_wal_force_restricted.cpp` (—) [domain_suite, theme_compiler] — AC1: Fresh process, default Restricted, no multi-tenant env → Security
 - `tests/compiler/test_security_capability_batch.cpp` (—) [batch_driver, domain_suite, theme_compiler] — test_security_capability_batch.cpp — thematic multi-TU batch
 - `tests/compiler/test_security_schedule_mutate_admit.cpp` (—) [domain_suite, theme_compiler] — Refines #2590 (gate contract) + #2587 (mailbox-starvation sibling
-- `tests/compiler/test_setcode_rebind_survive.cpp` (—) [domain_suite, theme_compiler] — closures or hash telemetry (Aether closed-loop agent state).
 - `tests/compiler/test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp` (—) [domain_suite, theme_compiler] — test_shape_jit_pass_deopt_incremental_closedloop_ai_mutate.cpp — Issue #744:
 - `tests/compiler/test_side_effect_inherit.cpp` (—) [domain_suite, theme_compiler] — AC1: PrimMeta carries required_effects / effect_enforced_in_body / security_exempt
 - `tests/compiler/test_soa_cascade_instr_dirty_sync.cpp` (—) [domain_suite, theme_compiler] — AC1: source cites #2034; force_soa_instruction_dirty_sync +
@@ -1841,13 +1840,13 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_value_tag_hot_path.cpp` (—) [domain_suite, theme_compiler] — AC1: Pure is_* (is_fixnum_hot / is_int) match classify; single low2 path
 - `tests/compiler/test_workspace_delete_child.cpp` (—) [domain_suite, theme_compiler] — tests/compiler/test_workspace_delete_child.cpp — Issue #1770: WorkspaceTree delete_child test.
 
-### `observability` — Observability / metrics / query:*-stats (136)
+### `observability` — Observability / metrics / query:*-stats (137)
 
 **Target:** tests/compiler/test_obs_schema_matrix.cpp + tests/compiler/obs_schema_cases.hpp
 
 **Priority:** P2 — often thin schema probes; collapse into obs matrix
 
-#### domain/ (136)
+#### domain/ (137)
 
 - `tests/compiler/test_adaptive_reverify_limit.cpp` (—) [domain_suite, theme_compiler] — Issue #2939 — dep-closure reverify (BFS over var_to_constraints_) to
 - `tests/compiler/test_adt_hard_gate_exhaustiveness.cpp` (—) [domain_suite, theme_compiler] — AC1: Full hard-gate + non-exhaustive inject → adt_ok=false; suite fails;
@@ -1961,6 +1960,7 @@ Files listed as ``location/name`` with issue id and one-line summary.
 - `tests/compiler/test_self_evolution_loop_stats.cpp` (—) [domain_suite, theme_compiler] — Issue #1883 (#1978 renamed): issue# moved from filename to header.
 - `tests/serve/test_self_heal_policy_engine.cpp` (—) [domain_suite, theme_serve] — test_self_heal_policy_engine.cpp — standalone (flaky/failing ACs under batch link)
 - `tests/compiler/test_selfevo_bugfix.cpp` (—) [domain_suite, theme_compiler] — test_selfevo_bugfix_941_967.cpp — Issues #941–#967 Phase 1
+- `tests/compiler/test_setcode_rebind_survive.cpp` (—) [domain_suite, theme_compiler] — closures or hash telemetry (Aether closed-loop agent state).
 - `tests/compiler/test_shape_linear_collaborative_pass.cpp` (—) [domain_suite, theme_compiler] — Issue #1531/#1661/#462/#606 (#1978 renamed): issue# moved from filename to header.
 - `tests/compiler/test_should_audit_sampled_default.cpp` (—) [domain_suite, theme_compiler] — AC1: cold-start default Full (strategy + should_audit always hits)
 - `tests/compiler/test_solve_delta_unresolved_export.cpp` (—) [large, domain_suite, theme_compiler] — AC1: Synthetic over-limit → TIMEOUT + non-empty unresolved
