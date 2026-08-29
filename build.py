@@ -4732,6 +4732,20 @@ def cmd_lint():
             "Issue #3229 relower success define-collision linter failed — run python3 scripts/coverage/checks/check_relower_success_define_collision_3229.py"
         )
         return r
+    # Issue #3351: owner-scoped peer IR-cache must not clean-hit.
+    # Name-level gen + per-entry ack; lookup last-look before clean
+    # return. Soft/empty/single-eval 0 extra. Extends
+    # test_peer_jit_name_soft_stale; no docs/design / invent.
+    pir3351_script = COVERAGE_CHECKS / "check_peer_ir_name_soft_stale_3351.py"
+    if not pir3351_script.exists():
+        fail(f"missing {pir3351_script}")
+        return 1
+    r = run([sys.executable, str(pir3351_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3351 peer IR-cache owner-scoped soft-stale linter failed — run python3 scripts/coverage/checks/check_peer_ir_name_soft_stale_3351.py"
+        )
+        return r
     # Issue #3189: unify impact upper-bound on every production
     # partial-relower decision site (fail-closed). The helper
     # should_partial_relower_impact_checked was already wired into
@@ -13111,6 +13125,25 @@ def cmd_linear_root_moving_remap_3350_coverage():
         fail("linear_roots densify rewrite (#3350) coverage contract rows failed")
         return 1
     ok("linear_roots densify rewrite (#3350) coverage clean")
+    return 0
+
+
+def cmd_peer_ir_name_soft_stale_3351_coverage():
+    """Issue #3351: owner-scoped peer IR-cache must not clean-hit.
+
+    lookup_define_v2 last-looks name-level gen; restamp acks. Soft/empty
+    / single-eval 0 extra. Aligns with #3300 JIT name soft-stale.
+    """
+    print(f"{B}=== peer IR-cache owner-scoped soft-stale coverage (#3351) ==={N}")
+    script = COVERAGE_CHECKS / "check_peer_ir_name_soft_stale_3351.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("peer IR-cache owner-scoped soft-stale (#3351) coverage contract rows failed")
+        return 1
+    ok("peer IR-cache owner-scoped soft-stale (#3351) coverage clean")
     return 0
 
 
@@ -21617,6 +21650,8 @@ def main():
         "linear-nested-abort-drain-3249-coverage": cmd_linear_nested_abort_drain_3249_coverage,
         "linear-root-moving-remap-3350": cmd_linear_root_moving_remap_3350_coverage,
         "linear-root-moving-remap-3350-coverage": cmd_linear_root_moving_remap_3350_coverage,
+        "peer-ir-name-soft-stale-3351": cmd_peer_ir_name_soft_stale_3351_coverage,
+        "peer-ir-name-soft-stale-3351-coverage": cmd_peer_ir_name_soft_stale_3351_coverage,
         "restart-n-spec-boundary-3250": cmd_restart_n_spec_boundary_3250_coverage,
         "restart-n-spec-boundary-3250-coverage": cmd_restart_n_spec_boundary_3250_coverage,
         "agent-deny-class-3251": cmd_agent_deny_class_3251_coverage,

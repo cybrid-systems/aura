@@ -2199,6 +2199,79 @@ extern "C" std::uint32_t peer_jit_name_soft_stale_live_v_read(void) {
     return g_peer_jit_name_soft_stale_live.load(std::memory_order_relaxed);
 }
 
+// ── Issue #3351: name-level peer IR-cache soft-stale generation ──────
+// Sibling of #3300 (same owner-scoped fanout, no table-epoch bump).
+// IR cache is per-CompilerService: a boolean process-wide clear on the
+// first peer restamp would let other peers clean-hit pre-invalidate IR.
+// Generation + per-entry ack: lookup_define_v2 returns need-relower
+// while live gen > entry.peer_ir_stale_ack_; restamp acks. Empty table
+// / single-eval / Soft: one acquire, no extra atomics.
+namespace {
+constexpr unsigned kPeerIrNameSoftStaleCap = 256;
+struct PeerIrNameSlot {
+    std::atomic<std::uint64_t> name_hash{0};
+    std::atomic<std::uint64_t> gen{0};
+};
+PeerIrNameSlot g_peer_ir_name_soft_stale[kPeerIrNameSoftStaleCap];
+std::mutex g_peer_ir_name_soft_stale_mtx;
+std::atomic<std::uint32_t> g_peer_ir_name_soft_stale_live{0};
+std::atomic<std::uint64_t> g_peer_ir_name_soft_stale_mark_total{0};
+} // namespace
+
+extern "C" void aura_aot_mark_peer_ir_name_soft_stale(const char* name) {
+    if (!name || !*name)
+        return;
+    if (aura_aot_state_map_size() <= 1)
+        return;
+    const std::uint64_t h = peer_jit_name_hash(name);
+    std::lock_guard<std::mutex> lock(g_peer_ir_name_soft_stale_mtx);
+    for (unsigned i = 0; i < kPeerIrNameSoftStaleCap; ++i) {
+        auto& slot = g_peer_ir_name_soft_stale[(h + i) % kPeerIrNameSoftStaleCap];
+        const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
+        if (cur == h) {
+            slot.gen.fetch_add(1, std::memory_order_acq_rel);
+            g_peer_ir_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+        if (cur == 0) {
+            slot.name_hash.store(h, std::memory_order_release);
+            slot.gen.store(1, std::memory_order_release);
+            g_peer_ir_name_soft_stale_live.fetch_add(1, std::memory_order_relaxed);
+            g_peer_ir_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
+            return;
+        }
+    }
+    g_peer_ir_name_soft_stale_mark_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+extern "C" std::uint64_t aura_aot_peer_ir_name_stale_gen(const char* name) {
+    if (!name || !*name)
+        return 0;
+    if (g_peer_ir_name_soft_stale_live.load(std::memory_order_acquire) == 0)
+        return 0;
+    const std::uint64_t h = peer_jit_name_hash(name);
+    for (unsigned i = 0; i < kPeerIrNameSoftStaleCap; ++i) {
+        const auto& slot = g_peer_ir_name_soft_stale[(h + i) % kPeerIrNameSoftStaleCap];
+        const std::uint64_t cur = slot.name_hash.load(std::memory_order_acquire);
+        if (cur == 0)
+            return 0;
+        if (cur == h)
+            return slot.gen.load(std::memory_order_acquire);
+    }
+    return 0;
+}
+
+extern "C" int aura_aot_peer_ir_name_is_soft_stale(const char* name) {
+    return aura_aot_peer_ir_name_stale_gen(name) != 0 ? 1 : 0;
+}
+
+extern "C" std::uint64_t peer_ir_name_soft_stale_mark_total_v_read(void) {
+    return g_peer_ir_name_soft_stale_mark_total.load(std::memory_order_relaxed);
+}
+extern "C" std::uint32_t peer_ir_name_soft_stale_live_v_read(void) {
+    return g_peer_ir_name_soft_stale_live.load(std::memory_order_relaxed);
+}
+
 extern "C" void aura_aot_bump_func_table_epoch(void) {
     // Issue #2841 / #2744 / #2951: multi-eval cascade tax action. When >1
     // live AotState and throttle is armed (production default, or env),

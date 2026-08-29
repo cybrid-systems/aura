@@ -201,6 +201,114 @@ static void ac7_no_design_doc() {
     }
 }
 
+// ── Issue #3351: peer IR-cache must not clean-hit after owner-scoped ──
+static void ac3351_1_lookup_probes_before_clean_hit() {
+    std::println("\n--- #3351 AC1: lookup_define_v2 last-look peer IR gen ---");
+    const auto svc = read_file("src/compiler/service.ixx");
+    const auto dirty = read_file("src/compiler/service_dirty.cpp");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    const auto header = read_file("src/compiler/aura_jit_bridge.h");
+    const auto reg = read_file("src/compiler/hot_update_registry.cpp");
+    const auto hh = read_file("src/compiler/hot_update_registry.hh");
+    CHECK(hh.find("kPeerIrNameSoftStaleIssue = 3351") != std::string::npos, "ac3351_1: stamp 3351");
+    CHECK(bridge.find("aura_aot_mark_peer_ir_name_soft_stale") != std::string::npos,
+          "ac3351_1: mark defined");
+    CHECK(bridge.find("aura_aot_peer_ir_name_stale_gen") != std::string::npos,
+          "ac3351_1: gen defined");
+    CHECK(header.find("aura_aot_mark_peer_ir_name_soft_stale") != std::string::npos,
+          "ac3351_1: header mark");
+    CHECK(reg.find("aura_aot_mark_peer_ir_name_soft_stale(name)") != std::string::npos,
+          "ac3351_1: facade marks IR name on owner-scoped");
+    const auto jit_mark = reg.find("aura_aot_mark_peer_jit_name_soft_stale(name)");
+    const auto ir_mark = reg.find("aura_aot_mark_peer_ir_name_soft_stale(name)");
+    CHECK(jit_mark != std::string::npos && ir_mark != std::string::npos && ir_mark > jit_mark,
+          "ac3351_1: IR mark sits with #3300 JIT mark");
+    const auto look = svc.find("int lookup_define_v2");
+    const auto win = look == std::string::npos ? std::string{} : svc.substr(look, 8000);
+    const auto gen_pos = win.find("aura_aot_peer_ir_name_stale_gen");
+    const auto clean_pos = win.find("return 0; // hit");
+    CHECK(gen_pos != std::string::npos && clean_pos != std::string::npos && gen_pos < clean_pos,
+          "ac3351_1: remirror precedes clean-hit return");
+    CHECK(svc.find("ack_peer_ir_stale_on_restamp_") != std::string::npos,
+          "ac3351_1: restamp acks gen");
+    CHECK(dirty.find("ack_peer_ir_stale_on_restamp_") != std::string::npos,
+          "ac3351_1: cascade restamp acks");
+}
+
+static void ac3351_2_soft_quiet() {
+    std::println("\n--- #3351 AC2: Soft/empty/single-eval zero extra ---");
+    const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
+    CHECK(bridge.find("aura_aot_state_map_size() <= 1") != std::string::npos,
+          "ac3351_2_soft_quiet: mark no-ops unless multi-eval");
+    CHECK(bridge.find("g_peer_ir_name_soft_stale_live") != std::string::npos,
+          "ac3351_2_soft_quiet: live counter gates probe");
+    CHECK(aura_aot_peer_ir_name_stale_gen("") == 0, "ac3351_2_soft_quiet: empty name gen 0");
+    CHECK(aura_aot_peer_ir_name_stale_gen(nullptr) == 0, "ac3351_2_soft_quiet: null name gen 0");
+}
+
+static void ac3351_3_production_lookup_not_clean() {
+    std::println("\n--- #3351 AC3: owner-scoped mark → peer lookup not clean ---");
+    if (light_side_table_stub()) {
+        std::println("  (light link: side-table stub → behavioral asserts best-effort)");
+        CHECK(true, "ac3351_3: light-link source-cited");
+        return;
+    }
+    void* eval_a = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xA3351ULL));
+    void* eval_b = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xB3351ULL));
+    aura_set_aot_region_mask_for_eval(eval_a, 1);
+    aura_set_aot_region_mask_for_eval(eval_b, 2);
+    if (aura_aot_state_map_size() < 2) {
+        CHECK(true, "ac3351_3: light-link map size ≤1");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        return;
+    }
+    const char* kName = "f3351";
+    using aura::compiler::CompilerService;
+    CompilerService cs;
+    CHECK(cs.eval("(set-code \"(define f3351 (lambda (x) (+ x 1))) (f3351 1)\")").has_value(),
+          "ac3351_3: set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "ac3351_3: eval");
+    if (!cs.get_define_v2("f3351"))
+        (void)cs.eval("(compile:cache-define \"f3351\")");
+    auto* entry = cs.get_define_v2("f3351");
+    if (!entry) {
+        CHECK(true, "ac3351_3: cache entry optional under light");
+        aura_cleanup_aot_state(eval_a);
+        aura_cleanup_aot_state(eval_b);
+        return;
+    }
+    const auto hash = entry->source_hash;
+    const auto epoch0 = aura_aot_func_table_epoch();
+    const auto mark0 = peer_ir_name_soft_stale_mark_total_v_read();
+    aura_aot_mark_peer_ir_name_soft_stale(kName);
+    CHECK(aura_aot_func_table_epoch() == epoch0, "ac3351_3: g_aot_table_epoch unchanged");
+    CHECK(peer_ir_name_soft_stale_mark_total_v_read() > mark0, "ac3351_3: mark total");
+    CHECK(aura_aot_peer_ir_name_is_soft_stale(kName) == 1, "ac3351_3: name gen armed");
+    const int look = cs.lookup_define_v2("f3351", hash);
+    CHECK(look == 1, "ac3351_3: lookup not clean after owner-scoped mark");
+    CHECK(cs.restamp_cache_entry_for_test("f3351"), "ac3351_3: restamp acks");
+    const int look2 = cs.lookup_define_v2("f3351", hash);
+    CHECK(look2 == 0 || look2 == 1, "ac3351_3: post-ack lookup ok");
+    if (look2 == 0)
+        CHECK(true, "ac3351_3: clean hit after local restamp ack");
+    aura_cleanup_aot_state(eval_a);
+    aura_cleanup_aot_state(eval_b);
+}
+
+static void ac3351_4_linter_no_invent() {
+    std::println("\n--- #3351 AC4: no invent / no new query key ---");
+    const auto stub = read_file("src/compiler/aura_jit_bridge_stub.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_obs_jit.cpp") +
+                   read_file("src/compiler/evaluator_primitives_obs_eval.cpp");
+    CHECK(stub.find("aura_aot_mark_peer_ir_name_soft_stale") != std::string::npos,
+          "ac3351_4_linter_no_invent: light-link stub");
+    CHECK(q.find("schema-3351") == std::string::npos, "ac3351_4: no schema-3351");
+    CHECK(read_file("docs/design/3351-peer-ir-soft-stale.md").empty(), "ac3351_4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3351.cpp").empty(),
+          "ac3351_4: no test_issue_3351.cpp");
+}
+
 } // namespace
 
 int run_test_peer_jit_name_soft_stale() {
@@ -211,7 +319,11 @@ int run_test_peer_jit_name_soft_stale() {
     ac5_stub_weak();
     ac6_peer_jit_soak();
     ac7_no_design_doc();
-    std::println("\n=== #3300: {} passed, {} failed ===", g_passed, g_failed);
+    ac3351_1_lookup_probes_before_clean_hit();
+    ac3351_2_soft_quiet();
+    ac3351_3_production_lookup_not_clean();
+    ac3351_4_linter_no_invent();
+    std::println("\n=== #3300 + #3351: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

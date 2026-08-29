@@ -82,6 +82,9 @@ inline constexpr int kHotUpdateCascadeReasonIssue = 3221;
 // define-correct under collisions. Soft never writes it.
 inline constexpr int kRelowerSuccessDefineCollisionIssue = 3229;
 inline constexpr std::size_t kRelowerSuccessDefineCap = 64;
+// Issue #3351: owner-scoped peer IR-cache must not clean-hit after
+// residual_force / soft-stale. Name-level gen + per-entry ack.
+inline constexpr int kPeerIrNameSoftStaleIssue = 3351;
 
 // Define-id for the #3229 side set: prefer stable_func_id, else 32-bit
 // FNV of the name (never 0). Separates defines that collide on 6 bits.

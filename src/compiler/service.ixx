@@ -4373,6 +4373,10 @@ public:
         // lazy-rebuild from pre-abort IR (NodeIds vs restored AST).
         // Cleared on the next successful store_define_v2.
         bool abort_map_invalid = false;
+        // Issue #3351: last-acked peer IR soft-stale generation for this
+        // define (process-wide name gen from owner-scoped invalidate).
+        // lookup_define_v2 must not return clean while live gen > ack.
+        std::uint64_t peer_ir_stale_ack_ = 0;
 
         // Issue #196: per-block dirty bitmask helpers.
 
@@ -4985,6 +4989,16 @@ public:
         if (abort_force_rejects_clean_hit_(it->second, abort_gen1) ||
             (abort_gen1 != 0 && abort_gen0 != abort_gen1))
             return 1;
+        // Issue #3351: owner-scoped invalidate does not bump
+        // g_aot_table_epoch (#2841/#2951). Peer IR-cache can still look
+        // clean (dirty + stamps match). Last-look: name-level peer IR
+        // soft-stale generation. Empty table: one acquire (Soft /
+        // single-eval zero extra). Reuses should_relower_total.
+        const auto ir_stale_gen = aura_aot_peer_ir_name_stale_gen(name.c_str());
+        if (ir_stale_gen > it->second.peer_ir_stale_ack_) {
+            metrics_.should_relower_total.fetch_add(1, std::memory_order_relaxed);
+            return 1;
+        }
         // Issue #1915: clean hit with matching source_hash — no re-lower.
         metrics_.invalidate_early_exit_clean_total.fetch_add(1, std::memory_order_relaxed);
         return 0; // hit
@@ -5010,6 +5024,7 @@ public:
         entry.last_used = ++ir_cache_v2_access_clock_; // #1042
         // Issue #2033 / #2111 / #2183: unified restamp after successful store.
         restamp_cache_entry_live_(entry);
+        ack_peer_ir_stale_on_restamp_(entry, name);
         // Issue #3136: success-path bitmap coherence — stamp residual force
         // region for the just-restamped define so residual_force_mask()
         // shrinks for the covered region (under production + named residual
@@ -5329,6 +5344,12 @@ public:
             abort_force_generation_.load(std::memory_order_acquire);
         metrics_.cache_entry_version_stamp_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.cache_stamp_restamp_total.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    // Issue #3351: ack process-wide peer IR name gen on local restamp so
+    // this eval can clean-hit again without clearing other peers.
+    void ack_peer_ir_stale_on_restamp_(IRCacheEntry& entry, const std::string& name) noexcept {
+        entry.peer_ir_stale_ack_ = aura_aot_peer_ir_name_stale_gen(name.c_str());
     }
 
     // Issue #3258: gen==0 never-aborted lookup is one acquire. After the
@@ -6229,6 +6250,7 @@ public:
                 } else {
                     // Issue #2183 AC1: restamp after successful partial peel.
                     restamp_cache_entry_live_(it->second);
+                    ack_peer_ir_stale_on_restamp_(it->second, name);
                     // Issue #3136: success-path bitmap coherence (see 4968).
                     if (aura_production_defaults_active_probe() != 0) {
                         hot_update_registry().note_relower_success_coverage(
@@ -6418,6 +6440,7 @@ public:
                     } else {
                         // Issue #2183 AC1: restamp after successful per-fn partial.
                         restamp_cache_entry_live_(it->second);
+                        ack_peer_ir_stale_on_restamp_(it->second, name);
                         // Issue #3136: success-path bitmap coherence (see 4968).
                         if (aura_production_defaults_active_probe() != 0) {
                             hot_update_registry().note_relower_success_coverage(
@@ -7613,6 +7636,7 @@ public:
         if (it == ir_cache_v2_.end())
             return false;
         restamp_cache_entry_live_(it->second);
+        ack_peer_ir_stale_on_restamp_(it->second, name);
         // Issue #3136: success-path bitmap coherence (see store_ir_cache_v2).
         if (aura_production_defaults_active_probe() != 0) {
             hot_update_registry().note_relower_success_coverage(1ULL << (fnv1a_64(name) & 63));

@@ -207,6 +207,7 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
         if (n > 0) {
             if (auto it = ir_cache_v2_.find(name); it != ir_cache_v2_.end()) {
                 restamp_cache_entry_live_(it->second);
+                ack_peer_ir_stale_on_restamp_(it->second, name);
                 metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                 // Issue #3136: success-path bitmap coherence — root restamp
                 // (cascade-reemit path). Issue #3383: must use the SAME
@@ -229,6 +230,7 @@ void CompilerService::notify_hot_update_after_cascade_(const std::string& name,
                     continue;
                 if (auto it = ir_cache_v2_.find(d); it != ir_cache_v2_.end()) {
                     restamp_cache_entry_live_(it->second);
+                    ack_peer_ir_stale_on_restamp_(it->second, d);
                     metrics_.cache_stamp_aot_restamp_total.fetch_add(1, std::memory_order_relaxed);
                     // Issue #3136: success-path bitmap coherence — dependent
                     // restamp (cascade-reemit path, see root comment above).
