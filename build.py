@@ -2736,6 +2736,24 @@ def cmd_lint():
             "Issue #3435 relocate drop-tracking linter failed — run python3 scripts/coverage/checks/check_relocate_drop_tracking_3435.py"
         )
         return r
+    # Issue #3437: ~Evaluator must drop the per-Evaluator AgentScope
+    # (identity plane B) so a host that scope-spawns and destroys the
+    # Evaluator without orch:scope-join-all leaves no dangling-key
+    # scope (fiber / mailbox / reservation / observer leak; address
+    # recycling could inherit a foreign tree). ~AgentScope cancels +
+    # drains + releases; unconditional and idempotent with join-all
+    # drop-if-empty. Extends tests/orch/test_orch_scope.cpp (#81967);
+    # no docs/design/.
+    ssd3437_script = COVERAGE_CHECKS / "check_scope_session_drop_3437.py"
+    if not ssd3437_script.exists():
+        fail(f"missing {ssd3437_script}")
+        return 1
+    r = run([sys.executable, str(ssd3437_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3437 scope session drop linter failed — run python3 scripts/coverage/checks/check_scope_session_drop_3437.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.

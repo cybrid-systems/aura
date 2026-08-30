@@ -48,6 +48,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <new> // Issue #3437: placement-new CompilerService at a recycled address
 #include <print>
 #include <string>
 #include <string_view>
@@ -890,6 +891,70 @@ int run_test_orch_scope() {
 
         (void)cs2.eval(R"((orch:scope-cancel-all))");
         (void)cs2.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
+    }
+
+    // ── Issue #3437: ~Evaluator drops the session AgentScope (identity plane B) ──
+    {
+        std::println("\n--- #3437: Evaluator teardown drops the session scope ---");
+        const auto ctor_src = read_file("src/compiler/evaluator_ctor.cpp");
+        CHECK(ctor_src.find("Issue #3437") != std::string::npos,
+              "3437 AC1: evaluator_ctor cites #3437");
+        CHECK(ctor_src.find("drop_agent_scope(static_cast<void*>(this))") != std::string::npos,
+              "3437 AC1: cleanup_orch_agents drops the scope map slot");
+
+        // AC1: scope-spawn then destroy the Evaluator WITHOUT join-all —
+        // the map slot must be gone (no dangling-key scope leak).
+        reset_all();
+        void* ev_key = nullptr;
+        {
+            CompilerService cs3;
+            const auto ok = cs3.eval(
+                R"((let ((r (orch:scope-spawn \"leak-3437"))) (if (hash-ref r \"ok\") 1 0)))");
+            CHECK(ok && is_int(*ok) && as_int(*ok) == 1, "3437 AC1: scope-spawn ok (no join-all)");
+            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&cs3.evaluator()));
+            CHECK(scope != nullptr, "3437 AC1: scope exists before dtor");
+            CHECK(scope->size() >= 1, "3437 AC1: scope holds the live handle");
+            ev_key = static_cast<void*>(&cs3.evaluator());
+        } // ~CompilerService -> ~Evaluator -> cleanup_orch_agents -> drop
+        CHECK(aura::orch::find_agent_scope(ev_key) == nullptr,
+              "3437 AC1: ~Evaluator erased the scope map slot");
+
+        // AC2: an Evaluator at a RECYCLED address inherits nothing —
+        // placement-new two CompilerService objects over the same storage.
+        alignas(CompilerService) static unsigned char buf[sizeof(CompilerService)];
+        {
+            auto* cs_a = ::new (static_cast<void*>(buf)) CompilerService();
+            const auto ok_a = cs_a->eval(
+                R"((let ((r (orch:scope-spawn \"addr-a-3437"))) (if (hash-ref r \"ok\") 1 0)))");
+            CHECK(ok_a && is_int(*ok_a) && as_int(*ok_a) == 1, "3437 AC2: spawn at storage slot A");
+            CHECK(aura::orch::find_agent_scope(static_cast<void*>(&cs_a->evaluator())) != nullptr,
+                  "3437 AC2: slot A scope present");
+            cs_a->~CompilerService();
+        }
+        {
+            auto* cs_b = ::new (static_cast<void*>(buf)) CompilerService();
+            const void* key_b = static_cast<const void*>(&cs_b->evaluator());
+            CHECK(aura::orch::find_agent_scope(const_cast<void*>(key_b)) == nullptr,
+                  "3437 AC2: recycled address inherits no foreign scope");
+            const auto ok_b = cs_b->eval(
+                R"((let ((r (orch:scope-spawn \"addr-b-3437"))) (if (hash-ref r \"ok\") 1 0)))");
+            CHECK(ok_b && is_int(*ok_b) && as_int(*ok_b) == 1,
+                  "3437 AC2: fresh scope spawn at recycled address");
+            auto* scope_b = aura::orch::find_agent_scope(const_cast<void*>(key_b));
+            CHECK(scope_b != nullptr && scope_b->size() == 1,
+                  "3437 AC2: fresh scope starts empty (exactly the new handle)");
+            cs_b->~CompilerService();
+        }
+
+        // AC5/AC6: no test_issue_NNNN.cpp; no registry surface added.
+        CHECK(read_file("tests/orch/test_issue_3437.cpp").empty(),
+              "3437 AC5: no tests/orch/test_issue_3437.cpp");
+        CHECK(read_file("tests/issues/test_issue_3437.cpp").empty(),
+              "3437 AC5: no tests/issues/test_issue_3437.cpp");
+        CHECK(ctor_src.find("AgentRegistry") == std::string::npos,
+              "3437 AC6: teardown adds no AgentRegistry");
+
+        reset_all();
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
