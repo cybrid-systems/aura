@@ -1943,6 +1943,7 @@ int main() {
               "3413 AC6: no test_issue_3413.cpp per #81934 (extend existing test)");
 
         std::println("\n--- #3413 AC7: build.py wiring ---");
+        const auto build = read_file("build.py");
         CHECK(build.find("cmd_partial_reemit_success_coverage_3413_coverage") != std::string::npos,
               "3413 AC7: cmd_partial_reemit_success_coverage_3413_coverage in build.py");
         CHECK(build.find("check_partial_reemit_success_coverage_3413") != std::string::npos,

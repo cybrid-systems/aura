@@ -7584,6 +7584,18 @@ def _tool_available(name: str) -> bool:
     return shutil.which(name) is not None
 
 
+def _linker_binary_runs(name: str) -> bool:
+    """True if `name` is on PATH and can start (not a broken .so link)."""
+    path = shutil.which(name)
+    if path is None:
+        return False
+    try:
+        r = subprocess.run([path, "--version"], capture_output=True, timeout=5)
+        return r.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def _aura_test_env(extra: dict | None = None) -> dict:
     """Env for spawning `./build/aura` under CI / local harnesses.
 
@@ -7673,9 +7685,9 @@ def _select_fast_linker() -> str | None:
         return None
     # Prefer mold when it works; fall back to lld on GCC16/libatomic_asneeded
     # incompatibility (mold issue #1545 / Gentoo #968893).
-    if _tool_available("mold") and _fuse_ld_works("mold"):
+    if _tool_available("mold") and _linker_binary_runs("mold") and _fuse_ld_works("mold"):
         return "mold"
-    if _tool_available("ld.lld") and _fuse_ld_works("lld"):
+    if _tool_available("ld.lld") and _linker_binary_runs("ld.lld") and _fuse_ld_works("lld"):
         return "lld"
     if _tool_available("mold"):
         warn("mold present but cannot link with this toolchain; falling back")
@@ -7689,7 +7701,7 @@ def _phase(label: str, t0: float) -> None:
 
 
 def _cmake_configure_args() -> list[str]:
-    args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-dev"]
+    args = ["cmake", "-B", str(BUILD), "-G", "Ninja", "-Wno-author"]
     # CMake 4.4+ experimental gate for `import std` (must be set before
     # project()/toolchain detection). UUID from CMake binary (CxxImportStd).
     args.append("-DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=f35a9ac6-8463-4d38-8eec-5d6008153e7d")
@@ -21869,7 +21881,7 @@ def cmd_pgo_instrument():
             str(BUILD),
             "-G",
             "Ninja",
-            "-Wno-dev",
+            "-Wno-author",
             "-DCMAKE_CXX_FLAGS=-fprofile-instr-generate",
             "-DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-generate",
             "-DCMAKE_SHARED_LINKER_FLAGS=-fprofile-instr-generate",
@@ -21986,7 +21998,7 @@ def cmd_pgo_optimize():
             str(BUILD),
             "-G",
             "Ninja",
-            "-Wno-dev",
+            "-Wno-author",
             f"-DCMAKE_CXX_FLAGS=-fprofile-instr-use={profdata}",
             f"-DCMAKE_EXE_LINKER_FLAGS=-fprofile-instr-use={profdata}",
             f"-DCMAKE_SHARED_LINKER_FLAGS=-fprofile-instr-use={profdata}",
@@ -22140,7 +22152,7 @@ def cmd_coverage():
             str(COVERAGE_BUILD),
             "-G",
             "Ninja",
-            "-Wno-dev",
+            "-Wno-author",
             "-DCMAKE_BUILD_TYPE=RelWithDebInfo",
             "-DAURA_ENABLE_COVERAGE=ON",
         ]

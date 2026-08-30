@@ -32,15 +32,6 @@
 #include <string>
 #include <string_view>
 
-namespace aura::compiler::macro_exp {
-
-// Forward declaration for the helper (defined in macro_expansion.cpp,
-// exported from aura.compiler.macro_expansion module).
-inline void stamp_rest_param_hygiene(aura::ast::FlatAST& target, const aura::ast::FlatAST& source,
-                                     aura::ast::NodeId src_body_id, aura::ast::NodeId list_root);
-
-} // namespace aura::compiler::macro_exp
-
 namespace {
 
 using aura::test::g_failed;
