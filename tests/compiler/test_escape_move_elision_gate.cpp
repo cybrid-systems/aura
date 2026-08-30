@@ -1482,6 +1482,64 @@ static void ac3446_5_soft_no_new_key() {
           "3446 AC5: no test_issue_3446.cpp per #81934");
 }
 
+// ── Issue #3448: last==0 green face must drop on remount so Move/Drop
+// elision cannot ride a pre-remount stamp (residual of #3227/#2984).
+
+static void ac3448_1_last0_green_blocks_elision() {
+    std::println("\n--- #3448 AC1: production last==0 green remount blocks elision ---");
+    using namespace aura::compiler::typed_audit;
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    reset_rehydrate_miss_invalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(34481);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(rebind_linear_proof_after_root_migration(), "3448 AC1: last==0 green rebinds");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "3448 AC1: would_allow==0 after remount");
+    CHECK(!linear_move_drop_elision_ok(), "3448 AC1: elision blocked after last==0 remount");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3448_4_soft_no_schema() {
+    std::println("\n--- #3448 AC4: Soft last==0 green does not hard-drop; no schema ---");
+    using namespace aura::compiler::typed_audit;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    clear_type_linear_commit_proof_for_test();
+    stamp_type_linear_commit_proof(34484);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    set_last_proof_linear_root_count_for_test(0);
+    CHECK(!rebind_linear_proof_after_root_migration(), "3448 AC4: Soft no hard-drop");
+    CHECK(g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0,
+          "3448 AC4: Soft face stays");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    CHECK(mut.find("schema-3448") == std::string::npos, "3448 AC4: no new query key");
+    CHECK(tma.find("schema-3448") == std::string::npos, "3448 AC4: no schema-3448");
+    CHECK(read_file("docs/design/3448-linear-zero-root-green-face.md").empty(),
+          "3448 AC4: no docs/design/3448-*");
+    CHECK(read_file("tests/compiler/test_issue_3448.cpp").empty() &&
+              read_file("tests/issues/test_issue_3448.cpp").empty(),
+          "3448 AC4: no test_issue_3448.cpp");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1549,6 +1607,9 @@ int run_test_escape_move_elision_gate() {
     ac3446_3_interpreter_unchanged();
     ac3446_4_prologue_guardshape_kept();
     ac3446_5_soft_no_new_key();
+    std::println("\n=== Issue #3448: last==0 green face drops on remount ---");
+    ac3448_1_last0_green_blocks_elision();
+    ac3448_4_soft_no_schema();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

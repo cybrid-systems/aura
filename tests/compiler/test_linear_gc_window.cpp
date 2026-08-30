@@ -71,6 +71,8 @@ void ac1_source() {
     auto gc = read_file("src/compiler/evaluator_gc.cpp");
     CHECK(gc.find("rebind_linear_proof_after_root_migration") != std::string::npos,
           "3227: compact_sweep rebinds linear proof");
+    CHECK(gc.find("Issue #3448") != std::string::npos,
+          "3448: compact_sweep last==0 green face still drops");
 }
 
 void ac2_soft_dirty_epoch() {

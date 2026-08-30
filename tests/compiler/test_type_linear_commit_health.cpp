@@ -1252,6 +1252,133 @@ static void ac3227_4_source_and_linter() {
     CHECK(read_file("tests/issues/test_issue_3227.cpp").empty(), "3227 AC4: no tests/issues");
 }
 
+// ── Issue #3448: last==0 green face must drop on remount (#3227/#2984 residual)
+//   AC1: Production + green proof linear_root_count==0 + rebind → elision blocked
+//   AC2: last>0 path unchanged (#3227 count-match still drops face + gen)
+//   AC3: no green face + last==0 → still quiet (no extra collect)
+//   AC4: Soft/Off no new query schema; Soft does not hard-drop last==0 green
+
+static void ac3448_1_prod_last0_green_drops_face() {
+    std::println("\n--- #3448 AC1: production last==0 green face drops on remount ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    typed_audit::set_last_proof_linear_root_count_for_test(0);
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const auto chk0 = typed_audit::linear_compact_root_check_total_v_read();
+    const auto mis0 = typed_audit::linear_compact_root_mismatch_total_v_read();
+    const bool hit = typed_audit::rebind_linear_proof_after_root_migration();
+    CHECK(hit, "3448 AC1: production last==0 green rebinds");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() > gen0,
+          "3448 AC1: densify/steal invalidate_gen advanced");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "3448 AC1: would_allow dropped");
+    CHECK(typed_audit::g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0,
+          "3448 AC1: linear_ok dropped");
+    CHECK(!typed_audit::linear_fast_path_ok(), "3448 AC1: !linear_fast_path_ok");
+    CHECK(!typed_audit::linear_move_drop_elision_ok(), "3448 AC1: !Move/Drop elision");
+    CHECK(last_type_linear_proof_outcome_v_read() == typed_audit::kTypeLinearProofOutcomeReject,
+          "3448 AC1: outcome Reject");
+    CHECK(typed_audit::linear_compact_root_check_total_v_read() == chk0,
+          "3448 AC1: last==0 is not #2984 last!=0 collect");
+    CHECK(typed_audit::linear_compact_root_mismatch_total_v_read() == mis0,
+          "3448 AC1: last==0 is not #2984 count-mismatch");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+}
+
+static void ac3448_2_last_gt0_unchanged() {
+    std::println("\n--- #3448 AC2: last>0 path unchanged (#3227) ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = 0;
+    typed_audit::stamp_type_linear_commit_proof(1);
+    typed_audit::publish_type_linear_proof_outcome(typed_audit::kTypeLinearProofOutcomeStamped);
+    typed_audit::publish_last_proof_face(true, true);
+    typed_audit::set_last_proof_linear_root_count_for_test(3);
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    const bool hit = typed_audit::rebind_linear_proof_after_root_migration();
+    CHECK(hit, "3448 AC2: production last>0 still rebinds");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() > gen0,
+          "3448 AC2: invalidate_gen advanced");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0,
+          "3448 AC2: would_allow dropped");
+    CHECK(!typed_audit::linear_move_drop_elision_ok(), "3448 AC2: !Move/Drop elision");
+    typed_audit::g_linear_ir_fastpath_boundary_depth_override = -1;
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+}
+
+static void ac3448_3_no_face_last0_quiet() {
+    std::println("\n--- #3448 AC3: no green face + last==0 still quiet ---");
+    reset_for_test();
+    apply_production_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::publish_last_proof_face(false, false);
+    typed_audit::set_last_proof_linear_root_count_for_test(0);
+    const auto chk0 = typed_audit::linear_compact_root_check_total_v_read();
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(!typed_audit::rebind_linear_proof_after_root_migration(),
+          "3448 AC3: last==0 no face quiet");
+    CHECK(typed_audit::linear_compact_root_check_total_v_read() == chk0,
+          "3448 AC3: quiet no collect");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0,
+          "3448 AC3: quiet no gen bump");
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+}
+
+static void ac3448_4_soft_no_new_key() {
+    std::println("\n--- #3448 AC4: Soft last==0 green does not hard-drop; no schema ---");
+    reset_for_test();
+    apply_dev_audit_defaults();
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+    typed_audit::reset_rehydrate_miss_invalidate_for_test();
+    typed_audit::publish_last_proof_face(true, true);
+    typed_audit::set_last_proof_linear_root_count_for_test(0);
+    const auto gen0 = typed_audit::rehydrate_miss_invalidate_gen_v_read();
+    CHECK(!typed_audit::rebind_linear_proof_after_root_migration(),
+          "3448 AC4: Soft does not hard-drop last==0 green");
+    CHECK(typed_audit::g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0,
+          "3448 AC4: Soft face stays green");
+    CHECK(typed_audit::rehydrate_miss_invalidate_gen_v_read() == gen0,
+          "3448 AC4: Soft does not bump invalidate_gen");
+    typed_audit::reset_linear_compact_root_consistency_for_test();
+
+    const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto q = read_file("src/compiler/evaluator_primitives_query_reflect.cpp");
+    const auto t = read_file("tests/compiler/test_type_linear_commit_health.cpp");
+    const auto lint =
+        read_file("scripts/coverage/checks/check_linear_zero_root_green_face_drop_3448.py");
+    const auto build = read_file("build.py");
+    CHECK(tma.find("kLinearZeroRootGreenFaceDropIssue") != std::string::npos, "3448 AC4: stamp");
+    CHECK(tma.find("Issue #3448") != std::string::npos, "3448 AC4: helper cite");
+    CHECK(t.find("ac3448_1_prod_last0_green_drops_face") != std::string::npos, "3448 AC4: suite");
+    CHECK(!lint.empty() && lint.find("3448") != std::string::npos, "3448 AC4: linter");
+    CHECK(build.find("check_linear_zero_root_green_face_drop_3448") != std::string::npos,
+          "3448 AC4: build.py");
+    CHECK(tma.find("schema-3448") == std::string::npos, "3448 AC4: no schema-3448 in tma");
+    CHECK(mut.find("schema-3448") == std::string::npos, "3448 AC4: no new query key");
+    CHECK(q.find("schema-3448") == std::string::npos, "3448 AC4: no schema in query reflect");
+    CHECK(tma.find("g_3448_") == std::string::npos, "3448 AC4: no g_3448_*");
+    CHECK(read_file("docs/design/3448-linear-zero-root-green-face.md").empty(),
+          "3448 AC4: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3448.cpp").empty(), "3448 AC4: no invent");
+    CHECK(read_file("tests/issues/test_issue_3448.cpp").empty(), "3448 AC4: no tests/issues");
+}
+
 static void ac3030_health_schema() {
     std::println("\n--- #3030 AC: type-linear-commit-health abort-clear keys ---");
     CompilerService cs;
@@ -1431,6 +1558,11 @@ int run_test_type_linear_commit_health() {
     ac3227_2_soft_and_quiet();
     ac3227_3_densify_steal_unchanged();
     ac3227_4_source_and_linter();
+    std::println("\n=== Issue #3448: last==0 green face drops on remount ===");
+    ac3448_1_prod_last0_green_drops_face();
+    ac3448_2_last_gt0_unchanged();
+    ac3448_3_no_face_last0_quiet();
+    ac3448_4_soft_no_new_key();
     std::println("\n=== Issue #2995: OccurrenceCommitHealth on commit-health query ===");
     ac2995_3_recover_fail_keeps_reject();
     ac2995_6_health_query_keys();
