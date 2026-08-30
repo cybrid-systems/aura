@@ -54,9 +54,11 @@ using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::reset_capability_effects_for_test;
+using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::core::security_event::g_security_event_ring;
 using aura::core::security_event::SecurityEvent;
+using aura::core::security_event::SecurityEventKind;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -83,7 +85,7 @@ EffectProvenance make_test_prov(std::uint64_t mid) {
 
 } // namespace
 
-int main() {
+int run_test_grant_effect_wildcard_write_fence() {
     using namespace aura::core::capability;
     std::println("\n--- Issue #3362: wildcard-write fence for grant_effect_capability ---");
 
@@ -103,16 +105,16 @@ int main() {
     std::println(
         "\n--- AC1+AC2: wildcard-only cannot synthesize TA via grant_effect_capability ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
+        set_mode(SandboxMode::Restricted);
         // Reset and grant `*` (wildcard-only) to the tenant — no explicit TA.
-        g_capability_registry().reset_for_test();
+        reset_capability_effects_for_test();
         ev.grant_capability("*");
         // Verify wildcard-only state.
         auto& reg = g_capability_registry();
         std::lock_guard<std::mutex> lock(reg.mtx);
         check(reg.holds_wildcard_only_locked(tenant),
               "tenant holds wildcard-only (no explicit TA grant)");
-        std::uint16_t before_bits = reg.effects_for_locked(tenant);
+        std::uint16_t before_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         check((before_bits & kTA) == 0,
               "effects_for_locked has NO TA after wildcard-only (per #3144 strip)");
         const auto fence_before =
@@ -130,7 +132,7 @@ int main() {
 
         // Verify NO TA / MSE bits landed in by_tenant (registry write must
         // NOT happen on deny — AC2 string-fence-failure-doesn't-leave-Effect).
-        std::uint16_t after_bits = reg.effects_for_locked(tenant);
+        std::uint16_t after_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         check((after_bits & kTA) == 0, "AC2: no TA bit written to by_tenant after fence-deny");
         check((after_bits & kMSE) == 0, "AC2: no MSE bit written to by_tenant after fence-deny");
         check((after_bits & kMutate) == 0,
@@ -141,8 +143,8 @@ int main() {
         const auto cur = ring.seq.load(std::memory_order_acquire);
         bool found_reason = false;
         for (auto s = cur; s > 0 && s + 16 > cur && !found_reason; --s) {
-            const auto& slot = ring.events[s % ring.events.size()];
-            if (slot.kind != 0 /*EffectDeny*/)
+            const auto& slot = ring.ring[(s - 1) % ring.ring.size()];
+            if (slot.kind != SecurityEventKind::EffectDeny)
                 continue;
             const std::string_view r(slot.reason, strnlen(slot.reason, sizeof(slot.reason)));
             if (r == "grant-effect-needs-explicit-tenant-admin") {
@@ -154,20 +156,20 @@ int main() {
               "SE emit carries stable deny reason 'grant-effect-needs-explicit-tenant-admin'");
 
         // Reset sandbox for next AC.
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // ----- AC3: explicit TA still allows same-tenant high-risk grant -----
     std::println("\n--- AC3: explicit TA still writes high-risk bits ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Restricted);
+        reset_capability_effects_for_test();
         ev.grant_capability("tenant-admin"); // explicit TA via string path
         auto& reg = g_capability_registry();
         std::uint16_t before_bits;
         {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            before_bits = reg.effects_for_locked(tenant);
+            before_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((before_bits & kTA) != 0,
               "explicit tenant-admin grant yields TA bit in effects_for_locked");
@@ -184,19 +186,19 @@ int main() {
         std::uint16_t after_bits;
         {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            after_bits = reg.effects_for_locked(tenant);
+            after_bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((after_bits & kTA) != 0, "AC3: TA bit present after explicit-TA holder grants");
         check((after_bits & kMSE) != 0,
               "AC3: MSE bit present after explicit-TA holder grants TA|MSE");
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // ----- AC4: grant_macro_self_evo wildcard-only → deny -----
     std::println("\n--- AC4: grant_macro_self_evo wildcard-only → deny ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Restricted);
+        reset_capability_effects_for_test();
         ev.grant_capability("*");
         const auto deny_before =
             g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load();
@@ -212,18 +214,18 @@ int main() {
         std::uint16_t bits;
         {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            bits = reg.effects_for_locked(tenant);
+            bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((bits & kMSE) == 0,
               "AC4: no MSE bit added to tenant after wildcard-only macro-self-evo deny");
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // ----- AC5: Soft/Off — no extra cost, same-tenant self-grant unchanged -----
     std::println("\n--- AC5: Soft/Off — no fence cost, same-tenant self-grant proceeds ---");
     {
-        set_mode(EffectSandboxMode::Off);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Off);
+        reset_capability_effects_for_test();
         ev.grant_capability("*"); // wildcard-only
         const auto fence_before =
             g_capability_effect_metrics().capability_wildcard_write_fence_deny_total.load();
@@ -240,7 +242,7 @@ int main() {
         std::uint16_t bits;
         {
             std::lock_guard<std::mutex> lock(reg.mtx);
-            bits = reg.effects_for_locked(tenant);
+            bits = static_cast<std::uint16_t>(reg.effects_for_locked(tenant));
         }
         check((bits & kTA) != 0, "AC5: TA bit lands under Off mode (no fence cost)");
         check((bits & kMSE) != 0, "AC5: MSE bit lands under Off mode (no fence cost)");
@@ -249,8 +251,8 @@ int main() {
     // ----- AC6: mid=0 in Restricted → #3090 refuse (independent of #3362) -----
     std::println("\n--- AC6: mid=0 production grant refused per #3090 ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Restricted);
+        reset_capability_effects_for_test();
         ev.grant_capability("tenant-admin"); // explicit TA so #3362 fence passes
         const auto mid_refuse_before =
             g_capability_effect_metrics().capability_grant_mid_refused_total.load();
@@ -261,12 +263,12 @@ int main() {
             g_capability_effect_metrics().capability_grant_mid_refused_total.load();
         check(mid_refuse_after == mid_refuse_before + 1,
               "AC6: mid=0 production grant bumps capability_grant_mid_refused_total");
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // Final restore.
-    set_mode(EffectSandboxMode::Off);
-    g_capability_registry().reset_for_test();
+    set_mode(SandboxMode::Off);
+    reset_capability_effects_for_test();
 
     if (g_failed) {
         std::println("\nFAIL: {} passed / {} failed", g_passed, g_failed);
@@ -276,3 +278,9 @@ int main() {
                  g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_grant_effect_wildcard_write_fence();
+}
+#endif

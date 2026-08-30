@@ -799,7 +799,7 @@ static std::uint32_t lower_flat_expr(
                         {"reverse", PrimId::ListReverse},
                         {"pair?", PrimId::PairP},
                         {"null?", PrimId::NullP},
-                    };
+                };
                 // Hash operations: emit inline opcodes (avoid PrimCall dispatch).
                 // Issue #2569: (hash-ref h k default) has 4 children but must NOT
                 // share the MakePair packing used by (hash-set! h k v) — that

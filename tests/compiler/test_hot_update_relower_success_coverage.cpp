@@ -367,3 +367,9 @@ int run_test_hot_update_relower_success_coverage() {
     std::println("\n=== Issue #3383 + #3229 AC tests done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_hot_update_relower_success_coverage();
+}
+#endif

@@ -12,6 +12,9 @@ include(${CMAKE_SOURCE_DIR}/cmake/AuraTest.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraModules.cmake)
 include(${CMAKE_SOURCE_DIR}/cmake/AuraIssueBundles.cmake)
 
+# aarch64 PIE + C++-module inlines that touch SHARED-lib globals need -fPIC.
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 
 # P0: evaluator implementation partitions (same module: aura.compiler.evaluator).
 set(AURA_EVALUATOR_SOURCE_FILES
@@ -4229,6 +4232,7 @@ add_dependencies(all_test_issue_targets test_linear_cross_closure)
 # closes the I6 residual where the dirty-root walk was deferred to Guard exit.
 # src-aligned with src/compiler/typed_mutation_audit.h (per #81934 constraint).
 aura_add_issue_test(test_linear_densify_immediate_revalidate)
+aura_issue_test_link_light(test_linear_densify_immediate_revalidate)
 add_dependencies(all_test_issue_targets test_linear_densify_immediate_revalidate)
 
 

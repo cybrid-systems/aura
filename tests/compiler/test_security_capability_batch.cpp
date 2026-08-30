@@ -68,13 +68,15 @@ extern int run_test_capability_effect_stats_snapshot();
 extern int run_test_capability_registry_snapshot();
 extern int run_test_capability_single_use_consume();
 extern int run_test_restricted_unset_principal();
+extern int run_test_check_and_record_wildcard_strip();
+extern int run_test_grant_effect_wildcard_write_fence();
 
 int main() {
     using aura::test::g_failed;
     using aura::test::g_passed;
     int members_failed = 0;
     int members_passed = 0;
-    std::println("=== test_security_capability_batch (34 members) ===");
+    std::println("=== test_security_capability_batch (36 members) ===");
 
     std::println("\n──── test_audit_mid_fallback_slo ────");
     reset_member_face();
@@ -407,6 +409,32 @@ int main() {
     } else {
         ++members_passed;
         std::println("OK member test_restricted_unset_principal ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_check_and_record_wildcard_strip ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_check_and_record_wildcard_strip() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_check_and_record_wildcard_strip ({}/{})", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_check_and_record_wildcard_strip ({} checks)", g_passed);
+    }
+
+    std::println("\n──── test_grant_effect_wildcard_write_fence ────");
+    reset_member_face();
+    g_passed = 0;
+    g_failed = 0;
+    if (run_test_grant_effect_wildcard_write_fence() != 0 || g_failed != 0) {
+        ++members_failed;
+        std::println("FAIL member test_grant_effect_wildcard_write_fence ({}/{})", g_passed,
+                     g_failed);
+    } else {
+        ++members_passed;
+        std::println("OK member test_grant_effect_wildcard_write_fence ({} checks)", g_passed);
     }
 
     std::println("\n──── test_typed_summary_full_gate ────");

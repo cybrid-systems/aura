@@ -198,12 +198,12 @@ inline void reset_for_test() noexcept {
 enum class StrategyProfile : std::uint32_t {
     Minimal = 1u << static_cast<unsigned>(HotPathScenario::TypedMutationInvariant),
     HotPathCore = (1u << static_cast<unsigned>(HotPathScenario::MutateStealGcOldClosure)) |
-                  (1u << static_cast<unsigned>(HotPathScenario::InvalidateJitDeopt)) |
-                  (1u << static_cast<unsigned>(HotPathScenario::FiberGuardShapeEpoch)),
+        (1u << static_cast<unsigned>(HotPathScenario::InvalidateJitDeopt)) |
+        (1u << static_cast<unsigned>(HotPathScenario::FiberGuardShapeEpoch)),
     AiSelfMod = (1u << static_cast<unsigned>(HotPathScenario::TypedMutationInvariant)) |
-                (1u << static_cast<unsigned>(HotPathScenario::TypePropInvariantCorr)) |
-                (1u << static_cast<unsigned>(HotPathScenario::AotHotUpdateAudit)) |
-                (1u << static_cast<unsigned>(HotPathScenario::SelfEvolutionLoop)),
+        (1u << static_cast<unsigned>(HotPathScenario::TypePropInvariantCorr)) |
+        (1u << static_cast<unsigned>(HotPathScenario::AotHotUpdateAudit)) |
+        (1u << static_cast<unsigned>(HotPathScenario::SelfEvolutionLoop)),
     Full = 0xFFu, // all scenarios in Count (low 8 bits)
 };
 

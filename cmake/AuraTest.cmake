@@ -39,6 +39,7 @@ endfunction()
 
 function(aura_test_compile_options TARGET)
     target_compile_options(${TARGET} PRIVATE
+        -fPIC
         -Wall -Wextra -Wpedantic -Werror
         -Wno-missing-field-initializers
         -Wno-unused-variable -Wno-unused-function

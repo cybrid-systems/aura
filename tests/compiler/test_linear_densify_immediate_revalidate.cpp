@@ -27,7 +27,6 @@
 
 import std;
 import aura.compiler.evaluator;
-import aura.compiler.observability;
 import aura.core.ast;
 
 namespace {
@@ -49,12 +48,14 @@ using aura::test::g_passed;
 // take the hard path; force depth > 0 via the linear_ir_fastpath_boundary_depth_override
 // test knob (mirrors #3238 wiring in evaluator_fiber_mutation.cpp).
 struct ScopedOverride {
-    int prev;
+    std::int32_t prev;
     explicit ScopedOverride(int v) noexcept
-        : prev(::aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override.exchange(
-              v)) {}
+        : prev(::aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override) {
+        ::aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override =
+            static_cast<std::int32_t>(v);
+    }
     ~ScopedOverride() noexcept {
-        ::aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override.store(prev);
+        ::aura::compiler::typed_audit::g_linear_ir_fastpath_boundary_depth_override = prev;
     }
 };
 
@@ -132,7 +133,7 @@ int main() {
             1, std::memory_order_relaxed);
         Evaluator ev{};
         CompilerMetrics metrics{};
-        ev.attach_compiler_metrics(&metrics);
+        ev.set_compiler_metrics(&metrics);
         const auto dirty_before = linear_fast_path_dirty_revalidate_total_v_read();
         const auto revalidate_before =
             metrics.linear_boundary_consistency_total.load(std::memory_order_relaxed);
@@ -147,7 +148,7 @@ int main() {
         // Cleanup.
         g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
             0, std::memory_order_relaxed);
-        ev.attach_compiler_metrics(nullptr);
+        ev.set_compiler_metrics(nullptr);
     }
 
     // --- AC4: soft path bumps observe counter, no dirty counter, no revalidate ---
@@ -166,7 +167,7 @@ int main() {
         const auto observe_before = linear_fast_path_force_revalidate_observe_total_v_read();
         Evaluator ev{};
         CompilerMetrics metrics{};
-        ev.attach_compiler_metrics(&metrics);
+        ev.set_compiler_metrics(&metrics);
         const auto revalidate_before =
             metrics.linear_boundary_consistency_total.load(std::memory_order_relaxed);
         const bool returned = note_densify_entry_under_live_mutation(&ev);
@@ -182,7 +183,7 @@ int main() {
         apply_production_audit_defaults();
         g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
             0, std::memory_order_relaxed);
-        ev.attach_compiler_metrics(nullptr);
+        ev.set_compiler_metrics(nullptr);
     }
 
     if (g_failed) {

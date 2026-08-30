@@ -44,8 +44,8 @@ import aura.compiler.ir_cache_pure;
 
 namespace {
 
-using aura::compiler::ir_cache_pure::should_partial_relower_impact_checked;
-using aura::compiler::ir_cache_pure::should_partial_relower_impact_checked_prod;
+using aura::compiler::should_partial_relower_impact_checked;
+using aura::compiler::should_partial_relower_impact_checked_prod;
 using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;

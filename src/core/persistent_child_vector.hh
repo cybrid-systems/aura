@@ -1016,7 +1016,7 @@ namespace detail {
     }
     template <typename C> constexpr bool safe_pcv_soa_full_shape() {
         return safe_pcv_soa_shape<C>() &&
-            requires(const C& c)
+            requires(const C & c)
         {
             {c.columnar_accessor()};
             {c.stable_shape_id()}->std::convertible_to<std::size_t>;
@@ -1033,7 +1033,7 @@ static_assert(detail::safe_pcv_soa_full_shape<PersistentChildVector<std::uint32_
 namespace detail {
     template <typename C> constexpr bool safe_pcv_child_columnar_shape() {
         return safe_pcv_soa_shape<C>() &&
-            requires(const C& c)
+            requires(const C & c)
         {
             {c.begin()};
             {c.end()};

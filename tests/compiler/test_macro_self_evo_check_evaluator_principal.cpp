@@ -29,6 +29,7 @@
 
 #include "test_harness.hpp"
 
+#include <cstring>
 #include <fstream>
 #include <print>
 #include <string>

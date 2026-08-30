@@ -61,6 +61,7 @@ using aura::core::capability::EffectSandboxMode;
 using aura::core::capability::g_capability_effect_metrics;
 using aura::core::capability::g_capability_registry;
 using aura::core::capability::reset_capability_effects_for_test;
+using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::test::g_failed;
 using aura::test::g_passed;
@@ -89,7 +90,7 @@ EffectProvenance make_test_prov() {
 
 } // namespace
 
-int main() {
+int run_test_check_and_record_wildcard_strip() {
     using namespace aura::core::capability;
     std::println("\n--- Issue #3363: check_and_record_effect wildcard strip uniform ---");
 
@@ -107,8 +108,8 @@ int main() {
     std::println(
         "\n--- AC1: wildcard-only + Restricted → TA/MSE deny (bit coverage via #3144 strip) ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Restricted);
+        reset_capability_effects_for_test();
         ev.grant_capability("*"); // wildcard-only, no explicit TA
         // Sanity: confirm wildcard-only state.
         const auto tenant = ev.capability_tenant_id();
@@ -135,15 +136,15 @@ int main() {
                                     /*sandbox_active=*/true);
         check(!mse_ok, "AC1: require_effect(MacroSelfEvo) DENIED for wildcard-only holder");
 
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // ----- AC2: wildcard-only + Restricted + Mutate → allow (Mutate NOT stripped) -----
     std::println(
         "\n--- AC2: wildcard-only + Restricted → Mutate allow (#3144 preserves Mutate) ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Restricted);
+        reset_capability_effects_for_test();
         ev.grant_capability("*");
         // Add an explicit Mutate grant (Mutate is NOT in the #3144 strip list,
         // so wildcard-only strip preserves Mutate bits if explicitly granted).
@@ -158,14 +159,14 @@ int main() {
                                     /*sandbox_active=*/true);
         check(mutate_ok, "AC2: require_effect(Mutate) ALLOWED for explicit-Mutate holder "
                          "(wildcard_only + Mutate bit)");
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // ----- AC3: no wildcard + no Mutate grant → Mutate deny (regression) -----
     std::println("\n--- AC3: no wildcard + no Mutate → Mutate deny (regression) ---");
     {
-        set_mode(EffectSandboxMode::Restricted);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Restricted);
+        reset_capability_effects_for_test();
         // No grants at all.
         const auto tenant = ev.capability_tenant_id();
         const auto prov = make_test_prov();
@@ -174,14 +175,14 @@ int main() {
                                     prov, tenant, "test-ac3-mutate", /*wildcard_ok=*/false,
                                     /*sandbox_active=*/true);
         check(!mutate_ok, "AC3: require_effect(Mutate) DENIED for empty-grants holder");
-        set_mode(EffectSandboxMode::Off);
+        set_mode(SandboxMode::Off);
     }
 
     // ----- AC4: Soft/Off — zero-cost short-circuit, no fence scan -----
     std::println("\n--- AC4: Soft/Off → zero-cost short-circuit ---");
     {
-        set_mode(EffectSandboxMode::Off);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Off);
+        reset_capability_effects_for_test();
         ev.grant_capability("*");
         const auto before_check = g_capability_effect_metrics().capability_check_total.load();
         const auto tenant = ev.capability_tenant_id();
@@ -202,8 +203,8 @@ int main() {
     // ----- AC4b: Soft/Off + wildcard_ok=false → same path (no fence scan) -----
     std::println("\n--- AC4b: Soft/Off + wildcard_ok=false → same path (no fence scan) ---");
     {
-        set_mode(EffectSandboxMode::Off);
-        g_capability_registry().reset_for_test();
+        set_mode(SandboxMode::Off);
+        reset_capability_effects_for_test();
         ev.grant_capability("*");
         const auto before_check = g_capability_effect_metrics().capability_check_total.load();
         const auto tenant = ev.capability_tenant_id();
@@ -216,8 +217,8 @@ int main() {
     }
 
     // ----- restore -----
-    set_mode(EffectSandboxMode::Off);
-    g_capability_registry().reset_for_test();
+    set_mode(SandboxMode::Off);
+    reset_capability_effects_for_test();
 
     if (g_failed) {
         std::println("\nFAIL: {} passed / {} failed", g_passed, g_failed);
@@ -227,3 +228,9 @@ int main() {
                  g_passed);
     return 0;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_check_and_record_wildcard_strip();
+}
+#endif
