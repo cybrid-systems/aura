@@ -2633,6 +2633,24 @@ def cmd_lint():
             "Issue #3334 reclaimed abandon linter failed — run python3 scripts/coverage/checks/check_reclaimed_abandon_3334.py"
         )
         return r
+    # Issue #3433: one cleanup policy for "join returned non-Ok and the
+    # body is still running or already marked reclaimed". join_agent now
+    # re-derives the local status from post-drain fiber liveness
+    # (mirrors join_agents per-handle derivation, #3050) so a
+    # Timeout/Cancelled join with a still-running body defers like
+    # Reclaimed (mailbox attached, reservation held) instead of the
+    # Done-path detach+release. Extends test_join_drain_reclaim.cpp
+    # (#81967); no docs/design/.
+    jcf3433_script = COVERAGE_CHECKS / "check_join_cleanup_fork_3433.py"
+    if not jcf3433_script.exists():
+        fail(f"missing {jcf3433_script}")
+        return 1
+    r = run([sys.executable, str(jcf3433_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3433 join cleanup fork linter failed — run python3 scripts/coverage/checks/check_join_cleanup_fork_3433.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.

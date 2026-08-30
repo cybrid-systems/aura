@@ -376,6 +376,266 @@ static void ac3334_5_source_and_linter() {
     CHECK(!docs.good(), "3334 AC5: no docs/design");
 }
 
+static void ac3433_1_timeout_live_defers_like_reclaimed() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3433 AC1: production Timeout + live body → Reclaimed-defer ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+
+    // No SchedRunner: workers not started, so the body never executes and
+    // the fiber deterministically stays !is_done — the tight non-yielding
+    // residual scenario the issue describes (same fixture pattern as
+    // #2397 AC1b). Production max_no_yield_ms must not be able to force
+    // the body to Done before the join derives the local status.
+    Scheduler sched(1);
+    aura::orch::AgentSpec spec;
+    spec.name = "3433-live";
+    spec.attach_mailbox = true;
+    spec.body = [] {
+        for (;;) {
+        }
+    };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "3433 AC1: spawn ok");
+    CHECK(!h.fiber->is_done(), "3433 AC1: body never ran (still live)");
+    const auto res0 = h.reserved_memory_bytes;
+    CHECK(res0 > 0, "3433 AC1: reservation recorded");
+    CHECK(h.mailbox != nullptr, "3433 AC1: mailbox attached");
+
+    const auto def0 =
+        g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 50; // short primary → Timeout (body never Done)
+    policy.drain_ms = 0;    // cancel only; body stays live
+    const auto jr = join_agent(h, policy);
+    CHECK(jr.status == JoinStatus::Reclaimed, "3433 AC1: Timeout + !is_done → derived Reclaimed");
+    CHECK(h.reclaimed_deferred_cleanup, "3433 AC1: Reclaimed-defer pending");
+    CHECK(h.mailbox != nullptr, "3433 AC1: mailbox still attached (no Done-path detach)");
+    CHECK(h.reserved_memory_bytes == res0, "3433 AC1: reservation still held");
+    if (aura::orch::production_reclaimed_must_wait()) {
+        CHECK(h.must_wait_reclaimed, "3433 AC1: production auto-wait Timeout → must_wait");
+    }
+    CHECK(g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(
+              std::memory_order_relaxed) == def0 + 1,
+          "3433 AC1: deferred-cleanup counter bumps (reuse, AC4)");
+
+    // Cleanup: mark the synthetic body Done so dtor completes deferred cleanup.
+    if (h.fiber)
+        h.fiber->set_state(FiberState::Done);
+    h.finish_reclaimed_cleanup_on_dtor();
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3433_2_ok_done_unchanged() {
+    std::println("\n--- #3433 AC2: join Ok + body Done → unchanged Done-path ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    aura::orch::AgentSpec spec;
+    spec.name = "3433-ok";
+    spec.attach_mailbox = true;
+    spec.body = [] { Fiber::yield(aura::serve::YieldReason::Explicit); };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "3433 AC2: spawn ok");
+    const auto jr = join_agent(h, JoinPolicy{.primary_ms = 5000, .drain_ms = 200});
+    CHECK(jr.status == JoinStatus::Ok, "3433 AC2: Ok join");
+    CHECK(h.reserved_memory_bytes == 0, "3433 AC2: Done-path releases reservation");
+    CHECK(!h.reclaimed_deferred_cleanup, "3433 AC2: no deferred flag on Ok");
+    CHECK(!h.must_wait_reclaimed, "3433 AC2: no must_wait on Ok");
+}
+
+static void ac3433_3_soft_no_new_wait() {
+    std::println("\n--- #3433 AC3: Soft / sandbox=off → local re-derive only, no wait ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    std::atomic<bool> stop_3433b{false};
+    aura::orch::AgentSpec spec;
+    spec.name = "3433-soft";
+    spec.attach_mailbox = true;
+    spec.body = [&] {
+        while (!stop_3433b.load(std::memory_order_acquire))
+            ;
+    };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "3433 AC3: spawn ok");
+    const auto wait0 = g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed);
+    const auto to0 =
+        g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 50;
+    policy.drain_ms = 0;
+    const auto jr = join_agent(h, policy);
+    // Soft still re-derives the local status (same cost as join_agents).
+    CHECK(jr.status == JoinStatus::Reclaimed, "3433 AC3: Soft local re-derive → Reclaimed");
+    CHECK(!h.wait_reclaimed_used, "3433 AC3: no auto-wait in Soft");
+    CHECK(!h.must_wait_reclaimed, "3433 AC3: Soft no must_wait");
+    CHECK(g_orch_module_stats.wait_reclaimed_total.load(std::memory_order_relaxed) == wait0,
+          "3433 AC3: wait_reclaimed_total NOT bumped");
+    CHECK(g_orch_module_stats.wait_reclaimed_timeout_total.load(std::memory_order_relaxed) == to0,
+          "3433 AC3: wait_reclaimed_timeout_total NOT bumped");
+    stop_3433b.store(true, std::memory_order_release);
+    if (h.fiber)
+        h.fiber->request_cancel();
+    for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    (void)wait_reclaimed_body(h, std::optional<std::uint64_t>{100});
+    h.finish_reclaimed_cleanup_on_dtor();
+}
+
+static void ac3433_4_batch_unified_and_held_flags() {
+    std::println("\n--- #3433 AC4: join_agents per-handle unified policy + held flags ---");
+    apply_dev_audit_defaults();
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    std::atomic<bool> stop_3433c{false};
+    aura::orch::AgentSpec spec_ok;
+    spec_ok.name = "3433-batch-ok";
+    spec_ok.attach_mailbox = true;
+    spec_ok.body = [] { Fiber::yield(aura::serve::YieldReason::Explicit); };
+    auto h_ok = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_ok));
+    aura::orch::AgentSpec spec_live;
+    spec_live.name = "3433-batch-live";
+    spec_live.attach_mailbox = true;
+    spec_live.body = [&] {
+        while (!stop_3433c.load(std::memory_order_acquire))
+            ;
+    };
+    auto h_live = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec_live));
+    CHECK(h_ok.ok && h_live.ok, "3433 AC4: both spawn ok");
+    // Let the Ok body exit before the batch join.
+    for (int i = 0; i < 100 && h_ok.fiber && !h_ok.fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    aura::orch::AgentHandle hs[2];
+    hs[0] = std::move(h_ok);
+    hs[1] = std::move(h_live);
+    const auto res_live0 = hs[1].reserved_memory_bytes;
+    const auto def0 =
+        g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 50;
+    policy.drain_ms = 0;
+    const auto jr = join_agents(std::span<aura::orch::AgentHandle>(hs, 2), policy);
+    CHECK(jr.status == JoinStatus::Timeout || jr.status == JoinStatus::Reclaimed,
+          "3433 AC4: aggregate non-Ok (worst case)");
+    CHECK(hs[0].reserved_memory_bytes == 0, "3433 AC4: Done sibling released (no pinning)");
+    CHECK(!hs[0].reclaimed_deferred_cleanup, "3433 AC4: Done sibling not deferred");
+    CHECK(hs[1].reserved_memory_bytes == res_live0,
+          "3433 AC4: live sibling holds reservation (like Reclaimed)");
+    CHECK(hs[1].reclaimed_deferred_cleanup,
+          "3433 AC4: live sibling deferred (same policy as Reclaimed)");
+    CHECK(g_orch_module_stats.join_reclaimed_deferred_cleanup_total.load(
+              std::memory_order_relaxed) >= def0 + 1,
+          "3433 AC4: deferred-cleanup counter bumped for live sibling");
+    stop_3433c.store(true, std::memory_order_release);
+    if (hs[1].fiber)
+        hs[1].fiber->request_cancel();
+    for (int i = 0; i < 100 && hs[1].fiber && !hs[1].fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    (void)wait_reclaimed_body(hs[1], std::optional<std::uint64_t>{100});
+    hs[1].finish_reclaimed_cleanup_on_dtor();
+}
+
+static void ac3433_5_abandon_attach_only() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    using aura::orch::AbandonReclaimedOpts;
+    using aura::orch::AbandonReclaimedOutcome;
+    std::println(
+        "\n--- #3433 AC5: abandon after Timeout-derived Reclaimed releases attach-only ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    // No SchedRunner (synthetic live body, same as AC1): body never runs,
+    // join Timeout → derived Reclaimed → production auto-wait Timeout →
+    // must_wait_reclaimed set, then abandon releases attach-only.
+    Scheduler sched(1);
+    aura::orch::AgentSpec spec;
+    spec.name = "3433-abandon";
+    spec.attach_mailbox = true;
+    spec.body = [] {
+        for (;;) {
+        }
+    };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "3433 AC5: spawn ok");
+    const auto ab0 = g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed);
+    JoinPolicy policy;
+    policy.primary_ms = 50;
+    policy.drain_ms = 0;
+    (void)join_agent(h, policy);
+    if (aura::orch::production_reclaimed_must_wait()) {
+        CHECK(h.must_wait_reclaimed, "3433 AC5: must_wait after production Timeout");
+        AbandonReclaimedOpts opts;
+        opts.max_second_wait_ms = 1;
+        auto ar = h.abandon_reclaimed(opts);
+        CHECK(ar.outcome == AbandonReclaimedOutcome::Abandoned,
+              "3433 AC5: body still live → Abandoned");
+        CHECK(h.reserved_memory_bytes == 0, "3433 AC5: reservation released");
+        CHECK(h.name.empty(), "3433 AC5: name cleared");
+        CHECK(!h.fiber->is_done(), "3433 AC5: body-stack untouched (#2661)");
+        CHECK(ar.body_stack_untouched, "3433 AC5: body_stack_untouched flag");
+        CHECK(g_orch_module_stats.reclaimed_abandon_total.load(std::memory_order_relaxed) ==
+                  ab0 + 1,
+              "3433 AC5: reclaimed_abandon_total bumps");
+        CHECK(!h.reclaimed_deferred_cleanup, "3433 AC5: deferred cleared after abandon");
+    } else {
+        CHECK(!h.must_wait_reclaimed, "3433 AC5: Soft no must_wait (skip)");
+    }
+    if (h.fiber)
+        h.fiber->set_state(FiberState::Done);
+    h.finish_reclaimed_cleanup_on_dtor();
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3433_6_source_and_linter() {
+    std::println("\n--- #3433 AC6: source-cite + linter + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto test = read_file("tests/orch/test_join_drain_reclaim.cpp");
+    const auto build = read_file("build.py");
+    CHECK(spawn.find("Issue #3433") != std::string::npos, "3433 AC6: agent_spawn.h cites #3433");
+    CHECK(spawn.find("h.fiber->is_reclaimed()") != std::string::npos,
+          "3433 AC6: liveness reclaim arm in join_agent");
+    CHECK(spawn.find("!h.fiber->is_done()") != std::string::npos,
+          "3433 AC6: liveness still-running arm in join_agent");
+    CHECK(spawn.find("local.status = serve::JoinStatus::Reclaimed") != std::string::npos,
+          "3433 AC6: derive present");
+    CHECK(spawn.find("a.fiber->is_reclaimed()") != std::string::npos,
+          "3433 AC6: join_agents per-handle arm");
+    CHECK(spawn.find("class AgentRegistry") == std::string::npos &&
+              spawn.find("struct AgentRegistry") == std::string::npos,
+          "3433 AC6: no process-global AgentRegistry");
+    CHECK(spawn.find("query:join-cleanup") == std::string::npos &&
+              spawn.find("query:reclaim-live") == std::string::npos,
+          "3433 AC6: no new query key (AC4)");
+    CHECK(build.find("check_join_cleanup_fork_3433") != std::string::npos,
+          "3433 AC6: build.py wires linter");
+    CHECK(test.find("ac3433_1_timeout_live_defers_like_reclaimed") != std::string::npos,
+          "3433 AC6: test cites AC1 fn");
+    std::ifstream invent("tests/orch/test_issue_3433.cpp");
+    if (!invent.good())
+        invent.open("../tests/orch/test_issue_3433.cpp");
+    CHECK(!invent.good(), "3433 AC6: no test_issue_3433.cpp per #81967");
+    std::ifstream docs("docs/design/3433-join-cleanup-fork.md");
+    if (!docs.good())
+        docs.open("../docs/design/3433-join-cleanup-fork.md");
+    CHECK(!docs.good(), "3433 AC6: no docs/design/3433-* per #1655");
+}
+
 } // namespace
 
 int run_test_join_drain_reclaim() {
@@ -3812,6 +4072,7 @@ int run_test_join_drain_reclaim() {
             apply_production_audit_defaults();
             set_mode(SandboxMode::Strict);
             Scheduler sched(1);
+            SchedRunner runner(sched);
             AgentScope scope(sched);
             AgentSpec spec;
             spec.name = "src-3273-ac2";
@@ -3942,6 +4203,14 @@ int run_test_join_drain_reclaim() {
     ac3334_3_soft_zero_cost();
     ac3334_4_cleaned_when_body_done();
     ac3334_5_source_and_linter();
+
+    std::println("\n=== Issue #3433: Timeout/Cancelled join defers like Reclaimed ===");
+    ac3433_1_timeout_live_defers_like_reclaimed();
+    ac3433_2_ok_done_unchanged();
+    ac3433_3_soft_no_new_wait();
+    ac3433_4_batch_unified_and_held_flags();
+    ac3433_5_abandon_attach_only();
+    ac3433_6_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);
