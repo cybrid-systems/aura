@@ -30,6 +30,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <print>
@@ -2063,9 +2064,18 @@ int main() {
         CHECK(pb.playbook_hint_min_dirty_reemit == 1, "3445 AC3: hint non-Idle while residual");
         CHECK(pb.action != ReloadRecoveryPlaybookAction::Idle,
               "3445 AC3: playbook action not Idle while residual");
+        // Force-on regardless of AURA_SANDBOX=off (CI) — env=1 beats
+        // sandbox/production resolve order in resolve_coverage_verify_min_dirty_enabled.
+        const char* cov_save = std::getenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        const std::string cov_prev = cov_save ? cov_save : "";
+        const char* sb_save = std::getenv("AURA_SANDBOX");
+        const std::string sb_prev = sb_save ? sb_save : "";
+        ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", "1", 1);
+        ::unsetenv("AURA_SANDBOX");
         ctr.production_defaults_active.store(1, std::memory_order_relaxed);
         reg.reset_coverage_verify_for_test();
         reg.reset_exhausted_min_dirty_retry_for_test();
+        reg.reset_reemit_boundary_handshake_for_test();
         reg.set_exhausted_min_dirty_retry_cap(3);
         CHECK(reg.residual_force_mask() == env_bit, "3445 AC3: live residual Env");
         const auto sched0 = reg.coverage_verify_scheduled_total();
@@ -2075,6 +2085,14 @@ int main() {
         CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
               "3445 AC3: uncovered Env retained after min-dirty seed");
         ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
+        if (cov_prev.empty())
+            ::unsetenv("AURA_COVERAGE_VERIFY_MIN_DIRTY");
+        else
+            ::setenv("AURA_COVERAGE_VERIFY_MIN_DIRTY", cov_prev.c_str(), 1);
+        if (sb_prev.empty())
+            ::unsetenv("AURA_SANDBOX");
+        else
+            ::setenv("AURA_SANDBOX", sb_prev.c_str(), 1);
 
         std::println("\n--- #3445 AC4: relower success must not zero a different reason bit ---");
         reg.on_reload_success();

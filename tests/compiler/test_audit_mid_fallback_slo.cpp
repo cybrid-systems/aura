@@ -155,6 +155,9 @@ int run_test_audit_mid_fallback_slo() {
     std::println("=== Issue #2594: audit mid-fallback SLO + degraded arm ===");
     CHECK(true, "issue stamp #2594");
     CompilerService cs;
+    // Soft bootstrap so later Full metrics queries are stamped (#2818/#3414).
+    CHECK(cs.eval("(set-code \"1\")").has_value(), "Soft set-code");
+    CHECK(cs.eval("(eval-current)").has_value(), "Soft eval-current");
     reset_audit_mid_fallback_slo_for_test();
 
     const auto initial_slo_bp = audit_mid_fallback_slo_bp();
