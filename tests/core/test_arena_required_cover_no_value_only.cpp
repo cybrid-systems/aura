@@ -45,12 +45,20 @@
 #include <vector>
 
 import std;
+import aura.core.arena;
 import aura.core.ast;
 
 namespace {
 
 using aura::test::g_failed;
 using aura::test::g_passed;
+
+struct Ac3456Tracked {
+    static inline int live = 0;
+    int v = 0;
+    Ac3456Tracked() { ++live; }
+    ~Ac3456Tracked() noexcept { --live; }
+};
 
 static std::string read_file(const char* path) {
     for (const auto& p :
@@ -512,6 +520,58 @@ static void ac3420_factory_refuse_surface() {
               std::string::npos,
           "3420: reuses uncovered metric");
     CHECK(arena.find("factory_uncovered_refused_") != std::string::npos, "3420: refuse helper");
+}
+
+// #3456: destroy indexes ptr→dtors_ slot (swap-remove). Linear begin()
+// walk is miss-only. reset still runs remaining dtors once.
+static void ac3456_destroy_dtor_index() {
+    std::println("\n--- #3456: destroy dtor_index_ swap-remove ---");
+    const auto arena_src = read_file("src/core/arena.ixx");
+    const auto build = read_file("build.py");
+    CHECK(arena_src.find("kDestroyDtorIndexIssue = 3456") != std::string::npos, "AC1: stamp");
+    CHECK(arena_src.find("dtor_index_") != std::string::npos, "AC1: dtor_index_");
+    CHECK(arena_src.find("swap_remove_dtor_at_") != std::string::npos, "AC1: swap-remove");
+    CHECK(arena_src.find("dtor_index_.find(ptr)") != std::string::npos, "AC1: happy-path find");
+    const auto dpos = arena_src.find("void destroy(T* ptr)");
+    CHECK(dpos != std::string::npos, "AC1: destroy present");
+    const auto dwin = dpos == std::string::npos ? std::string{} : arena_src.substr(dpos, 1800);
+    CHECK(dwin.find("for (auto it = dtors_.begin(); it != dtors_.end(); ++it)") ==
+              std::string::npos,
+          "AC1: destroy does not walk dtors_.begin() on the happy path");
+    CHECK(arena_src.find("rebuild_dtor_index_") != std::string::npos,
+          "AC3: relocate rebuilds index");
+    CHECK(arena_src.find("kFactoryRefuseUncoveredIssue = 3420") != std::string::npos,
+          "AC3: #3420 refuse path stamp stays");
+
+    Ac3456Tracked::live = 0;
+    aura::ast::ASTArena arena;
+    arena.destroy(static_cast<Ac3456Tracked*>(nullptr));
+    CHECK(Ac3456Tracked::live == 0, "AC2: destroy(nullptr) no-op");
+    std::vector<Ac3456Tracked*> temps;
+    temps.reserve(256);
+    for (int i = 0; i < 256; ++i)
+        temps.push_back(arena.create<Ac3456Tracked>());
+    CHECK(arena.live_count() == 256, "AC1: 256 temps tracked");
+    CHECK(Ac3456Tracked::live == 256, "AC2: 256 live dtors");
+    for (auto* p : temps)
+        arena.destroy(p);
+    CHECK(arena.live_count() == 0, "AC1: all temps unregistered");
+    CHECK(Ac3456Tracked::live == 0, "AC2: destroy ran each dtor once (no leak / no double)");
+    auto* a = arena.create<Ac3456Tracked>();
+    auto* b = arena.create<Ac3456Tracked>();
+    auto* c = arena.create<Ac3456Tracked>();
+    CHECK(Ac3456Tracked::live == 3, "AC2: three live");
+    arena.destroy(b);
+    CHECK(Ac3456Tracked::live == 2, "AC2: middle destroy once");
+    arena.reset();
+    CHECK(Ac3456Tracked::live == 0, "AC2: reset runs remaining dtors exactly once");
+    CHECK(arena.live_count() == 0, "AC2: reset cleared dtors_");
+    (void)a;
+    (void)c;
+    CHECK(read_file("tests/core/test_issue_3456.cpp").empty(), "AC5: no test_issue_3456.cpp");
+    CHECK(build.find("check_destroy_dtor_index_3456") != std::string::npos,
+          "AC5: build.py wires linter");
+    CHECK(arena_src.find("schema-3456") == std::string::npos, "AC4: no new query key");
 }
 
 // AC8: Soft / Off / render-hotpath single-load zero-cost contract preserved.
@@ -1085,6 +1145,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3404_arena_auto_arm_soft_fallback();
     ac3405_pure_wrap_dirty_entry();
     ac3454_production_pure_wrap_soa();
+    ac3456_destroy_dtor_index();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);

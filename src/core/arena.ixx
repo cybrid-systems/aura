@@ -652,6 +652,9 @@ inline constexpr int kFactoryDefaultCoverIssue = 3326;
 // proceed. Soft/Off/compat keep default create. Reuses
 // g_intermediate_create_uncovered_under_required_total (no new key).
 inline constexpr int kFactoryRefuseUncoveredIssue = 3420;
+// Issue #3456: destroy() indexes ptr→dtors_ slot (swap-remove). Linear
+// scan is miss-only belt. dtors_ stays the Moving size/align table.
+inline constexpr int kDestroyDtorIndexIssue = 3456;
 
 [[nodiscard]] inline std::uint64_t intermediate_create_with_cover_total_v_read() noexcept {
     return g_intermediate_create_with_cover_total.load(std::memory_order_relaxed);
@@ -1677,8 +1680,8 @@ public:
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
         // Issue #2166: record size/align for opt-in Moving densify remap.
-        dtors_.push_back(
-            {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
+        // Issue #3456: index ptr→slot so destroy is O(1) not O(live).
+        note_dtor_entry_(result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T));
         // Issue #2971 / #3053: auto-wire happens in allocate_raw_impl
         // (create / try_allocate / allocate_checked share that path).
         // Issue #3326: default cover is both-null (Soft/compat).
@@ -1702,8 +1705,7 @@ public:
             return nullptr;
         ++stats_.allocation_count;
         auto* result = std::construct_at(static_cast<T*>(raw), std::forward<Args>(args)...);
-        dtors_.push_back(
-            {result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T)});
+        note_dtor_entry_(result, +[](void* p) { static_cast<T*>(p)->~T(); }, sizeof(T), alignof(T));
         if (cover_slot != nullptr) {
             *cover_slot = result;
             if (aura::core::lifetime::general_object_pin_required_active() &&
@@ -1730,15 +1732,26 @@ public:
         if (!ptr)
             return;
         AURA_HOT_RECORD(); // Issue #2142
-        for (auto it = dtors_.begin(); it != dtors_.end(); ++it) {
-            if (it->ptr == ptr) {
+        // Issue #3456: ptr→slot index (happy path). Linear begin() walk
+        // only on miss (stale index / untracked).
+        if (auto idx_it = dtor_index_.find(ptr); idx_it != dtor_index_.end()) {
+            const std::size_t i = idx_it->second;
+            if (i < dtors_.size() && dtors_[i].ptr == ptr) {
                 ptr->~T();
-                dtors_.erase(it);
-                // Issue #1518: recycle small-pool slots for freelist relocate.
+                swap_remove_dtor_at_(i);
                 (void)small_pool_.recycle(ptr, sizeof(T));
                 erase_intermediate_create_(ptr);
                 return;
             }
+        }
+        for (std::size_t i = 0; i < dtors_.size(); ++i) {
+            if (dtors_[i].ptr != ptr)
+                continue;
+            ptr->~T();
+            swap_remove_dtor_at_(i);
+            (void)small_pool_.recycle(ptr, sizeof(T));
+            erase_intermediate_create_(ptr);
+            return;
         }
         // Not tracked (e.g. allocated by an upstream helper, or
         // ownership already moved). Best-effort dtor call.
@@ -2885,7 +2898,38 @@ private:
                 ++moved;
         }
         dtors_ = std::move(kept);
+        rebuild_dtor_index_(); // Issue #3456: pointers moved; rebuild ptr→slot
         return moved;
+    }
+
+    void note_dtor_entry_(void* p, void (*dtor)(void*), std::size_t sz, std::size_t al) noexcept {
+        dtors_.push_back({p, dtor, sz, al});
+        if (p)
+            dtor_index_[p] = dtors_.size() - 1;
+    }
+
+    void swap_remove_dtor_at_(std::size_t i) noexcept {
+        if (i >= dtors_.size())
+            return;
+        void* p = dtors_[i].ptr;
+        const std::size_t last = dtors_.size() - 1;
+        if (i != last) {
+            dtors_[i] = dtors_[last];
+            if (dtors_[i].ptr)
+                dtor_index_[dtors_[i].ptr] = i;
+        }
+        dtors_.pop_back();
+        if (p)
+            dtor_index_.erase(p);
+    }
+
+    void rebuild_dtor_index_() noexcept {
+        dtor_index_.clear();
+        dtor_index_.reserve(dtors_.size());
+        for (std::size_t i = 0; i < dtors_.size(); ++i) {
+            if (void* p = dtors_[i].ptr)
+                dtor_index_[p] = i;
+        }
     }
 
     void run_destructors() noexcept {
@@ -2896,6 +2940,7 @@ private:
             it->dtor(it->ptr);
         }
         dtors_.clear();
+        dtor_index_.clear(); // Issue #3456
         // Issue #2971: drop auto-wired inventory with the objects. Soft
         // path: vector is empty → no extra work beyond the empty check.
         if (!intermediate_creates_.empty()) {
@@ -3522,6 +3567,9 @@ public:
     std::atomic<std::size_t> root_remap_closure_capture_total_{0};
     std::atomic<std::size_t> root_remap_closure_capture_fail_total_{0};
     std::vector<DtorEntry> dtors_;
+    // Issue #3456: ptr → index in dtors_. destroy swap-removes; miss
+    // falls back to a one-shot linear walk. Rebuilt after Moving remap.
+    std::unordered_map<void*, std::size_t> dtor_index_;
     // Issue #2166: old→new create-object addresses from last Moving densify.
     // Cleared/rebuilt each Moving call; Soft/Force leave it empty.
     std::unordered_map<void*, void*> last_object_remap_;

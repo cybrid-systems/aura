@@ -3831,6 +3831,18 @@ def cmd_lint():
             "Issue #3420 factory-refuse uncovered linter failed — run python3 scripts/coverage/checks/check_factory_refuse_uncovered_3420.py"
         )
         return r
+    # Issue #3456: destroy indexes ptr→dtors_ slot (swap-remove). Linear
+    # begin() walk is miss-only. Extends required-cover + #3420 linter.
+    ddi3456_script = COVERAGE_CHECKS / "check_destroy_dtor_index_3456.py"
+    if not ddi3456_script.exists():
+        fail(f"missing {ddi3456_script}")
+        return 1
+    r = run([sys.executable, str(ddi3456_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3456 destroy dtor-index linter failed — run python3 scripts/coverage/checks/check_destroy_dtor_index_3456.py"
+        )
+        return r
     # Issue #3421: production apply_closure hard-refuses densify-stale
     # closures (#2569 restamp is not a remap). Soft / no-move keep
     # recover. Extends test_setcode_rebind_survive; linter after #3420.
@@ -15748,6 +15760,26 @@ def cmd_production_pure_wrap_soa_3454_coverage():
     return 0
 
 
+def cmd_destroy_dtor_index_3456_coverage():
+    """Issue #3456: ASTArena::destroy indexes ptr→dtors_ slot.
+
+    Residual of #1519: destroy still walked dtors_.begin(), so
+    Guard-scoped temps paid O(live objects). Swap-remove + dtor_index_.
+    Linear walk is miss-only. Moving size/align table stays.
+    """
+    print(f"{B}=== destroy dtor-index coverage (#3456) ==={N}")
+    script = COVERAGE_CHECKS / "check_destroy_dtor_index_3456.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("destroy dtor-index (#3456) coverage contract rows failed")
+        return 1
+    ok("destroy dtor-index (#3456) coverage clean")
+    return 0
+
+
 def cmd_recover_fail_clear_persist_3406_coverage():
     """Issue #3406: outermost persist recover-fail must clear persist buffer + bump mismatch.
 
@@ -23502,6 +23534,8 @@ def main():
         "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
         "production-pure-wrap-soa-3454": cmd_production_pure_wrap_soa_3454_coverage,
         "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
+        "destroy-dtor-index-3456": cmd_destroy_dtor_index_3456_coverage,
+        "destroy-dtor-index-3456-coverage": cmd_destroy_dtor_index_3456_coverage,
         "recover-fail-clear-persist-3406": cmd_recover_fail_clear_persist_3406_coverage,
         "recover-fail-clear-persist-3406-coverage": cmd_recover_fail_clear_persist_3406_coverage,
         "synthesize-set-walks-rhs-3407": cmd_synthesize_set_walks_rhs_3407_coverage,
