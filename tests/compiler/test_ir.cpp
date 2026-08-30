@@ -277,6 +277,54 @@ bool test_quote() {
     return true;
 }
 
+// Issue #3457: second eval_flat of the same LiteralString / :foo
+// SymId must not grow string_heap_ / keyword_table_.
+bool test_literal_string_sym_intern() {
+    aura::ast::ASTArena arena(4096);
+    auto a = arena.allocator();
+    aura::ast::FlatAST flat(a);
+    aura::ast::StringPool pool(a);
+    aura::compiler::Evaluator eval;
+
+    auto sid = pool.intern("hello-3457");
+    auto lit = flat.add_literalstring(sid);
+    auto r1 = eval.eval_flat(flat, pool, lit, eval.top_env());
+    if (!r1 || !aura::compiler::types::is_string(*r1)) {
+        std::println(std::cerr, "FAIL: first LiteralString intern expected string");
+        return false;
+    }
+    const auto heap0 = eval.string_heap().size();
+    auto r2 = eval.eval_flat(flat, pool, lit, eval.top_env());
+    if (!r2 || !aura::compiler::types::is_string(*r2)) {
+        std::println(std::cerr, "FAIL: second LiteralString intern expected string");
+        return false;
+    }
+    if (eval.string_heap().size() != heap0) {
+        std::println(std::cerr, "FAIL: second LiteralString intern grew string_heap_");
+        return false;
+    }
+
+    auto kw = pool.intern(":foo-3457");
+    auto var = flat.add_variable(kw);
+    auto k1 = eval.eval_flat(flat, pool, var, eval.top_env());
+    if (!k1) {
+        std::println(std::cerr, "FAIL: first :foo intern");
+        return false;
+    }
+    const auto ksz0 = eval.keyword_table().size();
+    auto k2 = eval.eval_flat(flat, pool, var, eval.top_env());
+    if (!k2) {
+        std::println(std::cerr, "FAIL: second :foo intern");
+        return false;
+    }
+    if (eval.keyword_table().size() != ksz0) {
+        std::println(std::cerr, "FAIL: second :foo intern grew keyword_table_");
+        return false;
+    }
+    std::println("LiteralString / :foo SymId intern: OK");
+    return true;
+}
+
 int main() {
     // Full is the cold-start default (#2818). IR execute refuses unstamped
     // depth-0 under Full (#3224/#3414), so `(+ 1 2)` becomes
@@ -289,6 +337,8 @@ int main() {
     evaluator.set_arena(&arena);
 
     if (!test_quote())
+        return 1;
+    if (!test_literal_string_sym_intern())
         return 1;
 
     // Test cases: (input, expected_string)

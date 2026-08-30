@@ -340,6 +340,8 @@ Evaluator::~Evaluator() {
     error_values_.clear();
     opaque_heap_.clear();
     string_heap_.clear();
+    string_intern_by_sym_.clear();
+    keyword_intern_by_sym_.clear();
     {
         // Issue #1720: strategies_ guarded for concurrent fiber access.
         std::unique_lock<std::shared_mutex> lk(strategies_mtx_);

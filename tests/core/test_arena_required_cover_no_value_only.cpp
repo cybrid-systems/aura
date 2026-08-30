@@ -1073,12 +1073,12 @@ static void ac3401_eval_flat_hot_path_intern() {
     // consults string_intern_; std::string construction only on miss.
     CHECK(eval_flat.find("// Issue #3401: happy-path string intern") != std::string::npos,
           "AC2: LiteralString arm carries #3401 happy-path intern comment");
+    CHECK(eval_flat.find("string_intern_by_sym_.get(v.sym_id)") != std::string::npos,
+          "AC2/#3457: LiteralString arm looks up by v.sym_id");
     CHECK(eval_flat.find("string_view raw_sv = p->resolve") != std::string::npos,
           "AC2: LiteralString arm reads pool resolve via std::string_view");
-    CHECK(eval_flat.find("string_intern_.find") != std::string::npos,
-          "AC2: LiteralString arm consults string_intern_ first");
-    CHECK(eval_flat.find("string_intern_.emplace") != std::string::npos,
-          "AC2: LiteralString arm records into string_intern_ on miss");
+    CHECK(eval_flat.find("string_intern_by_sym_.set(v.sym_id") != std::string::npos,
+          "AC2/#3457: LiteralString arm records by v.sym_id on miss");
     CHECK(eval_flat.find("std::string raw(raw_sv)") != std::string::npos,
           "AC2: LiteralString arm intern-once construction only on miss");
     // Evaluator::string_heap_ is a pmr::vector, not a pointer. `->`
@@ -1096,10 +1096,10 @@ static void ac3401_eval_flat_hot_path_intern() {
           "AC3: :foo keyword Variable arm carries #3401 O(1) intern comment");
     CHECK(eval_flat.find("string_view name = p->resolve") != std::string::npos,
           "AC3: :foo keyword Variable arm reads pool resolve via std::string_view");
-    CHECK(eval_flat.find("keyword_intern_.find") != std::string::npos,
-          "AC3: :foo keyword Variable arm consults keyword_intern_ first");
-    CHECK(eval_flat.find("keyword_intern_.emplace") != std::string::npos,
-          "AC3: :foo keyword Variable arm records into keyword_intern_ on miss");
+    CHECK(eval_flat.find("keyword_intern_by_sym_.get(v.sym_id)") != std::string::npos,
+          "AC3/#3457: :foo arm looks up by v.sym_id");
+    CHECK(eval_flat.find("keyword_intern_by_sym_.set(v.sym_id") != std::string::npos,
+          "AC3/#3457: :foo arm records by v.sym_id on miss");
 
     // AC4: eval_env.lookup call site uses std::string_view (no std::string
     // construction on the hot path).
@@ -1109,10 +1109,12 @@ static void ac3401_eval_flat_hot_path_intern() {
 
     // AC5: Evaluator class declares string_intern_ + keyword_intern_ near
     // short_str_cache_ / keyword_table_.
-    CHECK(evaluator_ixx.find("string_intern_;") != std::string::npos,
-          "AC5: Evaluator class declares string_intern_");
-    CHECK(evaluator_ixx.find("keyword_intern_;") != std::string::npos,
-          "AC5: Evaluator class declares keyword_intern_");
+    CHECK(evaluator_ixx.find("string_intern_by_sym_;") != std::string::npos,
+          "AC5/#3457: Evaluator class declares string_intern_by_sym_");
+    CHECK(evaluator_ixx.find("keyword_intern_by_sym_;") != std::string::npos,
+          "AC5/#3457: Evaluator class declares keyword_intern_by_sym_");
+    CHECK(evaluator_ixx.find("kEvalFlatSymInternIssue = 3457") != std::string::npos,
+          "3457: issue stamp");
 
     // AC6: no test_issue_3401.cpp, no docs/design/3401-*.md, no
     // classify_eval_value_tag reintroduction (#2616 invariant).

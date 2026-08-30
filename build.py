@@ -3843,6 +3843,18 @@ def cmd_lint():
             "Issue #3456 destroy dtor-index linter failed — run python3 scripts/coverage/checks/check_destroy_dtor_index_3456.py"
         )
         return r
+    # Issue #3457: eval_flat intern by SymId (dense), not hashed
+    # string_view. Extends #3401 linter + test_ir eval_flat fixture.
+    efs3457_script = COVERAGE_CHECKS / "check_eval_flat_sym_intern_3457.py"
+    if not efs3457_script.exists():
+        fail(f"missing {efs3457_script}")
+        return 1
+    r = run([sys.executable, str(efs3457_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3457 eval_flat SymId intern linter failed — run python3 scripts/coverage/checks/check_eval_flat_sym_intern_3457.py"
+        )
+        return r
     # Issue #3421: production apply_closure hard-refuses densify-stale
     # closures (#2569 restamp is not a remap). Soft / no-move keep
     # recover. Extends test_setcode_rebind_survive; linter after #3420.
@@ -15565,6 +15577,26 @@ def cmd_eval_flat_hot_path_3401_coverage():
     return 0
 
 
+def cmd_eval_flat_sym_intern_3457_coverage():
+    """Issue #3457: eval_flat intern keys by SymId, not hashed string_view.
+
+    Residual of #3401: intern maps hashed pool string_view. Hit is a
+    dense SymId probe. Miss still allocates the heap payload once.
+    Env::lookup stays string_view; #2616 classify ban stays.
+    """
+    print(f"{B}=== eval_flat SymId intern coverage (#3457) ==={N}")
+    script = COVERAGE_CHECKS / "check_eval_flat_sym_intern_3457.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("eval_flat SymId intern (#3457) coverage contract rows failed")
+        return 1
+    ok("eval_flat SymId intern (#3457) coverage clean")
+    return 0
+
+
 def cmd_dense_children_columns_3402_coverage():
     """Issue #3402: FlatAST dense children columns + columnar walks over contiguous NodeId.
 
@@ -23522,6 +23554,8 @@ def main():
         "shape-compact-no-global-bump-2908-coverage": cmd_shape_compact_no_global_bump_2908_coverage,
         "eval-flat-hot-path-3401": cmd_eval_flat_hot_path_3401_coverage,
         "eval-flat-hot-path-3401-coverage": cmd_eval_flat_hot_path_3401_coverage,
+        "eval-flat-sym-intern-3457": cmd_eval_flat_sym_intern_3457_coverage,
+        "eval-flat-sym-intern-3457-coverage": cmd_eval_flat_sym_intern_3457_coverage,
         "dense-children-columns-3402": cmd_dense_children_columns_3402_coverage,
         "dense-children-columns-3402-coverage": cmd_dense_children_columns_3402_coverage,
         "set-child-locked-dense-inplace-3453": cmd_set_child_locked_dense_inplace_3453_coverage,
