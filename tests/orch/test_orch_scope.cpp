@@ -805,6 +805,93 @@ int run_test_orch_scope() {
         (void)cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
     }
 
+    // ── #3444: orch:scope-child returns path; spawn targets the child ──
+    {
+        std::println("\n--- #3444: scope-child addressing + spawn on path ---");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto readme_src = read_file("src/orch/README.md");
+        CHECK(prim_src.find("Issue #3444") != std::string::npos, "3444 AC: prim cites #3444");
+        CHECK(prim_src.find("child-index") != std::string::npos, "3444 AC1: child-index on hash");
+        CHECK(prim_src.find("scope-path") != std::string::npos, "3444 AC1: scope-path on hash");
+        CHECK(prim_src.find("&child == &parent") != std::string::npos,
+              "3444 AC4: HardDeny stub check");
+        CHECK(readme_src.find("#3444") != std::string::npos, "3444 AC: README cites #3444");
+        CHECK(prim_src.find("class AgentRegistry") == std::string::npos,
+              "3444 AC5: no AgentRegistry");
+        CHECK(read_file("tests/orch/test_issue_3444.cpp").empty(),
+              "3444 AC6: no test_issue_3444.cpp");
+
+        reset_all();
+        CompilerService cs2;
+        const auto p0 = cs2.eval(
+            R"((let ((r (orch:scope-child "c0")))
+                 (if (and (hash-ref r "ok")
+                          (= (hash-ref r "child-index") 0)
+                          (string=? (hash-ref r "scope-path") "0")) 1 0)))");
+        CHECK(p0 && is_int(*p0) && as_int(*p0) == 1, "3444 AC1: first child hash path=0 index=0");
+        const auto p1 =
+            cs2.eval(R"((let ((r (orch:scope-child "c1"))) (hash-ref r "child-index")))");
+        CHECK(p1 && is_int(*p1) && as_int(*p1) == 1, "3444 AC1: second child-index=1");
+
+        auto* root = aura::orch::find_agent_scope(static_cast<void*>(&cs2.evaluator()));
+        CHECK(root != nullptr, "3444 AC2: per-Evaluator root exists");
+        const auto root_sz = root->size();
+        CHECK(root->child_count() >= 2, "3444 AC1: two C++ children");
+
+        const auto spawn_child = cs2.eval(
+            R"((let ((r (orch:scope-spawn "on-child-3444" :path "0")))
+                 (if (hash-ref r "ok") 1 0)))");
+        CHECK(spawn_child && is_int(*spawn_child) && as_int(*spawn_child) == 1,
+              "3444 AC2: scope-spawn :path 0 ok");
+        CHECK(root->size() == root_sz, "3444 AC2: root handles_ size unchanged");
+        CHECK(root->child_at(0).size() == 1, "3444 AC2: handle lives on child");
+
+        const auto dir_path = cs2.eval(
+            R"((let ((r (orch:agent-directory)))
+                 (let ((agents (hash-ref r "agents")))
+                   (if (string=? (hash-ref (vector-ref agents 0) "scope-path") "0") 1 0))))");
+        CHECK(dir_path && is_int(*dir_path) && as_int(*dir_path) == 1,
+              "3444 AC1: directory_snapshot scope-path matches");
+
+        const auto spawn_root = cs2.eval(
+            R"((let ((r (orch:scope-spawn "on-root-3444")))
+                 (if (hash-ref r "ok") 1 0)))");
+        CHECK(spawn_root && is_int(*spawn_root) && as_int(*spawn_root) == 1,
+              "3444 AC3: omit path → root spawn ok");
+        CHECK(root->size() == root_sz + 1, "3444 AC3: omit path grows root handles_");
+
+        const auto bad = cs2.eval(
+            R"((let ((r (orch:scope-spawn "nope" :path "99")))
+                 (if (hash-ref r "ok") 1 0)))");
+        CHECK(bad && is_int(*bad) && as_int(*bad) == 0, "3444 AC2: unknown path → ok=#f");
+
+        const auto watch_ok = cs2.eval(
+            R"((let ((r (orch:scope-watch :path "0" :policy 'report-only)))
+                 (if (hash-ref r "ok") 1 0)))");
+        CHECK(watch_ok && is_int(*watch_ok) && as_int(*watch_ok) == 1,
+              "3444 AC2: scope-watch :path 0");
+        CHECK(root->child_at(0).size() == 1, "3444 AC2: watch does not steal the child handle");
+        CHECK(root->resolve_scope_path("0") == &root->child_at(0),
+              "3444 AC2: resolve_scope_path 0 is the child");
+        CHECK(root->resolve_scope_path("0")->size() == 1,
+              "3444 AC2: resolved child still holds the spawn");
+        const auto bad_res = cs2.eval(
+            R"((let ((r (orch:scope-resolve "x" :path "99")))
+                 (if (hash-ref r "ok") 1 0)))");
+        CHECK(bad_res && is_int(*bad_res) && as_int(*bad_res) == 0,
+              "3444 AC2: scope-resolve unknown path → ok=#f");
+        const auto join_child = cs2.eval(
+            R"((let ((r (orch:scope-join-all :path "0" :timeout-ms 2000 :drain-ms 2000)))
+                 (if (hash-has-key? r "ok") 1 0)))");
+        CHECK(join_child && is_int(*join_child) && as_int(*join_child) == 1,
+              "3444 AC2: scope-join-all :path 0");
+        CHECK(aura::orch::find_agent_scope(static_cast<void*>(&cs2.evaluator())) != nullptr,
+              "3444 AC2: joining child does not drop the Evaluator root");
+
+        (void)cs2.eval(R"((orch:scope-cancel-all))");
+        (void)cs2.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
+    }
+
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

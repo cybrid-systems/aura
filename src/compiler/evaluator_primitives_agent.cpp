@@ -37,6 +37,7 @@ module;
 #include <algorithm>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <random>
 #include <thread>
 #include <unordered_map>
@@ -3738,6 +3739,52 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             return build_orch_hash(kv);
         });
 
+    // Issue #3444: optional :path / :child-index addressing. Omit →
+    // the per-Evaluator root (today). Invalid walk → nullptr. No extra
+    // atomic on the omit-path arm.
+    auto parse_scope_addr_kw = [&ev](std::string_view k, const EvalValue& val, std::string& path,
+                                     std::optional<std::int64_t>& child_index) -> bool {
+        if ((k == "path" || k == "scope-path" || k == "scope_path") && types::is_string(val)) {
+            path = heap_str_from(ev.string_heap_, val);
+            return true;
+        }
+        if ((k == "child-index" || k == "child_index") && types::is_int(val)) {
+            child_index = types::as_int(val);
+            return true;
+        }
+        return false;
+    };
+    auto resolve_scope_addr =
+        [](aura::orch::AgentScope& root, const std::string& path,
+           std::optional<std::int64_t> child_index) -> aura::orch::AgentScope* {
+        if (!path.empty())
+            return root.resolve_scope_path(path);
+        if (child_index.has_value()) {
+            if (*child_index < 0)
+                return nullptr;
+            return root.resolve_scope_path(std::to_string(*child_index));
+        }
+        return &root;
+    };
+    auto make_scope_addr_fail = [&ev, build_orch_hash](int schema, const char* status,
+                                                       const char* error) -> EvalValue {
+        const auto sidx = ev.string_heap_.size();
+        ev.string_heap_.push_back(status);
+        std::vector<std::pair<std::string, EvalValue>> kv = {
+            {"ok", make_bool(false)},
+            {"schema", make_int(schema)},
+            {"status", make_string(sidx)},
+            {"schema-3444", make_int(aura::orch::kScopeChildAddressIssue)},
+            {"issue-3444", make_int(aura::orch::kScopeChildAddressIssue)},
+        };
+        if (error && *error) {
+            const auto eidx = ev.string_heap_.size();
+            ev.string_heap_.push_back(error);
+            kv.push_back({"error", make_string(eidx)});
+        }
+        return build_orch_hash(kv);
+    };
+
     // Issue #2588: Aura language surface for AgentScope supervision.
     // Per-Evaluator scope (not process-static — see agent_scope.h
     // g_evaluator_agent_scopes map). Mirrors Aura semantics:
@@ -3756,8 +3803,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Body thunk is optional for MVP (empty body = supervised no-op);
     // closure-ID parsing mirrors orch:spawn-agent pattern.
     add("orch:scope-spawn",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_deny_class, parse_scope_addr_kw,
+         resolve_scope_addr, make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
@@ -3765,7 +3812,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ev.primitive_error_counter_ptr());
             }
             orch_sched.ensure(2);
-            auto& scope =
+            auto& root =
                 aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
 
             auto name = heap_str_from(ev.string_heap_, a[0]);
@@ -3781,11 +3828,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // Issue #3434: explicit tenant for this spawn. 0 = inherit
             // Evaluator capability tenant (fallback below).
             std::uint64_t tenant_id = 0;
+            // Issue #3444: optional :path / :child-index. Omit → root.
+            std::string addr_path;
+            std::optional<std::int64_t> addr_child;
             for (; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
-                    types::is_int(val)) {
+                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                    continue;
+                } else if ((k == "keepalive-interval-ms" || k == "keepalive_interval_ms") &&
+                           types::is_int(val)) {
                     keepalive_interval_ms =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "max-no-yield-ms" || k == "max_no_yield_ms") &&
@@ -3799,6 +3851,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 }
             }
+            auto* target = resolve_scope_addr(root, addr_path, addr_child);
+            if (!target) {
+                aura::orch::g_orch_module_stats.scope_spawn_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                aura::orch::g_orch_module_stats.spawn_failures.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+                return make_scope_addr_fail(2588, "invalid-path",
+                                            "orch:scope-spawn: unknown :path / :child-index");
+            }
+            auto& scope = *target;
 
             auto body = [&ev, cid]() {
                 if (!cid)
@@ -3906,6 +3968,16 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                          return make_string(s);
                      }()},
                 };
+                // Issue #3444: echo scope-path only when the caller
+                // addressed a child. Omit-path keeps today's hash.
+                if (!addr_path.empty() || addr_child.has_value()) {
+                    const std::string echoed =
+                        !addr_path.empty() ? addr_path : std::to_string(*addr_child);
+                    const auto pidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(echoed);
+                    kv.push_back({"scope-path", make_string(pidx)});
+                    kv.push_back({"schema-3444", make_int(aura::orch::kScopeChildAddressIssue)});
+                }
                 return build_orch_hash(kv);
             } catch (...) {
                 // [SILENCE-PRIM-#2588]: scope-spawn exceptions convert to
@@ -3939,58 +4011,99 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // Not a global registry — linter check_orch_mvp_scope.py stays green
     // (hierarchical scope bound to per-Evaluator scope map, no process-wide
     // discoverable agent map). Issue #2537 is the C++ primitive.
-    // Returns hash {ok, name, schema=2631, schema=2588, schema=2537, status}.
-    add("orch:scope-child", [&ev, build_orch_hash](std::span<const EvalValue> a) -> EvalValue {
-        if (a.empty() || !types::is_string(a[0])) {
-            return make_primitive_error(
-                ev.string_heap_, ev.error_values_,
-                "orch:scope-child: usage (orch:scope-child name [:kw val]…)",
-                ev.primitive_error_counter_ptr());
-        }
-        orch_sched.ensure(2);
-        auto& parent =
-            aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
-        auto name = heap_str_from(ev.string_heap_, a[0]);
-        try {
-            (void)parent.spawn_child();
-            const auto cidx = ev.string_heap_.size();
-            ev.string_heap_.push_back(name);
-            aura::orch::g_orch_module_stats.scope_child_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(true)},
-                {"name", make_string(cidx)},
-                {"schema", make_int(2631)},
-                {"schema-2588", make_int(2588)},
-                {"schema-2537", make_int(2537)},
-                {"status",
-                 [&] {
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back("ok");
-                     return make_string(s);
-                 }()},
-            };
-            return build_orch_hash(kv);
-        } catch (...) {
-            // [SILENCE-PRIM-#2631]: scope-child failures surface as ok=false hash
-            // (Agent-visible status); do not rethrow through prim dispatch.
-            // (Mergebot already shipped this annotation in origin/main;
-            // #2632 ship keeps the same wording rather than overwriting.)
-            aura::orch::g_orch_module_stats.scope_child_total.fetch_add(1,
-                                                                        std::memory_order_relaxed);
-            std::vector<std::pair<std::string, EvalValue>> kv = {
-                {"ok", make_bool(false)},
-                {"schema", make_int(2631)},
-                {"status",
-                 [&] {
-                     auto s = ev.string_heap_.size();
-                     ev.string_heap_.push_back("scope-child-failed");
-                     return make_string(s);
-                 }()},
-            };
-            return build_orch_hash(kv);
-        }
-    });
+    // Issue #3444: return child-index / scope-path (directory encoding)
+    // so later orch:scope-spawn / watch / join-all / scope-resolve can
+    // target the child. HardDeny stub and dangling scheduler → ok=#f.
+    // Returns hash {ok, name, child-index, scope-path, schema=2631, …}.
+    add("orch:scope-child",
+        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
+            if (a.empty() || !types::is_string(a[0])) {
+                return make_primitive_error(
+                    ev.string_heap_, ev.error_values_,
+                    "orch:scope-child: usage (orch:scope-child name [:path p] [:child-index n])",
+                    ev.primitive_error_counter_ptr());
+            }
+            orch_sched.ensure(2);
+            auto& root =
+                aura::orch::get_or_create_agent_scope(static_cast<void*>(&ev), *orch_sched.sched);
+            auto name = heap_str_from(ev.string_heap_, a[0]);
+            std::string addr_path;
+            std::optional<std::int64_t> addr_child;
+            for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
+                auto k = orch_keyword_key(a[i]);
+                (void)parse_scope_addr_kw(k, a[i + 1], addr_path, addr_child);
+            }
+            auto* parent_ptr = resolve_scope_addr(root, addr_path, addr_child);
+            if (!parent_ptr) {
+                return make_scope_addr_fail(2631, "invalid-path",
+                                            "orch:scope-child: unknown :path / :child-index");
+            }
+            auto& parent = *parent_ptr;
+            // Issue #3444: dead scheduler → structured fail (do not
+            // report ok=#t, and do not create a dangling child).
+            if (!parent.scheduler_alive()) {
+                return make_scope_addr_fail(2631, "scheduler-dangling",
+                                            "orch:scope-child: Scheduler destroyed (#2782/#3444)");
+            }
+            try {
+                const auto before = parent.child_count();
+                auto& child = parent.spawn_child();
+                // Issue #3444: HardDeny returns *this (parent stub).
+                if (&child == &parent) {
+                    return make_scope_addr_fail(
+                        2631, "hard-deny", "orch:scope-child: concurrent hard deny (#2946/#3444)");
+                }
+                const auto idx = parent.child_count() > before ? before : parent.child_count();
+                const std::string parent_path =
+                    !addr_path.empty() ? addr_path
+                                       : (addr_child.has_value() ? std::to_string(*addr_child)
+                                                                 : std::string("root"));
+                const auto spath = aura::orch::format_child_scope_path(parent_path, idx);
+                const auto cidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(name);
+                const auto pidx = ev.string_heap_.size();
+                ev.string_heap_.push_back(spath);
+                aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(true)},
+                    {"name", make_string(cidx)},
+                    {"child-index", make_int(static_cast<std::int64_t>(idx))},
+                    {"scope-path", make_string(pidx)},
+                    {"schema", make_int(2631)},
+                    {"schema-2588", make_int(2588)},
+                    {"schema-2537", make_int(2537)},
+                    {"schema-3444", make_int(aura::orch::kScopeChildAddressIssue)},
+                    {"issue-3444", make_int(aura::orch::kScopeChildAddressIssue)},
+                    {"status",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("ok");
+                         return make_string(s);
+                     }()},
+                };
+                return build_orch_hash(kv);
+            } catch (...) {
+                // [SILENCE-PRIM-#2631]: scope-child failures surface as ok=false hash
+                // (Agent-visible status); do not rethrow through prim dispatch.
+                // (Mergebot already shipped this annotation in origin/main;
+                // #2632 ship keeps the same wording rather than overwriting.)
+                aura::orch::g_orch_module_stats.scope_child_total.fetch_add(
+                    1, std::memory_order_relaxed);
+                std::vector<std::pair<std::string, EvalValue>> kv = {
+                    {"ok", make_bool(false)},
+                    {"schema", make_int(2631)},
+                    {"status",
+                     [&] {
+                         auto s = ev.string_heap_.size();
+                         ev.string_heap_.push_back("scope-child-failed");
+                         return make_string(s);
+                     }()},
+                };
+                return build_orch_hash(kv);
+            }
+        });
 
     // Issue #2588 AC1 + AC4: orch:scope-watch — scope-level liveness + optional
     // RestartN. Maps to AgentScope::watch_all(stall_timeout_ms, AgentFailurePolicy).
@@ -4000,10 +4113,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     //                restart-count, bp-degraded, bp-cancelled, bp-throttled,
     //                schema=2588, schema-2887}.
     add("orch:scope-watch",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             orch_sched.ensure(2);
-            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            if (!scope) {
+            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            if (!root) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
                     "orch:scope-watch: no scope (call orch:scope-spawn first)",
@@ -4011,6 +4125,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             }
             aura::orch::AgentFailurePolicy policy{};
             std::uint32_t stall_ms = 0;
+            std::string addr_path;
+            std::optional<std::int64_t> addr_child;
             auto parse_action =
                 [](std::string_view pol) -> std::optional<aura::orch::AgentFailureAction> {
                 if (pol == "cancel")
@@ -4026,7 +4142,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if ((k == "stall-ms" || k == "stall_ms") && types::is_int(val)) {
+                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                    continue;
+                } else if ((k == "stall-ms" || k == "stall_ms") && types::is_int(val)) {
                     stall_ms =
                         static_cast<std::uint32_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "policy" || k == "on-stall" || k == "on_stall") &&
@@ -4102,6 +4220,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     }
                 }
             }
+            auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
+            if (!scope) {
+                return make_scope_addr_fail(2588, "invalid-path",
+                                            "orch:scope-watch: unknown :path / :child-index");
+            }
             const auto before_restart =
                 aura::orch::g_orch_module_stats.agent_restart_total.load(std::memory_order_relaxed);
             const auto wr = scope->watch_all(stall_ms, policy);
@@ -4165,10 +4288,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // AgentHandle (must_wait_reclaimed / reservation-held /
     // reclaimed_deferred_cleanup) and on subsequent orch:scope-resolve.
     add("orch:scope-join-all",
-        [&ev, build_orch_hash, orch_keyword_key](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, parse_scope_addr_kw, resolve_scope_addr,
+         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             orch_sched.ensure(2);
-            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
-            if (!scope) {
+            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            if (!root) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
                     "orch:scope-join-all: no scope (call orch:scope-spawn first)",
@@ -4177,10 +4301,14 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::JoinPolicy policy{};
             policy.drain_ms = aura::orch::kDefaultJoinDrainMs;
             std::optional<aura::orch::AgentFailurePolicy> fail_pol;
+            std::string addr_path;
+            std::optional<std::int64_t> addr_child;
             for (std::size_t i = 0; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
+                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                    continue;
+                } else if ((k == "timeout-ms" || k == "timeout_ms") && types::is_int(val)) {
                     policy.primary_ms =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
                 } else if ((k == "drain-ms" || k == "drain_ms") && types::is_int(val)) {
@@ -4204,6 +4332,11 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                         p.on_join_fail = aura::orch::AgentFailureAction::ReportOnly;
                     fail_pol = p;
                 }
+            }
+            auto* scope = resolve_scope_addr(*root, addr_path, addr_child);
+            if (!scope) {
+                return make_scope_addr_fail(2588, "invalid-path",
+                                            "orch:scope-join-all: unknown :path / :child-index");
             }
             const auto jr = scope->join_all(policy, fail_pol);
             // Issue #3051: per-handle auto short-wait on the language
@@ -4245,7 +4378,9 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             // ~AgentScope semantics: after join_all, scope holds no live
             // handles (drop the per-Evaluator storage slot so the next
             // scope-spawn creates a fresh scope with empty handles_).
-            if (scope->empty())
+            // Issue #3444: only drop the Evaluator slot when joining the
+            // root. Joining a child must not discard the parent tree.
+            if (scope == root && scope->empty())
                 aura::orch::drop_agent_scope(static_cast<void*>(&ev));
             const char* st = "ok";
             switch (jr.status) {
@@ -4354,26 +4489,39 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // After scope slot dropped (empty session) → not-found.
     add("orch:scope-resolve",
         [&ev, build_orch_hash, orch_keyword_key, add_identity_plane,
-         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
+         add_reclaimed_pending_lifecycle, parse_scope_addr_kw, resolve_scope_addr,
+         make_scope_addr_fail](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:scope-resolve: usage (orch:scope-resolve name "
-                                            "[:include-descendants bool])",
+                                            "[:include-descendants bool] [:path p])",
                                             ev.primitive_error_counter_ptr());
             }
             const auto name = heap_str_from(ev.string_heap_, a[0]);
             bool include_descendants = true;
+            std::string addr_path;
+            std::optional<std::int64_t> addr_child;
             for (std::size_t i = 1; i + 1 < a.size(); i += 2) {
                 auto k = orch_keyword_key(a[i]);
                 auto& val = a[i + 1];
-                if ((k == "include-descendants" || k == "include_descendants") &&
-                    types::is_bool(val)) {
+                if (parse_scope_addr_kw(k, val, addr_path, addr_child)) {
+                    continue;
+                } else if ((k == "include-descendants" || k == "include_descendants") &&
+                           types::is_bool(val)) {
                     include_descendants = types::as_bool(val);
                 }
             }
             aura::orch::g_orch_module_stats.scope_resolve_total.fetch_add(
                 1, std::memory_order_relaxed);
-            auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            auto* root = aura::orch::find_agent_scope(static_cast<void*>(&ev));
+            aura::orch::AgentScope* scope = root;
+            if (root && (!addr_path.empty() || addr_child.has_value())) {
+                scope = resolve_scope_addr(*root, addr_path, addr_child);
+                if (!scope) {
+                    return make_scope_addr_fail(2926, "invalid-path",
+                                                "orch:scope-resolve: unknown :path / :child-index");
+                }
+            }
             aura::orch::AgentHandle* hp = scope ? scope->find(name, include_descendants) : nullptr;
             if (!hp) {
                 aura::orch::g_orch_module_stats.scope_resolve_miss_total.fetch_add(

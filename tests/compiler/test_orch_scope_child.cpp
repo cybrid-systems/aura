@@ -70,6 +70,12 @@ static void ac2631_spawn_child_hierarchy() {
           "AC1: prim uses get_or_create_agent_scope (per-Evaluator scope map)");
     CHECK(agent.find("scope_child_total.fetch_add") != std::string::npos,
           "AC1: prim bumps scope_child_total counter");
+    CHECK(agent.find("child-index") != std::string::npos,
+          "3444 AC1: orch:scope-child hash includes child-index");
+    CHECK(agent.find("scope-path") != std::string::npos,
+          "3444 AC1: orch:scope-child hash includes scope-path");
+    CHECK(agent.find("&child == &parent") != std::string::npos,
+          "3444 AC4: HardDeny stub is not reported ok");
 }
 
 // AC2: ~AgentScope / scope-join-all drains children then parent
