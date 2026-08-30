@@ -3034,6 +3034,24 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // metric; never frees body-stack owned objects. Ok / Timeout /
     // Cancelled path runs the full detach + reservation release as
     // before (idempotent with ~AgentHandle).
+    // Issue #3433: one cleanup policy for "join returned non-Ok and the
+    // body is still running or already marked reclaimed". Fiber::join
+    // may return Timeout / Cancelled while the body is a tight
+    // non-yielding loop; cancel_and_drain_fiber may also leave the
+    // fiber reclaimed (is_reclaimed()) after this call. Re-derive the
+    // local status from post-drain fiber liveness — mirroring the
+    // per-handle derivation join_agents already does (#3050) — so the
+    // same still-running body gets Reclaimed-defer (mailbox attached,
+    // reservation held) instead of the Done-path detach+release. A
+    // body already Done keeps its join status (Ok / Timeout), so a
+    // reclaimed-and-exited fiber still releases normally (#3245 AC2).
+    // Soft / sandbox=off / explicit wait_reclaimed_ms: no new wait
+    // (AC3) — only the local re-derive (same cost as join_agents pays).
+    serve::JoinResult local = jr;
+    if (h.fiber && (h.fiber->is_reclaimed() || local.status != serve::JoinStatus::Ok) &&
+        !h.fiber->is_done())
+        local.status = serve::JoinStatus::Reclaimed;
+    jr.status = local.status; // surface the derived policy (Aura hash + host)
     complete_agent_join_cleanup(h, jr);
     // Issue #2970: optional auto-wait after JoinStatus::Reclaimed —
     // hosts must not have to remember a second wait_reclaimed_body call
@@ -3154,16 +3172,20 @@ inline void cancel_and_drain_fibers(std::span<serve::Fiber* const> fibers,
     // so a single Reclaimed sibling cannot pin every reservation.
     // #2661: still-running reclaimed bodies keep the deferred path
     // (no body-stack free). Soft / unset wait: no extra wait (AC3).
+    // Issue #3433: one cleanup policy for "join returned non-Ok and the
+    // body is still running or already marked reclaimed" — mirrors the
+    // single-handle join_agent re-derive (#3433). A live (not Done) body
+    // under a non-Ok aggregate defers like Reclaimed (mailbox attached,
+    // reservation held) instead of the Done-path detach+release; only a
+    // Done body takes Ok. Same still-running body gets the same policy
+    // whether the batch join returned Reclaimed or Timeout.
     for (auto& a : agents) {
         serve::JoinResult local = jr;
-        if (a.fiber && a.fiber->is_reclaimed()) {
+        if (a.fiber && (a.fiber->is_reclaimed() || local.status != serve::JoinStatus::Ok) &&
+            !a.fiber->is_done()) {
             local.status = serve::JoinStatus::Reclaimed;
         } else if (a.fiber && a.fiber->is_done()) {
             local.status = serve::JoinStatus::Ok;
-        } else if (jr.status == serve::JoinStatus::Reclaimed) {
-            // Sibling was Reclaimed; this body is still live but not
-            // reclaimed — after cancel+drain use Timeout (Done-path).
-            local.status = serve::JoinStatus::Timeout;
         }
         if (local.status == serve::JoinStatus::Ok && a.fiber && jr.status != serve::JoinStatus::Ok)
             orch_post_join_provenance(a.fiber);
