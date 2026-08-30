@@ -27,6 +27,8 @@
 //     orch:scope-resolve live find.
 //   - directory (directory_snapshot / orch:agent-directory): read-only
 //     projection of the same scope tree. Not a second name table.
+//     Issue #3444: Aura orch:scope-child returns that scope_path so
+//     spawn / watch / join / resolve can target a child via :path.
 //   - HandoffToken / join_via_handoff: observation-only cross-Evaluator
 //     lifecycle close (#3148 / #3216). Not a fourth plane; no ownership
 //     move; no session-spanning workflow.
@@ -90,6 +92,19 @@ inline constexpr int kAgentScopeHierarchyCancelIssue = 2781;
 inline constexpr int kAgentScopeSchedulerLifetimeIssue = 2782;
 // Issue #2976: opt-in MutexGuarded concurrency (default SingleOwner).
 inline constexpr int kAgentScopeConcurrencyIssue = 2976;
+// Issue #3444: Aura addressing key for the C++ hierarchy (#2537 /
+// #2631). One per-Evaluator map; :path / :child-index walks child_at.
+// orch:scope-child returns scope-path matching directory_snapshot.
+inline constexpr int kScopeChildAddressIssue = 3444;
+
+// Issue #3444: directory_snapshot encodes root as "root" and children
+// as "0" / "0/1". Same rule for orch:scope-child's returned path.
+[[nodiscard]] inline std::string format_child_scope_path(std::string_view parent_path,
+                                                         std::size_t index) {
+    if (parent_path.empty() || parent_path == "root")
+        return std::to_string(index);
+    return std::string(parent_path) + "/" + std::to_string(index);
+}
 
 inline std::atomic<std::uint64_t> g_agent_scope_bp_seq{1};
 
@@ -459,6 +474,8 @@ public:
         ScopeEnterGuard g(this, "spawn_child");
         // Issue #2946: concurrent hard deny — do not push children_.
         // Return *this as fail-closed stub (caller must not treat as child).
+        // Issue #3444: Aura orch:scope-child detects the stub via
+        // `&child == &parent` and returns ok=#f (never ok=#t on *this).
         if (g.denied_hard())
             return *this;
         if (!sched_) {
@@ -502,6 +519,51 @@ public:
     [[nodiscard]] const AgentScope& child_at(std::size_t i) const {
         ScopeEnterGuard g(this, "child_at");
         return *children_.at(i);
+    }
+
+    // Issue #3444: walk "0" / "0/1" / "root" via child_at. Empty and
+    // "root" resolve to *this (omit-path = today's root). Invalid
+    // segment or HardDeny → nullptr. Not a second Evaluator map.
+    [[nodiscard]] AgentScope* resolve_scope_path(std::string_view path) noexcept {
+        ScopeEnterGuard g(this, "resolve_scope_path");
+        if (g.denied_hard())
+            return nullptr;
+        if (path.empty() || path == "root")
+            return this;
+        AgentScope* cur = this;
+        std::size_t pos = 0;
+        while (pos < path.size()) {
+            if (path[pos] == '/') {
+                ++pos;
+                continue;
+            }
+            const auto slash = path.find('/', pos);
+            const auto seg = path.substr(
+                pos, slash == std::string_view::npos ? std::string_view::npos : slash - pos);
+            pos = slash == std::string_view::npos ? path.size() : slash + 1;
+            if (seg.empty() || seg == "root")
+                continue;
+            std::size_t idx = 0;
+            bool digits = false;
+            for (char c : seg) {
+                if (c < '0' || c > '9')
+                    return nullptr;
+                digits = true;
+                const auto next = idx * 10u + static_cast<std::size_t>(c - '0');
+                if (next < idx)
+                    return nullptr;
+                idx = next;
+            }
+            if (!digits)
+                return nullptr;
+            if (idx >= cur->child_count())
+                return nullptr;
+            cur = &cur->child_at(idx);
+        }
+        return cur;
+    }
+    [[nodiscard]] const AgentScope* resolve_scope_path(std::string_view path) const noexcept {
+        return const_cast<AgentScope*>(this)->resolve_scope_path(path);
     }
 
     // Join all live handles. Mirrors join_agents (#2082/#2153/#3050):

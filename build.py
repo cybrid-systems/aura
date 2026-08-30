@@ -3855,6 +3855,18 @@ def cmd_lint():
             "Issue #3457 eval_flat SymId intern linter failed — run python3 scripts/coverage/checks/check_eval_flat_sym_intern_3457.py"
         )
         return r
+    # Issue #3444: orch:scope-child returns scope-path / child-index;
+    # spawn/watch/join/resolve accept :path via child_at. After #3457.
+    sca3444_script = COVERAGE_CHECKS / "check_scope_child_address_3444.py"
+    if not sca3444_script.exists():
+        fail(f"missing {sca3444_script}")
+        return 1
+    r = run([sys.executable, str(sca3444_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3444 scope-child address linter failed — run python3 scripts/coverage/checks/check_scope_child_address_3444.py"
+        )
+        return r
     # Issue #3421: production apply_closure hard-refuses densify-stale
     # closures (#2569 restamp is not a remap). Soft / no-move keep
     # recover. Extends test_setcode_rebind_survive; linter after #3420.
@@ -16174,6 +16186,26 @@ def cmd_scope_message_resolve_3442_coverage():
     return 0
 
 
+def cmd_scope_child_address_3444_coverage():
+    """Issue #3444: orch:scope-child returns path; spawn/watch/join/resolve accept it.
+
+    Residual of #2631: spawn_child reference discarded. Addressing key
+    reuses directory scope_path. One Evaluator map. HardDeny / dangling
+    → ok=#f. Extends test_agent_scope_hierarchy + test_orch_scope.
+    """
+    print(f"{B}=== scope_child_address coverage (#3444) ==={N}")
+    script = COVERAGE_CHECKS / "check_scope_child_address_3444.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("scope_child_address (#3444) coverage contract rows failed")
+        return 1
+    ok("scope_child_address (#3444) coverage clean")
+    return 0
+
+
 def cmd_jit_dual_fresh_c_bridge_3447_coverage():
     """Issue #3447: JIT dual-fresh observes facade C-bridge AND table epoch.
 
@@ -23586,6 +23618,8 @@ def main():
         "deopt-pending-fast-path-3441-coverage": cmd_deopt_pending_fast_path_3441_coverage,
         "scope-message-resolve-3442": cmd_scope_message_resolve_3442_coverage,
         "scope-message-resolve-3442-coverage": cmd_scope_message_resolve_3442_coverage,
+        "scope-child-address-3444": cmd_scope_child_address_3444_coverage,
+        "scope-child-address-3444-coverage": cmd_scope_child_address_3444_coverage,
         "ffi-jit-live-ptr-inventory-3443": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
         "ffi-jit-live-ptr-inventory-3443-coverage": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
         "partial-reemit-success-coverage-3413": cmd_partial_reemit_success_coverage_3413_coverage,

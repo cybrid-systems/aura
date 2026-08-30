@@ -647,9 +647,13 @@ Semantics:
    AgentFailurePolicy)`. `RestartN` re-spawns under the same `AgentSpec`
    (#2229 sibling). Counts: alive / stalled / cancelled / done / closed /
    restart-count (incremental from RestartN bumps on the same watch call).
-4. **Hierarchy optional later** — v1 is flat scope per Evaluator/session
-   (`orch:scope-child` deferred). `AgentScope::spawn_child` exists in C++
-   (#2537) but is not yet exposed to Aura.
+4. **Hierarchy addressing (#2537 / #2631 / #3444)** — `orch:scope-child`
+   returns `child-index` / `scope-path` matching `directory_snapshot`
+   (`"0"`, `"0/1"`). `orch:scope-spawn` / `watch` / `join-all` /
+   `scope-resolve` accept optional `:path` / `:child-index` resolved via
+   `child_at` on the same per-Evaluator root. Omit path = today's root.
+   HardDeny / dangling scheduler on `scope-child` → `ok=#f` (never the
+   parent stub). Not a second Evaluator map and not a global registry.
 5. **Not a global registry** — `scripts/coverage/checks/check_orch_mvp_scope.py` still
    rejects `AgentRegistry` / `global_agent_registry` / `conduct_parallel`.
    The map `g_evaluator_agent_scopes()` is storage only; the `AgentScope`

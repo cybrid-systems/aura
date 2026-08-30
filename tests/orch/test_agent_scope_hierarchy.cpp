@@ -13,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <cstddef>
+#include <cstdlib>
 #include <format>
 #include <fstream>
 #include <iterator>
@@ -23,6 +24,7 @@
 #include <thread>
 #include <vector>
 
+#include "compiler/typed_mutation_audit.h"
 #include "orch/agent_scope.h"
 #include "orch/agent_spawn.h"
 #include "serve/fiber.h"
@@ -36,6 +38,7 @@ using aura::orch::AgentHandle;
 using aura::orch::AgentScope;
 using aura::orch::AgentSpec;
 using aura::orch::kAgentScopeHierarchyIssue;
+using aura::orch::kScopeChildAddressIssue;
 using aura::serve::Fiber;
 using aura::serve::JoinStatus;
 using aura::serve::Scheduler;
@@ -407,6 +410,128 @@ static void ac2781_source_and_query() {
           "ac2781: no c->cancel_all() recursion (use unlocked)");
 }
 
+// ── Issue #3444: Aura addressing key (scope-path / child_at) ──────────
+static void ac3444_scope_path_address() {
+    std::println("\n--- #3444: scope-path / child_at addressing ---");
+    CHECK(kScopeChildAddressIssue == 3444, "3444 AC: issue stamp");
+
+    auto header = read_file("src/orch/agent_scope.h");
+    auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(header.find("resolve_scope_path") != std::string::npos,
+          "3444 AC1: resolve_scope_path on AgentScope");
+    CHECK(header.find("format_child_scope_path") != std::string::npos,
+          "3444 AC1: format_child_scope_path matches directory");
+    CHECK(prim.find("&child == &parent") != std::string::npos,
+          "3444 AC4: orch:scope-child detects HardDeny stub");
+    CHECK(prim.find("scheduler_alive") != std::string::npos,
+          "3444 AC4: orch:scope-child fails closed on dangling scheduler");
+    CHECK(prim.find("parse_scope_addr_kw") != std::string::npos,
+          "3444 AC2: spawn/watch/join/resolve parse :path / :child-index");
+    CHECK(prim.find("class AgentRegistry") == std::string::npos, "3444 AC5: no AgentRegistry");
+    CHECK(read_file("tests/orch/test_issue_3444.cpp").empty(), "3444 AC6: no test_issue_3444.cpp");
+    CHECK(read_file("docs/design/3444-scope-child-address.md").empty(),
+          "3444 AC6: no docs/design/3444-*");
+
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope root(sched);
+    auto& c0 = root.spawn_child();
+    auto& c1 = root.spawn_child();
+    auto& g0 = c0.spawn_child();
+    CHECK(root.resolve_scope_path("") == &root, "3444 AC3: empty path → root");
+    CHECK(root.resolve_scope_path("root") == &root, "3444 AC3: root path → root");
+    CHECK(root.resolve_scope_path("0") == &c0, "3444 AC1: path 0 → first child");
+    CHECK(root.resolve_scope_path("1") == &c1, "3444 AC1: path 1 → second child");
+    CHECK(root.resolve_scope_path("0/0") == &g0, "3444 AC1: path 0/0 → grandchild");
+    CHECK(root.resolve_scope_path("9") == nullptr, "3444 AC1: invalid index → nullptr");
+    CHECK(aura::orch::format_child_scope_path("root", 0) == "0", "3444 AC1: format root child → 0");
+    CHECK(aura::orch::format_child_scope_path("0", 1) == "0/1", "3444 AC1: format nested → 0/1");
+
+    const auto root_before = root.size();
+    AgentSpec spec;
+    spec.name = "child-only-3444";
+    spec.body = [] {};
+    spec.attach_mailbox = false;
+    auto* target = root.resolve_scope_path("0");
+    CHECK(target == &c0, "3444 AC2: resolve 0 is c0");
+    (void)target->spawn(std::move(spec));
+    CHECK(root.size() == root_before, "3444 AC2: root handles_ size unchanged");
+    CHECK(c0.size() == 1, "3444 AC2: handle lives on the child");
+    auto snap = root.directory_snapshot();
+    bool saw = false;
+    for (const auto& e : snap.entries) {
+        if (e.name == "child-only-3444" && e.scope_path == "0")
+            saw = true;
+    }
+    CHECK(saw, "3444 AC1: directory_snapshot scope-path=0 matches");
+    root.cancel_all();
+    (void)root.join_all(std::optional<std::uint64_t>{2000});
+}
+
+static void ac3444_hard_deny_stub() {
+    std::println("\n--- #3444 AC4: spawn_child HardDeny returns parent stub ---");
+    auto set_prod = [](bool on) {
+        aura::compiler::typed_audit::g_typed_mutation_audit_counters.production_defaults_active
+            .store(on ? 1u : 0u, std::memory_order_relaxed);
+    };
+    set_prod(true);
+    unsetenv("AURA_SANDBOX");
+    unsetenv("AURA_AGENT_SCOPE_CONCURRENT_ABORT");
+
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope scope(sched);
+    std::atomic<bool> stop_body{false};
+    AgentSpec hang;
+    hang.name = "3444-hang";
+    hang.body = [&] {
+        while (!stop_body.load(std::memory_order_acquire)) {
+            if (aura::serve::g_current_fiber && aura::serve::g_current_fiber->is_cancel_requested())
+                return;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    };
+    hang.attach_mailbox = false;
+    (void)scope.spawn(std::move(hang));
+    const auto children_before = scope.child_count();
+
+    std::atomic<int> ready{0};
+    std::atomic<bool> go{false};
+    std::atomic<bool> join_entered{false};
+    std::atomic<bool> got_stub{false};
+
+    std::thread t_join([&] {
+        ready.fetch_add(1, std::memory_order_acq_rel);
+        while (!go.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        join_entered.store(true, std::memory_order_release);
+        (void)scope.join_all(std::optional<std::uint64_t>{800});
+    });
+    std::thread t_child([&] {
+        ready.fetch_add(1, std::memory_order_acq_rel);
+        while (!go.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        while (!join_entered.load(std::memory_order_acquire))
+            std::this_thread::yield();
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        auto& child = scope.spawn_child();
+        got_stub.store(&child == &scope, std::memory_order_release);
+    });
+
+    while (ready.load(std::memory_order_acquire) < 2)
+        std::this_thread::yield();
+    go.store(true, std::memory_order_release);
+    t_child.join();
+    stop_body.store(true, std::memory_order_release);
+    scope.cancel_all();
+    t_join.join();
+
+    CHECK(got_stub.load(std::memory_order_relaxed),
+          "3444 AC4: concurrent spawn_child returns parent stub");
+    CHECK(scope.child_count() == children_before, "3444 AC4: HardDeny does not push children_");
+    set_prod(false);
+}
+
 } // namespace
 
 int run_test_agent_scope_hierarchy() {
@@ -423,8 +548,12 @@ int run_test_agent_scope_hierarchy() {
     ac2781_hierarchy_cancel_no_misuse();
     ac2781_stress_deep_cancel();
     ac2781_source_and_query();
+    std::println("\n=== Issue #3444: scope-path addressing ===");
+    ac3444_scope_path_address();
+    ac3444_hard_deny_stub();
 
-    std::println("\n=== #2537 + #2781 results: {} passed, {} failed ===", g_passed, g_failed);
+    std::println("\n=== #2537 + #2781 + #3444 results: {} passed, {} failed ===", g_passed,
+                 g_failed);
     return g_failed ? 1 : 0;
 }
 
