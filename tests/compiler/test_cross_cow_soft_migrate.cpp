@@ -390,6 +390,9 @@ static void ac3410_production_probe() {
     // Reuse existing CrossCowHardReject reason (no new metric field per AC5).
     CHECK(rt.find("cross_cow_note_hard_(CrossCowHardReject::Other)") != std::string::npos,
           "AC6: reuse CrossCowHardReject::Other reason");
+    CHECK(rt.find("cur_c_bridge") != std::string::npos &&
+              rt.find("Issue #3447") != std::string::npos,
+          "AC6: #3447 C-bridge miss visible to #3410 (not sole leave-native)");
     // Facade reference: production mark_define_dirty / invalidate_function
     // bumps bridge_epoch + defuse_version + aot table epoch in sequence.
     CHECK(rt.find("hard_invalidate_via_facade") != std::string::npos ||

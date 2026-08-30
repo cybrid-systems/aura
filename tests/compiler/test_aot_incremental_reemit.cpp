@@ -2145,6 +2145,97 @@ int main() {
         reg.reset_force_jit_repromote_for_test();
     }
 
+    // ── #3447: JIT dual-fresh must sample facade C-bridge AND table epoch.
+    // Owner-scoped hard invalidate freezes g_aot_table_epoch; C-bridge
+    // still advances. Dual-fresh used to stay green on the frozen table.
+    {
+        std::println("\n--- #3447 AC1: dual-fresh miss on either C-bridge or table ---");
+        const auto br = read_file("src/compiler/aura_jit_bridge.cpp");
+        CHECK(br.find("Issue #3447") != std::string::npos,
+              "3447 AC1: Issue #3447 in aura_is_jit_closure_fresh");
+        CHECK(br.find("aura_get_current_bridge_epoch()") != std::string::npos &&
+                  br.find("g_aot_table_epoch.load") != std::string::npos,
+              "3447 AC1: samples C-bridge AND table");
+        const auto t0 = aura_aot_func_table_epoch();
+        const auto c0 = aura_get_current_bridge_epoch();
+        const auto d0 = aura_get_aot_defuse_version();
+        if (d0 == 0)
+            aura_set_aot_defuse_version(10);
+        const auto defuse = aura_get_aot_defuse_version();
+        aura_aot_bump_func_table_epoch();
+        const auto t1 = aura_aot_func_table_epoch();
+        CHECK(t1 > t0, "3447 AC1: table epoch still moves (single-eval bump)");
+        aura_set_current_bridge_epoch(0);
+        CHECK(aura_is_jit_closure_fresh(t1, defuse),
+              "3447 AC1: matching table + C-bridge inactive is fresh");
+        CHECK(!aura_is_jit_closure_fresh(t1 - 1, defuse),
+              "3447 AC1: table miss is stale (C inactive)");
+        aura_set_current_bridge_epoch(t1);
+        CHECK(aura_is_jit_closure_fresh(t1, defuse),
+              "3447 AC1: matching C-bridge AND table is fresh");
+
+        std::println("\n--- #3447 AC2: owner-scoped table frozen, C-bridge miss ---");
+        aura_set_current_bridge_epoch(t1 + 9);
+        CHECK(aura_aot_func_table_epoch() == t1, "3447 AC2: table epoch unchanged");
+        CHECK(!aura_is_jit_closure_fresh(t1, defuse),
+              "3447 AC2: C-bridge miss even though table matches");
+        const auto c_remount = aura_get_current_bridge_epoch();
+        CHECK(aura_is_jit_closure_fresh(c_remount, defuse),
+              "3447 AC2: remount restamp to C-bridge is green (table frozen)");
+
+        std::println("\n--- #3447 AC3: no table force-bump; #3300 peer name kept ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        const auto hot = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(rt.find("aura_aot_peer_jit_name_is_soft_stale") != std::string::npos,
+              "3447 AC3: #3300 name gate kept");
+        CHECK(hot.find("g_aot_table_epoch") != std::string::npos &&
+                  hot.find("Issue #3300") != std::string::npos,
+              "3447 AC3: owner-scoped does not force-bump table (#3300/#2841)");
+
+        std::println("\n--- #3447 AC4: captured==0 + tracking stale; LEGACY_TRUST kept ---");
+        setenv("AURA_BRIDGE_EPOCH_LEGACY_TRUST", "0", 1);
+        aura_set_current_bridge_epoch(t1 + 9);
+        CHECK(!aura_is_jit_closure_fresh(0, defuse),
+              "3447 AC4: captured==0 + C-bridge tracking is stale (#2930)");
+        CHECK(br.find("AURA_BRIDGE_EPOCH_LEGACY_TRUST") != std::string::npos,
+              "3447 AC4: Soft LEGACY_TRUST path kept");
+
+        std::println("\n--- #3447 AC5: #3410 still fires; not the only leave-native path ---");
+        CHECK(rt.find("Issue #3410") != std::string::npos, "3447 AC5: #3410 probe kept");
+        CHECK(rt.find("cur_c_bridge") != std::string::npos,
+              "3447 AC5: #3410 samples C-bridge miss (not sole owner path)");
+        CHECK(br.find("bool aura_is_jit_closure_fresh") != std::string::npos,
+              "3447 AC5: dual-fresh is the other owner leave-native path");
+
+        std::println("\n--- #3447 AC6: non-duplicative vs #3410/#3412/#3377/#3300/#2841/#2951 ---");
+        CHECK(rt.find("Issue #3412") != std::string::npos ||
+                  read_file("src/compiler/aura_jit_runtime.cpp").find("Issue #3412") !=
+                      std::string::npos,
+              "3447 AC6: #3412 deopt_pending kept");
+        CHECK(hot.find("Issue #3377") != std::string::npos,
+              "3447 AC6: #3377 owner slot clear kept");
+        CHECK(hot.find("Issue #3300") != std::string::npos, "3447 AC6: #3300 peer name kept");
+        CHECK(br.find("#2841") != std::string::npos || hot.find("#2841") != std::string::npos,
+              "3447 AC6: #2841 no table force-bump kept");
+        CHECK(hot.find("#2951") != std::string::npos || br.find("#2951") != std::string::npos,
+              "3447 AC6: #2951 owner-scoped kept");
+        CHECK(read_file("docs/design/3447-jit-dual-fresh-c-bridge.md").empty(),
+              "3447 AC6: no docs/design/3447-* per #1655");
+        CHECK(read_file("tests/issues/test_issue_3447.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3447.cpp").empty() &&
+                  read_file("tests/core/test_issue_3447.cpp").empty(),
+              "3447 AC6: no test_issue_3447.cpp per #81934");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_jit_dual_fresh_c_bridge_3447") != std::string::npos,
+              "3447 AC6: build.py wires linter");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3447") ==
+                  std::string::npos,
+              "3447 AC6: no new query key");
+
+        aura_set_current_bridge_epoch(c0);
+        aura_set_aot_defuse_version(d0);
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

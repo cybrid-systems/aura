@@ -720,13 +720,16 @@ bool aura_aot_probe_checkpoint_version(std::uint64_t defuse_version, std::uint64
 void aura_aot_record_deopt_on_steal(void);
 std::uint64_t aura_aot_bridge_epoch_mismatches(void);
 
-// Issue #1508 / #1491: JIT closure dual-freshness (bridge_epoch + env/defuse).
-// Returns true when both domains are fresh vs current host epochs.
+// Issue #1508 / #1491 / #3447: JIT closure dual-freshness (C-bridge +
+// table generation + env/defuse). Returns true when all domains are
+// fresh vs current host epochs. Owner-scoped invalidate freezes table
+// epoch; C-bridge still goes stale until remount restamp.
 // Strict (default): unstamped capture (0) while domain tracking is active
 // (current != 0) is STALE — matches is_bridge_stale / is_env_frame_stale.
 // AURA_BRIDGE_EPOCH_LEGACY_TRUST=1 restores pre-#1491 "0 is ok" trust.
-bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
-                               std::uint64_t captured_defuse_or_env_version);
+bool aura_is_jit_closure_fresh(
+    std::uint64_t captured_bridge_epoch,
+    std::uint64_t captured_defuse_or_env_version); // Issue #3447: C-bridge AND table
 // Bump dual-check / stale-deopt / safe-fallback metrics (nullable aot_metrics).
 void aura_jit_closure_record_dual_check(void);
 void aura_jit_closure_record_stale_deopt(void);
