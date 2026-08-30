@@ -396,6 +396,12 @@ inline void reset_ffi_opaque_alias_slot_cover_for_test() noexcept {
     g_ffi_opaque_alias_slot_cover_total.store(0, std::memory_order_relaxed);
 }
 
+// Issue #3443: FFI/JIT live ptrs outside opaque_heap_ slots. Stamp only
+// (no new query key / no g_3443_*). Cover SSOT stays slot XOR #3210
+// canary XOR EXEMPT(would_move==false). Residual of #3022/#3057/#3055/
+// #3210/#3368.
+inline constexpr int kFfiJitLivePtrInventoryIssue = 3443;
+
 } // namespace aura::core::densify_consistency
 
 #endif // AURA_CORE_DENSIFY_CONSISTENCY_REPORT_H

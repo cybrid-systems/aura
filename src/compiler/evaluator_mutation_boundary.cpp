@@ -6216,6 +6216,17 @@ std::size_t Evaluator::register_known_moving_densify_root_slots() noexcept {
         if (op)
             known_slots.push_back(&op);
     }
+    // Issue #3443: JIT/module cached Env* (create<T> raw addresses) live
+    // in modules_ across Phase-5 Moving. EXEMPT is not cover. Lasting
+    // void** slots — same SSOT shape as opaque_heap_. Vector is stable
+    // for the densify window (no push during compact). Do not dual-note
+    // canary on these slots (#3368).
+    for (auto*& m : modules_) {
+        if (m)
+            known_slots.push_back(reinterpret_cast<void**>(&m));
+    }
+    if (require_inject_env_)
+        known_slots.push_back(reinterpret_cast<void**>(&require_inject_env_));
     if (!known_slots.empty()) {
         for (void** slot : known_slots)
             arena_group_->register_external_root_slot_for_densify_all(slot);

@@ -15815,6 +15815,28 @@ def cmd_deopt_pending_fast_path_3441_coverage():
     return 0
 
 
+def cmd_ffi_jit_live_ptr_inventory_3443_coverage():
+    """Issue #3443: FFI/JIT live ptrs outside opaque_heap_ fail-closed.
+
+    EXEMPT is observe-only. Arena-tracked + no slot + no canary under
+    required+Moving fail-closes on existing untracked / stale / breach
+    face. opaque_heap_ remains FFI cover SSOT. modules_ Env* become
+    lasting slots. No second pin registry / no new query key.
+    Extends test_moving_densify_fail_closed + densify_root_closure.
+    """
+    print(f"{B}=== ffi_jit_live_ptr_inventory coverage (#3443) ==={N}")
+    script = COVERAGE_CHECKS / "check_ffi_jit_live_ptr_inventory_3443.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ffi_jit_live_ptr_inventory (#3443) coverage contract rows failed")
+        return 1
+    ok("ffi_jit_live_ptr_inventory (#3443) coverage clean")
+    return 0
+
+
 def cmd_scope_message_resolve_3442_coverage():
     """Issue #3442: message prims resolve name-table then session-local scope.
 
@@ -23116,6 +23138,8 @@ def main():
         "deopt-pending-fast-path-3441-coverage": cmd_deopt_pending_fast_path_3441_coverage,
         "scope-message-resolve-3442": cmd_scope_message_resolve_3442_coverage,
         "scope-message-resolve-3442-coverage": cmd_scope_message_resolve_3442_coverage,
+        "ffi-jit-live-ptr-inventory-3443": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
+        "ffi-jit-live-ptr-inventory-3443-coverage": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
         "partial-reemit-success-coverage-3413": cmd_partial_reemit_success_coverage_3413_coverage,
         "partial-reemit-success-coverage-3413-coverage": cmd_partial_reemit_success_coverage_3413_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,

@@ -5062,17 +5062,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                                 // Env and any closures it owns can be freed later
                                 // via gc_module(cache_key).
                                 auto& inst_arena = arena_group_->module_arena(cache_key);
-                                auto* cached_env = inst_arena.create_with_cover<Env>(
-                                    nullptr, "inst-env-cache-transient", mod_env);
-                                // Issue #3180: inst cache env is transient (lives in inst_arena
-                                // scoped to the module load; densify observes via pin).
-                                // Declare EXEMPT cover for the transient path.
+                                // Issue #3443: cached Env* survives Phase-5 Moving —
+                                // lasting void** slot in modules_, not EXEMPT
+                                // (EXEMPT is only legal when would_move==false).
+                                auto mod_idx = modules_.size();
+                                modules_.push_back(nullptr);
+                                void** env_slot = reinterpret_cast<void**>(&modules_.back());
+                                auto* cached_env =
+                                    inst_arena.create_with_cover<Env>(env_slot, nullptr, mod_env);
                                 if (cached_env) {
                                     inst_arena.note_intermediate_create_with_cover_(
-                                        cached_env, nullptr, "inst-env-cache-transient");
+                                        cached_env, env_slot, nullptr);
                                 }
-                                auto mod_idx = modules_.size();
-                                modules_.push_back(cached_env);
                                 module_cache_[cache_key] = mod_idx;
                                 module_arena_ptrs_[cache_key] = &inst_arena;
                                 module_names_.push_back(cache_key);

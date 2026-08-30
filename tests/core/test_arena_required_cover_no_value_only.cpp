@@ -224,8 +224,8 @@ static void ac3180_hot_path_cover_declarations() {
           "AC3: evaluator_eval_flat declares cl_flat EXEMPT(transient)");
     CHECK(eval_flat.find("\"require-import-parse-transient\"") != std::string::npos,
           "AC3: evaluator_eval_flat declares ipool/iflat EXEMPT(transient)");
-    CHECK(eval_flat.find("\"inst-env-cache-transient\"") != std::string::npos,
-          "AC3: evaluator_eval_flat declares cached_env EXEMPT(transient)");
+    CHECK(eval_flat.find("cached_env, env_slot, nullptr") != std::string::npos,
+          "AC3: evaluator_eval_flat declares cached_env slot cover (#3443)");
 
     // service.ixx — parse_to_flat pool/flat slot cover on arena_ + module_arena.
     CHECK(service.find("note_intermediate_create_with_cover_(\n                pool_ptr, "

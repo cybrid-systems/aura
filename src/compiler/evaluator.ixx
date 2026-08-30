@@ -4324,12 +4324,14 @@ public:
     // (extends #2889 inventory). Walks workspace / mutate-target /
     // current flat+pool, WorkspaceTree layer flat/pool/parent slots,
     // RootRemap stable + closure capture slots, and FFI opaque_heap_
-    // aliases (#3057 — slot rewrite, not create-point observe). Also
-    // drains TemporaryMovingLivePtrCanary inventory (#3210) for stack/
-    // temp EnvFrame/Closure/JIT/FFI live ptrs that are not lasting
-    // void** slots. EnvFrame / JIT residual after objects_moved is
-    // fail-closed via last_object_remap_ stale scan (#3055) — not a second remap
-    // registry.
+    // aliases (#3057 — slot rewrite, not create-point observe). Issue
+    // #3443 also walks modules_ / require_inject_env_ so JIT/module
+    // cached create<T>* Env addresses are lasting void** slots (not
+    // EXEMPT). Also drains TemporaryMovingLivePtrCanary inventory
+    // (#3210) for stack/temp EnvFrame/Closure/JIT/FFI live ptrs that
+    // are not lasting void** slots. EnvFrame / JIT residual after
+    // objects_moved is fail-closed via last_object_remap_ stale scan
+    // (#3055) — not a second remap registry.
     // Returns the number of non-null slots registered via
     // ArenaGroup::register_external_root_slot_for_densify_all. Soft / no
     // arena_group → 0 (zero extra work when densify entry never reaches
@@ -13996,7 +13998,8 @@ public:
     // Fires before auto-arm live_compact(Moving) so the Evaluator known-
     // root slot inventory (workspace_flat_ / workspace_pool_ / mutate-
     // / current flat+pool / WorkspaceTree / RootRemap stable+closure /
-    // opaque_heap_ aliases) is registered before relocate. No module
+    // opaque_heap_ aliases / modules_ Env* (#3443)) is registered before
+    // relocate. No module
     // import from arena.ixx — ctx is the owning Evaluator.
     static void on_arena_known_roots_hook_thunk(void* ctx) noexcept;
     // Issue #1473: public test accessors for the 3 hook points wired by

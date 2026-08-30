@@ -845,6 +845,23 @@ export inline void note_ffi_opaque_alias_densify_cover(void* p, void** slot,
     note_temporary_moving_live_ptr(p);
 }
 
+// Issue #3443: EXEMPT is legal only when would_move==false (libc-heap /
+// external-native-addr — reason-only, no arena pointer). A live pointer
+// under production required + Moving is treated as maybe-arena-tracked:
+// drain into the existing #3210 temp canary so objects_moved>0 ∧
+// last_object_remap_ key fail-closes (reuse post-moving stale /
+// pin_contract_held=false / g_moving_untracked_*). Soft / Off / !Moving:
+// one exempt bump, no canary (AC5). Reuse LifetimePin SSOT (no extra
+// pin table). Do not dual-note a slotted pointer (#3368).
+export inline void note_ffi_opaque_create_exempt(void* p, const char* reason) noexcept {
+    if (!p || !moving_compact_enabled() ||
+        !aura::core::lifetime::general_object_pin_required_active()) {
+        aura::core::lifetime::note_ffi_opaque_create_exempt(reason);
+        return;
+    }
+    note_temporary_moving_live_ptr(p);
+}
+
 // Issue #2256: Adaptive-on-threshold policy. When fragmentation
 // ratio crosses kAutoMovingCompactThreshold and no compact has
 // run in the last kAdaptiveCompactCooldownMs, Moving compact is
