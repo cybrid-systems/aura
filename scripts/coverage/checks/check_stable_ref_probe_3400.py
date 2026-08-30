@@ -3,8 +3,10 @@
 
 Contract (one row per AC):
   AC1 source: check-stable-ref body cites #3400, unpacks via
-     unpack_stable_ref_arg, and validity = is_valid_in + get_safe —
-     the old `flat.generation() == captured_gen` compare is gone.
+     unpack_stable_ref_arg, and validity = node_gen_for + is_live_node
+     (not is_valid_in/get_safe — those still require ref.gen ==
+     generation_). The old `flat.generation() == captured_gen`
+     compare is gone.
   AC2 source: sibling-mutate-safe probe is node-gen domain (no
      workspace-gen compare anywhere in the prim body).
   AC3 fixture: restamped target old ref → #f row exists.
@@ -51,8 +53,8 @@ def main() -> int:
     # AC1: node-gen domain probe
     must("Issue #3400", "AC1 cite", win)
     must("unpack_stable_ref_arg(a[0])", "AC1 SSOT unpack", win)
-    must("is_valid_in(flat)", "AC1 node-gen validity", win)
-    must("get_safe(*ref)", "AC1 occupancy check", win)
+    must("node_gen_for(ref->id)", "AC1 node-gen validity", win)
+    must("is_live_node(ref->id)", "AC1 occupancy check", win)
     if "flat.generation() == captured_gen" in win:
         fails.append("AC1: workspace-gen compare still present in check-stable-ref body")
 
