@@ -6,10 +6,10 @@
 # washes residual_force_mask to 0 even for groups never re-emitted,
 # breaking only_covered re-promote + storm-clear min-dirty.
 #
-# AC1 — decide_and_reemit skips the fallback `covered = demoted` stamp;
-#       on_reemit_pipeline_call uses `covered = candidates ∩
-#       emit_region_mask_` (the actually-emitted bits), not the full
-#       demoted mask. Partial success must not over-cover residual.
+# AC1 — decide_and_reemit skips the fallback `covered = demoted` stamp.
+#       Pipeline reason-domain stamp is #3445 (override-only); this
+#       issue only closed the facade fallback. Partial success must
+#       not over-cover residual.
 # AC2 — residual_force_mask() still exposes uncovered bits so
 #       only_covered re-promote clears only the emitted bits.
 # AC3 — Storm-clear min-dirty still drives for the uncovered bit
@@ -42,24 +42,15 @@ def main() -> int:
     test = (ROOT / "tests" / "compiler" / "test_aot_incremental_reemit.cpp").read_text()
     build = (ROOT / "build.py").read_text()
 
-    # AC1 — decide_and_reemit skips the fallback demoted stamp +
-    # on_reemit_pipeline_call uses candidates ∩ emit_region_mask_.
+    # AC1 — decide_and_reemit skips the fallback demoted stamp.
+    # Pipeline count∩emit / demoted stamp is the #3445 residual (do
+    # not require those lines here — #3413 is facade-only).
     if "Issue #3413" not in hot:
         fails.append("AC1: hot_update_registry.cpp missing 'Issue #3413' marker")
     if "skip the fallback `covered = demoted` stamp" not in hot:
         fails.append(
             "AC1: decide_and_reemit must skip the fallback `covered = demoted` stamp (residual -> 0 over-cover source)"
         )
-    if "covered = candidates & emit_region_mask_.load" not in hot:
-        fails.append("AC1: on_reemit_pipeline_call must use `covered = candidates & emit_region_mask_` (not demoted)")
-    # The demoted fallback must still exist as a last-resort for the
-    # candidates == 0 edge case (preserves #2895 multi-success intent).
-    if hot.count("covered = demoted") < 1:
-        fails.append("AC1: candidates == 0 edge-case demoted fallback missing (preserves #2895 multi-success window)")
-    # AC1 guard: the EXACT pattern `if (covered == 0) covered = demoted`
-    # must appear only once on the hot path — not as a wholesale default.
-    if hot.count("if (covered == 0)\n                    covered = demoted;") > 1:
-        fails.append("AC1: demoted fallback should appear exactly once (not as the default path)")
 
     # AC2 — residual_force_mask accessor + only_covered re-promote intact.
     if "residual_force_mask" not in hot:
@@ -105,7 +96,7 @@ def main() -> int:
             )
 
     # AC7 — Test markers + build.py wiring.
-    if "3413 AC1: reemit success coverage uses candidates" not in test:
+    if "3413 AC1: decide_and_reemit skips fallback demoted stamp" not in test:
         fails.append("AC7: test_aot_incremental_reemit.cpp missing 3413 AC1 marker")
     if "3413 AC2/AC3: only_covered re-promote + storm-clear min-dirty intact" not in test:
         fails.append("AC7: test_aot_incremental_reemit.cpp missing 3413 AC2/AC3 markers")

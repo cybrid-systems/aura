@@ -495,9 +495,12 @@ static void ac3059_2_cascade_coverage_matches_pipeline() {
     const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
     reg.on_force_jit_for_reason(AotReloadFail::Defuse);
     CHECK((reg.force_jit_regions_mask() & defuse_bit) != 0, "3059 AC2: force bit set");
-    reg.on_reemit_pipeline_call(1, 1);
-    const auto pipe_last = reg.last_reemit_success_region_mask();
-    CHECK(pipe_last == defuse_bit, "3059 AC2: pipeline last_success = demoted");
+    // Issue #3445: candidates is a COUNT, not a reason mask. Pipeline
+    // without Agent override must not invent last_success (count ∩ emit
+    // or demoted fallback).
+    reg.on_reemit_pipeline_call(3, 1);
+    CHECK(reg.last_reemit_success_region_mask() == 0,
+          "3059 AC2: pipeline count does not stamp last_success");
 
     // n==0 must not invent coverage (same as a 0-success pipeline call).
     reg.on_reload_success();
@@ -511,11 +514,11 @@ static void ac3059_2_cascade_coverage_matches_pipeline() {
     CHECK(reg.last_reemit_success_region_mask() == 0,
           "3059 AC2: n==0 does not invent last_success");
 
-    // n>0 coverage branch is the same stamp the pipeline uses.
+    // n>0 coverage is Agent opt-in — same stamp both paths consume.
     reg.note_reemit_success_coverage(defuse_bit);
-    CHECK(reg.last_reemit_success_region_mask() == pipe_last,
-          "3059 AC2: success stamp matches pipeline last_success");
-    CHECK(reg.residual_force_mask() == (reg.force_jit_regions_mask() & ~pipe_last),
+    CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+          "3059 AC2: success stamp is Agent opt-in coverage");
+    CHECK(reg.residual_force_mask() == (reg.force_jit_regions_mask() & ~defuse_bit),
           "3059 AC2: residual = force & ~last_success");
 
     const auto dirty = read_file("src/compiler/service_dirty.cpp");
