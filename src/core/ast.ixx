@@ -4628,6 +4628,11 @@ public:
         return SafePCVSpan<NodeId>(std::span<const NodeId>(child_data_.data() + begin, count));
     }
 
+    // Issue #3453: observe in-place dense patch (equal-length set).
+    static constexpr int kSetChildLockedDenseInplaceIssue = 3453;
+    [[nodiscard]] bool dense_children_dirty() const noexcept { return dense_dirty_; }
+    [[nodiscard]] std::size_t dense_child_data_size() const noexcept { return child_data_.size(); }
+
     // Issue #3402: lazy-sync helper — rebuilds child_data_ /
     // child_begin_ / child_count_ from the legacy children_ PCV
     // vector. Called by children_columnar(id) when dense_dirty_ is
@@ -5190,7 +5195,6 @@ public:
     // When a snapshot still aliases storage, cow_* falls back to with_* COW
     // and flatast_locked_move_out_cow_total bumps (#2906 AC3 correctness).
     void set_child_locked(NodeId id, std::uint32_t idx, NodeId child) pre(id < children_.size()) {
-        dense_dirty_ = true; // Issue #3402: invalidate dense mirror
         contract_assert(id < children_.size());
         auto list = std::move(children_[id]);
         if (idx >= list.size()) {
@@ -5230,6 +5234,19 @@ public:
                 incoming_index_add_edge(child, id, idx);
         }
         add_mutation_child_op(id, idx, old_cid, child, "structural-set-child");
+        // Issue #3453: equal-length replace patches the already-synced
+        // dense slot in O(1). Do not eager-sync. First mutate after
+        // copy/compact / never-synced still dirties (full rebuild on
+        // next children_columnar). insert/remove keep dirty (arity).
+        if (!dense_dirty_ && id < child_count_.size() && idx < child_count_[id]) {
+            const auto slot = static_cast<std::size_t>(child_begin_[id]) + idx;
+            if (slot < child_data_.size())
+                child_data_[slot] = child;
+            else
+                dense_dirty_ = true;
+        } else {
+            dense_dirty_ = true; // Issue #3402: invalidate dense mirror
+        }
     }
     void insert_child_locked(NodeId id, std::uint32_t idx, NodeId child) {
         dense_dirty_ = true; // Issue #3402: invalidate dense mirror
@@ -9609,8 +9626,10 @@ public:
     // Legacy children_ (vector<PersistentChildVector<NodeId>>) is kept
     // as edit buffer / snapshot anchor; children_columnar(id) reads
     // the dense columns and lazy-syncs from PCV on first call after a
-    // structural mutation (controlled by dense_dirty_, set in
-    // set_child_locked / insert_child_locked / remove_child_locked).
+    // structural mutation (controlled by dense_dirty_). Issue #3453:
+    // equal-length set_child_locked patches child_data_ in-place when
+    // !dense_dirty_; insert_child_locked / remove_child_locked still
+    // dirty (arity change).
     // Issue #3402: mutable so children_columnar(id) const accessor can
     // trigger sync_dense_columns_from_pcv() on first read after a
     // structural mutation. Pattern matches the other FlatAST cache
@@ -9625,6 +9644,7 @@ public:
     // the dense columns have not yet been re-synced.
     // children_columnar(id) checks this flag and triggers
     // sync_dense_columns_from_pcv() before returning the SafePCVSpan.
+    // Issue #3453: equal-length set_child_locked may leave this false.
     mutable bool dense_dirty_ = true;
 };
 

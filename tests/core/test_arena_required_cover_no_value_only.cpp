@@ -42,8 +42,10 @@
 #include <fstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 import std;
+import aura.core.ast;
 
 namespace {
 
@@ -830,9 +832,9 @@ static void ac3402_dense_children_columns() {
     CHECK(ast_ixx.find("void sync_dense_columns_from_pcv()") != std::string::npos,
           "AC3: sync_dense_columns_from_pcv() helper present");
 
-    // AC4: 3 mutators (set_child_locked / insert_child_locked /
-    // remove_child_locked) all mark dense_dirty_ = true.
-    for (const auto* fn : {"set_child_locked", "insert_child_locked", "remove_child_locked"}) {
+    // AC4: insert/remove still dirty (arity). #3453: set_child_locked
+    // patches dense in-place when !dense_dirty_.
+    for (const auto* fn : {"insert_child_locked", "remove_child_locked"}) {
         const std::string needle = std::string("void ") + fn + "(";
         const auto pos = ast_ixx.find(needle);
         CHECK(pos != std::string::npos, (std::string("AC4: ") + fn + " definition found").c_str());
@@ -840,6 +842,19 @@ static void ac3402_dense_children_columns() {
             const auto window = ast_ixx.substr(pos, 500);
             CHECK(window.find("dense_dirty_ = true") != std::string::npos,
                   (std::string("AC4: ") + fn + " marks dense_dirty_ = true").c_str());
+        }
+    }
+    {
+        const auto pos = ast_ixx.find("void set_child_locked(");
+        CHECK(pos != std::string::npos, "AC4/3453: set_child_locked definition found");
+        if (pos != std::string::npos) {
+            const auto window = ast_ixx.substr(pos, 2800);
+            CHECK(window.find("!dense_dirty_") != std::string::npos,
+                  "3453 AC1: set_child_locked in-place when !dense_dirty_");
+            CHECK(window.find("child_data_[") != std::string::npos,
+                  "3453 AC1: set_child_locked writes child_data_ slot");
+            CHECK(window.find("dense_dirty_ = true") != std::string::npos,
+                  "AC4: set_child_locked still dirties never-synced fallback");
         }
     }
 
@@ -861,6 +876,51 @@ static void ac3402_dense_children_columns() {
           "AC7: build.py registers check_dense_children_columns_3402");
     CHECK(build.find("dense-children-columns-3402") != std::string::npos,
           "AC7: build.py dispatch entry present");
+    CHECK(ast_ixx.find("kSetChildLockedDenseInplaceIssue = 3453") != std::string::npos,
+          "3453: issue stamp");
+    CHECK(build.find("check_set_child_locked_dense_inplace_3453") != std::string::npos,
+          "3453: build.py wires linter");
+}
+
+static void ac3453_equal_length_set_inplace() {
+    std::println("\n--- #3453 AC1: equal-length set_child_locked patches dense in-place ---");
+    using aura::ast::FlatAST;
+    using aura::ast::NodeId;
+    using aura::ast::NodeTag;
+    FlatAST flat;
+    const NodeId p = flat.add_node(NodeTag::Begin);
+    const NodeId a = flat.add_literal(1);
+    const NodeId b = flat.add_literal(2);
+    const NodeId c = flat.add_literal(3);
+    flat.root = p;
+    flat.insert_child(p, 0, a);
+    flat.insert_child(p, 1, b);
+    (void)flat.children_columnar(p);
+    CHECK(!flat.dense_children_dirty(), "3453 AC1: synced tree is not dirty");
+    const auto sz0 = flat.dense_child_data_size();
+    CHECK(sz0 >= 2, "3453 AC1: dense child_data has the two children");
+    flat.set_child_locked(p, 0, c);
+    CHECK(!flat.dense_children_dirty(), "3453 AC1: equal-length set leaves dense_dirty_ false");
+    CHECK(flat.dense_child_data_size() == sz0, "3453 AC1: child_data size unchanged (no clear)");
+    CHECK(flat.get_child(p, 0) == c, "3453 AC1: dense slot is the new child");
+    CHECK(!flat.dense_children_dirty(), "3453 AC1: children_columnar did not full-rebuild");
+    std::vector<NodeId> kids;
+    (void)aura::ast::walk_children_hot<NodeId>(flat, p, [&](NodeId x) { kids.push_back(x); });
+    CHECK(kids.size() == 2 && kids[0] == c && kids[1] == b,
+          "3453 AC1: walk_children_hot sees patch");
+
+    std::println("--- #3453 AC2: insert/remove still dirty ---");
+    (void)flat.children_columnar(p);
+    CHECK(!flat.dense_children_dirty(), "3453 AC2: re-synced");
+    const NodeId d = flat.add_literal(4);
+    flat.insert_child(p, 2, d);
+    CHECK(flat.dense_children_dirty(), "3453 AC2: insert_child dirties dense");
+    CHECK(flat.get_child(p, 2) == d, "3453 AC2: next columnar walk sees new arity");
+    (void)flat.children_columnar(p);
+    CHECK(!flat.dense_children_dirty(), "3453 AC2: sync after insert");
+    flat.remove_child(p, 2);
+    CHECK(flat.dense_children_dirty(), "3453 AC2: remove_child dirties dense");
+    CHECK(flat.get_child(p, 1) == b, "3453 AC2: remaining child after remove rebuild");
 }
 
 // #3401: eval_flat hot-path intern — production skips the function-scope
@@ -955,6 +1015,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac10_no_invent_docs();
     ac3401_eval_flat_hot_path_intern();
     ac3402_dense_children_columns();
+    ac3453_equal_length_set_inplace();
     ac3403_inline_pass_soa();
     ac3404_arena_auto_arm_soft_fallback();
     ac3405_pure_wrap_dirty_entry();
