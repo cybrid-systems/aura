@@ -729,7 +729,7 @@ export struct NodeView {
     [[nodiscard]] bool has_int() const noexcept { return tag == NodeTag::LiteralInt; }
     [[nodiscard]] bool has_float() const noexcept { return tag == NodeTag::LiteralFloat; }
     [[nodiscard]] bool has_name() const noexcept { return sym_id != INVALID_SYM; }
-    NodeId child(std::uint32_t i) const { return children[i]; }
+    NodeId child(std::uint32_t i) const { return i < children.size() ? children[i] : NULL_NODE; }
 };
 
 // MutationRecord / rollback types live in aura.core.mutation (#275).

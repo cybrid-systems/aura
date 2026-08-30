@@ -841,6 +841,7 @@ static void ac2888_1_header_and_aggregation() {
               h.find("never mutates atomics") != std::string::npos,
           "AC1: pure-read documented");
     // AC1 live: clean proof → would_allow_commit=true via the query surface.
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "AC1: warm");
     CHECK(href2888(cs, "lifetime-consistency-proof-would-allow-commit") == 1,

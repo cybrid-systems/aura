@@ -383,10 +383,23 @@ static std::uint32_t lower_flat_expr(
                                 if (g_lowering_hooks.bridge_epoch_capture != 0)
                                     bridge_epoch = g_lowering_hooks.bridge_epoch_capture;
                                 if (in_impact_scope) {
+                                    // Re-pin to the live lowering FlatAST/Pool, not the
+                                    // cached no-op-deleter views. Those views dangle after
+                                    // the CompilerService that filled the IR cache is
+                                    // destroyed (set_closure_bridge_ptr then UAF in
+                                    // FlatAST::provenance).
+                                    std::shared_ptr<const aura::ast::FlatAST> live_flat;
+                                    std::shared_ptr<const aura::ast::StringPool> live_pool;
+                                    if (state.current_flat && state.current_pool) {
+                                        live_flat = std::shared_ptr<const aura::ast::FlatAST>(
+                                            state.current_flat, [](const aura::ast::FlatAST*) {});
+                                        live_pool = std::shared_ptr<const aura::ast::StringPool>(
+                                            state.current_pool,
+                                            [](const aura::ast::StringPool*) {});
+                                    }
                                     state.module.set_closure_bridge_ptr(
-                                        new_fid, bridge_it->second[ci].flat,
-                                        bridge_it->second[ci].pool, bridge_it->second[ci].body_id,
-                                        bridge_epoch);
+                                        new_fid, std::move(live_flat), std::move(live_pool),
+                                        bridge_it->second[ci].body_id, bridge_epoch);
                                     if (g_lowering_hooks.on_quote_lambda_bridge_copy)
                                         g_lowering_hooks.on_quote_lambda_bridge_copy();
                                 } else {

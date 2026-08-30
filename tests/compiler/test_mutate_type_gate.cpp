@@ -155,6 +155,7 @@ int run_test_mutate_type_gate() {
     {
         std::println("\n--- AC1: query ---");
         reset_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         CompilerService cs;
         CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
         CHECK(cs.eval("(hash-ref (engine:metrics \"query:type-incremental-fidelity-stats\") "
@@ -309,6 +310,7 @@ int run_test_mutate_type_gate() {
 
         // 6.12 — Query schema sentinels + lock keys reachable end-to-end.
         reset_for_test();
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
         {
             CompilerService cs;
             (void)cs.eval("(+ 1 1)");

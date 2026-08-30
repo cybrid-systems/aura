@@ -876,12 +876,13 @@ static void ac3401_eval_flat_hot_path_intern() {
     const auto evaluator_ixx = read_file("src/compiler/evaluator.ixx");
 
     // AC1: eval_flat function-scope try { is wrapped with #ifndef NDEBUG.
-    CHECK(
-        eval_flat.find("#ifndef NDEBUG") != std::string::npos &&
-            eval_flat.find(
-                "Issue #3401: production (NDEBUG) builds skip the function-scope\n    try/catch") !=
-                std::string::npos,
-        "AC1: eval_flat function-scope try { wrapped with #ifndef NDEBUG");
+    // Comment is two lines (`function-scope` then `// try/catch — …`);
+    // do not require a single contiguous `function-scope\n    try/catch`.
+    CHECK(eval_flat.find("#ifndef NDEBUG") != std::string::npos &&
+              eval_flat.find("Issue #3401: production (NDEBUG) builds skip the function-scope") !=
+                  std::string::npos &&
+              eval_flat.find("try/catch") != std::string::npos,
+          "AC1: eval_flat function-scope try { wrapped with #ifndef NDEBUG");
 
     // AC2: LiteralString arm reads pool resolve via std::string_view and
     // consults string_intern_; std::string construction only on miss.

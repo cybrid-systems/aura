@@ -7078,8 +7078,11 @@ MatchExhaustivenessResult check_match_exhaustiveness(const FlatAST& flat, const 
     if (!minfo)
         return r;
     std::uint32_t tid_raw = minfo->subject_type_id;
-    if (tid_raw == 0 || tid_raw >= reg.size())
+    if (tid_raw == 0 || tid_raw >= reg.size()) {
+        if (v.children.empty())
+            return r;
         tid_raw = flat.type_id(v.child(0));
+    }
     if (tid_raw == 0 || tid_raw >= reg.size())
         return r;
     TypeId subject{tid_raw, 1};

@@ -2692,8 +2692,15 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
             }
             // Issue #3400 AC2: live node after an unrelated sibling mutate
             // (workspace gen bumped, node_gen_ unchanged) must read #t —
-            // hence node-gen domain, not the workspace gen.
-            bool valid = ref->is_valid_in(flat) && flat.get_safe(*ref).has_value();
+            // hence node-gen domain, not the workspace gen. is_valid() /
+            // get_safe() still require ref.gen == generation_, which
+            // false-stales the live target.
+            const bool in_range = ref->id != aura::ast::NULL_NODE && ref->id < flat.size();
+            const auto ng = in_range ? flat.node_gen_for(ref->id) : std::uint16_t{0};
+            bool valid = in_range && !flat.is_free_slot(ref->id) && flat.is_live_node(ref->id) &&
+                         ng != 0 && ng == ref->gen;
+            if (valid && ref->wrap_epoch != 0 && ref->wrap_epoch != flat.wrap_epoch())
+                valid = false;
             if (!valid) {
                 const auto policy = ev.get_stale_ref_policy();
                 if (policy == aura::compiler::Evaluator::StaleRefPolicy::Disabled) {
