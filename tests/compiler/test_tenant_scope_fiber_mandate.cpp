@@ -21,13 +21,17 @@
 #include "test_harness.hpp"
 
 #include "compiler/security_capabilities.h"
+#include "compiler/typed_mutation_audit.h" // apply_production/dev_audit_defaults (#3434)
 #include "core/capability_model.hh"
 #include "core/gc_hooks.h" // Issue #3275: tenant_scope_resume_missing_total accessors
 #include "core/sandbox.hh"
 #include "core/security_event.hh"
 #include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
+#include "orch/agent_spawn.h"              // Issue #3434: production spawn tenant stamp
+#include "orch/sched_runner_test_helper.h" // SchedRunner for real spawn
 #include "serve/fiber.h"
+#include "serve/scheduler.h"
 
 #include <cstdint>
 #include <fstream>
@@ -44,11 +48,15 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::security::kEffectMutate;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
+using aura::compiler::typed_audit::apply_production_audit_defaults;
 using aura::core::capability::reset_capability_effects_for_test;
 using aura::core::capability::snapshot_capability_effect_stats;
 using aura::core::sandbox::SandboxMode;
 using aura::core::sandbox::set_mode;
 using aura::core::security_event::reset_security_event_ring_for_test;
+using aura::orch::g_orch_module_stats;
+using aura::serve::SchedRunner;
 using aura::test::g_failed;
 using aura::test::g_passed;
 
@@ -635,6 +643,177 @@ static void ac3275_4_linter_and_no_invent() {
     }
 }
 
+// ── Issue #3434: production spawn stamps Fiber::assigned_tenant_id ──
+// TenantScope resume mandate (#2491/#3275/#2883/#3320) was test-only:
+// every set_assigned_tenant_id caller lived under tests/, so the strong
+// resume hook returned early (assigned==0) on production orch spawn.
+// This issue resolves the tenant at spawn (spec.tenant_id → parent
+// assigned → quota TLS), stamps the fiber, denies "tenant-required"
+// under production Restricted+MT / Strict, and keeps Soft/Off + legacy
+// single-tenant zero-cost.
+static void ac3434_1_production_spawn_stamps_tenant() {
+    using aura::orch::AgentSpec;
+    using aura::orch::spawn_agent_with_mailbox;
+    std::println("\n--- #3434 AC1: production spawn stamps assigned_tenant_id ---");
+    reset_all();
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+    aura::core::provenance::set_multi_tenant_env_active(true);
+    const auto t0 = g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed);
+
+    aura::serve::Scheduler sched(1);
+    SchedRunner runner(sched);
+    AgentSpec spec;
+    spec.name = "3434-ac1";
+    spec.tenant_id = 7; // explicit production tenant
+    spec.body = [] { aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit); };
+    auto h = spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok && h.fiber, "3434 AC1: spawn ok");
+    CHECK(h.fiber->assigned_tenant_id() == 7,
+          "3434 AC1: fiber assigned_tenant_id stamped from spec (no test setter)");
+    // Wait for the body to finish so SchedRunner dtor is clean.
+    for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    (void)aura::orch::join_agent(h, aura::orch::JoinPolicy{.primary_ms = 500, .drain_ms = 50});
+    CHECK(g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed) == t0,
+          "3434 AC1: explicit tenant not denied");
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3434_2_steal_resume_rebind() {
+    using aura::serve::Fiber;
+    std::println("\n--- #3434 AC2: steal x resume rebinds to assigned tenant ---");
+    reset_all();
+    set_mode(SandboxMode::Restricted);
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_effect_sandbox_mode(1);  // Restricted
+    ev.set_capability_tenant_id(9); // worker ambient principal
+    auto fiber_owned = std::make_unique<Fiber>([] {});
+    fiber_owned->set_assigned_tenant_id(7); // spawn-stamped tenant (#3434)
+    const auto hard_before = Fiber::tenant_scope_mismatch_hard_total();
+    // Resume hook: assigned=7 vs worker principal=9 → hard mismatch +
+    // IsolationDeny fiber-principal-mismatch, then TenantScope rebinds to 7.
+    aura_fiber_install_tenant_scope_for_resume(fiber_owned.get());
+    CHECK(Fiber::tenant_scope_mismatch_hard_total() == hard_before + 1,
+          "3434 AC2: tenant_scope_mismatch_hard bumps on mismatch resume");
+    CHECK(fiber_owned->resume_had_mismatch(),
+          "3434 AC2: per-Fiber resume_had_mismatch set (IsolationDeny path)");
+    // Source-cite: rebind installs TenantScope to assigned, not worker.
+    const auto hook = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(hook.find("new Evaluator::TenantScope(*ev, assigned") != std::string::npos,
+          "3434 AC2: TenantScope rebinds to assigned (not worker principal)");
+    CHECK(hook.find("fiber-principal-mismatch") != std::string::npos,
+          "3434 AC2: IsolationDeny reason present");
+}
+
+static void ac3434_3_session_revoke_on_resume() {
+    std::println("\n--- #3434 AC3: stolen session grants revoked on resume ---");
+    const auto hook = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(hook.find("revoke_session_grants_on_steal_or_abort_locked") != std::string::npos,
+          "3434 AC3: revoke helper present");
+    CHECK(hook.find("has_resume_safety_ticket() && f->session_mid() != 0") != std::string::npos,
+          "3434 AC3: stolen-mid gate (assigned != 0 path)");
+    CHECK(hook.find("aura_fiber_install_tenant_scope_for_resume") != std::string::npos,
+          "3434 AC3: resume hook is the armed entry (now reachable via spawn stamp)");
+}
+
+static void ac3434_4_soft_zero_cost() {
+    std::println("\n--- #3434 AC4: Soft/Off + assigned=0 resume stays no-op ---");
+    reset_all();
+    const auto hook = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    CHECK(hook.find("const auto assigned = f->assigned_tenant_id();") != std::string::npos,
+          "3434 AC4: hook reads assigned tenant");
+    CHECK(hook.find("if (assigned == 0)") != std::string::npos,
+          "3434 AC4: assigned==0 returns early (zero extra lock)");
+    // Behavioral: Off sandbox + tenant 0 spawn succeeds and stays unstamped.
+    apply_dev_audit_defaults();
+    aura::serve::Scheduler sched(1);
+    SchedRunner runner(sched);
+    aura::orch::AgentSpec spec;
+    spec.name = "3434-ac4";
+    spec.body = [] { aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit); };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok, "3434 AC4: Soft spawn ok");
+    if (h.fiber)
+        CHECK(h.fiber->assigned_tenant_id() == 0,
+              "3434 AC4: Soft + tenant 0 stays unstamped (no forced MT)");
+    for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    (void)aura::orch::join_agent(h, aura::orch::JoinPolicy{.primary_ms = 500, .drain_ms = 50});
+}
+
+static void ac3434_5_restricted_single_tenant_no_deny() {
+    std::println("\n--- #3434 AC5: Restricted single-tenant legacy REPL no deny ---");
+    reset_all();
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Restricted);
+    aura::core::provenance::set_multi_tenant_env_active(false); // single-tenant
+    const auto t0 = g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed);
+    aura::serve::Scheduler sched(1);
+    SchedRunner runner(sched);
+    aura::orch::AgentSpec spec;
+    spec.name = "3434-ac5";
+    spec.body = [] { aura::serve::Fiber::yield(aura::serve::YieldReason::Explicit); };
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, std::move(spec));
+    CHECK(h.ok, "3434 AC5: Restricted single-tenant spawn ok (host left tenant 0)");
+    CHECK(g_orch_module_stats.spawn_tenant_required_total.load(std::memory_order_relaxed) == t0,
+          "3434 AC5: no tenant-required deny on legacy single-tenant");
+    for (int i = 0; i < 100 && h.fiber && !h.fiber->is_done(); ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    (void)aura::orch::join_agent(h, aura::orch::JoinPolicy{.primary_ms = 500, .drain_ms = 50});
+    aura::core::provenance::set_multi_tenant_env_active(false);
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
+}
+
+static void ac3434_6_source_and_linter() {
+    std::println("\n--- #3434 AC6: source-cite + linter + no invent ---");
+    const auto spawn = read_file("src/orch/agent_spawn.h");
+    const auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    const auto build = read_file("build.py");
+    CHECK(spawn.find("Issue #3434") != std::string::npos, "3434 AC6: agent_spawn.h cites #3434");
+    CHECK(spawn.find("set_assigned_tenant_id(spawn_tenant)") != std::string::npos,
+          "3434 AC6: spawn stamps fiber");
+    CHECK(spawn.find("spawn_tenant_required_total") != std::string::npos,
+          "3434 AC6: additive deny counter");
+    CHECK(spawn.find("class AgentRegistry") == std::string::npos &&
+              spawn.find("struct AgentRegistry") == std::string::npos,
+          "3434 AC6: no process-global AgentRegistry");
+    CHECK(prim.find("spec.tenant_id = tenant_id != 0 ? tenant_id : ev.capability_tenant_id()") !=
+              std::string::npos,
+          "3434 AC6: prim wires tenant (explicit > Evaluator capability)");
+    CHECK(build.find("check_tenant_spawn_mandate_3434") != std::string::npos,
+          "3434 AC6: build.py wires linter");
+    std::ifstream invent("tests/compiler/test_issue_3434.cpp");
+    if (!invent.good())
+        invent.open("../tests/compiler/test_issue_3434.cpp");
+    CHECK(!invent.good(), "3434 AC6: no test_issue_3434.cpp per #81967");
+    const std::filesystem::path docs_design_3434 = "docs/design";
+    std::error_code ec_3434;
+    if (std::filesystem::is_directory(docs_design_3434, ec_3434)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design_3434, ec_3434)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3434-") == std::string::npos,
+                  std::string("3434 AC6: no docs/design/") + name + " per #1655");
+        }
+    }
+}
+
 } // namespace
 
 int run_test_tenant_scope_fiber_mandate() {
@@ -666,6 +845,13 @@ int run_test_tenant_scope_fiber_mandate() {
     ac3275_2_production_lock_roundtrip();
     ac3275_3_soft_no_abort_path();
     ac3275_4_linter_and_no_invent();
+    std::println("\n=== Issue #3434: production spawn stamps assigned_tenant_id ===");
+    ac3434_1_production_spawn_stamps_tenant();
+    ac3434_2_steal_resume_rebind();
+    ac3434_3_session_revoke_on_resume();
+    ac3434_4_soft_zero_cost();
+    ac3434_5_restricted_single_tenant_no_deny();
+    ac3434_6_source_and_linter();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

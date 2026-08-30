@@ -22,6 +22,7 @@
 #define AURA_ORCH_AGENT_SPAWN_H
 
 #include "core/resource_quota.hh"
+#include "core/sandbox.hh" // Issue #3434: is_strict() + multi_tenant_env_active() spawn gate
 #include "serve/fiber.h"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/parallel_orch.h"
@@ -539,6 +540,11 @@ struct OrchModuleStats {
     std::atomic<std::uint64_t> agents_send{0};
     std::atomic<std::uint64_t> agents_recv{0};
     std::atomic<std::uint64_t> spawn_failures{0};
+    // Issue #3434: production Restricted+MT / Strict spawn denied because
+    // no tenant resolved (spec.tenant_id / parent assigned / quota TLS all
+    // 0). Additive — hosts branch on the "tenant-required" deny to fix
+    // their spawn policy. Soft/Off / legacy single-tenant stay zero.
+    std::atomic<std::uint64_t> spawn_tenant_required_total{0};
     std::atomic<std::uint64_t> parallel_batches{0};
     // Issue #1600
     std::atomic<std::uint64_t> spawn_quota_rejects{0};
@@ -1751,6 +1757,11 @@ struct AgentSpec {
     // Does not detach mailbox or cancel body (Throttle; Cancel is watch_all).
     // Env opt-in when 0: AURA_ORCH_PRODUCER_BP_BUDGET=N (spawn-time only).
     std::uint32_t producer_bp_budget = 0;
+    // Issue #3434: explicit tenant for this spawn. 0 = inherit parent
+    // fiber assigned_tenant_id (or Evaluator capability tenant, filled
+    // by the Aura prim). Under production Restricted+MT / Strict, a
+    // spawn that resolves to tenant 0 is denied ("tenant-required").
+    std::uint64_t tenant_id = 0;
 };
 
 // Issue #3250: RestartN fuel is a copyable AgentSpec body stored by
@@ -2066,6 +2077,30 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     auto orch_tenant = aura::core::resource_quota::current_quota_tenant();
     if (orch_tenant == 0 && serve::g_current_fiber)
         orch_tenant = serve::g_current_fiber->assigned_tenant_id();
+    // Issue #3434: production spawn must stamp Fiber::assigned_tenant_id so
+    // the TenantScope resume mandate (#2491/#3275/#2883/#3320) arms on the
+    // orch spawn path, not just test-stamped fibers. Resolve tenant:
+    // spec.tenant_id → parent fiber assigned_tenant_id → quota TLS tenant.
+    // Under production Restricted+MT / Strict, a spawn that still resolves
+    // to 0 is denied ("tenant-required", same family as unset-principal);
+    // Soft/Off and Restricted single-tenant keep the legacy zero-cost path
+    // (AC4/AC5). Stamp happens after Scheduler::spawn succeeds below.
+    std::uint64_t spawn_tenant = spec.tenant_id;
+    if (spawn_tenant == 0 && serve::g_current_fiber)
+        spawn_tenant = serve::g_current_fiber->assigned_tenant_id();
+    if (spawn_tenant == 0)
+        spawn_tenant = orch_tenant;
+    const bool tenant_required_gate =
+        production_defaults_active() &&
+        (aura::core::provenance::multi_tenant_env_active() || aura::core::sandbox::is_strict());
+    if (tenant_required_gate && spawn_tenant == 0) {
+        g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
+        g_orch_module_stats.spawn_tenant_required_total.fetch_add(1, std::memory_order_relaxed);
+        h.error = "tenant-required";
+        h.deny_class = AgentDenyClass::Other;
+        finalize_spawn_quota_reject(h);
+        return h;
+    }
     if (auto ferr = pq.check_orchestration_fibers(/*amount=*/fiber_preflight, orch_tenant)) {
         g_orch_module_stats.spawn_failures.fetch_add(1, std::memory_order_relaxed);
         g_orch_module_stats.spawn_quota_rejects.fetch_add(1, std::memory_order_relaxed);
@@ -2328,6 +2363,13 @@ inline void finalize_spawn_quota_reject(AgentHandle& h) noexcept {
     h.id = f->id();
     h.mailbox = mb;
     h.ok = true;
+    // Issue #3434: stamp the resolved tenant (spec / parent / quota TLS)
+    // on the production spawn path so the TenantScope resume mandate
+    // (#2491/#3275/#2883/#3320) arms without a test-harness setter.
+    // Soft/Off / legacy single-tenant with tenant 0 stays unstamped
+    // (AC4/AC5 — resume hook no-op, zero extra lock).
+    if (spawn_tenant != 0)
+        f->set_assigned_tenant_id(spawn_tenant);
     h.keepalive_interval_ms = ka_interval;
     h.liveness = live;
     h.max_no_yield_ms = effective_max_no_yield_ms;
