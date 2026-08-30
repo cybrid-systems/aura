@@ -15,6 +15,7 @@
 #include <contracts>
 #include <cstdint>
 #include <cstdlib>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include "hash_meta.h" // FNV constants (#901)
@@ -861,7 +862,12 @@ void ShapeProfiler::invalidate_all() noexcept {
 // *** COMPACT ↛ unique_lock_all_shards_ (#3199) ***
 // Gate: scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
 // Per-shard unique_lock_shard_ only so disjoint record_shape proceeds.
-std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
+//
+// *** COMPACT ↛ FULL-TABLE DEOPT (#3455) ***
+// Gate: scripts/coverage/checks/check_shape_compact_dirty_fnkey_3455.py
+// Version + hook only dirty ∪ relocated FnKeys (span view over the
+// define-dirty mask / Moving cone). Empty span → touched==0 no-op.
+std::uint32_t ShapeProfiler::on_arena_compact(std::span<const FnKey> dirty_or_relocated) noexcept {
     flush_tls_records();
     arena_compact_calls_.fetch_add(1, std::memory_order_relaxed);
     shape_inval_on_compact_triggered.fetch_add(1, std::memory_order_relaxed);
@@ -897,40 +903,48 @@ std::uint32_t ShapeProfiler::on_arena_compact() noexcept {
     const std::uint64_t epoch = aura::core::current_mutation_epoch();
     std::uint32_t touched = 0;
 
-    for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
-        auto lock = unique_lock_shard_(i);
-        auto& profiles = shards_[i].profiles;
-        if (hooks_to_fire.capacity() < hooks_to_fire.size() + profiles.size())
-            hooks_to_fire.reserve(hooks_to_fire.size() + profiles.size());
-        // flat_map iterator yields pair-by-value proxy; use auto&&.
-        for (auto&& [fn, profile] : profiles) {
-            const bool was_stable = profile.is_stable;
-            profile.version++;
-            if (epoch > profile.version)
-                profile.version = epoch;
-            // Issue #2908: per-profile version always advances (local dirty
-            // hooks / resume soft path). Process-global shape_version only
-            // under Global isolation (not production PerEval default).
-            if (allow_global_version_bump) {
-                shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
-                g_shape_compact_global_version_bump_total_atomic().fetch_add(
-                    1, std::memory_order_relaxed);
-            } else {
-                g_shape_compact_global_version_skipped_total_atomic().fetch_add(
-                    1, std::memory_order_relaxed);
-            }
-            ++touched;
+    // Issue #3455: filter by dirty ∪ relocated FnKeys. Do not walk every
+    // profile. One extra span probe per compact, not per record_shape.
+    if (!dirty_or_relocated.empty()) {
+        if (hooks_to_fire.capacity() < dirty_or_relocated.size())
+            hooks_to_fire.reserve(dirty_or_relocated.size());
+        for (std::size_t i = 0; i < kShapeProfilerShardCount; ++i) {
+            auto lock = unique_lock_shard_(i);
+            auto& profiles = shards_[i].profiles;
+            for (FnKey fn : dirty_or_relocated) {
+                if (shard_index(fn) != i)
+                    continue;
+                auto it = profiles.find(fn);
+                if (it == profiles.end())
+                    continue;
+                auto& profile = it->second;
+                const bool was_stable = profile.is_stable;
+                profile.version++;
+                if (epoch > profile.version)
+                    profile.version = epoch;
+                // Issue #2908: per-profile version advances for the cone.
+                // Process-global shape_version only under Global isolation.
+                if (allow_global_version_bump) {
+                    shape_version_bump_count.fetch_add(1, std::memory_order_relaxed);
+                    g_shape_compact_global_version_bump_total_atomic().fetch_add(
+                        1, std::memory_order_relaxed);
+                } else {
+                    g_shape_compact_global_version_skipped_total_atomic().fetch_add(
+                        1, std::memory_order_relaxed);
+                }
+                ++touched;
 
-            if (was_stable) {
-                shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
-                arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
-            }
+                if (was_stable) {
+                    shape_stability_post_compact_preserved.fetch_add(1, std::memory_order_relaxed);
+                    arena_compact_stable_preserved_.fetch_add(1, std::memory_order_relaxed);
+                }
 
-            hooks_to_fire.push_back(HookWork{fn, profile.version});
-            deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
-            arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
-            // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
-            deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+                hooks_to_fire.push_back(HookWork{fn, profile.version});
+                deopt_from_arena_compact_total.fetch_add(1, std::memory_order_relaxed);
+                arena_compact_deopt_hooks_.fetch_add(1, std::memory_order_relaxed);
+                // Explicitly do NOT call update_deopt_storm_state_(fn).  // #2617
+                deopt_storm_compact_suppressed.fetch_add(1, std::memory_order_relaxed);
+            }
         }
     }
 

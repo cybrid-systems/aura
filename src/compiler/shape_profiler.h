@@ -11,6 +11,7 @@
 #include <array>
 #include <atomic>
 #include <cstdint>
+#include <span>
 // Issue #337: std::flat_map (C++23) for per-shard
 // profiles. Better cache locality than
 // std::unordered_map for the small-to-medium
@@ -65,6 +66,10 @@ inline constexpr int kShapeProfilerConcurrencyIssue = 2141;
 inline constexpr int kShapeProfilerShardIssue = 2937;
 // Issue #3199: on_arena_compact must not unique_lock_all_shards_.
 inline constexpr int kShapeCompactNoAllShardsLockIssue = 3199;
+// Issue #3455: compact versions dirty ∪ relocated FnKeys only — not every
+// tracked profile. Storm isolation (#2617) and per-shard unique (#3199)
+// stay. Empty cone is the existing touched==0 no-op.
+inline constexpr int kShapeCompactDirtyFnkeyIssue = 3455;
 // Issue #3271: dirty hook is a trivially-copyable fn ptr (no std::function).
 inline constexpr int kShapeDirtyHookNoStdFunctionIssue = 3271;
 // Issue #3357: TLS record_shape merge (hot-FnKey unique_lock amortisation).
@@ -267,19 +272,21 @@ public:
     // Unlike reset(), preserves profiles and bumps version per fn.
     void invalidate_all() noexcept;
 
-    // Issue #1521 / #2617: Arena compact / defrag coordination.
+    // Issue #1521 / #2617 / #3455: Arena compact / defrag coordination.
     // Soft path for multi-round AI mutation under GC pressure:
-    //   - Bumps version on every tracked profile (JIT guards notice)
-    //   - Fires deopt hook with kShapeDirtyScopeArenaCompact
-    //   - Preserves is_stable + history (value-tag shapes are address-
-    //     independent; full invalidate_all would thrash deopt storms)
+    //   - Versions only dirty ∪ relocated FnKeys (span view — not a parallel
+    //     index). Untouched profiles keep version + is_stable (#3455).
+    //   - Empty span → no-op on profiles (existing touched==0 path).
+    //   - Fires deopt hook with kShapeDirtyScopeArenaCompact for the cone
+    //   - Preserves is_stable + history on touched stables
     //   - Does NOT feed the deopt-storm ring (compact is expected pressure)
     //   - Does NOT bump mutation_induced_invalidations_ (#2617 hard contract)
     //   - Does NOT unique_lock_all_shards_ (#3199: per-shard unique only)
     // Gate: scripts/coverage/checks/check_shape_compact_storm_isolation_2617.py
     //       scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py
+    //       scripts/coverage/checks/check_shape_compact_dirty_fnkey_3455.py
     // Returns number of profiles touched.
-    std::uint32_t on_arena_compact() noexcept;
+    std::uint32_t on_arena_compact(std::span<const FnKey> dirty_or_relocated = {}) noexcept;
 
     // Issue #1521: MutationBoundary / fiber-steal exit check.
     // After compact during an active boundary, re-assert stability ratio
