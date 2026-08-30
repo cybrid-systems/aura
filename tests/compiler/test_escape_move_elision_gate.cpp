@@ -1353,6 +1353,135 @@ static void ac3238_4_source_linter() {
           "3238 AC4: no docs/design");
 }
 
+// ── Issue #3446: compiled Move/Drop fence ORs live elision_ok + typed-entry ──
+// Residual of #3186/#3130/#3305/#3224: probe deopt_inc then continues;
+// fence only skipped the body on epoch-stale.
+
+static void ac3446_1_fence_or_skips_move_body() {
+    std::println("\n--- #3446 AC1: fence ORs elision+typed-entry; reject skips Move ---");
+    using namespace aura::compiler::typed_audit;
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("Issue #3446") != std::string::npos, "3446 AC1: Issue #3446 in aura_jit.cpp");
+    CHECK(jit.find("fence_elision_blocked = irb->CreateICmpEQ(fence_elision_ok_i, zero32)") !=
+              std::string::npos,
+          "3446 AC1: fence elision_ok()==0");
+    CHECK(jit.find("fence_entry_blocked = irb->CreateICmpEQ(fence_entry_ok_i, zero32)") !=
+              std::string::npos,
+          "3446 AC1: fence typed-entry==0");
+    CHECK(jit.find("is_stale = irb->CreateOr(is_stale, fence_elision_blocked)") !=
+              std::string::npos,
+          "3446 AC1: OR elision into is_stale");
+    CHECK(jit.find("begin_linear_epoch_fence") != std::string::npos &&
+              jit.find("store(inst.ops[1], c64(0))") != std::string::npos,
+          "3446 AC1: Move source-zero stays after fence (skipped on stale)");
+    const auto fence = jit.find("auto begin_linear_epoch_fence");
+    CHECK(fence != std::string::npos, "3446 AC1: fence helper present");
+    const auto body = fence == std::string::npos ? std::string{} : jit.substr(fence, 2800);
+    CHECK(body.find("linear_safety_probe()") == std::string::npos,
+          "3446 AC1: fence does not route through probe (probe continues after deopt)");
+
+    clear_escape_move_elision_gate();
+    clear_type_linear_commit_proof_for_test();
+    reset_linear_ir_fastpath_counters_for_test();
+    reset_linear_fast_path_dirty_revalidate_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(34461);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    publish_last_proof_face(false, false);
+    const auto blk0 = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(!linear_move_drop_elision_ok(), "3446 AC1: elision blocked after reject proof");
+    CHECK(!ir_typed_entry_commit_readiness_ok(),
+          "3446 AC1: typed-entry blocked after reject proof");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() > blk0,
+          "3446 AC1: existing elide-blocked counter bumped");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+}
+
+static void ac3446_2_drop_borrow_same_fence() {
+    std::println("\n--- #3446 AC2: Drop/Borrow inherit the same fence ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto drop = jit.find("case OpDropOp:");
+    CHECK(drop != std::string::npos, "3446 AC2: OpDropOp present");
+    const auto drop_body = drop == std::string::npos ? std::string{} : jit.substr(drop, 1800);
+    CHECK(drop_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3446 AC2: OpDropOp uses fence");
+    CHECK(drop_body.find("Issue #3446") != std::string::npos, "3446 AC2: Drop cites #3446");
+    const auto borrow = jit.find("case OpBorrowOp:");
+    CHECK(borrow != std::string::npos, "3446 AC2: OpBorrowOp present");
+    const auto borrow_body = borrow == std::string::npos ? std::string{} : jit.substr(borrow, 700);
+    CHECK(borrow_body.find("begin_linear_epoch_fence()") != std::string::npos,
+          "3446 AC2: Borrow/MutBorrow inherit fence");
+}
+
+static void ac3446_3_interpreter_unchanged() {
+    std::println("\n--- #3446 AC3: interpreter path unchanged (#3224/#3305) ---");
+    const auto ir = read_file("src/compiler/ir_executor_impl.cpp");
+    CHECK(ir.find("linear_state_allows_op") != std::string::npos,
+          "3446 AC3: interpreter still linear_state_allows_op");
+    CHECK(ir.find("typed_audit::linear_move_drop_elision_ok()") != std::string::npos,
+          "3446 AC3: interpreter still elision skip");
+    CHECK(ir.find("ir_typed_entry_blocked_result") != std::string::npos,
+          "3446 AC3: interpreter typed-entry refuse kept");
+    CHECK(ir.find("commit-readiness-refused") != std::string::npos,
+          "3446 AC3: interpreter refuse message kept");
+}
+
+static void ac3446_4_prologue_guardshape_kept() {
+    std::println("\n--- #3446 AC4: Apply prologue + GuardShape probe kept ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("Issue #3419") != std::string::npos, "3446 AC4: #3419 prologue cite kept");
+    CHECK(jit.find("hard_typed_entry") != std::string::npos, "3446 AC4: prologue production gate");
+    CHECK(jit.find("fn_ir_typed_entry_commit_readiness_ok") != std::string::npos,
+          "3446 AC4: prologue typed-entry emit");
+    CHECK(jit.find("is_stale = irb->CreateOr(is_stale, lin_unsafe)") != std::string::npos,
+          "3446 AC4: GuardShape still fail-closes via probe i1");
+    CHECK(jit.find("irb->CreateCondBr(any_unsafe, bb_deopt, bb_ok)") != std::string::npos,
+          "3446 AC4: probe still continues to bb_ok after deopt_inc");
+}
+
+static void ac3446_5_soft_no_new_key() {
+    std::println("\n--- #3446 AC5: Soft/Off quiet allow; no new query key ---");
+    using namespace aura::compiler::typed_audit;
+    auto save =
+        g_typed_mutation_audit_counters.production_defaults_active.load(std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.production_defaults_active.store(0, std::memory_order_relaxed);
+    set_strategy(AuditStrategy::Sampled);
+    clear_type_linear_commit_proof_for_test();
+    stamp_type_linear_commit_proof(34465);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeStamped);
+    publish_last_proof_face(true, true);
+    g_linear_ir_fastpath_boundary_depth_override = 0;
+    const auto blk0 = linear_fast_path_elide_blocked_production_total_v_read();
+    CHECK(ir_typed_entry_commit_readiness_ok(), "3446 AC5: Soft typed-entry allow");
+    CHECK(linear_move_drop_elision_ok() || linear_fast_path_ok(),
+          "3446 AC5: Soft elision/fast-path allow on green proof");
+    CHECK(linear_fast_path_elide_blocked_production_total_v_read() == blk0,
+          "3446 AC5: no new counters on quiet allow");
+    g_typed_mutation_audit_counters.production_defaults_active.store(save,
+                                                                     std::memory_order_relaxed);
+    clear_type_linear_commit_proof_for_test();
+    g_linear_ir_fastpath_boundary_depth_override = -1;
+
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto build = read_file("build.py");
+    CHECK(jit.find("schema-3446") == std::string::npos, "3446 AC5: no schema-3446 in jit");
+    CHECK(mut.find("schema-3446") == std::string::npos, "3446 AC5: no new query key");
+    CHECK(build.find("check_linear_epoch_fence_elision_typed_3446") != std::string::npos,
+          "3446 AC5: build.py wires linter");
+    CHECK(read_file("docs/design/3446-linear-epoch-fence.md").empty(),
+          "3446 AC5: no docs/design/3446-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3446.cpp").empty() &&
+              read_file("tests/issues/test_issue_3446.cpp").empty(),
+          "3446 AC5: no test_issue_3446.cpp per #81934");
+}
+
 } // namespace
 
 int run_test_escape_move_elision_gate() {
@@ -1414,6 +1543,12 @@ int run_test_escape_move_elision_gate() {
     ac3238_2_soft_quiet();
     ac3238_3_lineage();
     ac3238_4_source_linter();
+    std::println("\n=== Issue #3446: JIT Move/Drop fence ORs elision + typed-entry ---");
+    ac3446_1_fence_or_skips_move_body();
+    ac3446_2_drop_borrow_same_fence();
+    ac3446_3_interpreter_unchanged();
+    ac3446_4_prologue_guardshape_kept();
+    ac3446_5_soft_no_new_key();
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

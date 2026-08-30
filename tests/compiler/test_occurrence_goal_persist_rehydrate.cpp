@@ -2737,6 +2737,26 @@ static void ac3419_jit_typed_entry_every_function() {
     CHECK(stub.find("g_3419_") == std::string::npos, "3419 AC4: no g_3419_*");
 }
 
+static void ac3446_linear_epoch_fence_elision_typed() {
+    std::println("\n--- #3446: fence ORs elision_ok + typed-entry (residual of #3186) ---");
+    const auto jit = read_file("src/compiler/aura_jit.cpp");
+    CHECK(jit.find("Issue #3446") != std::string::npos, "3446: fence cite");
+    CHECK(jit.find("fence_elision_blocked = irb->CreateICmpEQ(fence_elision_ok_i, zero32)") !=
+              std::string::npos,
+          "3446: elision == 0 on fence (not probe continue)");
+    CHECK(jit.find("fence_entry_blocked = irb->CreateICmpEQ(fence_entry_ok_i, zero32)") !=
+              std::string::npos,
+          "3446: typed-entry == 0 on fence");
+    CHECK(jit.find("not_elision_ok = irb->CreateICmpNE(elision_ok_i, zero32)") != std::string::npos,
+          "3446: #3186 probe ICmpNE kept");
+    const auto t = read_file("tests/compiler/test_escape_move_elision_gate.cpp");
+    CHECK(t.find("ac3446_1_fence_or_skips_move_body") != std::string::npos,
+          "3446: primary fixture is test_escape_move_elision_gate");
+    const auto build = read_file("build.py");
+    CHECK(build.find("check_linear_epoch_fence_elision_typed_3446") != std::string::npos,
+          "3446: linter wired");
+}
+
 // ── Issue #3225: persist seqlock so concurrent outermost write × densify/steal
 // rehydrate cannot freeze a mixed fingerprint.
 //   AC1: production in-flight (odd seq) rehydrate is miss → empty, no green
@@ -3249,6 +3269,7 @@ int run_test_occurrence_goal_persist_rehydrate() {
     ac3224_ir_typed_entry_commit_readiness();
     ac3343_production_weak_abi_commit_readiness();
     ac3419_jit_typed_entry_every_function();
+    ac3446_linear_epoch_fence_elision_typed();
     ac3225_occurrence_persist_seqlock();
     // Issue #3170: outermost-success occurrence persist fingerprint guard
     // + uniform clear-on-abort/nested (I4 from 2026-08 type-system review -

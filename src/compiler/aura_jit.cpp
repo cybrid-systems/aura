@@ -801,6 +801,12 @@ struct LLVMBuilder {
         // Emits runtime call to aura_jit_linear_epoch_safety_check; on stale
         // deopts (aura_deopt_inc) and skips the mutation body. Leaves the
         // IR builder at bb_ok; caller emits body then calls end_fence.
+        // Issue #3446: also OR live elision_ok + typed-entry into this
+        // fail-close (skip body). linear_safety_probe deopt_inc then
+        // continues to bb_ok (observability) — not a substitute. Soft
+        // helpers return allow (one/two loads). Reuses
+        // g_linear_fast_path_elide_blocked_production_total inside the
+        // C ABI — no new query key.
         struct LinearEpochFence {
             llvm::BasicBlock* bb_ok = nullptr;
             llvm::BasicBlock* bb_merge = nullptr;
@@ -824,6 +830,21 @@ struct LLVMBuilder {
                     llvm::ConstantInt::get(llvm::Type::getInt8Ty(ctx), inst.linear_ownership_state),
                     llvm::ConstantInt::get(llvm::Type::getInt32Ty(ctx), inst.opcode)});
             auto* is_stale = irb->CreateICmpNE(stale_i, zero32);
+            // Issue #3446: stale |= elision_ok()==0 |= typed_entry_ok()==0
+            // so compiled Move/Drop skip the body (source slot not zeroed)
+            // after a reject proof, matching interpreter refuse.
+            auto* fence_elision_ok_i =
+                irb->CreateCall(llvm::FunctionCallee(fn_linear_move_drop_elision_ok),
+                                llvm::ArrayRef<llvm::Value*>{});
+            auto* fence_elision_blocked = irb->CreateICmpEQ(fence_elision_ok_i, zero32);
+            is_stale = irb->CreateOr(is_stale, fence_elision_blocked);
+            if (fn_ir_typed_entry_commit_readiness_ok) {
+                auto* fence_entry_ok_i =
+                    irb->CreateCall(llvm::FunctionCallee(fn_ir_typed_entry_commit_readiness_ok),
+                                    llvm::ArrayRef<llvm::Value*>{});
+                auto* fence_entry_blocked = irb->CreateICmpEQ(fence_entry_ok_i, zero32);
+                is_stale = irb->CreateOr(is_stale, fence_entry_blocked);
+            }
             irb->CreateCondBr(is_stale, bb_stale, bb_ok);
             // Stale: deopt to interpreter — skip mutation (prevents
             // use-after-move / UAF / double-free on post-mutate linear values).
@@ -1468,6 +1489,9 @@ struct LLVMBuilder {
             case OpMoveOp: {
                 // Issue #1535 / #1917: check epoch before zeroing source
                 // (prevents use-after-move after mid-op mutate).
+                // Issue #3446: begin_linear_epoch_fence also ORs live
+                // elision_ok + typed-entry so a reject proof skips this
+                // body (source slot not zeroed).
                 //
                 // Issue #2293: unpin the source slot before
                 // invalidation so verify_linear_pins_under_moving_compact
@@ -1501,6 +1525,8 @@ struct LLVMBuilder {
             case OpDropOp: {
                 // Issue #1535 / #1917: check epoch before drop (prevents
                 // double-free of stale/invalidated linear values).
+                // Issue #3446: same fence fail-close as Move (elision +
+                // typed-entry OR). Borrow/MutBorrow inherit the same call.
                 //
                 // Issue #2293: unpin the value being dropped AFTER
                 // the drop helpers run (so the unpin sees the same
