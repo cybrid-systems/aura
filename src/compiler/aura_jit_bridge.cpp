@@ -1772,20 +1772,29 @@ extern "C" std::uint64_t aura_aot_bridge_epoch_mismatches(void) {
 }
 
 // Issue #1508 / #1491: dual-freshness probe for JIT aura_closure_call.
-// bridge_epoch ↔ g_aot_table_epoch (hot-swap / invalidate domain)
-// defuse/env_version ↔ g_aot_defuse_version (mutate / EnvFrame domain)
+// Issue #3447: two clocks share the historical “bridge” name. Interpreter
+// `is_bridge_stale` samples g_current_bridge_epoch (facade). This probe
+// used to sample only g_aot_table_epoch (hot-swap generation). Owner-scoped
+// hard invalidate bumps C bridge + defuse but does NOT fetch_add table
+// epoch (#2841/#2951), so dual-fresh stayed green for owner live closures.
+// Freshness is now C-bridge AND table AND defuse. Remount restamp of
+// g_closure_bridge_epochs to the facade clock may not equal a frozen
+// table epoch — table domain also accepts captured == C-bridge when that
+// clock is tracking (leave-native until remount, then green). Soft extra
+// load of g_current_bridge_epoch only; no table force-bump. No new query key.
 //
 // Strictness matches Evaluator::is_bridge_stale / is_env_frame_stale (#1365 /
 // #1475 / #1491 / #2930 AC): when tracking is active (current != 0), an
 // unstamped capture (0) is STALE unless AURA_BRIDGE_EPOCH_LEGACY_TRUST=1.
 // Non-zero mismatch is always stale. current==0 → domain inactive → not stale.
-// Issue #2930: zero-epoch observations on the bridge domain bump the same
+// Issue #2930: zero-epoch observations on the C-bridge domain bump the same
 // process-wide counters as Evaluator::is_bridge_stale.
 extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
                                           std::uint64_t captured_defuse_or_env_version) {
     if (aot_metrics())
         aot_metrics()->jit_closure_dual_check_total.fetch_add(1, std::memory_order_relaxed);
-    const std::uint64_t cur_bridge = g_aot_table_epoch.load(std::memory_order_acquire);
+    const std::uint64_t cur_c_bridge = aura_get_current_bridge_epoch();
+    const std::uint64_t cur_table = g_aot_table_epoch.load(std::memory_order_acquire);
     const std::uint64_t cur_defuse = g_aot_defuse_version;
 
     static const bool legacy_trust = []() noexcept {
@@ -1811,8 +1820,16 @@ extern "C" bool aura_is_jit_closure_fresh(std::uint64_t captured_bridge_epoch,
         return captured == current;
     };
 
-    // Only count zero on the bridge_epoch domain (not defuse/env domain).
-    return domain_ok(captured_bridge_epoch, cur_bridge, legacy_trust, /*count_zero=*/true) &&
+    // Issue #3447: C-bridge is the facade clock (#2930 zero-count lives here).
+    const bool c_ok =
+        domain_ok(captured_bridge_epoch, cur_c_bridge, legacy_trust, /*count_zero=*/true);
+    // Table generation: equality, or captured already restamped to C-bridge
+    // after owner-scoped remount while table stayed frozen.
+    bool table_ok = domain_ok(captured_bridge_epoch, cur_table, legacy_trust, /*count_zero=*/false);
+    if (!table_ok && cur_c_bridge != 0 && captured_bridge_epoch != 0 &&
+        captured_bridge_epoch == cur_c_bridge)
+        table_ok = true;
+    return c_ok && table_ok &&
            domain_ok(captured_defuse_or_env_version, cur_defuse, legacy_trust,
                      /*count_zero=*/false);
 }

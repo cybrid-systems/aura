@@ -15905,6 +15905,27 @@ def cmd_scope_message_resolve_3442_coverage():
     return 0
 
 
+def cmd_jit_dual_fresh_c_bridge_3447_coverage():
+    """Issue #3447: JIT dual-fresh observes facade C-bridge AND table epoch.
+
+    Owner-scoped hard invalidate freezes g_aot_table_epoch. Dual-fresh
+    used to sample only table, so owner live closures stayed green.
+    No table force-bump. No new query key. Extends
+    test_aot_incremental_reemit.cpp.
+    """
+    print(f"{B}=== jit_dual_fresh_c_bridge coverage (#3447) ==={N}")
+    script = COVERAGE_CHECKS / "check_jit_dual_fresh_c_bridge_3447.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("jit_dual_fresh_c_bridge (#3447) coverage contract rows failed")
+        return 1
+    ok("jit_dual_fresh_c_bridge (#3447) coverage clean")
+    return 0
+
+
 def cmd_linear_epoch_fence_elision_typed_3446_coverage():
     """Issue #3446: JIT Move/Drop fence ORs live elision_ok + typed-entry.
 
@@ -23232,6 +23253,8 @@ def main():
         "reemit-pipeline-reason-coverage-3445-coverage": cmd_reemit_pipeline_reason_coverage_3445_coverage,
         "linear-epoch-fence-elision-typed-3446": cmd_linear_epoch_fence_elision_typed_3446_coverage,
         "linear-epoch-fence-elision-typed-3446-coverage": cmd_linear_epoch_fence_elision_typed_3446_coverage,
+        "jit-dual-fresh-c-bridge-3447": cmd_jit_dual_fresh_c_bridge_3447_coverage,
+        "jit-dual-fresh-c-bridge-3447-coverage": cmd_jit_dual_fresh_c_bridge_3447_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

@@ -1042,6 +1042,8 @@ namespace {
     [[maybe_unused]] EpochMustDeoptReg g_epoch_must_deopt_reg;
 } // namespace
 
+static std::uint64_t jit_closure_bridge_stamp_now() noexcept;
+
 // Issue #2501 test: force a live JIT closure's bridge_epoch one behind.
 extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t closure_id) {
     if (closure_id < 0)
@@ -1054,7 +1056,7 @@ extern "C" void aura_inject_stale_closure_bridge_epoch_for_test(std::int64_t clo
         return;
     if (g_closure_bridge_epochs.size() <= cid)
         g_closure_bridge_epochs.resize(cid + 1, 0);
-    const auto cur = aura_aot_func_table_epoch();
+    const auto cur = jit_closure_bridge_stamp_now();
     g_closure_bridge_epochs[cid] = cur > 0 ? cur - 1 : 0;
     // Ensure not already MustDeopt so the walk can mark it.
     if (g_closure_must_deopt.size() <= cid)
@@ -1212,13 +1214,24 @@ extern "C" std::uint64_t aura_closure_cache_generation_mismatch_total(void) {
     return g_closure_cache_generation_mismatch_total.load(std::memory_order_relaxed);
 }
 
+// Issue #3447: stamp the facade C-bridge clock when it is tracking so
+// aura_is_jit_closure_fresh (C-bridge AND table) restamps green after
+// owner-scoped remount. Table-only tests leave C-bridge at 0 and keep
+// stamping g_aot_table_epoch. No table force-bump.
+static std::uint64_t jit_closure_bridge_stamp_now() noexcept {
+    const auto c = aura_get_current_bridge_epoch();
+    if (c != 0)
+        return c;
+    return aura_aot_func_table_epoch();
+}
+
 // Issue #1508: stamp dual provenance (table epoch + defuse) at alloc.
 // Issue #2272: also stamp env_generation from the host mirror so the
 // PRIMARY env axis in aura_remount_closure_captures catches compact /
 // RegionExclusive writer drift.
 // Issue #2547: stamp cow_gen_at_capture from live workspace COW generation.
 static void stamp_closure_provenance_locked(size_t cid) {
-    const std::uint64_t bridge = aura_aot_func_table_epoch();
+    const std::uint64_t bridge = jit_closure_bridge_stamp_now();
     const std::uint64_t defuse = aura_get_aot_defuse_version();
     const std::uint64_t env_gen = aura_get_aot_live_env_frame_version();
     const std::uint64_t cow_gen = aura_get_live_workspace_cow_gen();
@@ -1362,6 +1375,7 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
     const std::uint64_t cap_defuse =
         cid < g_closure_defuse_versions.size() ? g_closure_defuse_versions[cid] : 0;
     const std::uint64_t cur_bridge = aura_aot_func_table_epoch();
+    const std::uint64_t cur_c_bridge = aura_get_current_bridge_epoch();
     const std::uint64_t cur_defuse = aura_get_aot_defuse_version();
     if (!cross_cow_drift_within_cap_(cap_bridge, cur_bridge) ||
         !cross_cow_drift_within_cap_(cap_defuse, cur_defuse)) {
@@ -1382,9 +1396,14 @@ static int try_cross_cow_soft_migrate_(std::size_t cid) noexcept {
     // (no new metric per AC5). Production Restrict/Strict + mutate-driven
     // dual-fresh must NOT soft-migrate onto pre-mutate g_jit_fns.fn —
     // MustDeopt forces reemit remap to retarget.
+    // Issue #3447: owner-scoped hard invalidate freezes g_aot_table_epoch
+    // so table cur_bridge can still match. Dual-fresh already misses on
+    // g_current_bridge_epoch; this probe must see that miss too or
+    // restamp-and-continue would wash leave-native on this call.
     if (aura::compiler::typed_audit::production_defaults_active() &&
         ((cap_defuse != 0 && cur_defuse != 0 && cap_defuse != cur_defuse) ||
-         (cap_bridge != 0 && cur_bridge != 0 && cap_bridge != cur_bridge))) {
+         (cap_bridge != 0 && cur_bridge != 0 && cap_bridge != cur_bridge) ||
+         (cap_bridge != 0 && cur_c_bridge != 0 && cap_bridge != cur_c_bridge))) {
         if (cid >= g_closure_must_deopt.size())
             g_closure_must_deopt.resize(g_closure_func_ids.size(), 0);
         g_closure_must_deopt[cid] = 1;
@@ -1583,7 +1602,7 @@ static int64_t alloc_closure_slot_locked(int64_t func_id, std::uint8_t is_arena)
     g_arena_closure_env_sizes.push_back(0);
     g_closure_names.emplace_back();
     g_closure_freed.push_back(0);
-    g_closure_bridge_epochs.push_back(aura_aot_func_table_epoch());
+    g_closure_bridge_epochs.push_back(jit_closure_bridge_stamp_now());
     g_closure_defuse_versions.push_back(aura_get_aot_defuse_version());
     g_closure_stable_func_ids.push_back(
         0);                            // Issue #2092/#2550: default 0 until named set_name stamps
@@ -2907,7 +2926,7 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
                     static_cast<std::int64_t>(cid), live_env,
                     /*linear_fp=*/0, table_epoch) != 0) {
                 g_closure_must_deopt[cid] = 0;
-                g_closure_bridge_epochs[cid] = table_epoch;
+                g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
                 g_closure_defuse_versions[cid] = host_defuse;
                 g_closure_env_gen[cid] = live_env;
                 invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
@@ -3091,7 +3110,7 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
                     static_cast<std::int64_t>(cid), live_env,
                     /*linear_fp=*/0, table_epoch) != 0) {
                 g_closure_must_deopt[cid] = 0;
-                g_closure_bridge_epochs[cid] = table_epoch;
+                g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
                 g_closure_defuse_versions[cid] = host_defuse;
                 g_closure_env_gen[cid] = live_env;
                 invalidate_closure_cache_for(static_cast<std::int64_t>(cid));
@@ -3414,7 +3433,7 @@ extern "C" std::uint64_t aura_remap_live_closures_after_reemit(const std::uint32
         // Atomic-from-callers' view: all fields under exclusive table lock.
         g_closure_func_ids[cid] = static_cast<std::int64_t>(match_id);
         g_closure_stable_func_ids[cid] = match_id;
-        g_closure_bridge_epochs[cid] = new_bridge_epoch;
+        g_closure_bridge_epochs[cid] = jit_closure_bridge_stamp_now();
         // Issue #2542: restamp env_gen to live env-frame generation so
         // remount PRIMARY axis (#2272) aligns after reemit.
         g_closure_env_gen[cid] = live_env;
