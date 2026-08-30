@@ -3811,18 +3811,17 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 case aura::ast::NodeTag::LiteralString: {
                     // Issue #3401: happy-path string intern. std::string
                     // construction + string_heap_.push_back happen only on
-                    // the first encounter of a unique literal; subsequent
-                    // hits return the cached EvalValue directly (string_view
-                    // lookup, zero heap allocation, zero push_back).
+                    // the first encounter of a unique literal.
+                    // Issue #3457: lookup by v.sym_id (dense), not hashed
+                    // string_view into the pool.
+                    if (const auto* e = string_intern_by_sym_.get(v.sym_id))
+                        return *e;
                     std::string_view raw_sv = p->resolve(v.sym_id);
-                    if (auto it = string_intern_.find(raw_sv); it != string_intern_.end()) {
-                        return it->second;
-                    }
                     std::string raw(raw_sv);
                     auto sid = string_heap_.size();
                     string_heap_.push_back(std::move(raw));
                     auto val = make_string(sid);
-                    string_intern_.emplace(raw_sv, val);
+                    string_intern_by_sym_.set(v.sym_id, val);
                     if (raw_sv.size() <= 6)
                         short_str_cache_[std::string(raw_sv)] = val;
                     return val;
@@ -3830,19 +3829,18 @@ EvalResult Evaluator::eval_flat(aura::ast::FlatAST& flat, aura::ast::StringPool&
                 case aura::ast::NodeTag::Variable: {
                     // Issue #3401: keyword O(1) intern. std::string
                     // construction + keyword_table_.push_back happen only
-                    // on the first encounter of a unique :foo literal;
-                    // subsequent hits return the cached EvalValue directly.
+                    // on the first encounter of a unique :foo literal.
+                    // Issue #3457: lookup by v.sym_id (dense).
                     // The leading ':' is preserved in keyword_table_[kidx]
                     // for backward compatibility with existing readers.
                     std::string_view name = p->resolve(v.sym_id);
                     if (!name.empty() && name[0] == ':') {
-                        if (auto it = keyword_intern_.find(name); it != keyword_intern_.end()) {
-                            return it->second;
-                        }
+                        if (const auto* e = keyword_intern_by_sym_.get(v.sym_id))
+                            return *e;
                         auto kidx = static_cast<std::uint64_t>(keyword_table_.size());
                         keyword_table_.push_back(std::string(name));
                         auto val = make_keyword(kidx);
-                        keyword_intern_.emplace(name, val);
+                        keyword_intern_by_sym_.set(v.sym_id, val);
                         return val;
                     }
                     // Issue #3401: name is std::string_view (no std::string

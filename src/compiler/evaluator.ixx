@@ -6191,22 +6191,40 @@ private:
     std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
                        std::equal_to<>>
         short_str_cache_;
-    // Issue #3401: full-size string intern — O(1) hot-path dedup so the
-    // LiteralString arm does not call string_heap_.push_back / construct
-    // std::string on the happy (already-interned) path. Keys are std::string
-    // to match the dominant Pattern in this class; construction happens
-    // exactly once per unique literal (on miss), then the EvalValue is
-    // returned from the cache for all subsequent hits.
-    std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
-                       std::equal_to<>>
-        string_intern_;
-    // Issue #3401: keyword intern — O(1) lookup replaces the O(n) linear
-    // scan over keyword_table_ in eval_flat's :foo Variable arm. Keys keep
-    // the leading ':' for backward compatibility with existing readers
-    // that index keyword_table_[kidx] expecting ":foo".
-    std::unordered_map<std::string, types::EvalValue, aura::core::TransparentStringHash,
-                       std::equal_to<>>
-        keyword_intern_;
+    // Issue #3401 / #3457: intern by pool SymId (dense probe). Hit is
+    // vals[id] when hit[id]; miss still constructs the heap payload once.
+    // Do not key the hot path on string_view into the pool (hash +
+    // compact-dangle). string_view maps removed — grep showed only the
+    // two eval_flat arms.
+    // Stamp: kEvalFlatSymInternIssue = 3457
+    struct SymIdIntern {
+        std::vector<types::EvalValue> vals;
+        std::vector<std::uint8_t> hit;
+        [[nodiscard]] const types::EvalValue* get(std::uint32_t id) const noexcept {
+            if (id == aura::ast::INVALID_SYM || id >= hit.size() || !hit[id])
+                return nullptr;
+            return &vals[id];
+        }
+        void set(std::uint32_t id, types::EvalValue v) {
+            if (id == aura::ast::INVALID_SYM)
+                return;
+            if (id >= vals.size()) {
+                vals.resize(id + 1);
+                hit.resize(id + 1);
+            }
+            vals[id] = v;
+            hit[id] = 1;
+        }
+        void clear() noexcept {
+            vals.clear();
+            hit.clear();
+        }
+    };
+    static constexpr int kEvalFlatSymInternIssue = 3457;
+    SymIdIntern string_intern_by_sym_;
+    // Issue #3401 / #3457: :foo intern by SymId. keyword_table_ still
+    // stores the leading ':' payload for existing readers.
+    SymIdIntern keyword_intern_by_sym_;
     std::vector<std::string> keyword_table_; // keyword name strings (indexed by KeywordRef)
     std::size_t eval_depth_ = 0;             // recursion counter for friendly stack overflow
     static constexpr std::size_t MAX_EVAL_DEPTH = 50000;

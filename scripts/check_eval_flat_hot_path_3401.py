@@ -5,20 +5,17 @@ Contract:
   AC1 eval_flat production path has no function-scope try { around the TCO
      loop — try is wrapped with #ifndef NDEBUG / #endif so production
      (NDEBUG) skips it; Soft (debug) keeps it for friendly Diagnostics.
-  AC2 LiteralString arm reads pool resolve via std::string_view and looks
-     up Evaluator::string_intern_ first; std::string construction +
-     string_heap_.push_back happen only on the first encounter of a
-     unique literal.
-  AC3 :foo keyword Variable arm reads pool resolve via std::string_view
-     and looks up Evaluator::keyword_intern_ first; std::string
-     construction + keyword_table_.push_back happen only on the first
-     encounter of a unique keyword. keyword_table_ entries keep the
-     leading ':' for backward compatibility with existing readers.
+  AC2 LiteralString arm looks up by v.sym_id (string_intern_by_sym_.get);
+     std::string construction + string_heap_.push_back happen only on
+     the first encounter of a unique literal (#3457 dense SymId).
+  AC3 :foo keyword Variable arm looks up by v.sym_id
+     (keyword_intern_by_sym_.get); std::string construction +
+     keyword_table_.push_back happen only on the first encounter of a
+     unique keyword. keyword_table_ entries keep the leading ':' .
   AC4 eval_env.lookup call site uses std::string_view (no std::string
      construction on the hot path); Env::lookup already takes string_view.
-  AC5 Evaluator class declares string_intern_ and keyword_intern_ as
-     std::unordered_map<std::string, types::EvalValue, ...> members near
-     short_str_cache_ / keyword_table_.
+  AC5 Evaluator class declares string_intern_by_sym_ and
+     keyword_intern_by_sym_ near short_str_cache_ / keyword_table_.
   AC6 no tests/core/test_issue_3401.cpp (extends existing tests per #81934);
      no docs/design/3401-*.md (per #1655); no `classify_eval_value_tag`
      banned-call reintroduction (per #2616 invariant).
@@ -101,9 +98,9 @@ def main() -> int:
         # 1500 chars covers the whole arm with margin.
         arm_text = eval_flat[literal_anchor_pos : literal_anchor_pos + 1500]
         required = [
+            "string_intern_by_sym_.get(v.sym_id)",
             "string_view raw_sv = p->resolve",
-            "string_intern_.find",
-            "string_intern_.emplace",
+            "string_intern_by_sym_.set(v.sym_id",
             "std::string raw(raw_sv)",
         ]
         missing = _arm_keywords(arm_text, required)
@@ -123,8 +120,8 @@ def main() -> int:
         arm_text = eval_flat[keyword_anchor_pos : keyword_anchor_pos + 1500]
         required = [
             "string_view name = p->resolve",
-            "keyword_intern_.find",
-            "keyword_intern_.emplace",
+            "keyword_intern_by_sym_.get(v.sym_id)",
+            "keyword_intern_by_sym_.set(v.sym_id",
         ]
         missing = _arm_keywords(arm_text, required)
         if missing:
@@ -142,13 +139,16 @@ def main() -> int:
     if "Env::lookup(std::string_view n)" not in env_cpp:
         fails.append("AC4: Env::lookup signature does not take std::string_view (env.cpp regression)")
 
-    # AC5: Evaluator class declares string_intern_ and keyword_intern_ near
+    # AC5: Evaluator class declares SymId intern maps near
     # short_str_cache_ / keyword_table_.
-    if "string_intern_;" not in evaluator_ixx:
-        fails.append("AC5: Evaluator class is missing string_intern_ member (LiteralString hot path cannot dedupe)")
-    if "keyword_intern_;" not in evaluator_ixx:
+    if "string_intern_by_sym_;" not in evaluator_ixx:
         fails.append(
-            "AC5: Evaluator class is missing keyword_intern_ member (:foo hot path still does O(n) linear scan)"
+            "AC5: Evaluator class is missing string_intern_by_sym_ member "
+            "(LiteralString hot path still hashes string_view)"
+        )
+    if "keyword_intern_by_sym_;" not in evaluator_ixx:
+        fails.append(
+            "AC5: Evaluator class is missing keyword_intern_by_sym_ member (:foo hot path still hashes string_view)"
         )
 
     # AC6: no tests/core/test_issue_3401.cpp (extends existing tests per

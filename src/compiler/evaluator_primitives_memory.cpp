@@ -228,6 +228,7 @@ void register_memory_primitives(PrimRegistrar add, Evaluator& ev,
             // cached String EvalValue pointing past the end of ev.string_heap_,
             // and ev.string_heap_[idx] is UB (segfault on .data() access).
             ev.short_str_cache_.clear();
+            ev.string_intern_by_sym_.clear(); // Issue #3457: heap indices die with string_heap_
             ev.string_heap_.clear();
             ev.string_heap_.shrink_to_fit();
             ev.pairs_.clear();
