@@ -18,6 +18,7 @@
 #include "test_harness.hpp"
 
 #include "serve/fiber.h"
+#include "core/lifetime_pin.hh" // Issue #3438: scoped linear drain AC6
 
 #include <atomic>
 #include <chrono>
@@ -27,6 +28,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <unordered_set> // Issue #3438: linear-keep set type in AC6
 
 import std;
 
@@ -59,6 +61,54 @@ static void yielding_body_fn(Fiber* /*self*/, int /*unused*/) {
 }
 
 // ── AC1: Hard reclaim → orphan roots released, no unbounded growth ──
+static void ac6_3438_scoped_linear_drain() {
+    std::println("\n--- AC6 (#3438): scoped linear drain — siblings survive ---");
+    const auto fh = read_file("src/serve/fiber.cpp");
+    const auto gc = read_file("src/compiler/evaluator_gc.cpp");
+    const auto steal = read_file("src/compiler/evaluator_fiber_mutation.cpp");
+    const auto boundary = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(fh.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos,
+          "3438 AC3: post-join drain uses the scoped helper");
+    CHECK(gc.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos,
+          "3438 AC3: outermost-fail drain uses the scoped helper");
+    CHECK(steal.find("unpin_linear_roots_scoped_for_fiber") != std::string::npos,
+          "3438 AC3: steal hard-fail drain uses the scoped helper");
+    CHECK(boundary.find("set_outermost_linear_keep") != std::string::npos,
+          "3438 AC1: outermost Guard enter publishes the fiber keep");
+    CHECK(boundary.find("clear_outermost_linear_keep") != std::string::npos,
+          "3438 AC2: successful outermost exit disarms the keep");
+
+    // Live behavior: two live linear roots (this fiber's + a sibling's);
+    // the fiber's keep snapshot holds only the sibling's — scoped drain
+    // keeps the sibling's root and drains this fiber's leftover.
+    aura::core::lifetime::reset_linear_roots_for_test();
+    static unsigned char mine3438[64];
+    static unsigned char theirs3438[64];
+    aura::core::lifetime::pin_linear_root(mine3438);
+    aura::core::lifetime::pin_linear_root(theirs3438);
+    {
+        Fiber fiber3438(+[] {}, /*stack_size=*/64 * 1024);
+        std::unordered_set<void*> keep3438;
+        keep3438.insert(theirs3438);
+        fiber3438.set_outermost_linear_keep(std::move(keep3438));
+        (void)fiber3438.release_orphan_roots();
+    }
+    std::unordered_set<void*> after3438;
+    aura::core::lifetime::snapshot_linear_roots(after3438);
+    CHECK(after3438.count(theirs3438) == 1,
+          "3438 AC1: sibling linear root survives the scoped reclaim drain");
+    CHECK(after3438.count(mine3438) == 0, "3438 AC1: this fiber's leftover linear root drained");
+    // Keep was consumed (take + disarm) -> unarmed reclaim falls back to
+    // the legacy #3023 drain (Soft / no-Guard-history contract).
+    {
+        Fiber fiber3438b(+[] {}, /*stack_size=*/64 * 1024);
+        (void)fiber3438b.release_orphan_roots();
+    }
+    aura::core::lifetime::snapshot_linear_roots(after3438);
+    CHECK(after3438.empty(), "3438 AC5: unarmed fallback still drains (Soft/#3023 contract)");
+    aura::core::lifetime::reset_linear_roots_for_test();
+}
+
 static void ac1_reclaim_releases_orphan_roots() {
     std::println("\n--- AC1: hard reclaim → release_orphan_roots() fires all callbacks ---");
     auto f0 = Fiber::orphan_roots_dropped_on_reclaim_total();
@@ -251,6 +301,7 @@ int run_test_fiber_reclaim_orphan_release() {
     ac3_reclaim_distinguishable_and_metrics();
     ac4_cancel_storm_stress();
     ac5_source_cite_and_linter();
+    ac6_3438_scoped_linear_drain();
     std::println("\n=== #2498: see per-AC results above ===");
     return aura::test::g_failed ? 1 : 0;
 }

@@ -2754,6 +2754,25 @@ def cmd_lint():
             "Issue #3437 scope session drop linter failed — run python3 scripts/coverage/checks/check_scope_session_drop_3437.py"
         )
         return r
+    # Issue #3438: unpin_all_linear_roots is process-wide at the three
+    # live-fiber drain faces (post-join reclaim / outermost fail /
+    # steal hard-fail) — wipes sibling fibers' live linear roots
+    # under multi-fiber mutate. Scoped drain via the fiber's
+    # outermost-Guard keep snapshot + shared
+    # unpin_linear_roots_scoped_for_fiber audit face; unpin_all stays
+    # for teardown / reset-for-test only. Extends
+    # tests/serve/test_fiber_reclaim_orphan_release.cpp (#81967);
+    # no test_issue_*.cpp, no new query key, no docs/design/.
+    sld3438_script = COVERAGE_CHECKS / "check_scoped_linear_drain_3438.py"
+    if not sld3438_script.exists():
+        fail(f"missing {sld3438_script}")
+        return 1
+    r = run([sys.executable, str(sld3438_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3438 scoped linear drain linter failed — run python3 scripts/coverage/checks/check_scoped_linear_drain_3438.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.

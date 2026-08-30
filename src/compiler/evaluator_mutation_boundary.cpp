@@ -2911,6 +2911,19 @@ Evaluator::MutationBoundaryGuard::MutationBoundaryGuard(
         aura::core::lifetime::snapshot_linear_roots(nested_linear_keep_);
         nested_linear_keep_armed_ = true;
     }
+    // Issue #3438: outermost enter also snapshots live linear roots
+    // (siblings') onto the fiber so the three drain faces (post-join
+    // reclaim / outermost fail / steal hard-fail) scope to this fiber's
+    // leftovers instead of process-wide unpin_all. Same production gate
+    // as the nested arm (Soft skips — zero extra cost). Successful
+    // outermost exit clears; fail/steal consume via take+disarm.
+    if (outermost && typed_audit::production_defaults_active()) {
+        if (auto* f3438 = aura::serve::g_current_fiber) {
+            std::unordered_set<void*> keep3438;
+            aura::core::lifetime::snapshot_linear_roots(keep3438);
+            f3438->set_outermost_linear_keep(std::move(keep3438));
+        }
+    }
     // Issue #2944: capture Mutation epoch mid for session-grant revoke on
     // outermost exit. Nested boundaries do not stamp (session_mid stays 0).
     if (outermost) {
@@ -3971,6 +3984,15 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         // / depth can flip after the post-pop check). Production !ok
         // still forces dirty-root revalidate; Soft stays observe-only.
         linear_fast_path_maybe_force_dirty_revalidate(/*late=*/true);
+    }
+    // Issue #3438: outermost exit — the Guard's linear-keep scope ends.
+    // Fail paths already drained scoped inside enforce (take + disarm);
+    // a successful exit disarms now so a later reclaim never drains with
+    // a stale keep. Abandoned mid-Guard (steal): dtor never runs — the
+    // keep stays armed for the steal hard-fail scoped drain.
+    if (outermost) {
+        if (auto* f3438 = aura::serve::g_current_fiber)
+            f3438->clear_outermost_linear_keep();
     }
     // ── Phase 2–3: panic checkpoint + GC defer (before reemit) ──
     // Issue #241 / #2120: commit/restore under lock so dual-epoch observers
