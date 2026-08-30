@@ -1132,6 +1132,179 @@ static void ac3333_6_source_and_linter() {
           "3333 AC6: no docs/design");
 }
 
+
+// ── Issue #3436: grant writers share one lifetime policy + caller principal
+// + no nested registry lock on the string mirror. ──────────────────────────
+//   AC1: Restricted TA-holder string grant "mutate" is forced single_use;
+//        1st successful Mutate check consumes, 2nd denies.
+//   AC2: the string path never inflates capability_live_session_grants.
+//   AC3: grant_effect_* pass capability_tenant_id_ into grant_locked as
+//        caller_principal — the #3409 SSOT fence evaluates the granting
+//        Evaluator's principal, not the default_tenant fallback.
+//   AC4: grant_effect_durable(name="mutate") completes without the
+//        self-deadlock and keeps #3177 session_bound + wrapper mid.
+//   AC5: Soft/Off — no forced single_use (zero-cost contract).
+//   AC6: source-cite + linter (scripts/coverage/checks/
+//        check_grant_lifetime_alignment_3436.py); no test_issue_3436.cpp;
+//        no docs/design/3436-*.
+
+static void ac3436_1_string_path_forced_single_use() {
+    std::println("\n--- #3436 AC1+AC2: string-path high-risk forced single_use ---");
+    reset_all(); // mode Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(21);
+    // Seed explicit TenantAdmin (the grant-capability! prim gate equivalent)
+    // while the sandbox is Off - under production the #3141 string fence +
+    // #3409 SSOT fence deny first-TA acquisition (bootstrap chicken-and-egg),
+    // so tests seed the principal first, then flip Restricted for the AC body.
+    ev.grant_capability("tenant-admin");
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1);      // Restricted
+    aura::core::bump_mutation_epoch(1); // non-zero me -> non-zero grant mid (#3090)
+
+    const auto forced_before =
+        g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+    const auto live_before = g_capability_effect_metrics().capability_live_session_grants.load();
+
+    ev.grant_capability("mutate"); // the documented string path (prim body)
+
+    CHECK(g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load() >=
+              forced_before + 1,
+          "AC1: string-path 'mutate' bumps capability_high_risk_forced_single_use_total");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(21, "mutate", g), "AC1: 'mutate' row exists");
+    CHECK(g.single_use, "AC1: string-path 'mutate' row is single_use (not sticky)");
+    CHECK(!g.session_bound, "AC1: string path stamps session_bound=false");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before,
+          "AC2: capability_live_session_grants not inflated by the string path");
+
+    // Consume semantics: join the row's bound mid; 1st allow consumes, 2nd denies.
+    EffectProvenance prov{};
+    prov.mutation_id = g.bound_mutation_id != 0 ? g.bound_mutation_id : 1;
+    prov.epoch = g.grant_epoch != 0 ? g.grant_epoch : 1;
+    const bool ok1 = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, /*tenant=*/21,
+                                             "3436-ac1-1", /*wildcard_ok=*/false,
+                                             /*sandbox_active=*/true);
+    CHECK(ok1, "AC1: 1st require_effect(Mutate) allow");
+    CapabilityGrant g2{};
+    CHECK(g_capability_registry().find_grant(21, "mutate", g2), "AC1: row still findable");
+    CHECK(g2.revoked, "AC1: single_use grant consumed by 1st allow");
+    const bool ok2 = check_and_record_effect(Effect::Mutate, Effect::Mutate, prov, /*tenant=*/21,
+                                             "3436-ac1-2", /*wildcard_ok=*/false,
+                                             /*sandbox_active=*/true);
+    CHECK(!ok2, "AC1: 2nd require_effect(Mutate) deny (consumed; AST untouched)");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before,
+          "AC2: live_session_grants unchanged after consume");
+}
+
+static void ac3436_2_durable_named_no_deadlock() {
+    std::println("\n--- #3436 AC4: named durable 'mutate' completes + session_bound forced ---");
+    reset_all(); // mode Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(22);
+    // Seed TA while Off (production fences deny first-TA acquisition).
+    ev.grant_capability("tenant-admin"); // #2967 TA + reason gate
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1); // Restricted
+    aura::core::bump_mutation_epoch(1);
+
+    const auto sb_before =
+        g_capability_effect_metrics().capability_durable_session_bound_total.load();
+    const auto live_before = g_capability_effect_metrics().capability_live_session_grants.load();
+
+    // Pre-#3436 this call self-deadlocked: grant_effect_durable held the
+    // registry mutex across the grant_capability("mutate") string mirror
+    // (name maps to Effect::Mutate -> mirror re-takes the non-recursive mtx).
+    // Completing this call IS the AC.
+    ev.grant_effect_durable(/*tenant=*/22, "mutate", kEffectMutate, /*mid=*/30,
+                            /*reason=*/"3436-ac4-durable");
+
+    CHECK(g_capability_effect_metrics().capability_durable_session_bound_total.load() ==
+              sb_before + 1,
+          "AC4: capability_durable_session_bound_total bumps (#3177 intact)");
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before + 1,
+          "AC4: named durable 'mutate' is one live session grant");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(22, "mutate", g), "AC4: 'mutate' row exists");
+    CHECK(!g.single_use, "AC4: durable row stays single_use=false (mirror did not force)");
+    CHECK(g.session_bound, "AC4: durable row stays session_bound=true (#3177)");
+    CHECK(g.bound_mutation_id == 30, "AC4: durable row keeps the wrapper's mid (no reset)");
+
+    (void)g_capability_registry().revoke_session_grants_for_mid(30);
+    CHECK(g_capability_effect_metrics().capability_live_session_grants.load() == live_before,
+          "AC4: mid exit cleared the durable session residual");
+}
+
+static void ac3436_3_caller_principal_ssot() {
+    std::println("\n--- #3436 AC3: grant_effect_* pass caller_principal into grant_locked ---");
+    reset_all(); // mode Off
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(32);
+    // Seed TA while Off (production fences deny first-TA acquisition):
+    // Evaluator (tenant 32) holds TA; default_tenant stays 0 (registry
+    // default). Pre-#3436 the foreign grant fell back to caller=0 inside
+    // the #3409 SSOT fence -> TA check on the wrong principal -> deny/drift.
+    ev.grant_capability("tenant-admin"); // TA holder
+    set_mode(SandboxMode::Restricted);
+    aura::core::sandbox::set_mode(aura::core::sandbox::SandboxMode::Restricted);
+    ev.set_effect_sandbox_mode(1); // Restricted
+    aura::core::bump_mutation_epoch(1);
+
+    const auto ssot_deny_before =
+        g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load();
+    ev.grant_effect_capability(/*tenant=*/33, "mutate", kEffectMutate,
+                               /*provenance_mutation_id=*/40, /*single_use=*/false);
+    CHECK(g_capability_effect_metrics().capability_macro_self_evo_grant_deny_total.load() ==
+              ssot_deny_before,
+          "AC3: no inner 'grant-ssot-needs-tenant-admin' deny for TA-holder foreign grant");
+    CHECK(ring_lookup_reason("grant-ssot-needs-tenant-admin") == nullptr,
+          "AC3: SE ring has no grant-ssot-needs-tenant-admin from the foreign grant");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(33, "mutate", g), "AC3: foreign row landed");
+    CHECK(g.single_use, "AC3: foreign high-risk grant forced single_use (#2882)");
+    // TOCTOU: the wrapper TA re-check + grant_locked act run under ONE
+    // registry critical section (#3126); caller_principal keeps the inner
+    // SSOT fence on the same principal (source-cited in the linter).
+}
+
+static void ac3436_4_soft_off_and_source_cite() {
+    std::println("\n--- #3436 AC5+AC6: Soft/Off zero-force + source-cite ---");
+    reset_all(); // Off
+
+    CompilerService cs;
+    auto& ev = cs.evaluator();
+    ev.set_capability_tenant_id(23);
+    const auto forced_before =
+        g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
+    ev.grant_capability("mutate"); // Off: no force
+    CHECK(g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load() ==
+              forced_before,
+          "AC5: Off mode does NOT bump forced-single_use for string 'mutate'");
+    CapabilityGrant g{};
+    CHECK(g_capability_registry().find_grant(23, "mutate", g), "AC5: row exists under Off");
+    CHECK(!g.single_use, "AC5: Off-mode string grant stays single_use=false");
+    const bool ok = check_and_record_effect(Effect::Mutate, Effect::Mutate, EffectProvenance{},
+                                            /*tenant=*/23, "3436-ac5");
+    CHECK(ok, "AC5: Off-mode check allows (legacy semantics, no extra fence)");
+    CapabilityGrant g2{};
+    CHECK(g_capability_registry().find_grant(23, "mutate", g2) && !g2.revoked,
+          "AC5: Off-mode grant not consumed (no force, legacy semantics)");
+
+    // AC6 source-cite: one high-risk lifetime policy + caller principal +
+    // mirror-outside-lock markers live in the sources (full contract in the
+    // coverage linter).
+    const auto sec = read_file("src/compiler/evaluator_security.cpp");
+    CHECK(sec.find("Issue #3436") != std::string::npos, "AC6: evaluator_security.cpp cites #3436");
+    CHECK(sec.find("registry lock released BEFORE the string mirror") != std::string::npos,
+          "AC6: lock-scope markers present");
+    CHECK(read_file("tests/core/test_issue_3436.cpp").empty(), "AC6: no test_issue_3436.cpp");
+}
+
 int run_test_capability_single_use_consume() {
     std::println("=== Issue #2586/#3142/#3144: single-use + SessionBound revoke + kCapWildcard "
                  "effects_for strip ===");
@@ -1390,17 +1563,19 @@ int run_test_capability_single_use_consume() {
         ev.set_effect_sandbox_mode(1); // Restricted
         ev.set_capability_tenant_id(8);
 
-        const auto durable_before =
-            g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
-        const auto forced_before =
-            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
-
         // grant_effect_durable MUST bypass the force and stay single_use=false.
         // Issue #2967: under production the durable surface also requires the
         // caller to hold TenantAdmin + a non-empty audit reason — grant the
         // meta-privilege to the caller first so the #2882 durable-override
         // semantics are exercised (admin caller, sticky grant).
         ev.grant_capability("tenant-admin");
+        // Issue #3436: the string-path TA seed now bumps the forced-single_use
+        // counter (high-risk string grant under production), so the baseline
+        // loads moved AFTER the seed — they measure the durable call only.
+        const auto durable_before =
+            g_capability_effect_metrics().capability_durable_high_risk_grant_total.load();
+        const auto forced_before =
+            g_capability_effect_metrics().capability_high_risk_forced_single_use_total.load();
         ev.grant_effect_durable(/*tenant=*/8, "mut-2882-durable", kEffectMutate, /*mid=*/2,
                                 /*reason=*/"2882-ac2-durable");
 
@@ -2026,6 +2201,12 @@ int run_test_capability_single_use_consume() {
         ac3333_4_soft_zero_skip();
         ac3333_5_stolen_skip_and_source();
         ac3333_6_source_and_linter();
+        // Issue #3436: grant lifetime alignment + caller principal + mirror
+        // deadlock close.
+        ac3436_1_string_path_forced_single_use();
+        ac3436_2_durable_named_no_deadlock();
+        ac3436_3_caller_principal_ssot();
+        ac3436_4_soft_off_and_source_cite();
 
         std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
         return g_failed == 0 ? 0 : 1;

@@ -15378,6 +15378,17 @@ def cmd_stable_ref_probe_3400_coverage():
         fail("check-stable-ref node-gen domain probe (#3400) coverage contract rows failed")
         return 1
     ok("check-stable-ref node-gen domain probe (#3400) coverage clean")
+
+    print(f"{B}=== grant lifetime alignment probe (#3436) ==={N}")
+    script = COVERAGE_CHECKS / "check_grant_lifetime_alignment_3436.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("grant lifetime alignment (#3436) coverage contract rows failed")
+        return 1
+    ok("grant lifetime alignment (#3436) coverage clean")
     return 0
 
 

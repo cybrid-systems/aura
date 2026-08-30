@@ -6565,6 +6565,13 @@ public:
     }
     [[nodiscard]] bool has_capability(std::string_view cap) const noexcept;
     void grant_capability(std::string cap);
+    // Issue #3436: explicit-lifetime + provenance-mid mirror form used by
+    // the grant_effect_* string mirrors (durable -> session_bound per #3177,
+    // sticky escape -> false/false, session -> single_use/true) so the mirror
+    // never clobbers the wrapper's row lifetime and never runs under the
+    // registry mutex the wrapper holds.
+    void grant_capability(std::string cap, bool single_use, bool session_bound,
+                          std::uint64_t provenance_mutation_id);
     void bump_capability_denial() noexcept {
         capability_denial_count_.fetch_add(1, std::memory_order_relaxed);
     }
