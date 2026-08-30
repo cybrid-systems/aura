@@ -1311,6 +1311,19 @@ def cmd_lint():
             "Issue #3423 add_mutate acquire-before-body linter failed — run python3 scripts/coverage/checks/check_add_mutate_acquire_before_body_3423.py"
         )
         return r
+    # Issue #3450: add_mutate RO fence before acquire so replace-type /
+    # atomic-batch cannot write a locked workspace. GUARD_EXEMPT skips.
+    # Extends test_workspace_lock_unlock; linter after #3423.
+    amr3450_script = COVERAGE_CHECKS / "check_add_mutate_read_only_fence_3450.py"
+    if not amr3450_script.exists():
+        fail(f"missing {amr3450_script}")
+        return 1
+    r = run([sys.executable, str(amr3450_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3450 add_mutate read-only fence linter failed — run python3 scripts/coverage/checks/check_add_mutate_read_only_fence_3450.py"
+        )
+        return r
     # Issue #3075: production_defaults arms QueryEpoch strict so
     # Agents cannot re-query green after mutate / restamp-lag.
     # Soft/dev stays off (no extra acquire). Extends query-epoch
@@ -15018,6 +15031,26 @@ def cmd_query_default_schema2_export_3449_coverage():
     return 0
 
 
+def cmd_add_mutate_read_only_fence_3450_coverage():
+    """Issue #3450: add_mutate fences workspace_read_only_ before acquire.
+
+    replace-type / atomic-batch missed the per-body RO check. Wrapper
+    now returns read-only before Guard acquire. GUARD_EXEMPT metadata
+    still runs. Extends test_workspace_lock_unlock.cpp. No new query key.
+    """
+    print(f"{B}=== add_mutate_read_only_fence coverage (#3450) ==={N}")
+    script = COVERAGE_CHECKS / "check_add_mutate_read_only_fence_3450.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("add_mutate_read_only_fence (#3450) coverage contract rows failed")
+        return 1
+    ok("add_mutate_read_only_fence (#3450) coverage clean")
+    return 0
+
+
 def cmd_query_find_prod_no_scan_coverage():
     """Issue #3427: production query:find miss is not a full SoA walk.
 
@@ -23333,6 +23366,8 @@ def main():
         "query-default-stamped": cmd_query_default_stamped_coverage,
         "query-default-schema2-export-3449": cmd_query_default_schema2_export_3449_coverage,
         "query-default-schema2-export-3449-coverage": cmd_query_default_schema2_export_3449_coverage,
+        "add-mutate-read-only-fence-3450": cmd_add_mutate_read_only_fence_3450_coverage,
+        "add-mutate-read-only-fence-3450-coverage": cmd_add_mutate_read_only_fence_3450_coverage,
         "query-find-prod-no-scan": cmd_query_find_prod_no_scan_coverage,
         "hot-contract-view-at-harden": cmd_hot_contract_view_at_harden_3428_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,

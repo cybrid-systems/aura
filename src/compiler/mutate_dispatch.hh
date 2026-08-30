@@ -79,6 +79,9 @@ inline constexpr int kNakedMutatePrimMetaIssue = 3197;
 // Issue #3423: add_mutate acquires via mutate_dispatch_try_acquire
 // *before* fn(a). #2986/#3197 post-check is a belt, not the write gate.
 inline constexpr int kAddMutateAcquireBeforeBodyIssue = 3423;
+// Issue #3450: add_mutate RO fence before acquire. Locked workspace
+// must not take exclusive workspace_mtx_ for replace-type / atomic-batch.
+inline constexpr int kAddMutateReadOnlyFenceIssue = 3450;
 inline thread_local std::uint64_t g_mutate_guard_acquire_gen{0};
 inline void note_mutate_guard_acquire_token() noexcept {
     g_mutate_guard_acquire_gen += 1;
