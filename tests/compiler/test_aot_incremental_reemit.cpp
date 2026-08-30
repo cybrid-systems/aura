@@ -1862,6 +1862,59 @@ int main() {
               "3412 AC7: linter script registered");
     }
 
+    // ── #3441: #3412 residual — fast-path cache + unnamed/sid==0 ──
+    // #3412 only gated the slow named arm. Warm g_closure_cache still
+    // called pre-mutate fn; empty-name closures skipped the named check.
+    {
+        std::println("\n--- #3441 AC1: fast path consults deopt_pending before cached fn() ---");
+        const auto rt = read_file("src/compiler/aura_jit_runtime.cpp");
+        CHECK(rt.find("Issue #3441") != std::string::npos,
+              "3441 AC1: Issue #3441 marker in aura_jit_runtime.cpp");
+        CHECK(rt.find("closure_call_deopt_pending_leave_native_") != std::string::npos,
+              "3441 AC1: shared leave-native helper");
+        const auto fast_header = rt.find("Inline cache check (Issue #1707");
+        const auto fast_gate = rt.find("closure_call_deopt_pending_leave_native_(fast_cid)");
+        const auto fast_fn =
+            rt.find("int64_t fast_result = fn(locals, static_cast<uint32_t>(argc))");
+        CHECK(fast_header != std::string::npos && fast_gate != std::string::npos &&
+                  fast_fn != std::string::npos && fast_header < fast_gate && fast_gate < fast_fn,
+              "3441 AC1: fast-path deopt gate between cache hit and fn()");
+        CHECK(rt.find("deopt_pending_invoke_fallbacks") != std::string::npos,
+              "3441 AC1: reuses deopt_pending_invoke_fallbacks (no new counter)");
+
+        std::println("\n--- #3441 AC2: unnamed / sid==0 slow path also leave-native ---");
+        const auto slow_header = rt.find("Slow path: full dispatch + cache update");
+        const auto unnamed_gate = rt.find("closure_call_deopt_pending_leave_native_(slow_cid)");
+        const auto slow_fn = rt.find("entry.fn(locals, static_cast<uint32_t>(argc))");
+        CHECK(slow_header != std::string::npos && unnamed_gate != std::string::npos &&
+                  slow_fn != std::string::npos && slow_header < unnamed_gate &&
+                  unnamed_gate < slow_fn,
+              "3441 AC2: unnamed gate between slow resolve and entry.fn()");
+        CHECK(rt.find("aura_jit_deopt_pending_count()") != std::string::npos,
+              "3441 AC2: unnamed consults deopt_pending_count (no new query key)");
+        CHECK(rt.find("g_closure_names[slow_cid].empty()") != std::string::npos,
+              "3441 AC2: empty-name arm present");
+
+        std::println("\n--- #3441 AC3: Soft/Off one load; #3412 named slow path kept ---");
+        CHECK(rt.find("aura_jit_is_deopt_pending(slow_cname.c_str())") != std::string::npos,
+              "3441 AC3: #3412 named slow-path needle kept");
+        CHECK(rt.find("Issue #3412") != std::string::npos, "3441 AC3: #3412 cite kept");
+
+        std::println("\n--- #3441 AC4/AC5: owner-scoped + remount restore; no invent ---");
+        CHECK(rt.find("g_aot_table_epoch") == std::string::npos ||
+                  rt.find("Issue #3300") != std::string::npos,
+              "3441 AC4: no new table-epoch force-bump (peers stay #3300)");
+        CHECK(read_file("docs/design/3441-fast-path-deopt-pending.md").empty(),
+              "3441 AC5: no docs/design/3441-* per #1655");
+        CHECK(read_file("tests/issues/test_issue_3441.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3441.cpp").empty() &&
+                  read_file("tests/core/test_issue_3441.cpp").empty(),
+              "3441 AC5: no test_issue_3441.cpp per #81934");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_deopt_pending_fast_path_3441") != std::string::npos,
+              "3441 AC5: build.py wires linter");
+    }
+
     // ── #3413: last_reemit_success must not stamp the full force_jit
     // mask on any n>0 — only_covered over-covers residual. Production
     // `covered = override || demoted` in decide_and_reemit /

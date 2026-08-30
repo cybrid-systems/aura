@@ -3626,6 +3626,17 @@ int64_t aura_lookup_fn_by_name(const char* name, int64_t* out_local_count, int64
     return fn;
 }
 
+// Issue #3441: #3412 only gated the slow named arm. Fast-path cache +
+// unnamed/sid==0 still dispatched a warm pre-mutate pointer under
+// production Defer. Same leave-native decision, no new query key:
+//   named     → aura_jit_is_deopt_pending(name)  (#3412 table)
+//   unnamed   → aura_jit_deopt_pending_count()!=0 (same table; Soft is 0)
+[[nodiscard]] static bool closure_call_deopt_pending_leave_native_(size_t cid) noexcept {
+    if (cid < g_closure_names.size() && !g_closure_names[cid].empty())
+        return aura_jit_is_deopt_pending(g_closure_names[cid].c_str()) != 0;
+    return aura_jit_deopt_pending_count() != 0;
+}
+
 int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
     // Issue #157 Phase 2 + #1361: shared table lock (always) + workspace read.
     std::shared_lock<std::shared_mutex> tlock(g_closure_table_mtx);
@@ -3846,6 +3857,24 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
                 g_closure_cache_generation_mismatch_total.fetch_add(1, std::memory_order_relaxed);
                 // Fall through to slow path — torn or invalidated mid-read.
             } else {
+                // Issue #3441: fast path must consult deopt_pending before
+                // calling the cached pre-mutate pointer. #3412 only wired
+                // the slow named arm. Named: aura_jit_is_deopt_pending.
+                // Unnamed/sid==0: deopt_pending_count (no new query key).
+                // Soft: pending==0 / name-empty, one load (AC3).
+                {
+                    const size_t fast_cid = static_cast<size_t>(closure_id);
+                    if (closure_call_deopt_pending_leave_native_(fast_cid)) {
+                        if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(
+                                aura_get_aot_metrics())) {
+                            m->deopt_pending_invoke_fallbacks.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+                        }
+                        aura_unlock_workspace_read();
+                        invalidate_closure_cache_for(closure_id);
+                        return 0;
+                    }
+                }
                 // Fast path: use snapshot (not live ce fields after gen check).
                 int32_t nargs = argc < arg_count ? static_cast<int32_t>(argc) : arg_count;
 
@@ -3947,6 +3976,19 @@ int64_t aura_closure_call(int64_t closure_id, int64_t* args, int64_t argc) {
             invalidate_closure_cache_for(closure_id);
             return 0;
         }
+    }
+    // Issue #3441: unnamed / sid==0 never took the #3412 named gate
+    // (`!slow_cname.empty()`). Production Defer leaves g_jit_fns.fn live
+    // and remount skipped. Consult deopt_pending_count (same AuraJIT
+    // table, no new query key). Soft: count is 0.
+    if ((slow_cid >= g_closure_names.size() || g_closure_names[slow_cid].empty()) &&
+        closure_call_deopt_pending_leave_native_(slow_cid)) {
+        if (auto* m = static_cast<aura::compiler::CompilerMetrics*>(aura_get_aot_metrics())) {
+            m->deopt_pending_invoke_fallbacks.fetch_add(1, std::memory_order_relaxed);
+        }
+        aura_unlock_workspace_read();
+        invalidate_closure_cache_for(closure_id);
+        return 0;
     }
 
     // Stack buffer for small locals, fallback to heap for large
