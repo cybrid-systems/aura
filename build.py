@@ -2776,6 +2776,19 @@ def cmd_lint():
             "Issue #3199 shape compact no-all-shards lock linter failed — run python3 scripts/coverage/checks/check_shape_compact_no_all_shards_lock_3199.py"
         )
         return r
+    # Issue #3455: on_arena_compact versions dirty ∪ relocated FnKeys
+    # only (not every tracked profile). Storm isolation + per-shard
+    # unique stay. Extends compact isolation + concurrency suites.
+    scdf3455_script = COVERAGE_CHECKS / "check_shape_compact_dirty_fnkey_3455.py"
+    if not scdf3455_script.exists():
+        fail(f"missing {scdf3455_script}")
+        return 1
+    r = run([sys.executable, str(scdf3455_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3455 shape compact dirty-FnKey linter failed — run python3 scripts/coverage/checks/check_shape_compact_dirty_fnkey_3455.py"
+        )
+        return r
     # Issue #3200: production Moving pin/EnvFrame Soft-gate must arm
     # sticky densify-off + Agent throttle (no silent amortisation gap).
     # Soft observe-only. Extends test_arena_moving_densify_health;
@@ -16277,6 +16290,26 @@ def cmd_shape_compact_storm_isolation_coverage():
     return 0
 
 
+def cmd_shape_compact_dirty_fnkey_3455_coverage():
+    """Issue #3455: on_arena_compact versions dirty ∪ relocated FnKeys only.
+
+    Residual of #2617/#2908/#3199: compact was not a storm but still
+    full-table deopt. Empty cone is the existing touched==0 no-op.
+    Storm isolation and per-shard unique stay.
+    """
+    print(f"{B}=== shape compact dirty-FnKey coverage (#3455) ==={N}")
+    script = COVERAGE_CHECKS / "check_shape_compact_dirty_fnkey_3455.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("shape compact dirty-FnKey (#3455) coverage contract rows failed")
+        return 1
+    ok("shape compact dirty-FnKey (#3455) coverage clean")
+    return 0
+
+
 def cmd_hot_contract_placement_coverage():
     """Issue #2435: hot vs cold contract placement (production hot OFF).
 
@@ -23449,6 +23482,8 @@ def main():
         "pending-recovery-drain-2690": cmd_pending_recovery_drain_2690_coverage,
         "value-tag-hotpath-ban": cmd_value_tag_hotpath_ban_coverage,
         "shape-compact-storm-isolation": cmd_shape_compact_storm_isolation_coverage,
+        "shape-compact-dirty-fnkey-3455": cmd_shape_compact_dirty_fnkey_3455_coverage,
+        "shape-compact-dirty-fnkey-3455-coverage": cmd_shape_compact_dirty_fnkey_3455_coverage,
         "shape-profiler-shard-2937": cmd_shape_profiler_shard_2937,
         "shape-profiler-shard-2937-coverage": cmd_shape_profiler_shard_2937_coverage,
         "shape-compact-no-global-bump-2908": cmd_shape_compact_no_global_bump_2908,

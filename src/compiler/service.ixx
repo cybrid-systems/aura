@@ -10820,9 +10820,18 @@ public:
             static_cast<CompilerService*>(ctx)->on_arena_compact_notify();
     }
     void on_arena_compact_notify() noexcept {
-        // Issue #1521: always soft-coordinate ShapeProfiler (version bump
-        // + ArenaCompact deopt hooks, keep is_stable / history).
-        const auto touched = shape_profiler_.on_arena_compact();
+        // Issue #1521 / #3455: ShapeProfiler versions dirty ∪ relocated
+        // FnKeys only (IR cache any_block_dirty — existing define-dirty
+        // mask). Empty cone → no-op on shape (touched==0). Do not walk
+        // every tracked FnKey. Storm isolation (#2617) unchanged.
+        std::vector<shape::FnKey> cone;
+        cone.reserve(ir_cache_v2_.size());
+        for (auto& [name, entry] : ir_cache_v2_) {
+            if (!entry.any_block_dirty())
+                continue;
+            cone.push_back(shape::make_fn_key(session_id_, name));
+        }
+        const auto touched = shape_profiler_.on_arena_compact(cone);
         // Issue #2984: note_arena_compact_linear_root_consistency (count).
         // Issue #3227: rebind / reject + invalidate_gen after compact.
         // Issue #3448: last==0 green face still drops (not quiet).

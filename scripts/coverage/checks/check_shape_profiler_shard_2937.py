@@ -88,7 +88,7 @@ def main() -> int:
             fails.append(f"AC2: {name} must use shared_lock_shard_")
 
     # ── AC3: compact isolation ──
-    compact = _extract_fn_body(cpp, r"ShapeProfiler::on_arena_compact\s*\(\s*\)\s*noexcept")
+    compact = _extract_fn_body(cpp, r"ShapeProfiler::on_arena_compact\s*\(")
     if not compact:
         fails.append("AC3: could not extract on_arena_compact")
     else:

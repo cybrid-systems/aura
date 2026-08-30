@@ -76,7 +76,7 @@ def main() -> int:
     must("kShapeCompactStormIsolationIssue", "AC1", sph)
     must("Explicitly do NOT call update_deopt_storm_state_", "AC1", spc)
 
-    compact_body = _extract_fn_body(spc, r"ShapeProfiler::on_arena_compact\s*\(\s*\)\s*noexcept")
+    compact_body = _extract_fn_body(spc, r"ShapeProfiler::on_arena_compact\s*\(")
     if not compact_body:
         fails.append("AC1: could not extract on_arena_compact body")
     else:

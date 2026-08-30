@@ -37,11 +37,14 @@ namespace {
 
 using aura::compiler::CompilerService;
 using aura::compiler::shape::current_global_shape_version;
+using aura::compiler::shape::deopt_from_arena_compact_total;
 using aura::compiler::shape::deopt_storm_compact_suppressed;
+using aura::compiler::shape::FnKey;
 using aura::compiler::shape::g_deopt_storm_isolations_total_atomic;
 using aura::compiler::shape::g_shape_compact_global_version_skipped_total_atomic;
 using aura::compiler::shape::g_shape_storm_global_bump_total_atomic;
 using aura::compiler::shape::g_shape_storm_per_eval_isolations_total_atomic;
+using aura::compiler::shape::kShapeCompactDirtyFnkeyIssue;
 using aura::compiler::shape::kShapeCompactNoGlobalBumpIssue;
 using aura::compiler::shape::kShapeCompactStormIsolationIssue;
 using aura::compiler::shape::kShapeStormForceReasonNone;
@@ -161,11 +164,17 @@ static void ac2_pure_compact_no_threshold() {
     const auto force0 = shape_storm_force_reason();
     (void)force0;
 
+    // Issue #3455: compact only the dirty FnKey, not the other 7 stables.
+    const auto f = static_cast<aura::compiler::shape::FnKey>(6100);
+    const auto g = static_cast<aura::compiler::shape::FnKey>(6101);
+    const auto vg0 = sp.current_snapshot(g).version;
+    const FnKey cone[] = {f};
     for (int i = 0; i < 50; ++i)
-        (void)sp.on_arena_compact();
+        (void)sp.on_arena_compact(cone);
 
     CHECK(sp.arena_compact_calls() >= 50, "AC2: arena_compact_calls advanced");
     CHECK(sp.arena_compact_deopt_hooks() > 0, "AC2: compact deopt hooks advanced");
+    CHECK(sp.current_snapshot(g).version == vg0, "AC2/#3455: untouched G version held");
     CHECK(sp.deopt_storm_total() == storm0, "AC2: deopt_storm_total unchanged");
     CHECK(g_deopt_storm_isolations_total_atomic().load() == iso0,
           "AC2: isolations unchanged by pure compact");
@@ -227,8 +236,9 @@ static void ac4_stable_history_preserved() {
     const auto ver_before = sp.current_snapshot(fn).version;
     const auto preserved0 = sp.arena_compact_stable_preserved();
 
+    const FnKey cone[] = {fn};
     for (int i = 0; i < 10; ++i)
-        (void)sp.on_arena_compact();
+        (void)sp.on_arena_compact(cone);
 
     CHECK(sp.profile_count() >= 1, "AC4: profile retained");
     if (stable_before) {
@@ -285,8 +295,9 @@ static void ac2908_compact_no_global_bump() {
     seed_stable(sp, 6, 80);
     const auto global0 = current_global_shape_version();
     const auto skip0 = g_shape_compact_global_version_skipped_total_atomic().load();
+    const FnKey cone[] = {static_cast<aura::compiler::shape::FnKey>(6100)};
     for (int i = 0; i < 30; ++i)
-        (void)sp.on_arena_compact();
+        (void)sp.on_arena_compact(cone);
     CHECK(current_global_shape_version() == global0,
           "AC1: process-global shape_version unchanged under PerEval compact");
     CHECK(g_shape_compact_global_version_skipped_total_atomic().load() > skip0,
@@ -354,6 +365,42 @@ static void ac2908_compact_no_global_bump() {
           "AC5: no new test file per #81967");
 }
 
+static void ac3455_compact_dirty_cone_only() {
+    std::println("\n--- #3455 AC1: compact versions dirty FnKey only ---");
+    CHECK(kShapeCompactDirtyFnkeyIssue == 3455, "AC1: issue stamp");
+    ShapeProfiler sp;
+    sp.apply_preset(ShapeProfiler::kLowMutationPreset);
+    seed_stable(sp, 4, 120);
+    const auto f = static_cast<aura::compiler::shape::FnKey>(6100);
+    const auto g = static_cast<aura::compiler::shape::FnKey>(6101);
+    const auto vf0 = sp.current_snapshot(f).version;
+    const auto vg0 = sp.current_snapshot(g).version;
+    const bool gs0 = sp.is_stable(g);
+    const auto deopt0 = deopt_from_arena_compact_total.load();
+    const auto hooks0 = sp.arena_compact_deopt_hooks();
+    const auto ring0 = sp.deopt_storm_total();
+    const FnKey cone[] = {f};
+    const auto touched = sp.on_arena_compact(cone);
+    CHECK(touched == 1, "AC1: touched == dirty cone size");
+    CHECK(deopt_from_arena_compact_total.load() - deopt0 == 1,
+          "AC1: deopt_from_arena_compact_total delta == cone");
+    CHECK(sp.arena_compact_deopt_hooks() - hooks0 == 1, "AC1: hooks == cone");
+    CHECK(sp.current_snapshot(f).version > vf0, "AC1: dirty F version advanced");
+    CHECK(sp.current_snapshot(g).version == vg0, "AC1: untouched G version held");
+    CHECK(sp.is_stable(g) == gs0, "AC1: untouched G is_stable held");
+    CHECK(sp.deopt_storm_total() == ring0, "AC2: storm total unchanged");
+    const auto vg1 = sp.current_snapshot(g).version;
+    CHECK(sp.on_arena_compact() == 0, "AC1: empty cone is no-op");
+    CHECK(sp.current_snapshot(g).version == vg1, "AC1: empty compact does not version G");
+    const auto sph = read_file("src/compiler/shape_profiler.h");
+    const auto spc = read_file("src/compiler/shape_profiler.cpp");
+    CHECK(sph.find("kShapeCompactDirtyFnkeyIssue = 3455") != std::string::npos, "AC5: stamp");
+    CHECK(spc.find("dirty_or_relocated") != std::string::npos, "AC5: span filter");
+    CHECK(read_file("tests/compiler/test_issue_3455.cpp").empty(), "AC5: no test_issue_3455.cpp");
+    CHECK(read_file("docs/design/3455-shape-compact-dirty-fnkey.md").empty(),
+          "AC5: no docs/design/3455-*");
+}
+
 static void ac3199_compact_no_all_shards_source() {
     std::println("\n--- #3199: compact isolation suite source-cite per-shard lock ---");
     using aura::compiler::shape::kShapeCompactNoAllShardsLockIssue;
@@ -373,6 +420,7 @@ int run_test_shape_compact_storm_isolation() {
     ac4_stable_history_preserved();
     ac5_source_cite();
     ac2908_compact_no_global_bump();
+    ac3455_compact_dirty_cone_only();
     ac3199_compact_no_all_shards_source();
     std::println("\n=== #2617/#2908: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;

@@ -65,7 +65,7 @@ def main() -> int:
     must("Issue #3199", "AC1 header", hh)
     must("Issue #3199", "AC1 cpp", cpp)
 
-    compact = _extract_fn_body(cpp, r"ShapeProfiler::on_arena_compact\s*\(\s*\)\s*noexcept")
+    compact = _extract_fn_body(cpp, r"ShapeProfiler::on_arena_compact\s*\(")
     if not compact:
         fails.append("AC1: could not extract on_arena_compact")
     else:

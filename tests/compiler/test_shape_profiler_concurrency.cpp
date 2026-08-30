@@ -134,8 +134,9 @@ static void ac3199_1_compact_no_all_shards() {
     auto compactor = [&]() {
         while (!start.load(std::memory_order_acquire)) {
         }
+        const FnKey cone[] = {a, b};
         for (int i = 0; i < 80; ++i)
-            compact_touched.fetch_add(sp.on_arena_compact(), std::memory_order_relaxed);
+            compact_touched.fetch_add(sp.on_arena_compact(cone), std::memory_order_relaxed);
     };
     std::thread t0(recorder, a);
     std::thread t1(recorder, b);
@@ -151,7 +152,7 @@ static void ac3199_1_compact_no_all_shards() {
 }
 
 static void ac3199_2_version_advances() {
-    std::println("\n--- #3199 AC2: compact bumps every tracked profile version ---");
+    std::println("\n--- #3199 AC2 / #3455: compact bumps dirty cone only ---");
     ShapeProfiler sp;
     std::vector<FnKey> fns;
     for (FnKey f = 1; f <= 16; ++f) {
@@ -163,10 +164,14 @@ static void ac3199_2_version_advances() {
     ver0.reserve(fns.size());
     for (auto f : fns)
         ver0.push_back(sp.current_snapshot(f).version);
-    const auto touched = sp.on_arena_compact();
-    CHECK(touched >= static_cast<std::uint32_t>(fns.size()), "3199 AC2: touched all");
-    for (std::size_t i = 0; i < fns.size(); ++i)
-        CHECK(sp.current_snapshot(fns[i]).version > ver0[i], "3199 AC2: version advanced");
+    const FnKey dirty[] = {fns[0], fns[1]};
+    const auto touched = sp.on_arena_compact(dirty);
+    CHECK(touched == 2, "3455/3199 AC2: touched dirty cone size");
+    CHECK(sp.current_snapshot(fns[0]).version > ver0[0], "3199 AC2: dirty version advanced");
+    CHECK(sp.current_snapshot(fns[1]).version > ver0[1], "3199 AC2: dirty version advanced");
+    for (std::size_t i = 2; i < fns.size(); ++i)
+        CHECK(sp.current_snapshot(fns[i]).version == ver0[i],
+              "3455/3199 AC2: untouched version held");
 }
 
 static void ac3199_3_compact_not_storm() {
@@ -542,8 +547,9 @@ int run_test_shape_profiler_concurrency() {
         auto compactor = [&]() {
             while (!start.load(std::memory_order_acquire)) {
             }
+            const FnKey cone[] = {1, 2, 3, 4, 5, 6, 7, 8};
             for (int i = 0; i < 50; ++i) {
-                compact_touched.fetch_add(sp.on_arena_compact(), std::memory_order_relaxed);
+                compact_touched.fetch_add(sp.on_arena_compact(cone), std::memory_order_relaxed);
             }
         };
 
@@ -746,8 +752,9 @@ int run_test_shape_profiler_concurrency() {
                 (void)sp.record_shape(static_cast<FnKey>(f), SHAPE_INT);
         const auto mut0 = sp.mutation_induced_invalidations();
         const auto storm0 = sp.deopt_storm_total();
-        const auto touched = sp.on_arena_compact();
-        CHECK(touched >= 12, "AC3: compact touched profiles");
+        const FnKey cone[] = {1};
+        const auto touched = sp.on_arena_compact(cone);
+        CHECK(touched == 1, "AC3/#3455: compact touched dirty cone");
         CHECK(sp.mutation_induced_invalidations() == mut0,
               "AC3: compact does not bump mutation_induced_invalidations (#2617)");
         CHECK(sp.deopt_storm_total() == storm0, "AC3: compact does not grow storm total");
@@ -824,6 +831,7 @@ int run_test_shape_profiler_concurrency() {
 #ifndef AURA_ISSUE_BATCH_MEMBER
 // Standalone binary links shape_profiler.cpp without runtime_ssot.
 extern "C" void aura_hot_update_set_shape_storm_active(int) {}
+extern "C" void aura_pcv_set_stale_span_exclusive(int) noexcept {}
 int main() {
     return run_test_shape_profiler_concurrency();
 }

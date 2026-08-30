@@ -73,7 +73,7 @@ def main() -> int:
     must("g_shape_compact_global_version_skipped_total_atomic", "AC1", hh)
     must("allow_global_version_bump", "AC1", cpp)
     must("aura_get_storm_isolation_mode", "AC1", cpp)
-    body = _extract_fn_body(cpp, r"ShapeProfiler::on_arena_compact\s*\(\s*\)\s*noexcept")
+    body = _extract_fn_body(cpp, r"ShapeProfiler::on_arena_compact\s*\(")
     if not body:
         fails.append("AC1: could not extract on_arena_compact body")
     else:
