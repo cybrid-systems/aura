@@ -39,6 +39,7 @@
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h"
 #include "compiler/typed_mutation_audit.h"
+#include "core/resource_quota.hh"
 #include "serve/multi_fiber_mailbox.h"
 #include "serve/scheduler.h"
 
@@ -62,6 +63,7 @@ using aura::compiler::types::as_bool;
 using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_int;
+using aura::core::resource_quota::reset_process_resource_quota_for_test;
 using aura::orch::g_orch_module_stats;
 using aura::orch::reset_all_agent_scopes_for_test;
 using aura::test::g_failed;
@@ -719,6 +721,88 @@ int run_test_orch_scope() {
         else
             ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
         apply_dev_audit_defaults();
+    }
+
+    // ── #3442: scope-spawn agents reachable by send/recv/ask/join ──
+    {
+        std::println("\n--- #3442: scope-spawn agents on the message plane ---");
+        const auto prim_src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        const auto readme_src = read_file("src/orch/README.md");
+        CHECK(prim_src.find("resolve_aura_agent") != std::string::npos,
+              "3442 AC: resolve_aura_agent helper");
+        CHECK(prim_src.find("Issue #3442") != std::string::npos, "3442 AC: cite");
+        CHECK(readme_src.find("#3442") != std::string::npos, "3442 AC: README");
+        CHECK(prim_src.find("class AgentRegistry") == std::string::npos,
+              "3442 AC4: no AgentRegistry");
+        CHECK(prim_src.find("schema-3442") == std::string::npos, "3442 AC6: no schema-3442");
+        CHECK(read_file("tests/orch/test_issue_3442.cpp").empty(),
+              "3442 AC7: no test_issue_3442.cpp");
+
+        reset_all();
+        unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+        reset_process_resource_quota_for_test();
+        g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+        (void)aura::orch::reset_scope_bp_map_for_test();
+        CompilerService cs;
+        cs.eval(R"((orch:scope-cancel-all))");
+        cs.eval(R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))");
+
+        std::println("\n--- 3442 AC1: scope-spawn then send/recv/ask/join ---");
+        auto spawn_ok = cs.eval(
+            R"((let ((r (orch:scope-spawn "scope-mail-3442"))) (if (hash-ref r "ok") 1 0)))");
+        CHECK(spawn_ok && is_int(*spawn_ok) && as_int(*spawn_ok) == 1, "3442 AC1: scope-spawn ok");
+        auto send_ok = cs.eval(R"(
+          (let ((r (orch:agent-send "scope-mail-3442" "hello-3442")))
+            (if (error? r) 0 (if (hash-ref r "ok") 1 0)))
+        )");
+        CHECK(send_ok && is_int(*send_ok) && as_int(*send_ok) == 1,
+              "3442 AC1: send to scope-spawn agent ok");
+        auto payload = cs.eval(R"(
+          (let ((r (orch:agent-recv "scope-mail-3442" :wait #f :timeout-ms 0)))
+            (if (error? r) 0
+                (if (string=? (hash-ref r "payload") "hello-3442") 1 0)))
+        )");
+        CHECK(payload && is_int(*payload) && as_int(*payload) == 1,
+              "3442 AC1: recv payload from scope-spawn agent");
+        auto ask_not_unknown = cs.eval(R"(
+          (let ((r (orch:agent-ask "scope-mail-3442" "ping" 1)))
+            (if (error? r) 0 (if (hash-has-key? r "status") 1 0)))
+        )");
+        CHECK(ask_not_unknown && is_int(*ask_not_unknown) && as_int(*ask_not_unknown) == 1,
+              "3442 AC1: ask resolves scope-spawn agent (not unknown)");
+        auto join_st = cs.eval(R"(
+          (let ((r (orch:agent-join "scope-mail-3442" :timeout-ms 2000)))
+            (if (error? r) 0
+                (if (string=? (hash-ref r "status") "invalid") 0 1)))
+        )");
+        CHECK(join_st && is_int(*join_st) && as_int(*join_st) == 1,
+              "3442 AC1: join-by-name finds scope-spawn agent");
+
+        std::println("\n--- 3442 AC2: name-table spawn-agent unchanged ---");
+        auto bare = cs.eval(R"(
+          (begin
+            (orch:spawn-agent "bare-mail-3442" (lambda () 1) :attach-mailbox #t)
+            (let ((s (orch:agent-send "bare-mail-3442" "bare-hello")))
+              (if (error? s) 0 (if (hash-ref s "ok") 1 0))))
+        )");
+        CHECK(bare && is_int(*bare) && as_int(*bare) == 1,
+              "3442 AC2: spawn-agent send still works");
+        (void)cs.eval(R"((orch:agent-join "bare-mail-3442" :timeout-ms 2000))");
+
+        std::println("\n--- 3442 AC5: same-name name-table wins ---");
+        auto wins = cs.eval(R"(
+          (begin
+            (orch:spawn-agent "dup-3442" (lambda () 1) :attach-mailbox #t)
+            (orch:scope-spawn "dup-3442")
+            (orch:agent-send "dup-3442" "name-table-wins")
+            (let ((r (orch:agent-recv "dup-3442" :wait #f :timeout-ms 0)))
+              (if (error? r) 0
+                  (if (string=? (hash-ref r "payload") "name-table-wins") 1 0))))
+        )");
+        CHECK(wins && is_int(*wins) && as_int(*wins) == 1, "3442 AC5: same-name name-table wins");
+        (void)cs.eval(R"((orch:agent-join "dup-3442" :timeout-ms 2000))");
+        (void)cs.eval(R"((orch:scope-cancel-all))");
+        (void)cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
     }
 
     std::println("\n=== results: {} passed, {} failed ===", g_passed, g_failed);

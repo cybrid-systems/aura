@@ -9,8 +9,8 @@ Agent orchestration facade — `orch.h` · `agent_spawn.h` · `orch.ixx` (#1588)
 | `(orch:spawn-agent name [thunk] [:attach-mailbox bool] [:high-water n] [:keepalive-interval-ms n] [:max-no-yield-ms n])` | `name` string; optional 0-arg thunk; optional keywords | hash `{ok, id, name, schema=1588, schema-2011, quota-exceeded[, error]}`; **quota reject → typed Aura error**. Production fail hashes add `deny-class` (`quota` / `bp-admit` / `schedule-gate` / `try-acquire` / `handoff` / `closed`) — Agents recover from that field; stats are dashboard-only (#3251). |
 | `(orch:agent-poll name)` | Issue #2540 coop yield edge | hash `{ok, yielded, schema-2540}` — forces `Fiber::yield` when `max_no_yield_ms` window elapsed |
 | `(orch:agent-join name [:timeout-ms n])` | name as registered at spawn | hash `{ok, status, wait-us, schema}` (`status` = ok/timeout/cancelled/invalid/**reclaimed** — Issue #2743); production adds `identity-plane="name-table"` (#3216). After production auto-wait Timeout, join hash + `orch:scope-resolve` / directory expose `lifecycle=reclaimed-pending` while the reservation is still held (#3220), and `cleanup-pending=#t` (#3272) — host **must** call `ensure_reclaimed_cleanup` (SSOT second-wait, #3087/#3245) or `wait_reclaimed_body` once the body exits; dtor (`~AgentHandle`) is the last resort that always releases the residual reservation (#3012). |
-| `(orch:agent-send name payload)` | payload string/int/bool | hash `{ok, status, schema}` (`status` = ok/backpressure/closed); unknown agent → error |
-| `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` |
+| `(orch:agent-send name payload)` | payload string/int/bool | hash `{ok, status, schema}` (`status` = ok/backpressure/closed); unknown agent → error. Issue #3442: resolve name-table first, then session-local `AgentScope::find` so `orch:scope-spawn` agents are reachable. Same-name in both planes: **name-table wins**. |
+| `(orch:agent-recv name [:wait bool] [:timeout-ms n])` | default wait `#t` | hash `{ok, empty, payload, schema}` — same #3442 resolve as send |
 | `(orch:parallel-intend tasks …)` | alias of `(parallel-intend …)` | same as parallel-intend batch hash |
 | `(engine:metrics \"query:orch-module-stats\")` | stats facade | live `OrchModuleStats` (+ mailbox/parallel mirrors) |
 
@@ -653,9 +653,11 @@ Semantics:
 5. **Not a global registry** — `scripts/coverage/checks/check_orch_mvp_scope.py` still
    rejects `AgentRegistry` / `global_agent_registry` / `conduct_parallel`.
    The map `g_evaluator_agent_scopes()` is storage only; the `AgentScope`
-   objects inside it are per-Evaluator. Name→handle bookkeeping stays
-   in `Evaluator::agent_names_` (`orch:spawn-agent` / `orch:agent-join`
-   only); the scope does not duplicate or replace it.
+   objects inside it are per-Evaluator. Name→handle **ownership** stays
+   in `Evaluator::agent_names_` (`orch:spawn-agent` put-on-ok). Message
+   prims (`orch:agent-send` / `recv` / `ask` / `agent-join`) resolve that
+   table first, then `AgentScope::find` (#3442) — resolve fallback, not a
+   second owning put. The scope does not duplicate reservation ownership.
 
 Hash results (AC3):
 - `orch:scope-spawn` → `{ok, id, name, schema=2588, schema-2083, schema-2161, status}`
@@ -753,6 +755,14 @@ table (MVP linter still forbids `AgentRegistry` / `global_agent_registry` /
 | `name-table` | per-Evaluator `OrchAgentNameTable` / `agent_names_` | `orch:spawn-agent` / `orch:agent-join` |
 | `scope-handle` | `AgentScope::handles_` (supervision) | `orch:scope-resolve` |
 | `directory` | `directory_snapshot` (read-only projection) | `orch:agent-directory` |
+
+Issue #3442: `orch:agent-send` / `recv` / `ask` / `agent-join` resolve
+**name-table first, then `AgentScope::find`** on the same Evaluator
+(intra-session message plane). Not a plane merge, not a second registry,
+not a session-spanning workflow. Same-name in both planes: **name-table
+wins**. Do not auto-put scope handles into the name table (`AgentHandle`
+is move-only; reservation stays with the scope). Cross-Evaluator send
+stays HandoffToken observation-only.
 
 Cross-Evaluator: `HandoffToken` + `join_via_handoff` / `orch:join-via-token`
 is **observation-only** — no ownership move, no reservation transfer, no

@@ -15797,6 +15797,28 @@ def cmd_deopt_pending_fast_path_3441_coverage():
     return 0
 
 
+def cmd_scope_message_resolve_3442_coverage():
+    """Issue #3442: message prims resolve name-table then session-local scope.
+
+    orch:scope-spawn agents lived only in AgentScope::handles_. send/recv
+    /ask/join consulted AgentNameTable only. Session-local fallback
+    (name-table first, then AgentScope::find). No second owning put,
+    no AgentRegistry, no new query key. Extends test_agent_scope /
+    test_agent_name_table_isolation / test_orch_scope.
+    """
+    print(f"{B}=== scope_message_resolve coverage (#3442) ==={N}")
+    script = COVERAGE_CHECKS / "check_scope_message_resolve_3442.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("scope_message_resolve (#3442) coverage contract rows failed")
+        return 1
+    ok("scope_message_resolve (#3442) coverage clean")
+    return 0
+
+
 def cmd_partial_reemit_success_coverage_3413_coverage():
     """Issue #3413: last_reemit_success must not stamp the full force_jit
     mask on any n>0 — only_covered over-covers residual.
@@ -23074,6 +23096,8 @@ def main():
         "deopt-pending-closure-call-3412-coverage": cmd_deopt_pending_closure_call_3412_coverage,
         "deopt-pending-fast-path-3441": cmd_deopt_pending_fast_path_3441_coverage,
         "deopt-pending-fast-path-3441-coverage": cmd_deopt_pending_fast_path_3441_coverage,
+        "scope-message-resolve-3442": cmd_scope_message_resolve_3442_coverage,
+        "scope-message-resolve-3442-coverage": cmd_scope_message_resolve_3442_coverage,
         "partial-reemit-success-coverage-3413": cmd_partial_reemit_success_coverage_3413_coverage,
         "partial-reemit-success-coverage-3413-coverage": cmd_partial_reemit_success_coverage_3413_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
