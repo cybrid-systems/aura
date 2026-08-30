@@ -2930,6 +2930,145 @@ static void ac3356_5_source_and_linter() {
 }
 
 
+// ── Issue #3443: FFI/JIT live ptrs outside opaque_heap_ slots ──
+// Residual of #3022/#3057/#3055/#3210/#3368: EXEMPT is observe-only.
+// Arena-tracked + EXEMPT + no slot + no canary under required+Moving
+// must fail-closed. opaque_heap_ remains FFI cover SSOT.
+
+static void ac3443_1_uncovered_ffi_required_fail_closed() {
+    std::println("\n--- #3443 AC1/AC6: arena-tracked FFI ptr not in opaque_heap_ ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    const auto stale0 = aura::core::densify_consistency::moving_post_moving_stale_total_v_read();
+    ASTArena arena(64 * 1024);
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 5, 6, 7, 8);
+    CHECK(p0 && p1, "3443 AC1: required create_with_cover produced objects");
+    // FFI buffer NOT in opaque_heap_ — pointer-form EXEMPT under required
+    // + Moving must canary, not silently succeed.
+    void* ffi_alias = s0;
+    aura::ast::note_ffi_opaque_create_exempt(ffi_alias, "external-native-addr");
+    CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() > 0,
+          "3443 AC1: required+Moving EXEMPT of live ptr notes #3210 canary");
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    if (r.objects_moved > 0) {
+        CHECK(r.post_moving_stale_count > 0, "3443 AC6: uncovered FFI buffer stale");
+        CHECK(!r.pin_contract_held, "3443 AC1: pin_contract_held=false");
+        CHECK(r.moving_incomplete_remap, "3443 AC1: incomplete-remap");
+        CHECK(aura::core::densify_consistency::moving_post_moving_stale_total_v_read() > stale0,
+              "3443 AC1: post-moving-stale-total");
+        CHECK(static_cast<Pod16*>(s0)->a == 1, "3443 AC1: slotted payload intact");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "3443 AC1: no-move payloads intact");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+}
+
+static void ac3443_2_opaque_heap_slot_still_green() {
+    std::println("\n--- #3443 AC2/AC6: opaque_heap_ slot still remaps green ---");
+    MovingFlagGuard on(1);
+    RequiredPinGuard req(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::core::densify_consistency::reset_moving_post_moving_stale_for_test();
+    ASTArena arena(64 * 1024);
+    void* s0 = nullptr;
+    void* s1 = nullptr;
+    auto* p0 = arena.create_with_cover<Pod16>(&s0, nullptr, 1, 2, 3, 4);
+    auto* p1 = arena.create_with_cover<Pod16>(&s1, nullptr, 5, 6, 7, 8);
+    CHECK(p0 && p1, "3443 AC2: required create_with_cover produced objects");
+    std::vector<void*> opaque_heap{s0};
+    arena.register_external_root_slot_for_densify(&opaque_heap[0]);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.post_moving_stale_count == 0, "3443 AC2: no stale after FFI slot");
+    if (r.objects_moved > 0) {
+        CHECK(r.pin_contract_held, "3443 AC2: pin_contract_held after opaque_heap_ remap");
+        CHECK(static_cast<Pod16*>(opaque_heap[0])->a == 1, "3443 AC2: remapped FFI alias payload");
+        CHECK(opaque_heap[0] == s0, "3443 AC2: FFI alias matches remapped slot");
+    } else {
+        CHECK(p0->a == 1 && p1->a == 5, "3443 AC2: no-move payloads intact");
+    }
+}
+
+static void ac3443_3_soft_zero_extra() {
+    std::println("\n--- #3443 AC5: Soft / Off / no Moving zero extra ---");
+    RequiredPinGuard off(0);
+    aura::ast::reset_temporary_moving_live_ptrs_for_test();
+    aura::core::densify_consistency::reset_moving_temporary_canary_noted_for_test();
+    {
+        MovingFlagGuard off_moving(0);
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        aura::ast::note_ffi_opaque_create_exempt(static_cast<void*>(p0), "external-native-addr");
+        CHECK(aura::core::densify_consistency::moving_temporary_canary_noted_total_v_read() == 0,
+              "3443 AC5: Off path does not note canary");
+        const auto r = arena.live_compact(LiveCompactMode::Soft);
+        CHECK(r.objects_moved == 0, "3443 AC5: Soft does not relocate");
+        CHECK(r.post_moving_stale_count == 0, "3443 AC5: Soft does not scan canaries");
+    }
+    const auto arena_src = read_file("src/core/arena.ixx");
+    CHECK(arena_src.find("note_ffi_opaque_create_exempt(void* p, const char* reason)") !=
+              std::string::npos,
+          "3443 AC5: pointer-form EXEMPT helper present");
+    CHECK(arena_src.find("general_object_pin_required_active()") != std::string::npos,
+          "3443 AC5: required gate on pointer-form EXEMPT");
+}
+
+static void ac3443_4_modules_slot_walk() {
+    std::println("\n--- #3443 AC4: JIT/module cached Env* are lasting slots ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto ev = read_file("src/compiler/evaluator.ixx");
+    const auto flat = read_file("src/compiler/evaluator_eval_flat.cpp");
+    CHECK(mb.find("for (auto*& m : modules_)") != std::string::npos,
+          "3443 AC4: register_known walks modules_");
+    CHECK(mb.find("require_inject_env_") != std::string::npos,
+          "3443 AC4: require_inject_env_ lasting slot");
+    CHECK(ev.find("modules_ / require_inject_env_") != std::string::npos ||
+              ev.find("#3443 also walks modules_") != std::string::npos,
+          "3443 AC4: evaluator.ixx documents modules_ walk");
+    CHECK(flat.find("lasting void** slot in modules_") != std::string::npos,
+          "3443 AC4: inst-env cache uses modules_ slot, not EXEMPT");
+    CHECK(flat.find("\"inst-env-cache-transient\"") == std::string::npos,
+          "3443 AC4: inst-env EXEMPT of moving Env* removed");
+}
+
+static void ac3443_5_exempt_taxonomy_unchanged() {
+    std::println("\n--- #3443 AC3: EXEMPT reason taxonomy unchanged ---");
+    const auto ffi = read_file("src/compiler/ffi_primitives_impl.cpp");
+    const auto lp = read_file("src/core/lifetime_pin.hh");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: external-native-addr") != std::string::npos,
+          "3443 AC3: c-opaque EXEMPT reason kept");
+    CHECK(ffi.find("GENERAL_OBJECT_PIN_EXEMPT: libc-heap") != std::string::npos,
+          "3443 AC3: c-alloc EXEMPT reason kept");
+    CHECK(lp.find("libc-heap |") != std::string::npos &&
+              lp.find("external-native-addr") != std::string::npos,
+          "3443 AC3: lifetime_pin taxonomy kept");
+}
+
+static void ac3443_6_source_cite_no_invent() {
+    std::println("\n--- #3443 AC6: source-cite + no invent ---");
+    const auto dc = read_file("src/core/densify_consistency_report.h");
+    const auto build = read_file("build.py");
+    CHECK(dc.find("kFfiJitLivePtrInventoryIssue = 3443") != std::string::npos,
+          "3443 AC6: stamp in densify_consistency_report.h");
+    CHECK(build.find("check_ffi_jit_live_ptr_inventory_3443") != std::string::npos,
+          "3443 AC6: build.py wires linter");
+    CHECK(read_file("docs/design/3443-ffi-jit-live-ptr.md").empty(),
+          "3443 AC6: no docs/design/3443-* per #1655");
+    CHECK(read_file("tests/core/test_issue_3443.cpp").empty(),
+          "3443 AC6: no test_issue_3443.cpp per #81967");
+    const auto arena = read_file("src/core/arena.ixx");
+    CHECK(arena.find("g_3443_") == std::string::npos, "3443 AC6: no g_3443_* counter");
+    CHECK(arena.find("schema-3443") == std::string::npos, "3443 AC6: no schema-3443 query key");
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -3517,6 +3656,15 @@ int run_test_moving_densify_fail_closed() {
         CHECK(read_file("tests/core/test_issue_3291.cpp").empty(),
               "3291 AC4: no test_issue_3291.cpp per #81967");
     }
+
+    // ── Issue #3443: FFI/JIT live ptrs outside opaque_heap_ ──
+    std::println("\n=== Issue #3443: FFI/JIT live ptrs outside opaque_heap_ ===");
+    ac3443_1_uncovered_ffi_required_fail_closed();
+    ac3443_2_opaque_heap_slot_still_green();
+    ac3443_3_soft_zero_extra();
+    ac3443_4_modules_slot_walk();
+    ac3443_5_exempt_taxonomy_unchanged();
+    ac3443_6_source_cite_no_invent();
 
     // clang-format off
     (void)R"(EnvFrame densify ownership scan fail enters outermost commit barrier (extends #2495 test file per #81967))";

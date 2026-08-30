@@ -189,8 +189,8 @@ _REQUIRED_HOT_PATH_COVER = (
         EVAL_FLAT,
     ),
     (
-        "AC3: evaluator_eval_flat declares cached_env EXEMPT(inst-env-cache-transient)",
-        re.compile(r'"inst-env-cache-transient"'),
+        "AC3: evaluator_eval_flat declares cached_env slot cover (#3443)",
+        re.compile(r"note_intermediate_create_with_cover_\(\s*\n?\s*cached_env\s*,\s*env_slot\s*,\s*nullptr\s*\)"),
         1,
         EVAL_FLAT,
     ),

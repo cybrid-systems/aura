@@ -192,6 +192,19 @@ static void ac5_source_cite() {
     CHECK(q.find("last_densify_root_remap_ok") != std::string::npos, "AC5: query reads last root");
 }
 
+// ── #3443: JIT/module cached Env* join known-root slot walk ──
+static void ac3443_modules_slot_inventory() {
+    std::println("\n--- #3443: modules_ Env* lasting slots on densify inventory ---");
+    const auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    const auto dcr = read_file("src/core/densify_consistency_report.h");
+    CHECK(mb.find("Issue #3443") != std::string::npos, "3443 AC4: mutation boundary cites #3443");
+    CHECK(mb.find("for (auto*& m : modules_)") != std::string::npos,
+          "3443 AC4: modules_ walked as lasting void**");
+    CHECK(dcr.find("kFfiJitLivePtrInventoryIssue = 3443") != std::string::npos, "3443 AC4: stamp");
+    CHECK(read_file("tests/compiler/test_issue_3443.cpp").empty(),
+          "3443 AC6: no test_issue_3443.cpp");
+}
+
 } // namespace
 
 int run_test_densify_root_closure_closed_loop() {
@@ -201,7 +214,8 @@ int run_test_densify_root_closure_closed_loop() {
     ac3_dual_epoch_closure();
     ac4_query();
     ac5_source_cite();
-    std::println("\n=== #2365: {} passed, {} failed ===", g_passed, g_failed);
+    ac3443_modules_slot_inventory();
+    std::println("\n=== #2365/#3443: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }
 

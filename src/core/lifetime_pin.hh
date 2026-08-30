@@ -858,10 +858,13 @@ inline std::size_t live_pin_count() noexcept {
 }
 
 // Issue #3022: FFI opaque / native create that is NOT arena-tracked
-// (libc heap, external native addr, FFI return). EXEMPT with reason;
-// no LifetimePin. Soft / required both skip pin (zero extra pin).
-// Reason taxonomy (linter): libc-heap | external-native-addr |
-// ffi-return-external | opaque-struct-copy.
+// (libc heap, external native addr). EXEMPT with reason; no LifetimePin.
+// Soft / required both skip pin (zero extra pin).
+// Reason taxonomy (linter, unchanged #3291/#3443 AC3): libc-heap |
+// external-native-addr. Densify-tracked aliases use slot or #3210
+// canary (note_ffi_opaque_alias_densify_cover) — EXEMPT is not remap
+// cover. Issue #3443: pointer form (arena.ixx) under required+Moving
+// notes a temp canary when would_move cannot be proven false.
 inline void note_ffi_opaque_create_exempt(const char* reason) noexcept {
     (void)reason;
     ++g_lifetime_pin_stats.general_object_pin_exempt_total;
