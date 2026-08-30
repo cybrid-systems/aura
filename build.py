@@ -15891,23 +15891,42 @@ def cmd_scope_message_resolve_3442_coverage():
     return 0
 
 
+def cmd_reemit_pipeline_reason_coverage_3445_coverage():
+    """Issue #3445: pipeline last_reemit_success is reason-group coverage.
+
+    #3413 closed the decide_and_reemit demoted fallback. Pipeline still
+    stamped candidate COUNT ∩ emit_mask (or full demoted) into the
+    reason-group word that only_covered / residual_force consume.
+    Stamp only Agent `reemit_success_coverage_override_`. No new query
+    key. Extends test_aot_incremental_reemit.cpp.
+    """
+    print(f"{B}=== reemit_pipeline_reason_coverage coverage (#3445) ==={N}")
+    script = COVERAGE_CHECKS / "check_reemit_pipeline_reason_coverage_3445.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("reemit_pipeline_reason_coverage (#3445) coverage contract rows failed")
+        return 1
+    ok("reemit_pipeline_reason_coverage (#3445) coverage clean")
+    return 0
+
+
 def cmd_partial_reemit_success_coverage_3413_coverage():
     """Issue #3413: last_reemit_success must not stamp the full force_jit
     mask on any n>0 — only_covered over-covers residual.
 
-    Production `covered = override || demoted` in decide_and_reemit /
-    on_reemit_pipeline_call washes residual_force_mask to 0 even for
-    groups never re-emitted, breaking only_covered re-promote +
-    storm-clear min-dirty. Fix: stamp the actually-emitted bits
-    (`candidates ∩ emit_region_mask_`), not the full demoted mask.
-    AC1 AC2 AC3 AC4 AC5 AC6.
+    Production `covered = override || demoted` in decide_and_reemit
+    washed residual_force_mask to 0 even for groups never re-emitted,
+    breaking only_covered re-promote + storm-clear min-dirty. Fix:
+    skip the facade fallback stamp. Pipeline count∩emit residual is
+    #3445. AC1 AC2 AC3 AC4 AC5 AC6.
 
     Source-cite linter (scripts/check_partial_reemit_success_coverage_3413.py)
     verifies:
-      AC1 decide_and_reemit skips the fallback `covered = demoted` stamp;
-         on_reemit_pipeline_call uses
-         `covered = candidates & emit_region_mask_` (not demoted).
-         demoted fallback preserved as last-resort for candidates == 0.
+      AC1 decide_and_reemit skips the fallback `covered = demoted` stamp.
+         Pipeline reason-domain stamp is #3445 (override-only).
       AC2 residual_force_mask() still exposes uncovered bits so
          only_covered re-promote clears only the emitted bits.
       AC3 Storm-clear min-dirty still drives for the uncovered bit.
@@ -23174,6 +23193,8 @@ def main():
         "ffi-jit-live-ptr-inventory-3443-coverage": cmd_ffi_jit_live_ptr_inventory_3443_coverage,
         "partial-reemit-success-coverage-3413": cmd_partial_reemit_success_coverage_3413_coverage,
         "partial-reemit-success-coverage-3413-coverage": cmd_partial_reemit_success_coverage_3413_coverage,
+        "reemit-pipeline-reason-coverage-3445": cmd_reemit_pipeline_reason_coverage_3445_coverage,
+        "reemit-pipeline-reason-coverage-3445-coverage": cmd_reemit_pipeline_reason_coverage_3445_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,

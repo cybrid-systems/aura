@@ -1917,15 +1917,12 @@ int main() {
 
     // ── #3413: last_reemit_success must not stamp the full force_jit
     // mask on any n>0 — only_covered over-covers residual. Production
-    // `covered = override || demoted` in decide_and_reemit /
-    // on_reemit_pipeline_call washes residual_force_mask to 0 even for
-    // groups never re-emitted, breaking only_covered re-promote +
-    // storm-clear min-dirty. Fix: stamp `candidates ∩ emit_region_mask_`
-    // (the actually-emitted bits), not the full demoted mask. Source-cite
-    // verification (extend existing per #81934).
+    // `covered = override || demoted` in decide_and_reemit washed
+    // residual_force_mask to 0 even for groups never re-emitted.
+    // Facade skip only; pipeline count∩emit residual is #3445.
+    // Source-cite verification (extend existing per #81934).
     {
-        std::println("\n--- #3413 AC1: reemit success coverage uses candidates ∩ emit mask, not "
-                     "demoted ---");
+        std::println("\n--- #3413 AC1: decide_and_reemit skips fallback demoted stamp ---");
         const auto hot = read_file("src/compiler/hot_update_registry.cpp");
         CHECK(hot.find("Issue #3413") != std::string::npos,
               "3413 AC1: Issue #3413 marker in hot_update_registry.cpp");
@@ -1934,11 +1931,6 @@ int main() {
         // The fallback was the source of the over-cover (residual -> 0).
         CHECK(hot.find("skip the fallback `covered = demoted` stamp") != std::string::npos,
               "3413 AC1: decide_and_reemit skips the fallback demoted stamp");
-        // on_reemit_pipeline_call must use candidates ∩ emit_region_mask_ as
-        // covered (not the full demoted mask). Partial success must not
-        // over-cover residual_force_mask.
-        CHECK(hot.find("covered = candidates & emit_region_mask_.load") != std::string::npos,
-              "3413 AC1: on_reemit_pipeline_call uses candidates ∩ emit_region_mask_ as covered");
 
         std::println(
             "\n--- #3413 AC2/AC3: only_covered re-promote + storm-clear min-dirty intact ---");
@@ -2001,6 +1993,156 @@ int main() {
               "3413 AC7: cmd_partial_reemit_success_coverage_3413_coverage in build.py");
         CHECK(build.find("check_partial_reemit_success_coverage_3413") != std::string::npos,
               "3413 AC7: linter script registered");
+    }
+
+    // ── #3445: #3413 residual — pipeline still stamped candidate COUNT ∩
+    // emit_mask (or full demoted) into the reason-group word. Stamp only
+    // Agent override so only_covered / residual_force stay one domain.
+    {
+        using aura::compiler::hot_update_registry;
+        using aura::compiler::relower_success_region_bit;
+        auto& reg = hot_update_registry();
+        auto& ctr = aura::compiler::typed_audit::g_typed_mutation_audit_counters;
+        const auto prod_save = ctr.production_defaults_active.load(std::memory_order_relaxed);
+
+        std::println("\n--- #3445 AC1: 3-candidate emit does not invent reason bit 0 ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.on_emit_region_mask_set(~0ULL);
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        const auto defuse_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Defuse);
+        const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+        const auto both = defuse_bit | env_bit;
+        CHECK((reg.force_jit_regions_mask() & both) == both, "3445 AC1: Defuse+Env demoted");
+        CHECK(defuse_bit == (1ULL << 0), "3445 AC1: Defuse is reason bit 0");
+        CHECK(env_bit == (1ULL << 1), "3445 AC1: Env is reason bit 1");
+        // Without override, candidates=3 ∩ emit_mask(~0) == 3 would have
+        // set bits 0+1. Pipeline must leave last_success untouched.
+        CHECK(reg.last_reemit_success_region_mask() == 0, "3445 AC1: last_success starts 0");
+        reg.on_reemit_pipeline_call(/*candidates=*/3, /*successes=*/1);
+        CHECK(reg.last_reemit_success_region_mask() == 0,
+              "3445 AC1: 3-candidate emit does not stamp count ∩ emit (bit 0)");
+        CHECK(reg.residual_force_mask() == both, "3445 AC1: residual still Defuse+Env");
+
+        // Agent opt-in covers bit 0 only; pipeline(3,1) must not OR extra bits.
+        reg.note_reemit_success_coverage(defuse_bit);
+        CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+              "3445 AC1: override stamps Defuse only");
+        CHECK(reg.residual_force_mask() == env_bit, "3445 AC1: residual Env after override");
+        reg.on_reemit_pipeline_call(3, 1);
+        CHECK(reg.last_reemit_success_region_mask() == defuse_bit,
+              "3445 AC1: pipeline restamps override, not count ∩ emit");
+        CHECK(reg.residual_force_mask() == env_bit, "3445 AC1: residual stays Env");
+
+        std::println("\n--- #3445 AC2: only_covered re-promote clears only emitted bit ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.set_force_jit_repromote_window(1);
+        reg.set_force_jit_repromote_only_covered_bits(true);
+        reg.set_force_jit_repromote_require_pending_idle(false);
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        reg.note_reemit_success_coverage(defuse_bit);
+        const auto part0 = reg.force_jit_repromote_partial_total();
+        reg.on_reemit_pipeline_call(3, 1); // window=1 → partial clear
+        CHECK((reg.force_jit_regions_mask() & defuse_bit) == 0,
+              "3445 AC2: covered Defuse re-promoted");
+        CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
+              "3445 AC2: uncovered Env stays force-JIT");
+        CHECK(reg.residual_force_mask() == env_bit, "3445 AC2: residual Env after only_covered");
+        CHECK(reg.force_jit_repromote_partial_total() == part0 + 1, "3445 AC2: partial_total +1");
+
+        std::println("\n--- #3445 AC3: residual drives min-dirty; playbook hint non-Idle ---");
+        ReloadRecoveryPlaybookInput pin{};
+        pin.force_jit_regions_mask = both;
+        pin.last_reemit_success_region_mask = defuse_bit;
+        pin.recovery_active = 1;
+        const auto pb = aura_reload_recovery_playbook_decide(pin);
+        CHECK(pb.residual_force_mask == env_bit, "3445 AC3: playbook residual Env");
+        CHECK(pb.playbook_hint_min_dirty_reemit == 1, "3445 AC3: hint non-Idle while residual");
+        CHECK(pb.action != ReloadRecoveryPlaybookAction::Idle,
+              "3445 AC3: playbook action not Idle while residual");
+        ctr.production_defaults_active.store(1, std::memory_order_relaxed);
+        reg.reset_coverage_verify_for_test();
+        reg.reset_exhausted_min_dirty_retry_for_test();
+        reg.set_exhausted_min_dirty_retry_cap(3);
+        CHECK(reg.residual_force_mask() == env_bit, "3445 AC3: live residual Env");
+        const auto sched0 = reg.coverage_verify_scheduled_total();
+        const bool drove = reg.maybe_coverage_verify_min_dirty();
+        CHECK(drove, "3445 AC3: residual min-dirty still drives");
+        CHECK(reg.coverage_verify_scheduled_total() == sched0 + 1, "3445 AC3: scheduled +1");
+        CHECK((reg.force_jit_regions_mask() & env_bit) != 0,
+              "3445 AC3: uncovered Env retained after min-dirty seed");
+        ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
+
+        std::println("\n--- #3445 AC4: relower success must not zero a different reason bit ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        reg.on_force_jit_for_reason(AotReloadFail::Defuse);
+        reg.on_force_jit_for_reason(AotReloadFail::Env);
+        const auto hash_bit = relower_success_region_bit("define-D-3445");
+        reg.note_relower_success_coverage(hash_bit);
+        CHECK((reg.residual_force_mask() & env_bit) != 0,
+              "3445 AC4: Env residual survives hashed-name cover");
+        CHECK((reg.residual_force_mask() & defuse_bit) != 0 || (hash_bit & defuse_bit) != 0,
+              "3445 AC4: Defuse residual survives unless hash collides bit 0");
+        // Even a colliding hash bit must not zero a *different* reason group.
+        reg.note_relower_success_coverage(defuse_bit);
+        CHECK((reg.residual_force_mask() & env_bit) != 0,
+              "3445 AC4: colliding hash on Defuse does not zero Env");
+
+        std::println("\n--- #3445 AC5: Soft / Off / idle force mask → zero extra stores ---");
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
+        CHECK(reg.force_jit_regions_mask() == 0, "3445 AC5: force mask idle");
+        const auto last0 = reg.last_reemit_success_region_mask();
+        reg.on_reemit_pipeline_call(3, 1);
+        CHECK(reg.last_reemit_success_region_mask() == last0,
+              "3445 AC5: idle mask does not stamp last_success");
+        const auto hot = read_file("src/compiler/hot_update_registry.cpp");
+        CHECK(hot.find("if (demoted != 0)") != std::string::npos,
+              "3445 AC5: demoted != 0 gate keeps Soft/idle to one/two loads");
+
+        std::println("\n--- #3445 AC6: non-duplicative vs #3413/#2895/#2949/#2978/#3026/"
+                     "#3136/#3229 ---");
+        CHECK(hot.find("Issue #3413") != std::string::npos, "3445 AC6: #3413 facade skip kept");
+        CHECK(hot.find("Issue #2895") != std::string::npos,
+              "3445 AC6: #2895 only_covered re-promote kept");
+        CHECK(hot.find("Issue #2949") != std::string::npos ||
+                  hot.find("resolve_force_jit_repromote_only_covered") != std::string::npos,
+              "3445 AC6: #2949 only_covered default kept");
+        CHECK(hot.find("Issue #2978") != std::string::npos,
+              "3445 AC6: #2978 sync remount covered named kept");
+        CHECK(hot.find("Issue #3026") != std::string::npos ||
+                  hot.find("residual_force_mask") != std::string::npos,
+              "3445 AC6: #3026 residual observe kept");
+        CHECK(hot.find("Issue #3136") != std::string::npos ||
+                  hot.find("Issue #3229") != std::string::npos,
+              "3445 AC6: #3136 / #3229 relower define coverage kept");
+        CHECK(hot.find("stamp_aot_reload_consistency_proof_fail_after_force_jit") !=
+                  std::string::npos,
+              "3445 AC6: #2845 fail-stamp would_allow_native=false kept");
+        CHECK(hot.find("covered = candidates & emit_region_mask_.load") == std::string::npos,
+              "3445 AC6: count ∩ emit stamp deleted");
+        CHECK(read_file("docs/design/3445-pipeline-reason-coverage.md").empty(),
+              "3445 AC6: no docs/design/3445-* per #1655");
+        CHECK(read_file("tests/issues/test_issue_3445.cpp").empty() &&
+                  read_file("tests/compiler/test_issue_3445.cpp").empty() &&
+                  read_file("tests/core/test_issue_3445.cpp").empty(),
+              "3445 AC6: no test_issue_3445.cpp per #81934");
+        const auto build = read_file("build.py");
+        CHECK(build.find("check_reemit_pipeline_reason_coverage_3445") != std::string::npos,
+              "3445 AC6: build.py wires linter");
+        CHECK(build.find("cmd_reemit_pipeline_reason_coverage_3445_coverage") != std::string::npos,
+              "3445 AC6: coverage cmd registered");
+        CHECK(read_file("src/compiler/evaluator_primitives_mutate.cpp").find("schema-3445") ==
+                  std::string::npos,
+              "3445 AC6: no new query key");
+
+        ctr.production_defaults_active.store(prod_save, std::memory_order_relaxed);
+        reg.on_reload_success();
+        reg.reset_force_jit_repromote_for_test();
     }
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);

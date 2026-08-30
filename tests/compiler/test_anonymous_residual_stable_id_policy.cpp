@@ -1911,10 +1911,13 @@ static void ac2978_1_sync_covered_named() {
     aura_test_set_closure_stable_func_id(named, 1); // Env bit
     aura_closure_set_must_deopt(named, 1);
     reg.on_force_jit_for_reason(AotReloadFail::Env);
+    const auto env_bit = aot_reload_fail_to_force_jit_mask(AotReloadFail::Env);
+    // Issue #3445: coverage is Agent opt-in reason bits, not candidate count.
+    reg.note_reemit_success_coverage(env_bit);
     const auto ok0 = aura_reemit_success_sync_covered_ok_total_v_read();
-    // Pipeline success stamps coverage then runs the sync walk.
+    // Pipeline success restamps override then runs the sync walk.
     reg.on_reemit_pipeline_call(/*candidates=*/1, /*successes=*/1);
-    CHECK(reg.last_reemit_success_region_mask() != 0, "AC1: coverage stamped");
+    CHECK(reg.last_reemit_success_region_mask() == env_bit, "AC1: coverage stamped");
     CHECK(aura_reemit_success_sync_covered_ok_total_v_read() > ok0 ||
               aura_closure_get_must_deopt(named) == 0,
           "AC1: covered named remounted / MustDeopt cleared");
