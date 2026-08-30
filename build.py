@@ -2651,6 +2651,22 @@ def cmd_lint():
             "Issue #3433 join cleanup fork linter failed — run python3 scripts/coverage/checks/check_join_cleanup_fork_3433.py"
         )
         return r
+    # Issue #3434: production spawn stamps Fiber::assigned_tenant_id so the
+    # TenantScope resume mandate (#2491/#3275/#2883/#3320) arms on the orch
+    # spawn path (not just test-stamped fibers). Resolves tenant at spawn
+    # (spec.tenant_id → parent assigned → quota TLS), denies "tenant-required"
+    # under production Restricted+MT / Strict. Extends
+    # test_tenant_scope_fiber_mandate.cpp (#81967); no docs/design/.
+    tsm3434_script = COVERAGE_CHECKS / "check_tenant_spawn_mandate_3434.py"
+    if not tsm3434_script.exists():
+        fail(f"missing {tsm3434_script}")
+        return 1
+    r = run([sys.executable, str(tsm3434_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3434 tenant spawn mandate linter failed — run python3 scripts/coverage/checks/check_tenant_spawn_mandate_3434.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.
