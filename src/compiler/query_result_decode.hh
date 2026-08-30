@@ -26,11 +26,17 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
                                 std::uint64_t current_fiber_id) noexcept {
     if (!qr.is_fresh_live(flat.generation()))
         return aura::core::QueryResultFreshness::StaleByEpoch;
-    if (flat.nested_authority_gap())
+    const bool hard = aura::compiler::typed_audit::production_defaults_active();
+    // Issue #3451: production nested_authority_gap → held QueryResult is
+    // not fresh until outermost triad. Reuse #3196 face + #3041 stale
+    // counter. Soft / Off never set the gap (#3312 AC2) — skip extra
+    // atomic on the quiet nested path.
+    if (hard && flat.nested_authority_gap()) {
+        aura::core::note_query_result_stale();
         return aura::core::QueryResultFreshness::StaleByEpoch;
+    }
     if (qr.match_count == 0)
         return aura::core::QueryResultFreshness::Fresh;
-    const bool hard = aura::compiler::typed_audit::production_defaults_active();
     if (!qr.matches[0].has_full_provenance()) {
         if (hard)
             aura::core::note_query_result_full_provenance_stale();
@@ -82,6 +88,7 @@ query_result_is_fresh_with_refs(const aura::core::QueryResult& qr, const aura::a
     return aura::core::QueryResultFreshness::Fresh;
 }
 
+#ifndef AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
 enum class HashNodeKind : std::uint8_t { NotHash = 0, Ok = 1, Stale = 2, BadArg = 3 };
 
 struct HashNodeResolve {
@@ -242,6 +249,7 @@ resolve_query_result_match(types::EvalValue arg, const StringHeap& heap, const P
     r.node = static_cast<aura::ast::NodeId>(qr.matches[0].node_id);
     return r;
 }
+#endif // AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
 
 } // namespace aura::compiler::query_result_decode
 

@@ -1328,10 +1328,19 @@ Evaluator::MutationCheckpoint Evaluator::exit_mutation_boundary(bool success) {
         // outside that cone. Agents must not treat nested OK as triad
         // complete — nested_return_not_triad_complete stays 1 until
         // outermost clears the gap.
+        // Issue #3451: after note_nested_authority_gap, poison last
+        // QueryEpoch (reuse #3041) so held QueryResult / last_query_epoch
+        // are stale until outermost. Do not run unified_restamp here.
         if (success && (typed_audit::production_defaults_active() ||
                         typed_audit::get_strategy() == typed_audit::AuditStrategy::Full)) {
             defuse_index_ = nullptr;
             workspace_flat_->note_nested_authority_gap();
+            // Issue #3451: production nested success poisons last QueryEpoch
+            // so last_query_epoch().is_fresh fails (Agents poll after Guard).
+            // Held QueryResult still needs the gap check in
+            // query_result_is_fresh_with_refs — reuse #3041 poison, no new
+            // query key. Soft / Off never reach this arm.
+            aura::core::force_query_epoch_stale_from_restamp_budget();
             if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_)) {
                 m->nested_authority_gap_total.fetch_add(1, std::memory_order_relaxed);
                 m->nested_return_not_triad_complete.store(1, std::memory_order_relaxed);

@@ -17,6 +17,7 @@
 #include "compiler/typed_mutation_audit.h"
 #include "core/provenance_tracker.hh"
 #include "core/sandbox.hh"
+#include "core/workspace_epoch.hh"
 #include "core/workspace_isolation.hh"
 #include "core/capability_model.hh"
 #include "compiler/security_capabilities.h"
@@ -35,6 +36,10 @@ import aura.compiler.macro_expansion;
 import aura.compiler.service;
 import aura.compiler.value;
 import aura.core.ast;
+
+// Issue #3451: freshness SSOT only (hash decode needs g_hash_tables).
+#define AURA_QUERY_RESULT_DECODE_FRESHNESS_ONLY
+#include "compiler/query_result_decode.hh"
 
 namespace {
 
@@ -3125,6 +3130,247 @@ static void ac3312_5_source_and_linter() {
     CHECK(read_file("tests/compiler/test_issue_3312.cpp").empty(), "3312 AC5: no invent compiler");
 }
 
+static aura::core::QueryResult make_pre_nested_schema2_qr(const aura::ast::FlatAST& flat,
+                                                          aura::ast::NodeId live) {
+    aura::core::QueryResult qr{};
+    qr.epoch = aura::core::capture_query_epoch(static_cast<std::uint64_t>(flat.generation()));
+    (void)qr.push_match_full(static_cast<std::uint32_t>(live), flat.node_gen_for(live),
+                             /*wrap_epoch=*/0, /*cow_epoch_at_capture=*/0, /*tenant_id=*/0,
+                             /*fiber_id=*/0, /*mutation_id_at_capture=*/0,
+                             /*boundary_pinned=*/0);
+    qr.matches[0].reserved = aura::core::kQueryResultMatchSchema2Prod;
+    return qr;
+}
+
+static void ac3451_1_nested_held_query_result_stale() {
+    std::println("\n--- #3451 AC1: production nested success stales held QR + last epoch ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3451 AC1: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    CHECK(flat != nullptr, "3451 AC1: workspace_flat");
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3451 AC1: live node");
+    const auto poison0 =
+        aura::core::g_restamp_budget_query_epoch_stale_total().load(std::memory_order_relaxed);
+    const auto stale0 = aura::core::g_query_result_stale_total().load(std::memory_order_relaxed);
+    auto qr = make_pre_nested_schema2_qr(*flat, live);
+    const auto pre = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    CHECK(pre == aura::core::QueryResultFreshness::Fresh, "3451 AC1: pre-nested schema-2 QR fresh");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        CHECK(ok, "3451 AC1: outer");
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            CHECK(ok, "3451 AC1: inner");
+            const auto extra = flat->add_literal(3451);
+            flat->insert_child(live, 0, extra);
+        }
+        CHECK(flat->nested_authority_gap(), "3451 AC1: gap face published");
+        CHECK(aura::core::g_restamp_budget_query_epoch_stale_total().load(
+                  std::memory_order_relaxed) > poison0,
+              "3451 AC1: #3041 poison counter bumped");
+        CHECK(!aura::core::last_query_epoch().is_fresh(
+                  aura::core::current_mutation_epoch(),
+                  static_cast<std::uint64_t>(flat->generation())),
+              "3451 AC1: last_query_epoch().is_fresh == false");
+        // Rebind captured epoch to live counters so gap (not gen drift) is
+        // the discriminator — the residual #3312 closed export, not held QR.
+        qr.epoch.mutation_epoch = aura::core::current_mutation_epoch();
+        qr.epoch.generation = static_cast<std::uint64_t>(flat->generation());
+        const auto stale_before_gap =
+            aura::core::g_query_result_stale_total().load(std::memory_order_relaxed);
+        const auto held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+            qr, *flat, /*tenant=*/0, /*fiber=*/0);
+        CHECK(held == aura::core::QueryResultFreshness::StaleByEpoch,
+              "3451 AC1: query_result_is_fresh_with_refs == StaleByEpoch under gap");
+        CHECK(aura::core::g_query_result_stale_total().load(std::memory_order_relaxed) >
+                  stale_before_gap,
+              "3451 AC1: g_query_result_stale_total bumped on gap");
+        (void)stale0;
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3451_2_nested_touched_export_unchanged() {
+    std::println("\n--- #3451 AC2: nested-touched query:*-stable still follows #3312 ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3451 AC2: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3451 AC2: live node");
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            const auto extra = flat->add_literal(34512);
+            flat->insert_child(live, 0, extra);
+        }
+        CHECK(flat->nested_authority_gap(), "3451 AC2: gap remains");
+        CHECK(ev.allow_query_stable_ref_export(live),
+              "3451 AC2: nested-touched query:*-stable still exportable (#3312)");
+        aura::ast::NodeId outside = aura::ast::NULL_NODE;
+        for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+            if (flat->is_live_node(id) && !flat->is_free_slot(id) &&
+                !flat->node_eagerly_restamped(id)) {
+                outside = id;
+                break;
+            }
+        }
+        CHECK(outside != aura::ast::NULL_NODE, "3451 AC2: outside-cone node");
+        CHECK(!ev.allow_query_stable_ref_export(outside),
+              "3451 AC2: outside cone stays structured gap (#3312)");
+    }
+    apply_dev_audit_defaults();
+}
+
+static void ac3451_3_outermost_clears_new_capture_fresh() {
+    std::println("\n--- #3451 AC3: outermost clears gap; new capture fresh; old QR stale ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_production_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3451 AC3: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    aura::ast::NodeId live = aura::ast::NULL_NODE;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    CHECK(live != aura::ast::NULL_NODE, "3451 AC3: live node");
+    auto qr = make_pre_nested_schema2_qr(*flat, live);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &ok);
+            const auto extra = flat->add_literal(34513);
+            flat->insert_child(live, 0, extra);
+        }
+        CHECK(flat->nested_authority_gap(), "3451 AC3: gap while nested window open");
+    }
+    CHECK(!flat->nested_authority_gap(), "3451 AC3: outermost clears gap");
+    const auto old_held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    CHECK(old_held != aura::core::QueryResultFreshness::Fresh,
+          "3451 AC3: pre-nested QR stays stale after outermost");
+    const auto recap =
+        aura::core::capture_query_epoch(static_cast<std::uint64_t>(flat->generation()));
+    CHECK(recap.is_fresh(aura::core::current_mutation_epoch(),
+                         static_cast<std::uint64_t>(flat->generation())),
+          "3451 AC3: new capture_query_epoch is fresh");
+    bool inner_ok = true;
+    const auto poison0 =
+        aura::core::g_restamp_budget_query_epoch_stale_total().load(std::memory_order_relaxed);
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        {
+            Evaluator::MutationBoundaryGuard inner(ev, &inner_ok);
+            inner_ok = false;
+        }
+        CHECK(!flat->nested_authority_gap(), "3451 AC3: nested abort does not publish gap");
+    }
+    CHECK(aura::core::g_restamp_budget_query_epoch_stale_total().load(std::memory_order_relaxed) ==
+              poison0,
+          "3451 AC3: nested abort does not poison QueryEpoch");
+    apply_dev_audit_defaults();
+}
+
+static void ac3451_4_soft_zero_extra() {
+    std::println("\n--- #3451 AC4: Soft nested success → no poison / no extra atomic ---");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    CHECK(setup_dense_ws(cs), "3451 AC4: dense workspace");
+    auto& ev = cs.evaluator();
+    auto* flat = ev.workspace_flat();
+    aura::ast::NodeId live = 0;
+    for (aura::ast::NodeId id = 0; id < flat->size(); ++id) {
+        if (flat->is_live_node(id) && !flat->is_free_slot(id)) {
+            live = id;
+            break;
+        }
+    }
+    const auto poison0 =
+        aura::core::g_restamp_budget_query_epoch_stale_total().load(std::memory_order_relaxed);
+    const auto stale0 = aura::core::g_query_result_stale_total().load(std::memory_order_relaxed);
+    auto qr = make_pre_nested_schema2_qr(*flat, live);
+    bool ok = true;
+    {
+        Evaluator::MutationBoundaryGuard outer(ev, &ok);
+        Evaluator::MutationBoundaryGuard inner(ev, &ok);
+        const auto extra = flat->add_literal(34514);
+        flat->insert_child(0, 0, extra);
+    }
+    CHECK(!flat->nested_authority_gap(), "3451 AC4: Soft no gap");
+    CHECK(aura::core::g_restamp_budget_query_epoch_stale_total().load(std::memory_order_relaxed) ==
+              poison0,
+          "3451 AC4: Soft no #3041 poison");
+    qr.epoch.mutation_epoch = aura::core::current_mutation_epoch();
+    qr.epoch.generation = static_cast<std::uint64_t>(flat->generation());
+    const auto held = aura::compiler::query_result_decode::query_result_is_fresh_with_refs(
+        qr, *flat, /*tenant=*/0, /*fiber=*/0);
+    CHECK(held == aura::core::QueryResultFreshness::Fresh ||
+              held == aura::core::QueryResultFreshness::SoftOnlyNoProvenance,
+          "3451 AC4: Soft with_refs does not extra-stale via gap");
+    CHECK(aura::core::g_query_result_stale_total().load(std::memory_order_relaxed) == stale0,
+          "3451 AC4: Soft no extra g_query_result_stale_total");
+}
+
+static void ac3451_5_source_and_linter() {
+    std::println("\n--- #3451 AC5: source-cite + no invent / docs ---");
+    auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    auto dec = read_file("src/compiler/query_result_decode.hh");
+    auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
+    auto we = read_file("src/core/workspace_epoch.hh");
+    auto build = read_file("build.py");
+    auto rest = read_file("tests/core/test_incremental_restamp.cpp");
+    CHECK(mb.find("Issue #3451") != std::string::npos, "3451 AC5: boundary cites #3451");
+    CHECK(mb.find("force_query_epoch_stale_from_restamp_budget") != std::string::npos,
+          "3451 AC5: reuse #3041 poison");
+    CHECK(dec.find("note_query_result_stale") != std::string::npos,
+          "3451 AC5: decode bumps stale on gap");
+    CHECK(dec.find("nested_authority_gap()") != std::string::npos, "3451 AC5: decode consults gap");
+    CHECK(qw.find("Issue #3451") != std::string::npos, "3451 AC5: query_workspace cites");
+    CHECK(we.find("kNestedGapQueryEpochStaleIssue = 3451") != std::string::npos,
+          "3451 AC5: issue stamp");
+    CHECK(build.find("check_nested_gap_query_epoch_stale_3451") != std::string::npos,
+          "3451 AC5: build.py wires linter");
+    CHECK(build.find("check_nested_return_not_triad_3312") != std::string::npos,
+          "3451 AC5: #3312 linter retained");
+    CHECK(rest.find("3451") != std::string::npos, "3451 AC5: incremental restamp extended");
+    CHECK(mb.find("schema-3451") == std::string::npos, "3451 AC5: no schema-3451 in boundary");
+    CHECK(read_file("docs/design/3451-nested-gap-query-epoch-stale.md").empty(),
+          "3451 AC5: no docs/design/");
+    CHECK(read_file("tests/issues/test_issue_3451.cpp").empty(), "3451 AC5: no invent");
+    CHECK(read_file("tests/compiler/test_issue_3451.cpp").empty(), "3451 AC5: no invent compiler");
+}
+
 static void ac3322_1_nested_closes_window() {
     std::println("\n--- #3322 AC1: production nested exit closes observation window ---");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
@@ -3846,6 +4092,10 @@ static void ac3215_macro_introduced_reason_string() {
     CHECK(cs.eval("(eval-current)").has_value(), "3215: eval");
     auto* ws = cs.evaluator().workspace_flat();
     CHECK(ws != nullptr, "3215: workspace");
+    if (ws == nullptr) {
+        apply_dev_audit_defaults();
+        return;
+    }
     aura::ast::NodeId lit = aura::ast::NULL_NODE;
     for (aura::ast::NodeId id = 0; id < ws->size(); ++id) {
         if (ws->is_live_node(id) && ws->tag(id) == aura::ast::NodeTag::LiteralInt) {
@@ -4047,6 +4297,12 @@ int main() {
     ac3312_3_outermost_and_abort_unchanged();
     ac3312_4_never_green_pre_mutate();
     ac3312_5_source_and_linter();
+    std::println("\n=== Issue #3451: nested gap poisons QueryEpoch / held QueryResult ===");
+    ac3451_1_nested_held_query_result_stale();
+    ac3451_2_nested_touched_export_unchanged();
+    ac3451_3_outermost_clears_new_capture_fresh();
+    ac3451_4_soft_zero_extra();
+    ac3451_5_source_and_linter();
     std::println("\n=== Issue #3322: nested / render-fast observation window close ===");
     ac3322_1_nested_closes_window();
     ac3322_2_soft_zero_extra();

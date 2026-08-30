@@ -55,9 +55,11 @@ def main() -> int:
     must("ac3312_1_nested_hot_cone_or_gap", "AC1 test", hyg)
 
     nest = mb.find("Issue #3312: production nested success may thin-hot-cone")
-    nwin = mb[nest : nest + 1800] if nest >= 0 else ""
+    nwin = mb[nest : nest + 2400] if nest >= 0 else ""
     if nest >= 0 and "unified_restamp_after_boundary(" in nwin:
         fails.append("AC1: nested #3312 block calls unified_restamp_after_boundary")
+    # Residual #3451: nested success poisons last QueryEpoch (held QR).
+    must("force_query_epoch_stale_from_restamp_budget", "3451 nested poison", nwin)
 
     must("ac3312_2_soft_zero_extra", "AC2 test", hyg)
     must("Soft / Off: zero extra", "AC2 comment", mb)
