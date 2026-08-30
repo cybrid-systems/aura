@@ -2903,6 +2903,19 @@ def cmd_lint():
             "Issue #3312 nested-return-not-triad linter failed — run python3 scripts/coverage/checks/check_nested_return_not_triad_3312.py"
         )
         return r
+    # Issue #3451: nested_authority_gap poisons last QueryEpoch / held
+    # QueryResult freshness (reuse #3041). Soft/Off zero extra. Extends
+    # hygiene nested Guard fixtures + incremental restamp; no docs/design.
+    ngqe3451_script = COVERAGE_CHECKS / "check_nested_gap_query_epoch_stale_3451.py"
+    if not ngqe3451_script.exists():
+        fail(f"missing {ngqe3451_script}")
+        return 1
+    r = run([sys.executable, str(ngqe3451_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3451 nested-gap query-epoch stale linter failed — run python3 scripts/coverage/checks/check_nested_gap_query_epoch_stale_3451.py"
+        )
+        return r
     # Issue #3322: nested / render-fast observation window close before
     # TypeLinearCommitProof. Production/Full invalidate defuse_index_;
     # Soft/Off zero extra. Extends hygiene nested Guards + mutation_boundary
@@ -15031,6 +15044,26 @@ def cmd_query_default_schema2_export_3449_coverage():
     return 0
 
 
+def cmd_nested_gap_query_epoch_stale_3451_coverage():
+    """Issue #3451: nested_authority_gap poisons QueryEpoch / held QueryResult.
+
+    Production nested success reuses #3041 force_query_epoch_stale after
+    note_nested_authority_gap. Held QueryResult consults the gap under
+    production. Soft/Off zero extra. Extends hygiene nested Guards.
+    """
+    print(f"{B}=== nested_gap_query_epoch_stale coverage (#3451) ==={N}")
+    script = COVERAGE_CHECKS / "check_nested_gap_query_epoch_stale_3451.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("nested_gap_query_epoch_stale (#3451) coverage contract rows failed")
+        return 1
+    ok("nested_gap_query_epoch_stale (#3451) coverage clean")
+    return 0
+
+
 def cmd_add_mutate_read_only_fence_3450_coverage():
     """Issue #3450: add_mutate fences workspace_read_only_ before acquire.
 
@@ -23368,6 +23401,8 @@ def main():
         "query-default-schema2-export-3449-coverage": cmd_query_default_schema2_export_3449_coverage,
         "add-mutate-read-only-fence-3450": cmd_add_mutate_read_only_fence_3450_coverage,
         "add-mutate-read-only-fence-3450-coverage": cmd_add_mutate_read_only_fence_3450_coverage,
+        "nested-gap-query-epoch-stale-3451": cmd_nested_gap_query_epoch_stale_3451_coverage,
+        "nested-gap-query-epoch-stale-3451-coverage": cmd_nested_gap_query_epoch_stale_3451_coverage,
         "query-find-prod-no-scan": cmd_query_find_prod_no_scan_coverage,
         "hot-contract-view-at-harden": cmd_hot_contract_view_at_harden_3428_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,

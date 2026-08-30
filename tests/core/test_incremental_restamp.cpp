@@ -386,6 +386,20 @@ int run_test_incremental_restamp() {
         CHECK(true, "#2402 AC5: source-cite + chaos soak");
     }
 
+    {
+        std::println("\n--- #3451: nested gap poisons QueryEpoch (source-cite) ---");
+        auto mb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        auto dec = read_file("src/compiler/query_result_decode.hh");
+        CHECK(mb.find("Issue #3451") != std::string::npos,
+              "3451: boundary cites nested-gap poison");
+        CHECK(mb.find("force_query_epoch_stale_from_restamp_budget") != std::string::npos,
+              "3451: reuse #3041 poison helper");
+        CHECK(dec.find("note_query_result_stale") != std::string::npos,
+              "3451: held QueryResult stale-counter on gap");
+        CHECK(dec.find("nested_authority_gap()") != std::string::npos,
+              "3451: decode consults nested_authority_gap");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

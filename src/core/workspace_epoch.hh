@@ -283,7 +283,11 @@ inline std::atomic<std::uint64_t>& g_query_epoch_stale_total() noexcept {
 // Issue #3041: production restamp-budget exceed forces the active
 // QueryEpoch stale so Agents can poll after Guard exit (no wait for
 // the next is_valid / refresh_if_stale). Soft never sets this.
+// Issue #3451: the same helper is also called from production nested
+// Guard success after note_nested_authority_gap (held QueryResult /
+// last_query_epoch ignore the gap face without this poison).
 inline constexpr int kRestampBudgetQueryEpochStaleIssue = 3041;
+inline constexpr int kNestedGapQueryEpochStaleIssue = 3451;
 inline std::atomic<std::uint32_t>& g_query_epoch_forced_stale() noexcept {
     static std::atomic<std::uint32_t> v{0};
     return v;
