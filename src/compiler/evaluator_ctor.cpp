@@ -13,6 +13,10 @@ module;
 // is a plain include (not a module); evaluator module pulls it into
 // purview so AgentNameTable member + cleanup method can use it.
 #include "orch/agent_spawn.h"
+// Issue #3437: session teardown drops the per-Evaluator AgentScope
+// (g_evaluator_agent_scopes map in agent_scope.h; that header includes
+// agent_spawn.h — include here keeps plain-header purview rules).
+#include "orch/agent_scope.h"
 // Issue #2078: header-only AgentNameTable definition (see .h for why
 // not in evaluator.ixx's global fragment).
 #include "compiler/agent_name_table.h"
@@ -376,6 +380,18 @@ void Evaluator::cleanup_orch_agents() noexcept {
     }
     // handles goes out of scope; AgentHandle destructors run and release
     // any remaining arena reservation via release_reservation_if_any().
+
+    // Issue #3437: session teardown must also drop the per-Evaluator
+    // AgentScope (identity plane B — g_evaluator_agent_scopes). A host
+    // that orch:scope-spawns and destroys this Evaluator without
+    // orch:scope-join-all would otherwise leave a unique_ptr<AgentScope>
+    // keyed by a dangling Evaluator* (fiber / mailbox / reservation /
+    // Scheduler-observer leak until process exit; an address-recycled
+    // Evaluator could inherit the foreign scope tree). ~AgentScope
+    // cancels + drains + releases reservations; the erase is
+    // unconditional session cleanup (Soft/Off same path, #3437 AC3) and
+    // idempotent with orch:scope-join-all drop-if-empty (#2588 AC4).
+    (void)aura::orch::drop_agent_scope(static_cast<void*>(this));
 }
 
 // Issue #1720: concurrent-safe timeline / intend-history API.
