@@ -229,9 +229,10 @@ static void ac6_schema_source() {
     CHECK(kTypedMutationAuditPassPhase >= 7, "phase >= 7");
 
     reset_for_test();
-    set_strategy(AuditStrategy::Full);
+    apply_dev_audit_defaults();
     CompilerService cs;
     seed(cs);
+    set_strategy(AuditStrategy::Full);
     CHECK(trail_href(cs, "schema-2145") == 2145, "schema-2145");
     CHECK(trail_href(cs, "hard-gate-wired") == 1, "wired");
     CHECK(trail_href(cs, "hard-gate-audits-total") >= 0, "audits key");
@@ -321,9 +322,10 @@ static void ac3217_deny_restore_then_stamp() {
           "ac3217_6: no docs/design/3217-* (#1655)");
 
     reset_for_test();
-    set_strategy(AuditStrategy::Full);
+    apply_dev_audit_defaults();
     CompilerService cs2;
     seed(cs2);
+    set_strategy(AuditStrategy::Full);
     CHECK(trail_href(cs2, "schema-3217") == 3217, "ac3217_3: query schema-3217");
     CHECK(trail_href(cs2, "deny-restore-then-stamp-wired") == 1, "ac3217_3: wired == 1");
     CHECK(trail_href(cs2, "schema-2145") == 2145, "ac3217_3: schema-2145 preserved");

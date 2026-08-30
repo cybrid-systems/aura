@@ -135,9 +135,11 @@ static void ac2_push_reemit_walks_iterator() {
         (void)aura_install_production_dirty_iterator();
     }
     CHECK(aura_hot_update_reemit_provider_wired() == 1, "AC2: iterator wired");
-    CHECK(aura_production_dirty_ring_push("alpha_3373", 1ULL << 1, 0) == 1, "AC2: push alpha");
-    CHECK(aura_production_dirty_ring_push("beta_3373", 1ULL << 1, 0) == 1, "AC2: push beta");
-    CHECK(aura_production_dirty_ring_push("gamma_3373", 1ULL << 1, 0) == 1, "AC2: push gamma");
+    // Region 0 = Default (always eligible). 1ULL<<1 == 2 is Evolution
+    // and aura_reemit_aot_for_dirty permanently skips that region.
+    CHECK(aura_production_dirty_ring_push("alpha_3373", 0, 0) == 1, "AC2: push alpha");
+    CHECK(aura_production_dirty_ring_push("beta_3373", 0, 0) == 1, "AC2: push beta");
+    CHECK(aura_production_dirty_ring_push("gamma_3373", 0, 0) == 1, "AC2: push gamma");
     CHECK(aura_production_dirty_ring_depth() == 3, "AC2: depth 3");
     CHECK(aura_production_dirty_ring_pushed_total() == 3, "AC2: pushed_total 3");
     const auto dirty_before = aura_reemit_dirty_count();

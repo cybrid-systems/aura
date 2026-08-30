@@ -3161,6 +3161,9 @@ static void ac3435_3_success_remap_only_moved() {
 // AC4: Soft / no-move path unchanged (zero extra walk).
 static void ac3435_4_soft_zero_extra() {
     std::println("\n--- #3435 AC4: Soft / no-move unchanged ---");
+    // Production default Moving is ON (#2256). Force the Soft/no-move
+    // window so this AC does not inherit process pref/env.
+    MovingFlagGuard off(0);
     aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
     aura::ast::reset_relocate_alloc_fail_inject_for_test();
     ASTArena arena(64 * 1024);

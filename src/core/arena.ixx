@@ -2460,7 +2460,10 @@ public:
                     old_addrs.erase(new_ptr);
                 const bool contract_held =
                     aura::core::lifetime::verify_pins_under_moving_compact(arena_id_, old_addrs);
-                result.pin_contract_held = contract_held;
+                // Issue #3435 / #2266: pin verify is one conjunct of the
+                // unified Moving success gate. Vacuous pin-ok must not
+                // overwrite fail-closed from untracked restore-to-old.
+                result.pin_contract_held = result.pin_contract_held && contract_held;
                 // Note: verify_pins_under_moving_compact already bumps
                 // g_moving_compact_pin_contract_fail_total on failure (single
                 // counter source-of-truth in lifetime_pin.ixx).

@@ -210,8 +210,11 @@ int run_test_production_security_defaults() {
     {
         std::println("\n--- AC7: schema-2053 query keys ---");
         reset_process();
-        apply_production_security_defaults();
+        // Soft bootstrap first (#2818/#3414): Full refuses unstamped IR.
         CompilerService cs;
+        CHECK(cs.eval("(set-code \"1\")").has_value(), "AC7: Soft set-code");
+        CHECK(cs.eval("(eval-current)").has_value(), "AC7: Soft eval-current");
+        apply_production_security_defaults();
         cs.evaluator().set_effect_sandbox_mode(
             static_cast<std::uint8_t>(g_capability_registry().sandbox_mode.load()));
         auto h = cs.eval("(engine:metrics \"query:capability-effect-stats\")");
