@@ -1404,6 +1404,53 @@ static void ac3366_1_bp_deny_failed_handle_has_typed_reject_fields() {
     reset_process_resource_quota_for_test();
 }
 
+static void ac3442_scope_message_resolve() {
+    std::println("\n--- #3442: scope-spawn agents on the message plane ---");
+    auto prim = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    auto readme = read_file("src/orch/README.md");
+    CHECK(prim.find("Issue #3442") != std::string::npos,
+          "3442 AC: evaluator_primitives_agent.cpp cites #3442");
+    CHECK(prim.find("resolve_aura_agent") != std::string::npos,
+          "3442 AC: resolve_aura_agent helper");
+    CHECK(prim.find("class AgentRegistry") == std::string::npos, "3442 AC4: no AgentRegistry");
+    CHECK(readme.find("#3442") != std::string::npos, "3442 AC5: README documents #3442");
+    CHECK(readme.find("name-table wins") != std::string::npos,
+          "3442 AC5: README documents name-table wins");
+    CHECK(read_file("tests/orch/test_issue_3442.cpp").empty(), "3442 AC7: no test_issue_3442.cpp");
+    CHECK(read_file("docs/design/3442-scope-message-resolve.md").empty(),
+          "3442 AC7: no docs/design/3442-*");
+
+    // Prior members / #3366 leave mailbox_bp_recent >= default 32, which
+    // BP-denies attach_mailbox spawn. Zero the gauge + quota for this AC.
+    unsetenv("AURA_ORCH_BP_ADMIT_THRESHOLD");
+    reset_process_resource_quota_for_test();
+    g_orch_module_stats.mailbox_bp_recent_total.store(0, std::memory_order_relaxed);
+    (void)aura::orch::reset_scope_bp_map_for_test();
+
+    Scheduler sched(2);
+    SchedRunner runner(sched);
+    AgentScope scope(sched);
+    AgentSpec spec;
+    spec.name = "scope-send-3442";
+    spec.attach_mailbox = true;
+    spec.mailbox_high_water = 16;
+    spec.body = [] {};
+    AgentHandle& handle = scope.spawn(std::move(spec));
+    CHECK(handle.ok, "3442 AC1: C++ scope spawn ok");
+    auto* found = scope.find("scope-send-3442");
+    CHECK(found != nullptr && found->id == handle.id, "3442 AC1: scope find by name");
+    aura::serve::mf_mailbox::MailMessage m;
+    m.payload = "hi-3442";
+    auto st = aura::orch::agent_send(*found, std::move(m));
+    CHECK(st == aura::serve::mf_mailbox::PushStatus::Ok ||
+              st == aura::serve::mf_mailbox::PushStatus::Backpressure,
+          "3442 AC1: C++ send via scope find");
+    auto rec = aura::orch::agent_recv(*found, false, 0);
+    CHECK(rec && rec->payload == "hi-3442", "3442 AC1: C++ recv via scope find");
+    scope.cancel_all();
+    (void)scope.join_all(aura::orch::JoinPolicy{.primary_ms = 2000, .drain_ms = 2000});
+}
+
 static void ac3366_6_source_cite_and_no_invent() {
     std::println("\n--- #3366 AC6: source-cite + no docs/design/ ---");
     auto readme = read_file("src/orch/README.md");
@@ -1453,10 +1500,11 @@ int run_test_agent_scope() {
     ac3125_cross_scope_directory();
     ac3366_1_bp_deny_failed_handle_has_typed_reject_fields();
     ac3366_6_source_cite_and_no_invent();
+    ac3442_scope_message_resolve();
 
-    std::println(
-        "\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216: passed={} failed={} ===",
-        g_passed, g_failed);
+    std::println("\n=== #2083/#2161/#2399/#2946/#2777/#2782/#2976/#3125/#3216/#3442: passed={} "
+                 "failed={} ===",
+                 g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

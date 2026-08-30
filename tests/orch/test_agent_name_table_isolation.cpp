@@ -71,6 +71,9 @@ static void ac1_source_and_no_static() {
           "orch:spawn-agent uses ev.agent_names_->put");
     CHECK(src.find("ev.agent_names_->find") != std::string::npos,
           "orch:agent-join/send/recv use ev.agent_names_->find");
+    CHECK(src.find("resolve_aura_agent") != std::string::npos,
+          "3442 AC: send/recv/ask/join resolve via resolve_aura_agent");
+    CHECK(src.find("Issue #3442") != std::string::npos, "3442 AC: source cites #3442");
     CHECK(src.find("static OrchAgentNameTable orch_agent_names") == std::string::npos,
           "no process-static OrchAgentNameTable");
 
@@ -227,6 +230,41 @@ static void ac3125_cross_scope_isolation() {
           "AC4: README has 'cross-scope directory merge' section");
 }
 
+// ── #3442: message prims resolve name-table then session-local scope ──
+static void ac3442_message_plane_resolve() {
+    std::println("\n--- #3442: name-table-then-scope message resolve ---");
+    auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    auto names = read_file("src/compiler/agent_name_table.h");
+    auto readme = read_file("src/orch/README.md");
+    CHECK(src.find("resolve_aura_agent") != std::string::npos,
+          "3442 AC: resolve_aura_agent helper present");
+    const auto helper = src.find("resolve_aura_agent");
+    const auto name_find = src.find("ev.agent_names_->find(name)", helper);
+    const auto scope_find = src.find("find_agent_scope(static_cast<void*>(&ev))", helper);
+    CHECK(helper != std::string::npos && name_find != std::string::npos &&
+              scope_find != std::string::npos && name_find < scope_find,
+          "3442 AC2: name-table find sits BEFORE AgentScope::find");
+    CHECK(src.find("class AgentRegistry") == std::string::npos,
+          "3442 AC4: no AgentRegistry in agent prims");
+    CHECK(names.find("never auto-puts scope handles") != std::string::npos,
+          "3442 AC5: AgentNameTable documents no auto-put of scope handles");
+    CHECK(readme.find("name-table wins") != std::string::npos,
+          "3442 AC5: README documents name-table wins");
+    CHECK(src.find("schema-3442") == std::string::npos, "3442 AC6: no schema-3442 query key");
+    CHECK(read_file("tests/orch/test_issue_3442.cpp").empty() &&
+              read_file("tests/issues/test_issue_3442.cpp").empty(),
+          "3442 AC7: no test_issue_3442.cpp");
+    CHECK(read_file("docs/design/3442-scope-message-resolve.md").empty(),
+          "3442 AC7: no docs/design/3442-*");
+
+    // Plane isolation: same name in two tables stays independent.
+    // Resolve prefers the name-table handle (documented AC5).
+    AgentNameTable table;
+    table.put(make_minimal_handle("dup-3442", 11));
+    auto* nt = table.find("dup-3442");
+    CHECK(nt != nullptr && nt->id == 11, "3442 AC5: name-table holds dup-3442 id=11");
+}
+
 } // namespace
 
 int run_test_agent_name_table_isolation() {
@@ -237,7 +275,8 @@ int run_test_agent_name_table_isolation() {
     ac3_drain_clears_table();
     ac3b_same_name_overrides();
     ac3125_cross_scope_isolation();
-    std::println("\n=== #2078/#3125: passed={} failed={} ===", g_passed, g_failed);
+    ac3442_message_plane_resolve();
+    std::println("\n=== #2078/#3125/#3442: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 

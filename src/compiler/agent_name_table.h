@@ -45,6 +45,11 @@ namespace aura::compiler {
 // (scope-handle) and directory_snapshot (directory). Not a process-global
 // table — one AgentNameTable per Evaluator. Cross-Evaluator handoff uses
 // observation-only HandoffToken (#3148), not a merge of this table.
+// Issue #3442: message prims (orch:agent-send / recv / ask / agent-join)
+// resolve this table first, then AgentScope::find on the same Evaluator.
+// Fallback is resolve-only — this table never auto-puts scope handles
+// (AgentHandle is move-only; reservation stays with the scope). Same-name
+// in both planes: name-table wins.
 struct AgentNameTable {
     AgentNameTable()
         : impl_(std::make_unique<Impl>()) {}

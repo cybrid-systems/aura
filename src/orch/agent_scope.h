@@ -20,6 +20,9 @@
 // planes (no unified resolve, no process-global table):
 //   - name-table (OrchAgentNameTable / agent_names_): per-Evaluator
 //     bookkeeping for Aura orch:spawn-agent / orch:agent-join.
+//     Issue #3442: message prims resolve name-table first, then
+//     AgentScope::find on the same Evaluator — resolve fallback, not
+//     a plane merge and not a second owning put.
 //   - scope-handle (AgentScope::handles_): supervision authority;
 //     orch:scope-resolve live find.
 //   - directory (directory_snapshot / orch:agent-directory): read-only
@@ -857,6 +860,8 @@ public:
     // After join_all, handles may remain with fiber done — find still
     // returns them (caller reads status via fiber/is_done); after the
     // per-Evaluator scope slot is dropped, Aura resolve returns not-found.
+    // Issue #3442: orch:agent-send / recv / ask / agent-join fall back
+    // to this find after a name-table miss (same Evaluator, no put).
     [[nodiscard]] AgentHandle* find(std::string_view name,
                                     bool include_descendants = true) noexcept {
         ScopeEnterGuard g(this, "find");

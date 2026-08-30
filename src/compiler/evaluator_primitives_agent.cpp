@@ -159,6 +159,27 @@ namespace {
         return std::string("handoff:") + std::to_string(id);
     }
 
+    // Issue #3442: session-local message-plane resolve. Name-table
+    // (plane A, orch:spawn-agent put-on-ok) first so the single-agent
+    // MVP is unchanged — one pointer miss on the hash, no extra atomic.
+    // AgentScope::find (plane B, orch:scope-spawn) is the fallback so
+    // supervised agents are reachable by orch:agent-send / recv / ask
+    // / agent-join. Same Evaluator only. Scope remains sole reservation
+    // owner — no second put, no proxy with reserved_memory_bytes > 0,
+    // no process-global AgentRegistry. Same-name in both planes:
+    // name-table wins (do not auto-put scope handles). Soft / Off:
+    // pointer walk, zero extra gauge (reuse scope-resolve-miss if a
+    // host already polls orch:scope-resolve; no new query key).
+    aura::orch::AgentHandle* resolve_aura_agent(Evaluator& ev, const std::string& name) {
+        if (ev.agent_names_) {
+            if (auto* h = ev.agent_names_->find(name))
+                return h;
+        }
+        if (auto* scope = aura::orch::find_agent_scope(static_cast<void*>(&ev)))
+            return scope->find(name);
+        return nullptr;
+    }
+
     // Issue #1717: RAII swap of evaluator workspace onto a temporary
     // WorkspaceTree child. Restores flat/pool and delete_child on scope exit
     // (exception-safe; closes the bare-swap UAF / leak window).
@@ -3427,9 +3448,10 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             aura::orch::AgentHandle* hp = nullptr;
             if (types::is_string(a[0])) {
                 auto name = heap_str_from(ev.string_heap_, a[0]);
-                hp = ev.agent_names_->find(name);
+                // Issue #3442: name-table first, then session-local scope find.
+                hp = resolve_aura_agent(ev, name);
             }
-            // Join-by-id is intentionally not supported (name table is name-keyed).
+            // Join-by-id is intentionally not supported (name-keyed).
             if (!hp) {
                 std::vector<std::pair<std::string, EvalValue>> kv = {
                     {"ok", make_bool(false)},
@@ -4497,7 +4519,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                 ev.primitive_error_counter_ptr());
         }
         auto name = heap_str_from(ev.string_heap_, a[0]);
-        auto* hp = ev.agent_names_->find(name);
+        auto* hp = resolve_aura_agent(ev, name);
         if (!hp || !hp->ok) {
             return make_primitive_error(ev.string_heap_, ev.error_values_,
                                         "orch:agent-ask: unknown agent",
@@ -4604,6 +4626,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     });
 
     // Issue #2011: language surface for agent_send / agent_recv.
+    // Issue #3442: resolve_aura_agent (name-table then session-local
+    // AgentScope::find) so orch:scope-spawn agents are on this plane.
     // Issue #2848: StableNodeRef-bearing payloads (query:stable-ref pair shape
     // (id . gen) / (id . (gen . _))) auto-run Evaluator::handoff_ref then
     // stamp held_ref_token + handoff_completed before push. Ordinary
@@ -4620,7 +4644,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                                             ev.primitive_error_counter_ptr());
             }
             auto name = heap_str_from(ev.string_heap_, a[0]);
-            auto* hp = ev.agent_names_->find(name);
+            auto* hp = resolve_aura_agent(ev, name);
             if (!hp || !hp->ok) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:agent-send: unknown agent",
@@ -4743,7 +4767,7 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     ev.primitive_error_counter_ptr());
             }
             auto name = heap_str_from(ev.string_heap_, a[0]);
-            auto* hp = ev.agent_names_->find(name);
+            auto* hp = resolve_aura_agent(ev, name);
             if (!hp || !hp->ok) {
                 return make_primitive_error(ev.string_heap_, ev.error_values_,
                                             "orch:agent-recv: unknown agent",
