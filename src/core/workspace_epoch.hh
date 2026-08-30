@@ -394,9 +394,13 @@ inline void reset_query_epoch_metrics_for_test() noexcept {
 //   - QueryEpoch snapshot (mutation_epoch + generation + bridge + workspace_id)
 //   - optional pin flag (SafePCVSpan-backed children_stable path sets pinned)
 //
-// EvalValue surface is a hash (schema-2933 / query-result-tag=1). Default
-// query:* return remains a bare match list; opt-in via :as-query-result /
-// :query-result #t (AC2 Soft regression green).
+// EvalValue surface is a hash (schema-2933 / query-result-tag=1). Soft
+// default query:* return remains a bare match list; opt-in via
+// :as-query-result / :query-result #t (AC2 Soft regression green).
+// Issue #3449 / #3395 / #3286: under production_defaults_active the
+// default find / pattern / filter / by-marker finish is schema-2 even
+// without the keyword. :as-query-result #f is not a layout-only escape
+// (schema-2 hash or structured reject). No second result schema.
 //
 // is_fresh: re-checks epoch against live mutation_epoch + FlatAST generation.
 // Fail-closed on wrap / gen mismatch unless pinned (pin keeps storage alive
@@ -521,6 +525,8 @@ inline constexpr int kQueryResultIssue = 2933;
 inline constexpr int kQueryResultFullProvenanceIssue = 3103;
 // Issue #3231: production :as-query-result must not export schema-1.
 inline constexpr int kQueryResultLayoutOnlyRejectIssue = 3231;
+// Issue #3449: production default query:* export is schema-2, not opt-in.
+inline constexpr int kQueryDefaultSchema2ExportIssue = 3449;
 inline constexpr const char* kQueryResultLayoutOnlyErrorKind = "query-result-layout-only";
 inline constexpr std::uint8_t kQueryResultMatchSchema2 = 1;
 // Issue #3311: production-stamped variant. Under production_defaults the

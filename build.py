@@ -14995,6 +14995,29 @@ def cmd_query_default_stamped_coverage():
     return 0
 
 
+def cmd_query_default_schema2_export_3449_coverage():
+    """Issue #3449: production default query:* export is schema-2.
+
+    After #3395/#3425 the finish helper auto-upgrades, but comments still
+    advertised opt-in Agent memory and hash OOM fell back to a green
+    bare list. Production always packs schema-2 (or structured reject);
+    :as-query-result #f is not a layout-only escape. Soft bare list
+    unchanged. Extends test_query_result_full_provenance.cpp. No new
+    query key.
+    """
+    print(f"{B}=== query_default_schema2_export coverage (#3449) ==={N}")
+    script = COVERAGE_CHECKS / "check_query_default_schema2_export_3449.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("query_default_schema2_export (#3449) coverage contract rows failed")
+        return 1
+    ok("query_default_schema2_export (#3449) coverage clean")
+    return 0
+
+
 def cmd_query_find_prod_no_scan_coverage():
     """Issue #3427: production query:find miss is not a full SoA walk.
 
@@ -23308,6 +23331,8 @@ def main():
         "fiber-spawn-cli": cmd_fiber_spawn_cli_coverage,
         "fiber-spawn-cli-dtor-drain": cmd_fiber_spawn_cli_dtor_drain_coverage,
         "query-default-stamped": cmd_query_default_stamped_coverage,
+        "query-default-schema2-export-3449": cmd_query_default_schema2_export_3449_coverage,
+        "query-default-schema2-export-3449-coverage": cmd_query_default_schema2_export_3449_coverage,
         "query-find-prod-no-scan": cmd_query_find_prod_no_scan_coverage,
         "hot-contract-view-at-harden": cmd_hot_contract_view_at_harden_3428_coverage,
         "query-children-stable-no-tls-span": cmd_query_children_stable_no_tls_coverage,

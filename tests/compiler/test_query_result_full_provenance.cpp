@@ -49,8 +49,10 @@ using aura::compiler::CompilerService;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::set_strategy;
 using aura::compiler::types::as_bool;
+using aura::compiler::types::as_int;
 using aura::compiler::types::is_bool;
 using aura::compiler::types::is_hash;
+using aura::compiler::types::is_int;
 
 constexpr std::uint64_t kQueryResultFullProvenanceIssue = 3103;
 
@@ -822,6 +824,124 @@ void test_3424_ac2_production_hash_to_mutate() {
                 eq && is_bool(*eq) && as_bool(*eq));
 }
 
+// Issue #3449: production default query:* export is schema-2, not opt-in
+// after #3395/#3425. Residual: comments still advertised opt-in; hash
+// OOM fell back to a green bare list; :as-query-result #f was untested.
+//   AC1 Production + (query:find name) no keyword → schema-2 hash
+//       (query-result-tag); resolve_mutate_node_arg accepts it
+//   AC2 Production + match count > 64 → query-result-overflow (no keyword)
+//   AC3 Soft/Off + no keyword → still a bare list
+//   AC4 :as-query-result #f under production is not a layout-only escape
+//   AC5 no docs/design/3449-*; no test_issue_3449.cpp; no schema-3449
+
+void test_3449_ac1_production_default_find_hash_to_mutate() {
+    std::print("AC3449/AC1 -- production default find is schema-2; mutate accepts hash\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    using aura::core::reset_query_result_full_provenance_for_test;
+    apply_dev_audit_defaults();
+    reset_query_result_full_provenance_for_test();
+    CompilerService cs;
+    expect_true("3449 AC1: set-code",
+                cs.eval("(set-code \"(define t3449 (lambda (x) 1))\")").has_value());
+    expect_true("3449 AC1: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto qr = cs.eval("(query :find \"t3449\")");
+    expect_true("3449 AC1: default find returns", qr.has_value());
+    expect_true("3449 AC1: default find IS a schema-2 hash", qr && is_hash(*qr));
+    auto tag = cs.eval("(hash-ref (query :find \"t3449\") \"query-result-tag\")");
+    expect_true("3449 AC1: query-result-tag present", tag && is_int(*tag) && as_int(*tag) == 1);
+    expect_true("3449 AC1: bind default find hash",
+                cs.eval("(define qr3449 (query :find \"t3449\"))").has_value());
+    auto mut = cs.eval("(mutate:replace-subtree qr3449 \"(lambda (x) 2)\")");
+    expect_true("3449 AC1: resolve_mutate_node_arg accepts default find hash", mut.has_value());
+    apply_dev_audit_defaults();
+}
+
+void test_3449_ac2_production_overflow_no_keyword() {
+    std::print("AC3449/AC2 -- production default finish reuses #3389 overflow\n");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    expect_true("3449 AC2: query_workspace readable", !qws.empty());
+    const auto wrap = qws.find("auto make_query_result_hash");
+    expect_true("3449 AC2: make_query_result_hash present", wrap != std::string::npos);
+    const auto body = wrap == std::string::npos ? std::string{} : qws.substr(wrap, 9000);
+    expect_true("3449 AC2: kMaxInlineMatches overflow in default pack",
+                body.find("query-result-overflow") != std::string::npos);
+    expect_true("3449 AC2: production default finish calls the same packer",
+                qws.find("as_query_result = true; // auto-upgrade") != std::string::npos &&
+                    qws.find("return make_query_result_hash(start, finished, pinned)") !=
+                        std::string::npos);
+    expect_true("3449 AC2: #3389 overflow counter reused (no new key)",
+                qws.find("note_query_result_overflow_total") != std::string::npos);
+}
+
+void test_3449_ac3_soft_bare_list() {
+    std::print("AC3449/AC3 -- Soft default find stays a bare list\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3449 AC3: set-code",
+                cs.eval("(set-code \"(define s3449 (lambda (x) 1))\")").has_value());
+    expect_true("3449 AC3: eval", cs.eval("(eval-current)").has_value());
+    auto qr = cs.eval("(query :find \"s3449\")");
+    expect_true("3449 AC3: Soft find returns", qr.has_value());
+    expect_true("3449 AC3: Soft find is NOT a hash (bare list)", qr && !is_hash(*qr));
+}
+
+void test_3449_ac4_prod_keyword_false_not_escape() {
+    std::print("AC3449/AC4 -- production :as-query-result #f is not layout-only\n");
+    using aura::compiler::typed_audit::apply_dev_audit_defaults;
+    using aura::compiler::typed_audit::apply_production_audit_defaults;
+    apply_dev_audit_defaults();
+    CompilerService cs;
+    expect_true("3449 AC4: set-code",
+                cs.eval("(set-code \"(define u3449 (lambda (x) 1))\")").has_value());
+    expect_true("3449 AC4: eval", cs.eval("(eval-current)").has_value());
+    apply_production_audit_defaults();
+    auto qr = cs.eval("(query :find \"u3449\" :as-query-result #f)");
+    expect_true("3449 AC4: #f find returns", qr.has_value());
+    expect_true("3449 AC4: #f find IS still a schema-2 hash", qr && is_hash(*qr));
+    apply_dev_audit_defaults();
+}
+
+void test_3449_ac5_source_and_linter() {
+    std::print("AC3449/AC5 -- source-cite; no invent / schema / docs\n");
+    std::ifstream f_qws("src/compiler/evaluator_primitives_query_workspace.cpp");
+    std::ifstream f_hh("src/core/workspace_epoch.hh");
+    std::ifstream f_mut("src/compiler/evaluator_primitives_mutate.cpp");
+    std::string qws((std::istreambuf_iterator<char>(f_qws)), std::istreambuf_iterator<char>());
+    std::string hh((std::istreambuf_iterator<char>(f_hh)), std::istreambuf_iterator<char>());
+    std::string mut((std::istreambuf_iterator<char>(f_mut)), std::istreambuf_iterator<char>());
+    expect_true("3449 AC5: query_workspace readable", !qws.empty());
+    expect_true("3449 AC5: workspace_epoch readable", !hh.empty());
+    expect_true("3449 AC5: kQueryDefaultSchema2ExportIssue",
+                hh.find("kQueryDefaultSchema2ExportIssue") != std::string::npos);
+    expect_true("3449 AC5: Issue #3449 in query_workspace",
+                qws.find("Issue #3449") != std::string::npos);
+    expect_true("3449 AC5: hash OOM not a production bare-list fallback",
+                qws.find("production QueryResult hash alloc failed") != std::string::npos);
+    expect_true("3449 AC5: #3395 auto-upgrade retained",
+                qws.find("as_query_result = true; // auto-upgrade") != std::string::npos);
+    expect_true("3449 AC5: #3424 hash resolve retained",
+                mut.find("Issue #3424") != std::string::npos);
+    expect_true("3449 AC5: no schema-3449 in query_workspace",
+                qws.find("schema-3449") == std::string::npos);
+    expect_true("3449 AC5: no schema-3449 in mutate", mut.find("schema-3449") == std::string::npos);
+    {
+        std::ifstream f("docs/design/3449-query-default-schema2.md");
+        expect_true("3449 AC5: no docs/design/3449-*", !f.good());
+    }
+    {
+        std::ifstream f("tests/compiler/test_issue_3449.cpp");
+        expect_true("3449 AC5: no tests/compiler/test_issue_3449.cpp", !f.good());
+    }
+    {
+        std::ifstream f("tests/issues/test_issue_3449.cpp");
+        expect_true("3449 AC5: no tests/issues/test_issue_3449.cpp", !f.good());
+    }
+}
+
 void test_3424_ac3_soft_unchanged() {
     std::print("AC3424/AC3 -- Soft bare list / int path unchanged\n");
     using aura::compiler::typed_audit::apply_dev_audit_defaults;
@@ -840,6 +960,11 @@ void test_3424_ac3_soft_unchanged() {
 int main() {
     std::print("Issue #3103 + #3137 + #3231 -- QueryResult full-provenance path (schema-2)\n");
     set_strategy(AuditStrategy::Full);
+    test_3449_ac1_production_default_find_hash_to_mutate();
+    test_3449_ac2_production_overflow_no_keyword();
+    test_3449_ac3_soft_bare_list();
+    test_3449_ac4_prod_keyword_false_not_escape();
+    test_3449_ac5_source_and_linter();
     test_ac1_struct_extension();
     test_ac2_push_match_defaults();
     test_ac3_push_match_full_provenance();
@@ -873,7 +998,7 @@ int main() {
     // the pre-existing eval-current path crash is resolved.
     test_3395_ac4_non_regress_source_cite();
     // AC3389 runtime ACs skipped — see comment above.
-    std::print(
-        "All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 AC tests PASSED\n");
+    std::print("All #3103 + #3137 + #3231 + #3286 + #3311 + #3389 + #3395 + #3424 + "
+               "#3449 AC tests PASSED\n");
     return 0;
 }

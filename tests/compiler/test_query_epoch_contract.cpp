@@ -482,6 +482,10 @@ int run_test_query_epoch_contract() {
         const auto hh = read_file("src/core/workspace_epoch.hh");
         const auto qw = read_file("src/compiler/evaluator_primitives_query_workspace.cpp");
         CHECK(hh.find("kQueryResultLayoutOnlyRejectIssue") != std::string::npos, "3231: stamp");
+        CHECK(hh.find("kQueryDefaultSchema2ExportIssue") != std::string::npos,
+              "3449: production default schema-2 export stamp");
+        CHECK(qw.find("Issue #3449") != std::string::npos,
+              "3449: finish helper cites last==opt-in residual");
         CHECK(qw.find("query-result-layout-only") != std::string::npos, "3231: finish reject");
         CHECK(qw.find("production_defaults_active()") != std::string::npos,
               "3231: production_defaults_active gate");

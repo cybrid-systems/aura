@@ -224,12 +224,23 @@ void register_workspace_query_primitives(
     // Issue #2933: wrap a bare match list into a first-class QueryResult
     // hash (schema-2933). Opt-in via :as-query-result / :query-result #t.
     // Default (no keyword) remains the bare list (AC2 Soft regression).
+    // Issue #3449: production_defaults_active() ignores the opt-in — always
+    // schema-2 (or structured reject). :as-query-result #f is not a
+    // layout-only escape. Soft still uses this default bare list.
     // Capture `ws` by value (struct-of-refs); do NOT capture &ws.
     auto make_query_result_hash = [ws, mev, &ev](const aura::core::QueryEpoch& epoch,
                                                  EvalValue matches, bool pinned) -> EvalValue {
         auto* ht = FlatHashTable::create(32);
-        if (!ht)
-            return matches; // Soft: fall back to bare list if hash OOM
+        if (!ht) {
+            // Issue #3449: production must not fall back to a green bare
+            // list (layout-only Agent-memory escape). Soft keeps the
+            // historical OOM fallback.
+            if (aura::compiler::typed_audit::production_defaults_active())
+                return mev("query-result-layout-only", "production QueryResult hash alloc failed; "
+                                                       "layout-only list is not Agent memory "
+                                                       "(Issue #3449 / #3231)");
+            return matches;
+        }
         auto meta = ht->metadata();
         auto keys = ht->keys();
         auto vals = ht->values();
@@ -397,6 +408,9 @@ void register_workspace_query_primitives(
         // keeps the cheap layout-only bare path (AC3 zero-cost).
         if (!as_query_result && aura::compiler::typed_audit::production_defaults_active())
             as_query_result = true; // auto-upgrade → stamped hash or error
+        // Issue #3449: production default export is schema-2 even when the
+        // caller omitted :as-query-result or passed #f. The auto-upgrade
+        // above is the SSOT; Soft keeps the bare-list early return.
         if (!as_query_result)
             return finished;
         return make_query_result_hash(start, finished, pinned);
@@ -1770,6 +1784,8 @@ void register_workspace_query_primitives(
             // reserved==kQueryResultMatchSchema2Prod under production.
             if (!as_query_result && aura::compiler::typed_audit::production_defaults_active())
                 as_query_result = true; // auto-upgrade → stamped hash or error
+            // Issue #3449: production :as-query-result #f is not a
+            // layout-only escape (same SSOT as end_query_epoch_maybe_result).
             if (as_query_result)
                 return make_query_result_hash(last_qe, result, /*pinned=*/false);
             return result;
