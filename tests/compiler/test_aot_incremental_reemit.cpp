@@ -1816,7 +1816,6 @@ int main() {
 
         std::println("\n--- #3412 AC2/AC3: Soft/Off zero-cost + non-force-bump ---");
         const auto bridge = read_file("src/compiler/aura_jit_bridge.cpp");
-        const auto wiso = read_file("src/core/workspace_isolation.hh");
         const auto jit = read_file("src/compiler/aura_jit.cpp");
         // AC2: aura_jit_is_deopt_pending is the consult path; on Soft/Off
         // when batch_deopt never stamped it, the consult returns 0 so the
@@ -1824,10 +1823,11 @@ int main() {
         CHECK(bridge.find("aura_jit_is_deopt_pending") != std::string::npos,
               "3412 AC2: aura_jit_is_deopt_pending C ABI in bridge");
         // AC3: owner-scoped multi-eval — owner unbound via deopt_pending;
-        // peers still use #3300 name soft-stale. No force-bump of
-        // g_aot_table_epoch on owner-scoped path.
-        CHECK(wiso.find("#3300") != std::string::npos || wiso.find("3300") != std::string::npos,
-              "3412 AC3: #3300 peer name soft-stale anchor in workspace_isolation.hh");
+        // peers still use #3300 name soft-stale (bridge side-table, not
+        // workspace_isolation). No force-bump of g_aot_table_epoch.
+        CHECK(bridge.find("Issue #3300") != std::string::npos &&
+                  bridge.find("name-level peer pure-JIT soft-stale") != std::string::npos,
+              "3412 AC3: #3300 peer name soft-stale anchor in aura_jit_bridge.cpp");
 
         std::println("\n--- #3412 AC5: non-duplicative vs #3188/#3345/#3300/#3377/#3410 ---");
         // #3188 IR dirty, #3345 hybrid dirty, #3300 peer JIT name soft-stale,

@@ -140,6 +140,7 @@ static void ac3_dual_epoch_closure() {
 // ── AC4 query ──
 static void ac4_query() {
     std::println("\n--- AC4: query schema-2365 ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
     CHECK(href(cs, "schema-2365") == 2365, "AC4: schema-2365");

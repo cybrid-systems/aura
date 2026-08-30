@@ -402,6 +402,11 @@ int run_test_linear_pin_moving_compact() {
               "ac3249_1_nested: outer success keeps remaining pin");
         const auto rel0 = linear_root_abort_release_total_v_read();
         bool fail_ok = true;
+        aura::compiler::reset_mutation_concurrency_health_admit_for_test();
+        aura::compiler::set_mutation_concurrency_health_admit_snapshot_for_test(clean_health);
+        aura::compiler::typed_audit::publish_last_proof_face(true, true);
+        aura::compiler::typed_audit::publish_type_linear_proof_outcome(
+            aura::compiler::typed_audit::kTypeLinearProofOutcomeStamped);
         auto fg = Evaluator::MutationBoundaryGuard::try_acquire(ev, 1, &fail_ok);
         if (!fg.has_value())
             CHECK(false,

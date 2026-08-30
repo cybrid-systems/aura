@@ -24,6 +24,7 @@
 #ifndef AURA_TEST_HARNESS_HPP
 #define AURA_TEST_HARNESS_HPP
 
+#include "compiler/typed_mutation_audit.h"
 #include "test/test_strategy.h"
 
 #include <cstddef>
@@ -39,6 +40,19 @@
 #include <vector>
 
 namespace aura::test {
+
+// Issue #2818 / #3224 / #3414: cold-start AuditStrategy is Full, and
+// unstamped depth-0 IR/JIT entry then returns commit-readiness-refused
+// (`(+ 1 1)`, `(engine:metrics …)`, `(current-time-ms)`, …). Unit tests
+// are Soft unless they apply_production_* / restore_cold_start themselves.
+// Constructor runs at TU init for every binary that includes this header
+// (custom main() included). Do not call apply_dev from CompilerService.
+struct DevAuditTestBootstrap {
+    DevAuditTestBootstrap() noexcept {
+        aura::compiler::typed_audit::apply_dev_audit_defaults();
+    }
+};
+inline DevAuditTestBootstrap g_dev_audit_test_bootstrap{};
 
 // Global pass/fail counters (legacy CHECK pattern). Initialized to 0.
 inline int g_passed = 0;
@@ -367,6 +381,7 @@ using ::aura::test::validate_stable_refs;
 #ifndef AURA_ISSUE_BOOTSTRAP
 #define AURA_ISSUE_BOOTSTRAP(run_fn)                                                               \
     int main() {                                                                                   \
+        aura::compiler::typed_audit::apply_dev_audit_defaults();                                   \
         aura::compiler::CompilerService cs;                                                        \
         run_fn(cs);                                                                                \
         return RUN_ALL_TESTS();                                                                    \

@@ -151,6 +151,7 @@ static void ac3_pairing_order_and_dual() {
 // ── AC4 query ──
 static void ac4_query() {
     std::println("\n--- AC4: query schema-2368 ---");
+    aura::compiler::typed_audit::apply_dev_audit_defaults();
     note_last_densify_remap_pairing_forced(false);
     note_last_densify_dual_epoch_ok(true);
     CompilerService cs;

@@ -375,12 +375,15 @@ static void ac3410_production_probe() {
     // Production probe activates AFTER within-cap check (so cap-drift hard
     // reject path is unchanged) and BEFORE the restamp / linear path
     // (so production same-gen drift cannot restamp + continue native).
-    const auto prod_pos = rt.find("production_defaults_active()");
-    const auto within_cap_pos = rt.find("cross_cow_drift_within_cap_");
-    const auto restamp_pos = rt.find("stamp_closure_provenance_locked(cid);");
-    CHECK(prod_pos != std::string::npos && within_cap_pos != std::string::npos &&
-              restamp_pos != std::string::npos && prod_pos > within_cap_pos &&
-              prod_pos < restamp_pos,
+    // Anchor inside try_cross_cow_soft_migrate_ — the TU has earlier
+    // production_defaults_active() / stamp_closure_provenance_locked defs.
+    const auto fn = rt.find("static int try_cross_cow_soft_migrate_");
+    const auto prod_pos = rt.find("Issue #3410", fn);
+    const auto within_cap_pos = rt.find("if (!cross_cow_drift_within_cap_", fn);
+    const auto restamp_pos = rt.find("stamp_closure_provenance_locked(cid);", fn);
+    CHECK(fn != std::string::npos && prod_pos != std::string::npos &&
+              within_cap_pos != std::string::npos && restamp_pos != std::string::npos &&
+              prod_pos > within_cap_pos && prod_pos < restamp_pos,
           "AC6: production probe between within-cap check and restamp");
     CHECK(rt.find("g_closure_must_deopt[cid] = 1") != std::string::npos,
           "AC6: MustDeopt set on production drift refuse");

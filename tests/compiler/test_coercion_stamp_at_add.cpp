@@ -58,6 +58,7 @@ using aura::compiler::restamp_coercion_entry_epoch_blame;
 using aura::compiler::set_coercion_active_mutation_context;
 using aura::compiler::set_reject_apply_on_provenance_miss;
 using aura::compiler::stamp_coercion_entry_from_active_context;
+using aura::compiler::typed_audit::apply_dev_audit_defaults;
 using aura::compiler::typed_audit::AuditStrategy;
 using aura::compiler::typed_audit::reset_for_test;
 using aura::compiler::typed_audit::set_strategy;
@@ -228,6 +229,7 @@ static void ac5_source_schema() {
     CHECK(cmake.find("test_coercion_stamp_at_add") != std::string::npos, "AC5: cmake");
     CHECK(cm.find("schema-2147") == std::string::npos || true, "AC5: lineage n/a in map");
 
+    apply_dev_audit_defaults();
     CompilerService cs;
     CHECK(cs.eval("(+ 1 1)").has_value(), "warm");
     CHECK(href(cs, "schema-2512") == 2512, "AC5: schema-2512 live");
