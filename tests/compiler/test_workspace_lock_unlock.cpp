@@ -219,6 +219,89 @@ int run_test_workspace_lock_unlock() {
         CHECK(cs.eval("(workspace :unlock 0)").has_value(), "AC5: unlock active cleanup");
     }
 
+    // ── Issue #3450: add_mutate RO fence before acquire ──
+    // replace-type / atomic-batch missed the per-body workspace_read_only_
+    // check. Wrapper now fences both. GUARD_EXEMPT metadata still runs.
+    {
+        std::println("\n--- #3450 AC1: locked workspace replace-type is read-only ---");
+        CompilerService cs;
+        CHECK(setup_ws(cs, "(define t3450 1)"), "3450 AC1: setup");
+        auto lk = cs.eval("(workspace :lock 0 #t)");
+        CHECK(lk && is_bool(*lk) && as_bool(*lk), "3450 AC1: lock active");
+        const auto log0 = cs.query_mutation_log().size();
+        auto rt = cs.eval("(mutate:replace-type 0 \"Int\")");
+        CHECK(mutate_read_only_denied(cs, rt), "3450 AC1: replace-type read-only");
+        CHECK(cs.query_mutation_log().size() == log0, "3450 AC1: mutation_log size unchanged");
+        CHECK(cs.eval("(workspace :unlock 0)").has_value(), "3450 AC1: unlock");
+    }
+    {
+        std::println("\n--- #3450 AC2: locked workspace atomic-batch is read-only ---");
+        CompilerService cs;
+        CHECK(setup_ws(cs, "(define b3450 1)"), "3450 AC2: setup");
+        auto lk = cs.eval("(workspace :lock 0 #t)");
+        CHECK(lk && is_bool(*lk) && as_bool(*lk), "3450 AC2: lock active");
+        const auto log0 = cs.query_mutation_log().size();
+        const auto batches0 = cs.evaluator().atomic_batch_count();
+        auto batch = cs.eval("(mutate:atomic-batch "
+                             "(list (list \"mutate:rebind\" \"b3450\" \"2\")) "
+                             "\"3450-locked\")");
+        CHECK(mutate_read_only_denied(cs, batch), "3450 AC2: atomic-batch read-only");
+        CHECK(cs.query_mutation_log().size() == log0, "3450 AC2: zero sub-op writes");
+        CHECK(cs.evaluator().atomic_batch_count() == batches0, "3450 AC2: no batch commit");
+        CHECK(cs.eval("(workspace :unlock 0)").has_value(), "3450 AC2: unlock");
+    }
+    {
+        std::println("\n--- #3450 AC3: unlocked replace-type / batch / set-body ---");
+        CompilerService cs;
+        CHECK(setup_ws(cs, "(define u3450 1)"), "3450 AC3: setup");
+        auto rt = cs.eval("(mutate:replace-type 0 \"Int\")");
+        CHECK(mutate_not_read_only_denied(cs, rt), "3450 AC3: unlocked replace-type not RO");
+        auto batch = cs.eval("(mutate:atomic-batch "
+                             "(list (list \"mutate:rebind\" \"u3450\" \"3\")) "
+                             "\"3450-unlocked\")");
+        CHECK(mutate_not_read_only_denied(cs, batch), "3450 AC3: unlocked atomic-batch not RO");
+        auto sb = cs.eval("(mutate:set-body \"u3450\" \"4\")");
+        CHECK(mutate_not_read_only_denied(cs, sb), "3450 AC3: unlocked set-body not RO");
+    }
+    {
+        std::println("\n--- #3450 AC4: GUARD_EXEMPT fingerprint still runs when locked ---");
+        CompilerService cs;
+        CHECK(setup_ws(cs, "(define e3450 1)"), "3450 AC4: setup");
+        auto lk = cs.eval("(workspace :lock 0 #t)");
+        CHECK(lk && is_bool(*lk) && as_bool(*lk), "3450 AC4: lock active");
+        auto fp = cs.eval("(mutate:set-agent-fingerprint 42)");
+        CHECK(fp && is_int(*fp) && as_int(*fp) == 42, "3450 AC4: fingerprint on locked ws");
+        auto pol = cs.eval("(mutate:set-stale-ref-policy \"warn\")");
+        CHECK(pol.has_value(), "3450 AC4: policy setter on locked ws");
+        if (pol && is_pair(*pol))
+            CHECK(merr_kind(cs, *pol) != "read-only", "3450 AC4: policy not RO-denied");
+        CHECK(cs.eval("(workspace :unlock 0)").has_value(), "3450 AC4: unlock");
+    }
+    {
+        std::println("\n--- #3450 AC5: wrapper source-cite + no invent ---");
+        const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+        const auto disp = read_file("src/compiler/mutate_dispatch.hh");
+        const auto lam =
+            mut.find("auto add_mutate = [&](std::string name, auto fn, bool guard_exempt");
+        const auto win = lam == std::string::npos ? std::string{} : mut.substr(lam, 14000);
+        CHECK(disp.find("kAddMutateReadOnlyFenceIssue") != std::string::npos, "3450 AC5: stamp");
+        CHECK(win.find("Issue #3450") != std::string::npos, "3450 AC5: wrapper cite");
+        const auto ro = win.find("workspace_read_only_");
+        const auto acq = win.find("mutate_dispatch_try_acquire");
+        const auto fn = win.find("auto result = fn(a)");
+        CHECK(ro != std::string::npos && acq != std::string::npos && ro < acq,
+              "3450 AC5: RO fence before acquire");
+        CHECK(fn != std::string::npos && acq < fn, "3450 AC5: acquire still before fn(a)");
+        CHECK(win.find("!guard_exempt && ev.workspace_read_only_") != std::string::npos,
+              "3450 AC5: GUARD_EXEMPT skips RO fence");
+        CHECK(mut.find("schema-3450") == std::string::npos, "3450 AC5: no new query key");
+        CHECK(read_file("docs/design/3450-add-mutate-read-only.md").empty(),
+              "3450 AC5: no docs/design");
+        CHECK(read_file("tests/compiler/test_issue_3450.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3450.cpp").empty(),
+              "3450 AC5: no test_issue_3450.cpp");
+    }
+
     std::println("\n=== #2786 workspace lock/unlock: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }

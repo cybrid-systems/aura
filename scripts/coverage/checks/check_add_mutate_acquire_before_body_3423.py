@@ -60,6 +60,11 @@ def main() -> int:
     if acq < 0 or fn_a < 0 or acq > fn_a:
         fails.append("AC1: mutate_dispatch_try_acquire must appear before auto result = fn(a)")
     must("if (!guard_exempt)", "AC1 exempt skip", lam_win)
+    # Issue #3450: wrapper RO fence before acquire (replace-type / batch).
+    must("workspace_read_only_", "AC1 #3450 RO fence", lam_win)
+    ro = lam_win.find("workspace_read_only_")
+    if ro < 0 or acq < 0 or ro > acq:
+        fails.append("AC1: workspace_read_only_ must appear before mutate_dispatch_try_acquire")
 
     must("guard-reject", "AC2 reject kind", lam_win)
     # Acquire-fail return must precede the body call.

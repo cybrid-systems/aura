@@ -943,6 +943,13 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
                 // outermost wrap counter — snapshot the acquire token
                 // *before* the wrapper acquire so the belt still sees it.
                 const auto token_before = aura::compiler::mutate_guard_acquire_token();
+                // Issue #3450: RO fence before acquire. A locked workspace
+                // must not take exclusive workspace_mtx_ for a no-op write
+                // (replace-type / atomic-batch missed the per-body check).
+                // GUARD_EXEMPT metadata/policy still runs. Per-body checks
+                // stay as belt.
+                if (!guard_exempt && ev.workspace_read_only_)
+                    return mev("read-only", std::string(op) + ": workspace is read-only");
                 // Issue #3423: acquire before fn(a). GUARD_EXEMPT skips
                 // (metadata/policy — no extra acquire). Acquire fail →
                 // structured reject, zero topology write.

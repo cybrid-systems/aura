@@ -561,6 +561,9 @@ static void ac3423_1_acquire_before_fn() {
     CHECK(acq != std::string::npos && fn != std::string::npos && acq < fn,
           "AC1 acquire before fn(a)");
     CHECK(win.find("guard-reject") != std::string::npos, "AC1 guard-reject kind");
+    const auto ro = win.find("workspace_read_only_");
+    CHECK(ro != std::string::npos && acq != std::string::npos && ro < acq,
+          "3450: wrapper RO fence before acquire");
 }
 
 static void ac3423_2_production_rebind_and_reject_kind() {
