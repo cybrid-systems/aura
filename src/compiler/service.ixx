@@ -434,6 +434,10 @@ static_assert(IncrementalPass<EscapeAnalysisWrap>,
 static_assert(HotPassDodCompliant<EscapeAnalysisWrap>,
               "EscapeAnalysisWrap HotPassDodCompliant (#2258)");
 static_assert(PureWrapPass<EscapeAnalysisWrap>, "EscapeAnalysisWrap PureWrapPass (#2258)");
+static_assert(DirtySoAEntryPass<EscapeAnalysisWrap>,
+              "Issue #3454: EscapeAnalysisWrap stays DirtySoAEntryPass (grandfather)");
+static_assert(!ProductionPureWrapPass<EscapeAnalysisWrap>,
+              "Issue #3454: EscapeAnalysisWrap AoS grandfather fails ProductionPureWrapPass");
 
 // CompilerService — owns a full compilation session's lifecycle.
 //
@@ -11022,6 +11026,12 @@ private:
         ShapeWrap shape_pass;
         EscapeAnalysisWrap escape_pass;
 
+        // Issue #3454 AC3 grandfather (length-capped 5): ComputeKindWrap,
+        // ConstantFoldingWrap, TypePropagationPass, ShapeWrap,
+        // EscapeAnalysisWrap. AoS DirtySoAEntryPass. New pack members must
+        // satisfy ProductionPureWrapPass (IRModuleV2 / IRFunctionSoA dirty
+        // entry) — not a silent 6th AoS Wrap. InlinePass SoA stays the
+        // #3403 production dispatch target; do not add it to this AoS suite.
         (void)run_production_incremental_dirty_pipeline(ir_mod, ck_pass, mask_ptr);
         (void)run_production_incremental_dirty_pipeline(ir_mod, cf_pass, mask_ptr);
         (void)run_production_incremental_dirty_pipeline(ir_mod, tp_pass, mask_ptr);

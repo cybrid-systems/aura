@@ -621,6 +621,14 @@ static void ac3405_pure_wrap_dirty_entry() {
           "per-function signature (IRFunctionSoA&, BlockDirtyPred)");
     CHECK(concepts.find("kPureWrap = true") != std::string::npos,
           "AC1: ProductionPureWrapPass concept references the kPureWrap flag");
+    // Issue #3454: the requires-clause type-checks SoA, not AoS IRFunction&.
+    CHECK(concepts.find("aura::compiler::IRFunctionSoA&") != std::string::npos,
+          "3454: ProductionPureWrapPass type-checks IRFunctionSoA&");
+    CHECK(concepts.find("aura::compiler::IRModuleV2&") != std::string::npos,
+          "3454: ProductionPureWrapPass type-checks IRModuleV2&");
+    CHECK(concepts.find("!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>") !=
+              std::string::npos,
+          "3454: AoS-only stub is compile-rejected");
 
     // AC2: existing check_pass_dod_compliance still exists (no regression).
     CHECK(pipeline_core.find("check_pass_dod_compliance") != std::string::npos,
@@ -663,6 +671,61 @@ static void ac3405_pure_wrap_dirty_entry() {
           "AC6: build.py registers check_pure_wrap_dirty_entry_3405");
     CHECK(build.find("pure-wrap-dirty-entry-3405") != std::string::npos,
           "AC6: build.py dispatch entry present");
+}
+
+// #3454: ProductionPureWrapPass type-checks SoA dirty entry (I5 of
+// #3405/#3403). AoS-only kPureWrap fails the concept. Grandfather
+// CK/CF/TP/Shape/Escape stay DirtySoAEntryPass. No new query key.
+static void ac3454_production_pure_wrap_soa() {
+    std::println("\n--- #3454 AC: ProductionPureWrapPass SoA dirty entry, not AoS IRFunction& ---");
+    const auto concepts = read_file("src/core/concept_constraints.ixx");
+    const auto sig = read_file("src/compiler/pass_soa_sig.hh");
+    const auto service = read_file("src/compiler/service.ixx");
+    const auto pipeline = read_file("src/compiler/pass_pipeline_core.ixx");
+    const auto pass_impls = read_file("src/compiler/pass_impls.ixx");
+    const auto build = read_file("build.py");
+
+    CHECK(sig.find("kProductionPureWrapSoaIssue = 3454") != std::string::npos,
+          "AC1: pass_soa_sig.hh stamps kProductionPureWrapSoaIssue = 3454");
+    CHECK(concepts.find("kProductionPureWrapSoaIssue = 3454") != std::string::npos,
+          "AC1: concept_constraints.ixx stamps #3454");
+    CHECK(concepts.find("import aura.compiler.ir_soa") != std::string::npos,
+          "AC1: concept_constraints imports ir_soa (same IRModuleV2 as InlinePass)");
+    CHECK(concepts.find("!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>") !=
+              std::string::npos,
+          "AC1: AoS-only kPureWrap is compile-rejected");
+    CHECK(concepts.find("ProductionPureWrapPass<pass_soa_detail::SoaDirtyPureWrapStub>") !=
+              std::string::npos,
+          "AC1: IRModuleV2 dirty entry satisfies ProductionPureWrapPass");
+    CHECK(concepts.find("aura::compiler::IRFunctionSoA&") != std::string::npos &&
+              concepts.find("aura::compiler::IRModuleV2&") != std::string::npos,
+          "AC1: requires-clause names IRFunctionSoA and IRModuleV2");
+
+    CHECK(pass_impls.find("void run_on_dirty_blocks_only(IRModuleV2& module,") != std::string::npos,
+          "AC2: InlinePass SoA dirty entry still present");
+    CHECK(pipeline.find("kPureWrapNoStdFunctionDirtyIssue") != std::string::npos,
+          "AC4: #3042 BlockDirtyPred / no std::function stamp stays");
+    CHECK(pipeline.find("do not add InlinePass here") != std::string::npos,
+          "AC2: AoS incremental pipeline does not gain InlinePass this ticket");
+
+    CHECK(service.find("Issue #3454 AC3 grandfather (length-capped 5)") != std::string::npos,
+          "AC3: grandfather list is explicit and length-capped");
+    CHECK(service.find("ComputeKindWrap") != std::string::npos &&
+              service.find("ConstantFoldingWrap") != std::string::npos &&
+              service.find("EscapeAnalysisWrap") != std::string::npos,
+          "AC3: CK/CF/Escape remain in the incremental pack");
+    CHECK(pass_impls.find("!ProductionPureWrapPass<ComputeKindWrap>") != std::string::npos,
+          "AC3: grandfather CK does not silently satisfy ProductionPureWrapPass");
+    CHECK(service.find("!ProductionPureWrapPass<EscapeAnalysisWrap>") != std::string::npos,
+          "AC3: grandfather Escape does not silently satisfy ProductionPureWrapPass");
+
+    CHECK(read_file("tests/core/test_issue_3454.cpp").empty(),
+          "AC5: no tests/core/test_issue_3454.cpp");
+    CHECK(build.find("check_production_pure_wrap_soa_3454") != std::string::npos,
+          "AC5: build.py registers check_production_pure_wrap_soa_3454");
+    CHECK(build.find("production-pure-wrap-soa-3454") != std::string::npos,
+          "AC5: build.py dispatch entry present");
+    CHECK(concepts.find("schema-3454") == std::string::npos, "AC4: no new schema-3454 query key");
 }
 
 // #3404: arena auto-arm Soft fallback must NOT bump
@@ -766,6 +829,8 @@ static void ac3403_inline_pass_soa() {
     CHECK(pass_impls.find("// Issue #3403: AoS `run(IRModule&)` is the cold") != std::string::npos,
           "AC1: InlinePass::run(IRModule&) #3403 cold / tests / debug "
           "print path source-cite anchor present");
+    CHECK(pass_impls.find("InlinePass::run_on_dirty_blocks_only(IRModuleV2&)") != std::string::npos,
+          "3454 AC2: InlinePass SoA remains the production dispatch target");
 
     // AC2: soa_view.ixx carries the hard-zero gate + production abort.
     CHECK(soa_view.find("hard_zero_dual_emit_bridge_in_production") != std::string::npos,
@@ -1019,6 +1084,7 @@ int run_test_arena_required_cover_no_value_only() {
     ac3403_inline_pass_soa();
     ac3404_arena_auto_arm_soft_fallback();
     ac3405_pure_wrap_dirty_entry();
+    ac3454_production_pure_wrap_soa();
 
     std::println("\n=== #3156 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);

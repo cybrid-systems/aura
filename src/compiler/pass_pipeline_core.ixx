@@ -780,6 +780,11 @@ bool run_incremental_dirty_pipeline(aura::ir::IRModule& mod, P& pass,
             continue;
         }
         // Issue #2060 / #3315: prefer explicit dirty-only / SoA-columnar entry.
+        // Issue #3454: ProductionPureWrapPass type-checks IRModuleV2 /
+        // IRFunctionSoA, not this AoS IRFunction& overload. This pipeline
+        // only has aura::ir::IRModule& — grandfathered CK/CF/TP/Shape/Escape
+        // stay here via DirtySoAEntryPass. Production soa_mod arm is
+        // run_production_soa_dirty_hot_pack (do not add InlinePass here).
         if constexpr (requires(P& p, aura::ir::IRFunction& f) { p.run_on_dirty_blocks_only(f); }) {
             dirty_only_entry_hits_total.fetch_add(1, std::memory_order_relaxed);
             dirty_only_blocks_run_total.fetch_add(dirty_blocks, std::memory_order_relaxed);

@@ -13,11 +13,15 @@
 // in AURA_CXX_MODULE_COMPILER (after ir.ixx) in cmake/AuraModules.cmake.
 
 module;
+// Issue #3454: SoA dirty-entry stamp + signature contract. Types themselves
+// come from `import aura.compiler.ir_soa` below (same entities as InlinePass).
+#include "compiler/pass_soa_sig.hh"
 
 export module aura.core.concept_constraints;
 
 import std;
 import aura.compiler.ir;
+import aura.compiler.ir_soa; // #3454: IRFunctionSoA / IRModuleV2 for ProductionPureWrapPass
 
 // Phase / inventory for Agent dashboards (#1577).
 export namespace aura::compiler::pass_concepts {
@@ -30,6 +34,8 @@ inline constexpr int kConceptConstraintsPhase = 1;
 inline constexpr int kPassConceptCount = 17;
 // Issue #3329: compile-time purity gate for production pipeline entry.
 inline constexpr int kPassPurityGateIssue = 3329;
+// Issue #3454: ProductionPureWrapPass type-checks SoA dirty entry (not AoS).
+inline constexpr int kProductionPureWrapSoaIssue = 3454;
 
 inline std::atomic<std::uint64_t> concept_constraints_import_hits{0};
 
@@ -280,12 +286,12 @@ concept PureWrapPass =
 // Issue #3405: tighter concept for DirtyAware members of the
 // production incremental pack. Requires BOTH the `kPureWrap` flag
 // AND a SoA dirty-block-only entry (`run_on_dirty_blocks_only` over
-// `IRFunctionSoA&` + `BlockDirtyPred`). Refuses any Wrap that sets
-// `kPureWrap = true` and writes workspace / process globals via a
-// full `run(IRModule&)` AoS walk — the only production surface for
-// DirtyAware PureWrap stages must be the SoA hot path. `set_block_
-// dirty_pred` (the AoS dirty-only path) is also rejected — the SoA
-// columnar path replaces it.
+// `IRFunctionSoA&` + `BlockDirtyPred`, or `IRModuleV2&`). Refuses any
+// Wrap that sets `kPureWrap = true` and writes workspace / process
+// globals via a full `run(IRModule&)` AoS walk — the only production
+// surface for DirtyAware PureWrap stages must be the SoA hot path.
+// `set_block_dirty_pred` (the AoS dirty-only path) is also rejected —
+// the SoA columnar path replaces it.
 //
 // Source-cite anchor: AC1 — concept or `check_pass_dod_compliance`
 // rejects a DirtyAware `kPureWrap` stage that only has `run(IRModule&)`
@@ -295,25 +301,21 @@ concept PureWrapPass =
 // (the legacy sibling); NEW production members must satisfy
 // `ProductionPureWrapPass` (this concept).
 //
-// Migration note: the existing 5 Wrap types in `optimization_passes.ixx`
-// still expose the legacy `run_on_dirty_blocks_only(IRFunction&, ...)`
-// signature. They are accepted by `DirtySoAEntryPass` (legacy) and
-// `run_incremental_dirty_pipeline` continues to dispatch through the
-// `IRFunction&` path. Migrating them to the new SoA per-function
-// signature is a follow-up scope (#3405 AC3 stays — the tightened
-// concept catches NEW production members; legacy stays grandfathered).
-// Intended NEW-member SoA signature is documented, not type-checked here:
-//   void run_on_dirty_blocks_only(aura::ir::IRFunctionSoA&, BlockDirtyPred)
-// IRFunctionSoA lives in ir_soa.ixx; BlockDirtyPred lives in
-// pass_pipeline_core.ixx (after this module). Naming those types in a
-// requires-parameter list makes the concept ill-formed at definition
-// time. Legacy `(IRFunction&)` is the compile-time gate; the SoA
-// signature is enforced by the #3405 source-cite linter + Wrap impls.
+// Issue #3454: #3405 still type-checked `run_on_dirty_blocks_only
+// (aura::ir::IRFunction&)`, so an AoS-only Wrap satisfied the
+// production concept. The SoA signature is now the requires-clause
+// (IRFunctionSoA / IRModuleV2 from ir_soa.ixx — not aura::ir).
+// BlockDirtyPred stays in pass_pipeline_core.ixx; one-arg calls use
+// the Wrap's defaulted pred/mask. Grandfathered five Wraps remain
+// DirtySoAEntryPass. See pass_soa_sig.hh.
 template <typename P>
-concept ProductionPureWrapPass = PureWrapPass<P> && SoAViewAwarePass<P> && DirtyAwarePass<P> &&
-                                 requires(P& p, aura::ir::IRFunction& f) {
-                                     { p.run_on_dirty_blocks_only(f) } -> std::same_as<void>;
-                                 };
+concept ProductionPureWrapPass =
+    PureWrapPass<P> && SoAViewAwarePass<P> && DirtyAwarePass<P> &&
+    (requires(P& p, aura::compiler::IRFunctionSoA& f) {
+         { p.run_on_dirty_blocks_only(f) } -> std::same_as<void>;
+     } || requires(P& p, aura::compiler::IRModuleV2& m) {
+         { p.run_on_dirty_blocks_only(m) } -> std::same_as<void>;
+     });
 
 // ── DirtySoAEntryPass (#2060) ──────────────────────────────────
 //
@@ -322,6 +324,9 @@ concept ProductionPureWrapPass = PureWrapPass<P> && SoAViewAwarePass<P> && Dirty
 //   void run_on_dirty_blocks_only(IRFunction&)
 // Accepted equivalent (pipeline routes via dirty peel + set_block_dirty_pred):
 //   IncrementalPass + DirtyAwarePass + SoAViewAwarePass
+// Issue #3454: this AoS arm is the grandfather path (CK/CF/TP/Shape/
+// Escape). NEW production DirtyAware PureWrap members must satisfy
+// ProductionPureWrapPass (IRFunctionSoA / IRModuleV2), not this concept.
 //
 // check_pass_dod_compliance / run_incremental_dirty_pipeline assert
 // this for DirtyAware hot stages so clean blocks never pay full
@@ -385,5 +390,40 @@ static_assert(AnalysisPass<pass_purity_detail::ImpureNamedSoaNoDirtyStub> &&
 static_assert(!ProductionPipelinePass<pass_purity_detail::ImpureNamedSoaNoDirtyStub>,
               "Issue #3329: SoA without DirtyPropagator/PureWrap fails production gate");
 static_assert(pass_concepts::kPassPurityGateIssue == 3329, "Issue #3329 stamp");
+
+// Issue #3454 AC1: AoS-only `kPureWrap` + `run_on_dirty_blocks_only
+// (IRFunction&)` must NOT satisfy ProductionPureWrapPass. SoA
+// IRModuleV2 dirty entry does. Stubs are compile-time only.
+namespace pass_soa_detail {
+    struct AosOnlyPureWrapStub {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+        std::string_view name() const { return "aos-only-wrap"; }
+        bool uses_soa_view() const { return true; }
+        static constexpr bool kPureWrap = true;
+        bool is_block_dirty(std::uint32_t) const { return true; }
+        void run_on_dirty_blocks_only(aura::ir::IRFunction&) {}
+    };
+    struct SoaDirtyPureWrapStub {
+        void run(aura::ir::IRModule&) {}
+        bool has_error() const { return false; }
+        std::string_view name() const { return "soa-dirty-wrap"; }
+        bool uses_soa_view() const { return true; }
+        static constexpr bool kPureWrap = true;
+        bool is_block_dirty(std::uint32_t) const { return true; }
+        void run_on_dirty_blocks_only(aura::compiler::IRModuleV2&) {}
+    };
+} // namespace pass_soa_detail
+static_assert(PureWrapPass<pass_soa_detail::AosOnlyPureWrapStub> &&
+                  SoAViewAwarePass<pass_soa_detail::AosOnlyPureWrapStub> &&
+                  DirtyAwarePass<pass_soa_detail::AosOnlyPureWrapStub>,
+              "Issue #3454: AoS-only stub is PureWrap + DirtyAware (today's bug shape)");
+static_assert(!ProductionPureWrapPass<pass_soa_detail::AosOnlyPureWrapStub>,
+              "Issue #3454: AoS-only dirty entry fails ProductionPureWrapPass");
+static_assert(ProductionPureWrapPass<pass_soa_detail::SoaDirtyPureWrapStub>,
+              "Issue #3454: IRModuleV2 dirty entry satisfies ProductionPureWrapPass");
+static_assert(pass_concepts::kProductionPureWrapSoaIssue == 3454, "Issue #3454 stamp");
+static_assert(pass_soa_sig::kProductionPureWrapSoaIssue == 3454,
+              "Issue #3454 pass_soa_sig.hh stamp");
 
 } // namespace aura::compiler
