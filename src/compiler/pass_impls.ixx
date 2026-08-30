@@ -4858,12 +4858,27 @@ consteval void check_production_soa_dirty_pack_2907() {
 }
 static_assert((check_production_soa_dirty_pack_2907(), true),
               "production SoA dirty hot pack #2907");
+// Issue #3454 AC3: grandfathered incremental-pack Wraps stay DirtySoAEntry
+// (AoS IRFunction&) and must NOT silently satisfy ProductionPureWrapPass.
+static_assert(!ProductionPureWrapPass<ComputeKindWrap>,
+              "#3454 ComputeKindWrap grandfather is DirtySoAEntry, not ProductionPureWrap");
+static_assert(!ProductionPureWrapPass<ConstantFoldingWrap>,
+              "#3454 ConstantFoldingWrap grandfather is DirtySoAEntry, not ProductionPureWrap");
+static_assert(!ProductionPureWrapPass<TypePropagationPass>,
+              "#3454 TypePropagationPass grandfather is DirtySoAEntry, not ProductionPureWrap");
+static_assert(!ProductionPureWrapPass<ShapeWrap>,
+              "#3454 ShapeWrap grandfather is DirtySoAEntry, not ProductionPureWrap");
 
 // Issue #2907 / #3315: production hot SoA dirty pack — CF → TP → DCE on
 // IRModuleV2 via run_dirty_pipeline (zero SoAtoAoSBridgePass / to_aos_view,
 // zero set_block_dirty_pred). Call from CompilerService when entry.soa_mod
 // is non-empty after dirty mark. type_reg optional (DCE identity/type rules;
 // nullptr keeps columnar path).
+// Issue #3454: this is the production SoA arm when ProductionPureWrapPass
+// holds. Grandfathered CK/CF/TP/Shape/Escape stay on the AoS suite
+// (DirtySoAEntryPass). InlinePass::run_on_dirty_blocks_only(IRModuleV2&)
+// remains the #3403 production dispatch target — not added to the AoS
+// incremental suite this ticket. Dual-emit abort (#3403) unchanged.
 export inline bool
 run_production_soa_dirty_hot_pack(IRModuleV2& mod,
                                   const aura::core::TypeRegistry* type_reg = nullptr) {

@@ -2497,6 +2497,20 @@ def cmd_lint():
             "Issue #3234 pass SCC no-std-function linter failed — run python3 scripts/coverage/checks/check_pass_scc_no_std_function_3234.py"
         )
         return r
+    # Issue #3454: ProductionPureWrapPass type-checks SoA dirty entry
+    # (IRFunctionSoA / IRModuleV2), not AoS IRFunction&. Grandfather
+    # CK/CF/TP/Shape/Escape stay DirtySoAEntryPass. Extends #3405/#3403
+    # linters + arena required-cover test.
+    ppw3454_script = COVERAGE_CHECKS / "check_production_pure_wrap_soa_3454.py"
+    if not ppw3454_script.exists():
+        fail(f"missing {ppw3454_script}")
+        return 1
+    r = run([sys.executable, str(ppw3454_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3454 ProductionPureWrapPass SoA linter failed — run python3 scripts/coverage/checks/check_production_pure_wrap_soa_3454.py"
+        )
+        return r
     # Issue #3235: vector-set! / hash-set! / set-car! auto-acquire
     # MutationBoundaryGuard (mutate_general PrimCall). Soft/dev still
     # mutates. Extends test_hash_table_grow; no docs/design / invent.
@@ -15690,6 +15704,37 @@ def cmd_pure_wrap_dirty_entry_3405_coverage():
     return 0
 
 
+def cmd_production_pure_wrap_soa_3454_coverage():
+    """Issue #3454: ProductionPureWrapPass type-checks SoA dirty entry.
+
+    Residual of #3405/#3403: the production concept still required
+    `run_on_dirty_blocks_only(IRFunction&)`, so an AoS-only kPureWrap
+    Wrap satisfied ProductionPureWrapPass. SoA (IRFunctionSoA /
+    IRModuleV2) is now the requires-clause. Grandfather CK/CF/TP/
+    Shape/Escape stay DirtySoAEntryPass. InlinePass SoA + dual-emit
+    abort unchanged.
+
+    Source-cite linter (scripts/coverage/checks/check_production_pure_wrap_soa_3454.py)
+    verifies:
+      AC1 AoS-only kPureWrap does not satisfy ProductionPureWrapPass.
+      AC2 InlinePass SoA still production dispatch; dual-emit abort stays.
+      AC3 grandfather list explicit, length-capped at 5; no silent drop.
+      AC4 BlockDirtyPred trivially copyable / no std::function (#3042).
+      AC5 no tests/core/test_issue_3454.cpp; no docs/design/3454-*.md.
+    """
+    print(f"{B}=== ProductionPureWrapPass SoA dirty entry coverage (#3454) ==={N}")
+    script = COVERAGE_CHECKS / "check_production_pure_wrap_soa_3454.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("ProductionPureWrapPass SoA dirty entry (#3454) coverage contract rows failed")
+        return 1
+    ok("ProductionPureWrapPass SoA dirty entry (#3454) coverage clean")
+    return 0
+
+
 def cmd_recover_fail_clear_persist_3406_coverage():
     """Issue #3406: outermost persist recover-fail must clear persist buffer + bump mismatch.
 
@@ -23420,6 +23465,8 @@ def main():
         "arena-auto-arm-soft-fallback-3404-coverage": cmd_arena_auto_arm_soft_fallback_3404_coverage,
         "pure-wrap-dirty-entry-3405": cmd_pure_wrap_dirty_entry_3405_coverage,
         "pure-wrap-dirty-entry-3405-coverage": cmd_pure_wrap_dirty_entry_3405_coverage,
+        "production-pure-wrap-soa-3454": cmd_production_pure_wrap_soa_3454_coverage,
+        "production-pure-wrap-soa-3454-coverage": cmd_production_pure_wrap_soa_3454_coverage,
         "recover-fail-clear-persist-3406": cmd_recover_fail_clear_persist_3406_coverage,
         "recover-fail-clear-persist-3406-coverage": cmd_recover_fail_clear_persist_3406_coverage,
         "synthesize-set-walks-rhs-3407": cmd_synthesize_set_walks_rhs_3407_coverage,

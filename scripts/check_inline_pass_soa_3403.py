@@ -137,6 +137,21 @@ def main() -> int:
     if "check_inline_pass_soa_3403" not in build:
         fails.append("AC6: build.py does not register check_inline_pass_soa_3403")
 
+    # Issue #3454 AC2: InlinePass SoA remains the production dispatch
+    # target; dual-emit abort unchanged. ProductionPureWrapPass now
+    # type-checks IRModuleV2 / IRFunctionSoA (not AoS IRFunction&).
+    concepts = _read("src/core/concept_constraints.ixx")
+    start_ppw = concepts.find("concept ProductionPureWrapPass")
+    end_ppw = concepts.find("concept DirtySoAEntryPass", start_ppw) if start_ppw >= 0 else -1
+    ppw_body = concepts[start_ppw:end_ppw] if start_ppw >= 0 and end_ppw > start_ppw else ""
+    if "IRModuleV2" not in ppw_body and "IRFunctionSoA" not in ppw_body:
+        fails.append(
+            "AC2/#3454: ProductionPureWrapPass does not type-check "
+            "InlinePass's IRModuleV2 (or IRFunctionSoA) SoA dirty entry"
+        )
+    if "hard_zero_dual_emit_bridge_in_production" not in soa_view:
+        fails.append("AC2/#3454: dual-emit abort gate (#3403) must stay")
+
     if fails:
         for f in fails:
             print(f"FAIL: {f}")

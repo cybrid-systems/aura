@@ -95,6 +95,13 @@ static void ac2_positive_negative() {
     CHECK(static_cast<bool>(aura::compiler::DirtyPropagatorAwarePass<
                             aura::compiler::opt_registry::ConstantFoldingPass>),
           "3329 AC3: CF DirtyPropagatorAware");
+    CHECK(!static_cast<bool>(aura::compiler::ProductionPureWrapPass<
+                             aura::compiler::pass_soa_detail::AosOnlyPureWrapStub>),
+          "3454 AC1: AoS-only kPureWrap fails ProductionPureWrapPass");
+    CHECK(static_cast<bool>(aura::compiler::ProductionPureWrapPass<
+                            aura::compiler::pass_soa_detail::SoaDirtyPureWrapStub>),
+          "3454 AC1: IRModuleV2 dirty entry satisfies ProductionPureWrapPass");
+    CHECK(aura::compiler::pass_concepts::kProductionPureWrapSoaIssue == 3454, "3454 stamp");
 }
 
 static void ac3_reexport_via_pass_manager() {
