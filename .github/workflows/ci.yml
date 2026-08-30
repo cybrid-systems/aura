@@ -183,14 +183,14 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -219,7 +219,7 @@ jobs:
       needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
       with:
@@ -230,7 +230,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -342,7 +342,7 @@ jobs:
                           # trap. Still uses slim matrix (no issue targets)
                           # to avoid the disk-full failure mode.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
 
@@ -385,7 +385,7 @@ jobs:
     needs: [asan-build]
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
 
@@ -468,14 +468,14 @@ jobs:
                           # recent header changes (#2632-#2635) trigger
                           # full rebuild of all arena.ixx dependents.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -509,14 +509,14 @@ jobs:
       needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
 
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
 
     - uses: actions/cache@v6
       with:
@@ -555,7 +555,7 @@ jobs:
                           # AURA_LINK_JOBS=1 serializes link to avoid
                           # arena.ixx.o deadlock (#2636).
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     env:
       SOURCE_DATE_EPOCH: "1704067200"
       CCACHE_DISABLE: 1
@@ -568,7 +568,7 @@ jobs:
     - uses: actions/cache@v6
       with:
         path: ~/.cache/pip
-        key: pip-${{ runner.os }}-dev-v1.0.5-${{ hashFiles('requirements-dev.txt') }}
+        key: pip-${{ runner.os }}-dev-v1.0.7-${{ hashFiles('requirements-dev.txt') }}
 
     - name: Install Python CI deps
       run: pip install --break-system-packages -r requirements-dev.txt
@@ -595,7 +595,7 @@ jobs:
                           # consistency across the 3 main-only sanitizer
                           # + health smoke jobs.
     container:
-      image: ghcr.io/cybrid-systems/dev:v1.0.5
+      image: ghcr.io/cybrid-systems/dev:v1.0.7
     steps:
     - uses: actions/checkout@v7
 
