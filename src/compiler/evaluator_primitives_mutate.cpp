@@ -1020,6 +1020,11 @@ void register_mutate_primitives(PrimRegistrar add, Evaluator& ev, MakeErrorVal m
     // MutationBoundaryGuard (metadata only — not an AST mutate).
     // SECURITY_EXEMPT: metadata-only agent identity stamp (#2057/#2152 allowlist).
     // GUARD_EXEMPT: metadata-only agent identity stamp (#2986). PrimMeta.guard_exempt.
+    // Issue #3452: MutateRegKind::MetadataGuardExempt — a raw add of
+    // mutate:set-agent-fingerprint is only legal for this I4 exempt face
+    // (not a structural write).
+    constexpr auto kSetAgentFingerprintKind = aura::compiler::MutateRegKind::MetadataGuardExempt;
+    (void)kSetAgentFingerprintKind;
     add("mutate:set-agent-fingerprint", [&ev, mev](std::span<const EvalValue> a) -> EvalValue {
         if (a.empty() || !is_int(a[0]))
             return mev("bad-arg", "usage: (mutate:set-agent-fingerprint <int>)");

@@ -68,6 +68,36 @@ def main() -> int:
     must("GUARD_EXEMPT:", "AC2", mut)
     must("guard_exempt", "AC2", mut)
 
+    # Issue #3452: raw add("mutate: only MetadataGuardExempt + GUARD_EXEMPT.
+    # add_mutate("mutate: is the structural path (not matched here).
+    lines = mut.splitlines()
+    for i, ln in enumerate(lines, 1):
+        s = ln.lstrip()
+        if s.startswith("//") or s.startswith("*"):
+            continue
+        if 'add("mutate:' not in ln:
+            continue
+        win = "\n".join(lines[max(0, i - 12) : i + 16])
+        if "GUARD_EXEMPT" not in win or "MetadataGuardExempt" not in win:
+            fails.append(f'AC3452: raw add("mutate: at mutate.cpp:{i} is not GUARD_EXEMPT + MetadataGuardExempt')
+    for name in (
+        "mutate:replace-type",
+        "mutate:replace-value",
+        "mutate:replace-pattern",
+        "mutate:atomic-batch",
+        "mutate:set-body",
+        "mutate:rebind",
+    ):
+        pos = mut.find(f'"{name}"')
+        if pos < 0:
+            fails.append(f"AC3452: missing {name}")
+            continue
+        look = mut[max(0, pos - 80) : pos]
+        if "add_mutate" not in look:
+            fails.append(f"AC3452: {name} is not registered through add_mutate")
+    must("MutateRegKind", "AC3452 kind", hh)
+    must("kMutateRegKindIssue = 3452", "AC3452 stamp", hh)
+
     must("mutate_dispatch_note", "AC3", hh)
     if "simulate applied" in hh:
         fails.append("AC3: simulate applied path still present")
