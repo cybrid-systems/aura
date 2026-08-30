@@ -2667,6 +2667,22 @@ def cmd_lint():
             "Issue #3434 tenant spawn mandate linter failed — run python3 scripts/coverage/checks/check_tenant_spawn_mandate_3434.py"
         )
         return r
+    # Issue #3435: relocate_tracked_objects_for_moving_ must not drop
+    # tracking when try_allocate fails after recycle (UAF bypass). Restore
+    # the DtorEntry at old + bump untracked so the caller folds into
+    # moving_incomplete_remap + pin_contract_held=false + sticky-off
+    # (#2495 face). Extends test_moving_densify_fail_closed.cpp (#81967);
+    # no docs/design/.
+    rdt3435_script = COVERAGE_CHECKS / "check_relocate_drop_tracking_3435.py"
+    if not rdt3435_script.exists():
+        fail(f"missing {rdt3435_script}")
+        return 1
+    r = run([sys.executable, str(rdt3435_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3435 relocate drop-tracking linter failed — run python3 scripts/coverage/checks/check_relocate_drop_tracking_3435.py"
+        )
+        return r
     # Issue #3238: densify/escape under live mutation forces
     # !linear_fast_path_ok + dirty-root revalidate (not wait for exit).
     # Soft observe; quiet !live. Extends test_escape_move_elision_gate.

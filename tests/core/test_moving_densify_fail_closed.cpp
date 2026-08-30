@@ -3069,6 +3069,146 @@ static void ac3443_6_source_cite_no_invent() {
     CHECK(arena.find("schema-3443") == std::string::npos, "3443 AC6: no schema-3443 query key");
 }
 
+// ── Issue #3435: relocate !neu after recycle must not drop tracking ──
+// recycle happens BEFORE the new slot is obtained; a try_allocate / pmr
+// failure then left the object out of kept (hole in dtors_ → UAF bypass
+// while external pin/slot/canary still holds old). Fix: restore tracking
+// at old + bump untracked so caller folds into moving_incomplete_remap +
+// pin_contract_held=false + production sticky-off.
+static std::atomic<std::int32_t> g_3435_dtor_count{0};
+struct DtorCount3435 {
+    std::int32_t a = 0;
+    ~DtorCount3435() { g_3435_dtor_count.fetch_add(1, std::memory_order_relaxed); }
+};
+
+// AC1: injected alloc-fail after recycle → no dangling dtors_ hole; the
+// failed object stays tracked at old (all dtors still run exactly once).
+static void ac3435_1_inject_alloc_fail_no_hole() {
+    std::println("\n--- #3435 AC1: inject alloc-fail → no dtors_ hole ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0,
+                                                        std::memory_order_relaxed); // Soft observe
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    g_3435_dtor_count.store(0, std::memory_order_relaxed);
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<DtorCount3435>(1);
+        auto* p1 = arena.create<DtorCount3435>(2);
+        auto* p2 = arena.create<DtorCount3435>(3);
+        CHECK(p0 && p1 && p2, "3435 AC1: create ok");
+        // First post-recycle allocation fails (after recycle already freed
+        // the old slot) → restore-to-old path must keep the object tracked.
+        aura::ast::g_relocate_alloc_fail_inject_remaining.store(1, std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.untracked_kept_count >= 1, "3435 AC1: failed relocate bumped untracked_kept_count");
+        CHECK(r.moving_incomplete_remap, "3435 AC1: moving_incomplete_remap set");
+        CHECK(r.pin_contract_held == false, "3435 AC1: pin_contract_held false (fail-closed)");
+    } // ~ASTArena runs all dtors_ entries
+    CHECK(g_3435_dtor_count.load(std::memory_order_relaxed) == 3,
+          "3435 AC1: all 3 objects destroyed exactly once — no dangling hole");
+}
+
+// AC2: production hard → moving_blocked_precondition + sticky densify-off
+// (reuses the existing #2495 fail-closed face; no new counter/query key).
+static void ac3435_2_production_hard_sticky() {
+    std::println("\n--- #3435 AC2: production hard → blocked + sticky ---");
+    MovingFlagGuard on(1);
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(1, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    {
+        ASTArena arena(64 * 1024);
+        auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+        auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+        auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+        aura::ast::g_relocate_alloc_fail_inject_remaining.store(1, std::memory_order_relaxed);
+        const auto r = arena.live_compact(LiveCompactMode::Moving);
+        CHECK(r.moving_incomplete_remap, "3435 AC2: incomplete remap");
+        CHECK(r.pin_contract_held == false, "3435 AC2: pin_contract_held false");
+        CHECK(r.moving_blocked_precondition, "3435 AC2: production hard blocks precondition");
+        CHECK(aura::ast::moving_incomplete_remap_sticky_densify_off(),
+              "3435 AC2: sticky densify-off armed");
+    }
+    aura::ast::clear_moving_incomplete_remap_sticky_densify_off();
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+}
+
+// AC3: success path unchanged — remap entries only for moved addresses;
+// objects_moved == count of neu != old.
+static void ac3435_3_success_remap_only_moved() {
+    std::println("\n--- #3435 AC3: success remap only for moved ---");
+    MovingFlagGuard on(1);
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    auto* p2 = arena.create<Pod16>(9, 10, 11, 12);
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved > 0, "3435 AC3: objects_moved > 0");
+    std::size_t changed = 0;
+    for (void* p : {static_cast<void*>(p0), static_cast<void*>(p1), static_cast<void*>(p2)}) {
+        void* neu = arena.resolve_object_remap(p);
+        if (neu != nullptr && neu != p)
+            ++changed;
+    }
+    CHECK(changed == r.objects_moved,
+          "3435 AC3: objects_moved equals count of actually-moved addresses");
+    CHECK(r.untracked_kept_count == 0, "3435 AC3: no untracked on success");
+    CHECK(r.pin_contract_held, "3435 AC3: pin_contract_held true on success");
+}
+
+// AC4: Soft / no-move path unchanged (zero extra walk).
+static void ac3435_4_soft_zero_extra() {
+    std::println("\n--- #3435 AC4: Soft / no-move unchanged ---");
+    aura::ast::g_moving_untracked_hard_abort_pref.store(0, std::memory_order_relaxed);
+    aura::ast::reset_relocate_alloc_fail_inject_for_test();
+    ASTArena arena(64 * 1024);
+    auto* p0 = arena.create<Pod16>(1, 2, 3, 4);
+    auto* p1 = arena.create<Pod16>(5, 6, 7, 8);
+    // Soft (no MovingFlagGuard): no moving window → objects_moved == 0,
+    // contract trivially held, no untracked.
+    const auto r = arena.live_compact(LiveCompactMode::Moving);
+    CHECK(r.objects_moved == 0, "3435 AC4: Soft no move");
+    CHECK(r.untracked_kept_count == 0, "3435 AC4: no untracked");
+    CHECK(r.pin_contract_held, "3435 AC4: contract held (vacuous)");
+    (void)p0;
+    (void)p1;
+}
+
+// AC5: source-cite + linter + no invent.
+static void ac3435_5_source_and_linter() {
+    std::println("\n--- #3435 AC5: source-cite + linter + no invent ---");
+    const auto ixx = read_file("src/core/arena.ixx");
+    const auto test = read_file("tests/core/test_moving_densify_fail_closed.cpp");
+    const auto build = read_file("build.py");
+    CHECK(ixx.find("Issue #3435") != std::string::npos, "3435 AC5: arena.ixx cites #3435");
+    CHECK(ixx.find("kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align})") !=
+              std::string::npos,
+          "3435 AC5: restore-to-old present (no hole)");
+    CHECK(ixx.find("g_relocate_alloc_fail_inject_remaining") != std::string::npos,
+          "3435 AC5: test-only alloc-fail seam present");
+    CHECK(ixx.find("last_object_remap_[p.old] = neu") != std::string::npos,
+          "3435 AC5: remap still only on successful relocate");
+    CHECK(build.find("check_relocate_drop_tracking_3435") != std::string::npos,
+          "3435 AC5: build.py wires linter");
+    CHECK(test.find("ac3435_1_inject_alloc_fail_no_hole") != std::string::npos,
+          "3435 AC5: test cites AC1");
+    std::ifstream invent("tests/core/test_issue_3435.cpp");
+    if (!invent.good())
+        invent.open("../tests/core/test_issue_3435.cpp");
+    CHECK(!invent.good(), "3435 AC5: no test_issue_3435.cpp per #81967");
+    const std::filesystem::path docs_design_3435 = "docs/design";
+    std::error_code ec_3435;
+    if (std::filesystem::is_directory(docs_design_3435, ec_3435)) {
+        for (const auto& entry : std::filesystem::directory_iterator(docs_design_3435, ec_3435)) {
+            const auto name = entry.path().filename().string();
+            CHECK(name.find("3435-") == std::string::npos,
+                  std::string("3435 AC5: no docs/design/") + name + " per #1655");
+        }
+    }
+}
+
 int run_test_moving_densify_fail_closed() {
     std::println("=== Issue #2495: Moving densify fail-closed on untracked external roots ===");
     std::println(
@@ -3740,6 +3880,13 @@ int run_test_moving_densify_fail_closed() {
     ac3356_3_pin_fail_closed();
     ac3356_4_existing_suite();
     ac3356_5_source_and_linter();
+
+    std::println("\n=== Issue #3435: relocate !neu after recycle restores tracking ===");
+    ac3435_1_inject_alloc_fail_no_hole();
+    ac3435_2_production_hard_sticky();
+    ac3435_3_success_remap_only_moved();
+    ac3435_4_soft_zero_extra();
+    ac3435_5_source_and_linter();
 
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
