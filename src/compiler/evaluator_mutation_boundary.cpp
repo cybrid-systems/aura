@@ -375,7 +375,13 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
     auto* tc = static_cast<aura::compiler::TypeChecker*>(ev->commit_type_checker_handle());
     if (!tc)
         return;
-    // Issue #3170: outermost-success fingerprint guard (I4 from 2026-08
+    // Issue #3440: persist-reject under outermost && success must flip
+    // success so exit_mutation_boundary's existing !success abort_restore
+    // stays SSOT. Soft/Off: note is a no-op (flag stays false).
+    auto note_3440_restore = []() noexcept {
+        aura::compiler::typed_audit::note_outermost_persist_reject_needs_restore();
+    };
+    // Issue #3170: outermost-success fingerprint guard (I4 from 2026-08)
     // type-system review -- 半解不得出厂). Compute the fingerprint of the
     // live occurrence goals NOW; if it differs from the snapshot that was
     // staged for write (tracked via expected_occurrence_fp_), the goals
@@ -409,6 +415,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
+            note_3440_restore();
             return;
         }
     }
@@ -434,6 +441,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
+            note_3440_restore();
             return;
         }
     }
@@ -458,6 +466,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
         aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
         ev->clear_type_export_authority();
+        note_3440_restore();
         return; // skip persist + proof + health + grant
     }
     // Issue #3281 AC2: no green stamp on torn state — outermost-success
@@ -486,6 +495,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             // the stale proof after mid-abort authority reject.
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             ev->clear_type_export_authority();
+            note_3440_restore();
             return;
         }
     }
@@ -538,6 +548,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
                 aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
                 (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
                 ev->bump_occurrence_persist_fingerprint_mismatch();
+                note_3440_restore();
                 return; // skip stamp + health + grant
             }
             // Soft: observe only, commit may succeed (drain already bumped
@@ -572,6 +583,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
+            note_3440_restore();
             return; // skip green stamp + health + grant
         }
     }
@@ -603,6 +615,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
             aura::compiler::typed_audit::clear_type_linear_commit_proof_on_abort();
             (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
             ev->bump_occurrence_persist_fingerprint_mismatch();
+            note_3440_restore();
             return; // no green stamp / no grant
         }
     }
@@ -631,6 +644,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         ev->clear_type_export_authority();
         aura::compiler::typed_audit::publish_type_linear_proof_outcome(
             aura::compiler::typed_audit::kTypeLinearProofOutcomeReject);
+        note_3440_restore();
         return; // skip health + grant
     }
     // Issue #2995: single-shot OccurrenceCommitHealth after persist +
@@ -668,6 +682,7 @@ extern "C" void aura_outermost_success_persist_occurrence(void* ev_ptr,
         // early-out, zero extra atomics on quiet SOLVED.
         (void)aura::compiler::typed_audit::clear_occurrence_persist_buffer(tc);
         ev->bump_occurrence_persist_fingerprint_mismatch();
+        note_3440_restore();
         return; // skip grant; recover face stamps via publish_occurrence_commit_health
     }
     // Issue #3004: query:type authority only after persist + Full
@@ -3749,6 +3764,21 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics_))
             m->render_fast_exit_total.fetch_add(1, std::memory_order_relaxed);
     }
+    // Issue #2608 / #2641 / #2896 / #2910 / #2938: OccurrenceGoal persist
+    // on outermost success. Issue #3440: persist-reject must restore the
+    // already-mutated AST. Run the helper BEFORE exit_mutation_boundary
+    // so flipping success hits the existing !success abort_restore SSOT
+    // (dual topology + coercion rewind + #3158 occurrence restore).
+    // Soft/Off: note is a no-op (flag stays false). Quiet SOLVED: one
+    // TLS load. Happy persist + grant path unchanged (no extra restore).
+    if (outermost && success) {
+        const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
+        aura_outermost_success_persist_occurrence(ev_, mid);
+        if (typed_audit::consume_outermost_persist_reject_needs_restore()) {
+            success = false;
+            success_flag_store(flag_, false);
+        }
+    }
     if (!inbody_force_exited_)
         ev_->exit_mutation_boundary(success);
     ev_->render_fast_exit_this_boundary_ = false;
@@ -5271,22 +5301,14 @@ Evaluator::MutationBoundaryGuard::~MutationBoundaryGuard() {
     }
     // Issue #1252: post-mutate linear ownership revalidate on
     // successful outermost Guard exit (#672 path made mandatory).
+    // Issue #3440: persist helper moved before exit_mutation_boundary
+    // so persist-reject can flip success into the existing abort_restore
+    // SSOT. This block is post-restore: persist-reject never reaches it
+    // (success already false). Happy persist already ran (no second write).
     if (outermost && success) {
         ev_->bump_linear_post_mutate_enforcement();
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
             m->mutation_boundary_linear_revalidations.fetch_add(1, std::memory_order_relaxed);
-        }
-        // Issue #2608 / #2641 / #2896 / #2910 / #2938: OccurrenceGoal persist
-        // for cross-delta / multi-session replay after steal/densify prune.
-        // Soft default OFF (zero cost); production/Full always write a
-        // snapshot on outermost success (no env required) so densify×steal
-        // rehydrate restores priority roots. Issue #2938: successful commit
-        // is sole authority — post-persist TypeLinearCommitProof freeze is
-        // inside the C ABI (written-total + last mid + proof fingerprint).
-        // Reject / force-rollback never reaches this block (AC3).
-        {
-            const auto mid = ev_->defuse_version_.load(std::memory_order_relaxed);
-            aura_outermost_success_persist_occurrence(ev_, mid);
         }
     } else if (outermost && !success) {
         if (auto* m = static_cast<CompilerMetrics*>(ev_->compiler_metrics())) {
