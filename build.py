@@ -4907,6 +4907,20 @@ def cmd_lint():
             "Issue #3419 JIT typed-entry every-function linter failed — run python3 scripts/coverage/checks/check_jit_typed_entry_every_function_3419.py"
         )
         return r
+    # Issue #3446: compiled Move/Drop fence ORs live elision_ok + typed-entry
+    # (probe deopt_inc then continues — not a substitute). Residual of
+    # #3186/#3224/#3419. Extends test_escape_move_elision_gate; no new
+    # query key. Linter after #3419.
+    lef3446_script = COVERAGE_CHECKS / "check_linear_epoch_fence_elision_typed_3446.py"
+    if not lef3446_script.exists():
+        fail(f"missing {lef3446_script}")
+        return 1
+    r = run([sys.executable, str(lef3446_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3446 linear epoch fence elision+typed-entry linter failed — run python3 scripts/coverage/checks/check_linear_epoch_fence_elision_typed_3446.py"
+        )
+        return r
     # Issue #3225: occurrence persist seqlock so concurrent outermost
     # write × densify/steal rehydrate cannot freeze a mixed fingerprint.
     # Soft/quiet skip seq. Reuses miss + empty-after-fence. Extends
@@ -15891,6 +15905,27 @@ def cmd_scope_message_resolve_3442_coverage():
     return 0
 
 
+def cmd_linear_epoch_fence_elision_typed_3446_coverage():
+    """Issue #3446: JIT Move/Drop fence ORs live elision_ok + typed-entry.
+
+    Probe deopt_inc then continues. Fence only skipped the body on
+    epoch-stale, so reject-proof Move still zeroed the source slot.
+    Reuse existing elide-blocked counter. Extends
+    test_escape_move_elision_gate.cpp. No new query key.
+    """
+    print(f"{B}=== linear_epoch_fence_elision_typed coverage (#3446) ==={N}")
+    script = COVERAGE_CHECKS / "check_linear_epoch_fence_elision_typed_3446.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("linear_epoch_fence_elision_typed (#3446) coverage contract rows failed")
+        return 1
+    ok("linear_epoch_fence_elision_typed (#3446) coverage clean")
+    return 0
+
+
 def cmd_reemit_pipeline_reason_coverage_3445_coverage():
     """Issue #3445: pipeline last_reemit_success is reason-group coverage.
 
@@ -23195,6 +23230,8 @@ def main():
         "partial-reemit-success-coverage-3413-coverage": cmd_partial_reemit_success_coverage_3413_coverage,
         "reemit-pipeline-reason-coverage-3445": cmd_reemit_pipeline_reason_coverage_3445_coverage,
         "reemit-pipeline-reason-coverage-3445-coverage": cmd_reemit_pipeline_reason_coverage_3445_coverage,
+        "linear-epoch-fence-elision-typed-3446": cmd_linear_epoch_fence_elision_typed_3446_coverage,
+        "linear-epoch-fence-elision-typed-3446-coverage": cmd_linear_epoch_fence_elision_typed_3446_coverage,
         "dual-fresh-mutate-soft-migrate-3410": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "dual-fresh-mutate-soft-migrate-3410-coverage": cmd_dual_fresh_mutate_soft_migrate_3410_coverage,
         "soa-residual-production-smoke": cmd_soa_residual_production_smoke_coverage,
