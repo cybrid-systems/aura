@@ -10821,7 +10821,7 @@ public:
         const auto touched = shape_profiler_.on_arena_compact();
         // Issue #2984: note_arena_compact_linear_root_consistency (count).
         // Issue #3227: rebind / reject + invalidate_gen after compact.
-        // last_proof_linear_root_count==0 → no extra collect.
+        // Issue #3448: last==0 green face still drops (not quiet).
         (void)typed_audit::rebind_linear_proof_after_root_migration();
         metrics_.shape_inval_on_compact_triggered_total.fetch_add(1, std::memory_order_relaxed);
         metrics_.shape_stability_post_compact_preserved_total.store(

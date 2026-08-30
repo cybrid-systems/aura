@@ -253,6 +253,9 @@ static void ac5_source() {
     CHECK(read_file("src/compiler/typed_mutation_audit.h")
                   .find("rebind_linear_proof_after_root_migration") != std::string::npos,
           "3227: compact/remount rebind is additive");
+    CHECK(read_file("src/compiler/typed_mutation_audit.h")
+                  .find("kLinearZeroRootGreenFaceDropIssue") != std::string::npos,
+          "3448: last==0 green face drop is additive on steal revalidate lineage");
     CHECK(
         read_file("src/compiler/typed_mutation_audit.h").find("last_proof_bound_to_current_eval") !=
             std::string::npos,

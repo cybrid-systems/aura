@@ -1154,7 +1154,8 @@ Evaluator::CompactSweepResult Evaluator::compact_sweep(void* sweep_buffers) {
 
     // Issue #2984: note_arena_compact_linear_root_consistency (count).
     // Issue #3227: rebind / reject face + densify/steal invalidate_gen
-    // so Move/Drop cannot elide against remapped roots. last==0 quiet.
+    // so Move/Drop cannot elide against remapped roots.
+    // Issue #3448: last==0 green face still drops (not quiet).
     (void)typed_audit::rebind_linear_proof_after_root_migration();
 
     return result;

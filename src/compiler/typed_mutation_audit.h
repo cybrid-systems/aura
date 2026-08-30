@@ -3125,17 +3125,41 @@ inline bool note_arena_compact_linear_root_consistency() noexcept {
 // Issue #3227: post-compact / hot-update remount must re-bind linear
 // proof before the next IR/JIT Move/Drop elision. Reuses #2984 compact
 // consistency + the densify/steal invalidate_gen (#3032/#3063) so
-// Agents see one face. last==0: quiet (no extra collect). Soft: #2984
-// observe-only. Production/Full: drop green face + advance gen until
-// the next outermost publish_last_proof_face. Count-matched remaps
-// still reject (root identities may have moved). No new query key.
+// Agents see one face. Soft: #2984 observe-only. Production/Full: drop
+// green face + advance gen until the next outermost
+// publish_last_proof_face. Count-matched remaps still reject (root
+// identities may have moved). No new query key.
+// Issue #3448: last==0 is quiet only when there is no published green
+// face. A green stamp with linear_root_count==0 (non-linear stamp, or
+// stamp before roots were discovered) must still drop
+// g_last_proof_would_allow_commit / g_last_proof_linear_ok under
+// Production/Full so remount cannot keep Move/Drop elision green.
+// Soft last==0 green does not hard-drop. No second proof model.
 inline constexpr int kLinearPostMigrationProofRebindIssue = 3227;
+inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
 [[nodiscard]] inline bool rebind_linear_proof_after_root_migration() noexcept {
     const auto last = last_proof_linear_root_count_v_read();
-    if (last == 0)
-        return false; // quiet: same as #2984
-    const bool mismatch = note_arena_compact_linear_root_consistency();
+    const bool green_face = g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0 ||
+                            g_last_proof_linear_ok.load(std::memory_order_relaxed) != 0;
+    // last==0 && !green: still quiet (no extra collect). Issue #3448.
+    if (last == 0 && !green_face)
+        return false;
     const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (last == 0) {
+        // last==0 + green face. Soft/Off: no hard-drop (AC4). Production:
+        // drop face + advance gen even though #2984 count-mismatch does
+        // not fire (last==0). One extra live-root count so remount
+        // introducing roots is observed; drop regardless of match.
+        if (!hard)
+            return false;
+        (void)aura::compiler::linear_or_dirty_roots_count_for_rebind();
+        g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+        g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+        g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+        return true;
+    }
+    const bool mismatch = note_arena_compact_linear_root_consistency();
     if (!hard)
         return mismatch;
     g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);

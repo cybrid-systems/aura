@@ -2693,6 +2693,7 @@ extern "C" void aura_pure_anon_bg_remount_drain(std::uint64_t max_n) noexcept {
         g_pure_anon_bg_drain_fail_total.fetch_add(fail, std::memory_order_relaxed);
     aura_bump_pure_anon_bg_totals(/*enqueue=*/0, ok, fail, /*overflow=*/0);
     // Issue #3227: successful remount may relocate linear roots.
+    // Issue #3448: last==0 green face still drops on remount.
     if (ok > 0)
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
 }
@@ -2999,6 +3000,7 @@ extern "C" void aura_residual_live_closure_remount_tick(std::uint64_t budget) {
         g_residual_remount_ok_total.fetch_add(ok, std::memory_order_relaxed);
         aura_bump_residual_remount_totals(ok, /*budget_skip=*/0);
         // Issue #3227: remount changed live linear roots — rebind/reject.
+        // Issue #3448: last==0 green face still drops.
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
     }
 }
@@ -3131,6 +3133,7 @@ extern "C" void aura_sync_remount_covered_named_live_closures(std::uint64_t mask
     if (ok || fail || leftover)
         aura_bump_reemit_success_sync_covered_remount_totals(ok, fail, leftover);
     // Issue #3227: successful covered remount may relocate linear roots.
+    // Issue #3448: last==0 green face still drops.
     if (ok > 0)
         (void)aura::compiler::typed_audit::rebind_linear_proof_after_root_migration();
 }

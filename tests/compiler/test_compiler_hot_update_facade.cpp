@@ -866,6 +866,9 @@ int run_test_issue_3112() {
         const auto tma = read_file("src/compiler/typed_mutation_audit.h");
         CHECK(tma.find("rebind_linear_proof_after_root_migration") != std::string::npos,
               "3227: helper");
+        CHECK(tma.find("kLinearZeroRootGreenFaceDropIssue") != std::string::npos,
+              "3448: last==0 green face drop on remount");
+        CHECK(rt.find("Issue #3448") != std::string::npos, "3448: remount cite");
     }
 
     std::print("[test_issue_3112] passed={} failed={}\n", g_passed, g_failed);
