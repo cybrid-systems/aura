@@ -6,6 +6,14 @@
 // apply_dev_audit_defaults() (tests / AURA_SANDBOX=off). Deployments that
 // never call apply_production_audit_defaults still audit fully.
 // Header form so serve/evaluator/tests can include without module churn.
+//
+// Issue #3452 (I4 compile-time): this header is AuditStrategy / trail /
+// commit-readiness / mid-abort SSOT. It does not reject a mutate:*
+// registered without Guard. That gate lives in mutate_dispatch.hh
+// MutateRegKind + check_mutate_dispatch_sole_guard_3074.py (raw
+// add("mutate: must be MetadataGuardExempt). Do not add a
+// requires_mutation_guard concept here (include-order cascade). A
+// Success trail is not a Guard.
 
 #ifndef AURA_COMPILER_TYPED_MUTATION_AUDIT_H
 #define AURA_COMPILER_TYPED_MUTATION_AUDIT_H

@@ -633,6 +633,73 @@ static void ac3423_5_source_and_linter() {
     CHECK(read_file("tests/issues/test_issue_3423.cpp").empty(), "AC5 no invent issues/");
 }
 
+static void ac3452_1_raw_add_exempt_only() {
+    std::println("\n--- #3452 AC1: raw add(\"mutate: is MetadataGuardExempt only ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    const auto lint = read_file("scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py");
+    CHECK(mut.find("add(\"mutate:set-agent-fingerprint\"") != std::string::npos,
+          "3452 AC1: fingerprint raw add");
+    CHECK(mut.find("MutateRegKind::MetadataGuardExempt") != std::string::npos,
+          "3452 AC1: fingerprint kind");
+    CHECK(lint.find("MetadataGuardExempt") != std::string::npos, "3452 AC1: 3074 extra");
+}
+
+static void ac3452_2_structural_add_mutate() {
+    std::println("\n--- #3452 AC2: structural list still add_mutate ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("add_mutate(\"mutate:replace-type\"") != std::string::npos,
+          "3452 AC2: replace-type");
+    CHECK(mut.find("add_mutate(\"mutate:atomic-batch\"") != std::string::npos,
+          "3452 AC2: atomic-batch");
+    CHECK(mut.find("add_mutate(\"mutate:set-body\"") != std::string::npos, "3452 AC2: set-body");
+    CHECK(mut.find("add_mutate(\"mutate:rebind\"") != std::string::npos, "3452 AC2: rebind");
+    CHECK(mut.find("add_mutate(\"mutate:replace-pattern\"") != std::string::npos,
+          "3452 AC2: replace-pattern");
+    CHECK(mut.find("add_mutate(\"mutate:rename-symbol\"") != std::string::npos,
+          "3452 AC2: rename-symbol");
+}
+
+static void ac3452_3_exempt_skip_acquire() {
+    std::println("\n--- #3452 AC3: EXEMPT metadata still skips acquire ---");
+    const auto mut = read_file("src/compiler/evaluator_primitives_mutate.cpp");
+    CHECK(mut.find("/*guard_exempt=*/true") != std::string::npos, "3452 AC3: exempt flag");
+    CHECK(mut.find("GUARD_EXEMPT:") != std::string::npos, "3452 AC3: GUARD_EXEMPT comments");
+    const auto pos = mut.find("add(\"mutate:set-agent-fingerprint\"");
+    CHECK(pos != std::string::npos, "3452 AC3: fingerprint add");
+    if (pos != std::string::npos) {
+        const auto win = mut.substr(pos, 900);
+        CHECK(win.find("mutate_dispatch_try_acquire") == std::string::npos,
+              "3452 AC3: fingerprint body does not acquire");
+    }
+}
+
+static void ac3452_4_audit_header_ssot() {
+    std::println("\n--- #3452 AC4: audit header points at MutateRegKind SSOT ---");
+    const auto audit = read_file("src/compiler/typed_mutation_audit.h");
+    const auto disp = read_file("src/compiler/mutate_dispatch.hh");
+    CHECK(disp.find("enum class MutateRegKind") != std::string::npos, "3452 AC4: enum");
+    CHECK(disp.find("kMutateRegKindIssue = 3452") != std::string::npos, "3452 AC4: stamp");
+    CHECK(audit.find("MutateRegKind") != std::string::npos, "3452 AC4: audit cites kind");
+    CHECK(audit.find("check_mutate_dispatch_sole_guard_3074.py") != std::string::npos,
+          "3452 AC4: audit cites 3074 linter");
+    CHECK(audit.find("schema-3452") == std::string::npos, "3452 AC4: no new query key");
+}
+
+static void ac3452_5_source_and_linter() {
+    std::println("\n--- #3452 AC5: linter after #3074 + no invent ---");
+    const auto build = read_file("build.py");
+    const auto lint = read_file("scripts/coverage/checks/check_mutate_reg_kind_3452.py");
+    CHECK(!lint.empty() && lint.find("3452") != std::string::npos, "3452 AC5: linter");
+    CHECK(build.find("check_mutate_reg_kind_3452") != std::string::npos, "3452 AC5: build.py");
+    const auto i3074 = build.find("check_mutate_dispatch_sole_guard_3074");
+    const auto i3452 = build.find("check_mutate_reg_kind_3452");
+    CHECK(i3074 != std::string::npos && i3452 != std::string::npos && i3452 > i3074,
+          "3452 AC5: linter after #3074");
+    CHECK(read_file("docs/design/3452-mutate-reg-kind.md").empty(), "3452 AC5: no docs/design");
+    CHECK(read_file("tests/compiler/test_issue_3452.cpp").empty(), "3452 AC5: no invent");
+    CHECK(read_file("tests/issues/test_issue_3452.cpp").empty(), "3452 AC5: no invent issues/");
+}
+
 } // namespace
 
 int run_test_mutation_guard_try_acquire_unit() {
@@ -664,6 +731,11 @@ int run_test_mutation_guard_try_acquire_unit() {
     ac3423_3_exempt_no_extra_acquire();
     ac3423_4_belt_and_nested();
     ac3423_5_source_and_linter();
+    ac3452_1_raw_add_exempt_only();
+    ac3452_2_structural_add_mutate();
+    ac3452_3_exempt_skip_acquire();
+    ac3452_4_audit_header_ssot();
+    ac3452_5_source_and_linter();
 
     std::println("\n=== test_mutation_guard_try_acquire_unit: {} passed, {} failed ===", g_passed,
                  g_failed);

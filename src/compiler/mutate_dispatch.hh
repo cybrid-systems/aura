@@ -82,6 +82,16 @@ inline constexpr int kAddMutateAcquireBeforeBodyIssue = 3423;
 // Issue #3450: add_mutate RO fence before acquire. Locked workspace
 // must not take exclusive workspace_mtx_ for replace-type / atomic-batch.
 inline constexpr int kAddMutateReadOnlyFenceIssue = 3450;
+// Issue #3452: I4 compile-time registration contract. Structural
+// mutate:* must register via add_mutate (Guard). Raw add("mutate: is
+// only MetadataGuardExempt (fingerprint / policy). Enforced by
+// check_mutate_dispatch_sole_guard_3074.py — typed_mutation_audit.h
+// is trail/strategy, not this gate.
+enum class MutateRegKind : std::uint8_t {
+    StructuralRequiresGuard = 0,
+    MetadataGuardExempt = 1,
+};
+inline constexpr int kMutateRegKindIssue = 3452;
 inline thread_local std::uint64_t g_mutate_guard_acquire_gen{0};
 inline void note_mutate_guard_acquire_token() noexcept {
     g_mutate_guard_acquire_gen += 1;

@@ -1284,6 +1284,19 @@ def cmd_lint():
             "Issue #3074 mutate_dispatch sole-guard linter failed — run python3 scripts/coverage/checks/check_mutate_dispatch_sole_guard_3074.py"
         )
         return r
+    # Issue #3452: I4 compile-time MutateRegKind. Raw add("mutate: must
+    # be MetadataGuardExempt. Structural stays add_mutate. Extends
+    # check_mutate_dispatch_sole_guard_3074 + guard-try-acquire unit.
+    mrk3452_script = COVERAGE_CHECKS / "check_mutate_reg_kind_3452.py"
+    if not mrk3452_script.exists():
+        fail(f"missing {mrk3452_script}")
+        return 1
+    r = run([sys.executable, str(mrk3452_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3452 mutate-reg-kind linter failed — run python3 scripts/coverage/checks/check_mutate_reg_kind_3452.py"
+        )
+        return r
     # Issue #3352: TransformEngine / AutoFixEngine apply_patches under a
     # live Evaluator must acquire via mutate_dispatch_try_acquire (#3074
     # sole Guard). CLI throwaway FlatAST stays ev=nullptr. Extends
@@ -18631,6 +18644,25 @@ def cmd_mutate_dispatch_sole_guard_3074():
     return cmd_mutate_dispatch_sole_guard_3074_coverage()
 
 
+def cmd_mutate_reg_kind_3452_coverage():
+    """Issue #3452: I4 MutateRegKind registration contract.
+
+    Raw add("mutate: must be MetadataGuardExempt. Structural stays
+    add_mutate. typed_mutation_audit.h documents the SSOT pointer.
+    """
+    print(f"{B}=== mutate_reg_kind coverage (#3452) ==={N}")
+    script = COVERAGE_CHECKS / "check_mutate_reg_kind_3452.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("mutate_reg_kind (#3452) coverage contract rows failed")
+        return 1
+    ok("mutate_reg_kind (#3452) coverage clean")
+    return 0
+
+
 def cmd_transform_engine_guard_3352_coverage():
     """Issue #3352: TransformEngine / AutoFixEngine Guard wrap (static).
 
@@ -23319,6 +23351,8 @@ def main():
         "chaos-production-readiness-3073-coverage": cmd_chaos_production_readiness_3073_coverage,
         "mutate-dispatch-sole-guard-3074": cmd_mutate_dispatch_sole_guard_3074,
         "mutate-dispatch-sole-guard-3074-coverage": cmd_mutate_dispatch_sole_guard_3074_coverage,
+        "mutate-reg-kind-3452": cmd_mutate_reg_kind_3452_coverage,
+        "mutate-reg-kind-3452-coverage": cmd_mutate_reg_kind_3452_coverage,
         "transform-engine-guard-3352": cmd_transform_engine_guard_3352_coverage,
         "transform-engine-guard-3352-coverage": cmd_transform_engine_guard_3352_coverage,
         "query-epoch-production-strict-3075": cmd_query_epoch_production_strict_3075,
