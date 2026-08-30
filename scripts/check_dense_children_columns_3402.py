@@ -121,12 +121,11 @@ def main() -> int:
             "(stale dense mirror after structural mutation)"
         )
 
-    # AC4: set_child_locked / insert_child_locked / remove_child_locked
-    # mark dense_dirty_ = true. Simple string-window check (regex
-    # matching the `pre(id < children_.size())` contract clause
-    # between `)` and `{` is brittle — the substring check is more
-    # robust and tolerant of pre(...) reformulations).
-    for fn in ("set_child_locked", "insert_child_locked", "remove_child_locked"):
+    # AC4: insert_child_locked / remove_child_locked mark dense_dirty_
+    # (arity change). Issue #3453: set_child_locked patches dense
+    # in-place when !dense_dirty_ — do not require unconditional dirty
+    # as the only mutate side effect.
+    for fn in ("insert_child_locked", "remove_child_locked"):
         fn_idx = ast_stripped.find(f"void {fn}(")
         if fn_idx == -1:
             fails.append(f"AC4: {fn} definition not found in ast.ixx")
@@ -137,6 +136,22 @@ def main() -> int:
                 f"AC4: {fn} does not mark dense_dirty_ = true "
                 "(next children_columnar call would return stale dense data)"
             )
+    set_idx = ast_stripped.find("void set_child_locked(")
+    if set_idx == -1:
+        fails.append("AC4/3453: set_child_locked definition not found")
+    else:
+        swin = ast_stripped[set_idx : set_idx + 2800]
+        if "!dense_dirty_" not in swin:
+            fails.append("AC3453: set_child_locked missing !dense_dirty_ in-place gate")
+        if "child_data_[" not in swin:
+            fails.append("AC3453: set_child_locked does not write child_data_ in-place")
+        # Unconditional dirty as the FIRST mutate side effect is the residual.
+        brace = swin.find("{")
+        head = swin[brace : brace + 180] if brace != -1 else ""
+        if "dense_dirty_ = true" in head and "child_data_[" not in head:
+            fails.append("AC3453: set_child_locked still unconditionally dirties dense before equal-length patch")
+        if "dense_dirty_ = true" not in swin:
+            fails.append("AC4: set_child_locked never dirties (never-synced / arity-miss fallback)")
 
     # AC5: sync_dense_columns_from_pcv rebuilds child_data_ /
     # child_begin_ / child_count_ from children_.

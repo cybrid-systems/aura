@@ -2457,6 +2457,19 @@ def cmd_lint():
             "Issue #3429 PCV shared-COW TLS linter failed — run python3 scripts/coverage/checks/check_pcv_shared_cow_tls_3429.py"
         )
         return r
+    # Issue #3453: equal-length set_child_locked patches dense children
+    # in-place when !dense_dirty_. insert/remove still dirty. Extends
+    # #3402 dense-columns linter + arena required-cover test.
+    scdi3453_script = COVERAGE_CHECKS / "check_set_child_locked_dense_inplace_3453.py"
+    if not scdi3453_script.exists():
+        fail(f"missing {scdi3453_script}")
+        return 1
+    r = run([sys.executable, str(scdi3453_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3453 set_child_locked dense-inplace linter failed — run python3 scripts/coverage/checks/check_set_child_locked_dense_inplace_3453.py"
+        )
+        return r
     # Issue #3328: production children_stable / query re-use of a held
     # SafePCVSpan force_refresh or structured stale-span (across-guard).
     # Soft frozen view. #2906/#3233 mutate exclusive unchanged.
@@ -15550,6 +15563,25 @@ def cmd_dense_children_columns_3402_coverage():
     return 0
 
 
+def cmd_set_child_locked_dense_inplace_3453_coverage():
+    """Issue #3453: equal-length set_child_locked patches dense in-place.
+
+    Synced tree + set_child does not full-rebuild child_data_.
+    insert/remove still dirty. Extends #3402 linter + required-cover test.
+    """
+    print(f"{B}=== set_child_locked dense inplace coverage (#3453) ==={N}")
+    script = COVERAGE_CHECKS / "check_set_child_locked_dense_inplace_3453.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("set_child_locked dense inplace (#3453) coverage contract rows failed")
+        return 1
+    ok("set_child_locked dense inplace (#3453) coverage clean")
+    return 0
+
+
 def cmd_inline_pass_soa_3403_coverage():
     """Issue #3403: InlinePass + run_pipeline dual-emit residual — SoA
     hot entry + hard-zero bridge gate.
@@ -23380,6 +23412,8 @@ def main():
         "eval-flat-hot-path-3401-coverage": cmd_eval_flat_hot_path_3401_coverage,
         "dense-children-columns-3402": cmd_dense_children_columns_3402_coverage,
         "dense-children-columns-3402-coverage": cmd_dense_children_columns_3402_coverage,
+        "set-child-locked-dense-inplace-3453": cmd_set_child_locked_dense_inplace_3453_coverage,
+        "set-child-locked-dense-inplace-3453-coverage": cmd_set_child_locked_dense_inplace_3453_coverage,
         "inline-pass-soa-3403": cmd_inline_pass_soa_3403_coverage,
         "inline-pass-soa-3403-coverage": cmd_inline_pass_soa_3403_coverage,
         "arena-auto-arm-soft-fallback-3404": cmd_arena_auto_arm_soft_fallback_3404_coverage,
