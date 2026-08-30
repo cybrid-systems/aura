@@ -275,6 +275,25 @@ int run_test_outermost_persist_fail_closed() {
               "3431 AC5: build.py wires linter");
     }
 
+    {
+        std::println("\n--- #3440: persist-reject notes restore (structural commit face) ---");
+        CHECK(aura::compiler::typed_audit::kOutermostPersistRejectRestoreIssue == 3440,
+              "3440: stamp");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto fn_pos =
+            emb.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+        const auto emb_after = (fn_pos == std::string::npos) ? std::string{} : emb.substr(fn_pos);
+        CHECK(contains(emb_after, "note_3440_restore()"), "3440: persist-reject arms note restore");
+        CHECK(contains(emb, "consume_outermost_persist_reject_needs_restore()"),
+              "3440: dtor consumes restore flag");
+        CHECK(contains(emb, "Issue #3440"), "3440: dtor cites #3440");
+        const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+        const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+        CHECK(persist_call != std::string::npos && exit_pos != std::string::npos &&
+                  persist_call < exit_pos,
+              "3440: persist helper runs BEFORE exit_mutation_boundary");
+    }
+
     std::println("\n=== Results: {} passed, {} failed ===", g_passed, g_failed);
     return g_failed ? 1 : 0;
 }

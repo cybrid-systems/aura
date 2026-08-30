@@ -1685,6 +1685,13 @@ static void ac3082_3_outermost_persist_unchanged() {
           "AC3: persist → stamp → ensure → grant still sole outermost path");
     CHECK(mb.find("aura_outermost_success_persist_occurrence") != std::string::npos,
           "AC3: persist helper retained");
+    CHECK(mb.find("Issue #3440") != std::string::npos,
+          "AC3: #3440 persist-reject restore cite (persist still outermost-only)");
+    const auto persist_call = mb.find("aura_outermost_success_persist_occurrence(ev_");
+    const auto exit_pos = mb.find("ev_->exit_mutation_boundary(success)");
+    CHECK(persist_call != std::string::npos && exit_pos != std::string::npos &&
+              persist_call < exit_pos,
+          "AC3: persist still sole outermost path (now before abort_restore SSOT)");
 }
 
 static void ac3082_4_soft_no_nested_zero_extra() {

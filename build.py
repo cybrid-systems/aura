@@ -4915,6 +4915,20 @@ def cmd_lint():
             "Issue #3431 unstaged expected_fp persist linter failed — run python3 scripts/coverage/checks/check_occurrence_unstaged_expected_fp_3431.py"
         )
         return r
+    # Issue #3440: persist-reject under outermost && success must
+    # abort_restore the already-success AST. TLS flag flips success
+    # before exit_mutation_boundary so existing !success restore is
+    # SSOT. Extends occurrence abort / persist-fail-closed suites.
+    pr3440_script = COVERAGE_CHECKS / "check_outermost_persist_reject_restore_3440.py"
+    if not pr3440_script.exists():
+        fail(f"missing {pr3440_script}")
+        return 1
+    r = run([sys.executable, str(pr3440_script)], cwd=ROOT)
+    if r != 0:
+        fail(
+            "Issue #3440 persist-reject abort_restore linter failed — run python3 scripts/coverage/checks/check_outermost_persist_reject_restore_3440.py"
+        )
+        return r
     # Issue #3416: last-proof last-writer across steal × dual-Evaluator.
     # Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
     # Green bind eval-scoped. Soft/Off no extra slot. Extends
@@ -17599,6 +17613,28 @@ def cmd_occurrence_unstaged_expected_fp_3431_coverage():
     return 0
 
 
+def cmd_outermost_persist_reject_restore_3440_coverage():
+    """Issue #3440: persist-reject must abort_restore the already-success AST.
+
+    #3376 closed the authority face. Persist-reject now notes a TLS
+    restore flag and flips success before exit_mutation_boundary so
+    the existing !success abort_restore SSOT runs. Soft/Off no-op.
+    Extends test_occurrence_abort_restore + persist-fail-closed.
+    No docs/design/, no tests/issues/test_issue_3440.cpp.
+    """
+    print(f"{B}=== outermost persist-reject restore (#3440) ==={N}")
+    script = COVERAGE_CHECKS / "check_outermost_persist_reject_restore_3440.py"
+    if not script.exists():
+        fail(f"missing {script}")
+        return 1
+    r = subprocess.run([sys.executable, str(script)], cwd=ROOT)
+    if r.returncode != 0:
+        fail("outermost persist-reject restore (#3440) coverage contract rows failed")
+        return 1
+    ok("outermost persist-reject restore (#3440) coverage clean")
+    return 0
+
+
 def cmd_solve_delta_partial_cleared_3169():
     """Issue #3169: production solve_delta fail-closed + clear partial
     goals / unresolved after TIMEOUT / instance-repair failure.
@@ -22860,6 +22896,8 @@ def main():
         "cascade-rearm-new-edge-only-3168-coverage": cmd_cascade_rearm_new_edge_only_3168,
         "occurrence-persist-fingerprint-3170": cmd_occurrence_persist_fingerprint_3170,
         "occurrence-unstaged-expected-fp": cmd_occurrence_unstaged_expected_fp_3431_coverage,
+        "outermost-persist-reject-restore-3440": cmd_outermost_persist_reject_restore_3440_coverage,
+        "outermost-persist-reject-restore-3440-coverage": cmd_outermost_persist_reject_restore_3440_coverage,
         "occurrence-persist-fingerprint-3170-coverage": cmd_occurrence_persist_fingerprint_3170,
         "solve-delta-partial-cleared-3169": cmd_solve_delta_partial_cleared_3169,
         "solve-delta-partial-cleared-3169-coverage": cmd_solve_delta_partial_cleared_3169,

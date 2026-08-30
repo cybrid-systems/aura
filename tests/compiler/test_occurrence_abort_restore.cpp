@@ -222,6 +222,93 @@ static void ac6_7_no_invent_docs() {
           "present");
 }
 
+// Issue #3440: persist-reject under outermost && success must flip
+// success so the existing !success abort_restore SSOT runs. Do not
+// invent a second restore.
+static void ac3440_persist_reject_flips_success_into_abort_restore() {
+    std::println("\n--- #3440 AC1: persist-reject notes restore + dtor flips success ---");
+    const auto audit_h = read_file("src/compiler/typed_mutation_audit.h");
+    const auto boundary_cpp = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+    CHECK(audit_h.find("kOutermostPersistRejectRestoreIssue = 3440") != std::string::npos,
+          "3440 AC1: stamp in typed_mutation_audit.h");
+    CHECK(audit_h.find("note_outermost_persist_reject_needs_restore") != std::string::npos,
+          "3440 AC1: TLS note helper present");
+    CHECK(audit_h.find("consume_outermost_persist_reject_needs_restore") != std::string::npos,
+          "3440 AC1: TLS consume helper present");
+    CHECK(audit_h.find("g_tls_outermost_persist_reject_needs_restore") != std::string::npos,
+          "3440 AC1: TLS flag (not a new metric key)");
+    CHECK(audit_h.find("g_3440_") == std::string::npos,
+          "3440 AC1: no g_3440_* counter (issue: TLS flag, not a new metric key)");
+
+    const auto fn_pos =
+        boundary_cpp.find("extern \"C\" void aura_outermost_success_persist_occurrence(");
+    CHECK(fn_pos != std::string::npos, "3440 AC1: persist helper present");
+    const auto helper = fn_pos == std::string::npos ? std::string{} : boundary_cpp.substr(fn_pos);
+    const auto end_helper = helper.find("extern \"C\" void aura_clear_occurrence_persist_buffer");
+    const auto helper_body =
+        end_helper == std::string::npos ? helper : helper.substr(0, end_helper);
+    std::size_t note_n = 0;
+    auto np = helper_body.find("note_3440_restore()");
+    while (np != std::string::npos) {
+        ++note_n;
+        np = helper_body.find("note_3440_restore()", np + 1);
+    }
+    CHECK(note_n >= 9, "3440 AC1: all persist-reject arms note restore (overflow / unstaged / "
+                       "fp-mismatch / mid-abort / drain / pending-face / ADT / last-look / "
+                       "recover-fail)");
+
+    std::println("\n--- #3440 AC2: dtor consume + flip success BEFORE exit_mutation_boundary ---");
+    const auto persist_call = boundary_cpp.find("aura_outermost_success_persist_occurrence(ev_");
+    const auto consume_pos = boundary_cpp.find("consume_outermost_persist_reject_needs_restore()");
+    const auto exit_pos = boundary_cpp.find("ev_->exit_mutation_boundary(success)");
+    CHECK(persist_call != std::string::npos && consume_pos != std::string::npos &&
+              exit_pos != std::string::npos && persist_call < consume_pos && consume_pos < exit_pos,
+          "3440 AC2: persist then consume then exit_mutation_boundary (flip before restore)");
+    CHECK(boundary_cpp.find("Issue #3440") != std::string::npos, "3440 AC2: dtor cites #3440");
+    const auto consume_win =
+        consume_pos == std::string::npos ? std::string{} : boundary_cpp.substr(consume_pos, 400);
+    CHECK(consume_win.find("success = false") != std::string::npos,
+          "3440 AC2: consume arm flips success = false");
+
+    std::println("\n--- #3440 AC3: abort_restore stays SSOT (no second restore) ---");
+    std::size_t restore_n = 0;
+    auto rp = boundary_cpp.find("abort_restore_dual_topology(");
+    while (rp != std::string::npos) {
+        ++restore_n;
+        rp = boundary_cpp.find("abort_restore_dual_topology(", rp + 1);
+    }
+    CHECK(restore_n >= 1, "3440 AC3: abort_restore_dual_topology still present");
+    CHECK(boundary_cpp.find("abort_restore_dual_topology_persist_reject") == std::string::npos,
+          "3440 AC3: no second persist-reject restore helper");
+    std::size_t occ_n = 0;
+    auto op = boundary_cpp.find("restore_or_clear_occurrence_to_entry(");
+    while (op != std::string::npos) {
+        ++occ_n;
+        op = boundary_cpp.find("restore_or_clear_occurrence_to_entry(", op + 1);
+    }
+    CHECK(occ_n == 3, "3440 AC3: still exactly 3 #3158 abort sites (reuse, not a 4th restore)");
+
+    std::println("\n--- #3440 AC4: Soft/Off note is a no-op ---");
+    CHECK(audit_h.find("Soft/Off note is a no-op") != std::string::npos ||
+              audit_h.find("Soft/Off") != std::string::npos,
+          "3440 AC4: Soft/Off contract documented on the helper");
+    const auto note_fn = audit_h.find("inline void note_outermost_persist_reject_needs_restore");
+    CHECK(note_fn != std::string::npos, "3440 AC4: note helper body found");
+    const auto note_body =
+        note_fn == std::string::npos ? std::string{} : audit_h.substr(note_fn, 500);
+    CHECK(note_body.find("production_defaults_active()") != std::string::npos,
+          "3440 AC4: note gated on production_defaults_active");
+    CHECK(note_body.find("AuditStrategy::Full") != std::string::npos,
+          "3440 AC4: note gated on Full strategy");
+
+    std::println("\n--- #3440 AC5: no invent docs / no test_issue_3440.cpp ---");
+    CHECK(read_file("docs/design/3440-persist-reject-abort-restore.md").empty(),
+          "3440 AC5: no docs/design/3440-* per #1655");
+    CHECK(read_file("tests/compiler/test_issue_3440.cpp").empty() &&
+              read_file("tests/issues/test_issue_3440.cpp").empty(),
+          "3440 AC5: no test_issue_3440.cpp per #81934");
+}
+
 } // namespace
 
 int run_test_occurrence_abort_restore() {
@@ -233,6 +320,7 @@ int run_test_occurrence_abort_restore() {
     ac4_counters_and_helpers();
     ac5_no_second_model();
     ac6_7_no_invent_docs();
+    ac3440_persist_reject_flips_success_into_abort_restore();
 
     std::println("\n=== #3158 result: passed={} failed={} ===", aura::test::g_passed,
                  aura::test::g_failed);

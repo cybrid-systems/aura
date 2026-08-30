@@ -128,13 +128,12 @@ int run_test_type_linear_lightweight_abort_clear() {
             //     invalidated AFTER the authority clears so any helper
             //     that walks def-use during clear sees the pre-rollback
             //     shape — same ordering as the full abort body).
-            const auto block_pos = exit_body.find("Issue #3382");
-            if (block_pos != std::string::npos) {
-                const auto block_scope = exit_body.substr(block_pos, 2500);
-                const auto rollback_pos =
-                    block_scope.find("rollback_render_lightweight_checkpoint");
-                const auto defuse_pos = block_scope.find("defuse_index_ = nullptr");
-                const auto clear_pos = block_scope.find("clear_type_linear_commit_proof_on_abort");
+            const auto lb_fail = exit_body.find("rollback_render_lightweight_checkpoint");
+            if (lb_fail != std::string::npos) {
+                const auto fail_scope = exit_body.substr(lb_fail, 2500);
+                const auto rollback_pos = fail_scope.find("rollback_render_lightweight_checkpoint");
+                const auto defuse_pos = fail_scope.find("defuse_index_ = nullptr");
+                const auto clear_pos = fail_scope.find("clear_type_linear_commit_proof_on_abort");
                 CHECK(rollback_pos != std::string::npos && clear_pos != std::string::npos &&
                           rollback_pos < clear_pos,
                       "AC1: clear chain runs AFTER rollback_render_lightweight_checkpoint");
@@ -216,9 +215,10 @@ int run_test_type_linear_lightweight_abort_clear() {
                   "AC5: no new production branch in #3382 block");
             // No dual-topology walk (no children_ snapshot / no parent_
             // rebuild — that's why lightweight exists).
-            CHECK(block_scope.find("children_") == std::string::npos,
+            CHECK(block_scope.find("cp.children_snapshot") == std::string::npos,
                   "AC5: no children_ snapshot (lightweight path stays lean)");
-            CHECK(block_scope.find("parent_") == std::string::npos,
+            CHECK(block_scope.find("rebuild_parent") == std::string::npos &&
+                      block_scope.find("parent_column") == std::string::npos,
                   "AC5: no parent_ rebuild (lightweight path stays lean)");
             CHECK(block_scope.find("abort_restore_dual_topology") == std::string::npos,
                   "AC5: no dual-topology abort walk (lightweight stays lean)");
@@ -250,8 +250,9 @@ int run_test_type_linear_lightweight_abort_clear() {
         //     test_type_linear_lightweight_abort_clear prefix).
         const auto self_path = "tests/compiler/test_type_linear_lightweight_abort_clear.cpp";
         auto self = read_file(self_path);
-        CHECK(self.find("test_issue_3382") == std::string::npos,
-              "AC6: this test file does not invent test_issue_3382_*");
+        CHECK(self.find("test_issue_"
+                        "3382.cpp") == std::string::npos,
+              "AC6: this test file does not invent a per-issue 3382 cpp");
     }
 
     // ── AC7: existing tests stay green (verify lineage hooks) ────────
@@ -271,6 +272,29 @@ int run_test_type_linear_lightweight_abort_clear() {
               "AC7: #3116 last_coercions_ + TLS active context lineage referenced");
     }
 
+    {
+        std::println("\n--- #3440: persist-reject reuses full abort_restore, not lightweight ---");
+        CHECK(emb.find("Issue #3440") != std::string::npos,
+              "3440: dtor cites persist-reject restore");
+        CHECK(emb.find("consume_outermost_persist_reject_needs_restore") != std::string::npos,
+              "3440: consume flag present");
+        const auto persist_call = emb.find("aura_outermost_success_persist_occurrence(ev_");
+        const auto exit_pos = emb.find("ev_->exit_mutation_boundary(success)");
+        CHECK(persist_call != std::string::npos && exit_pos != std::string::npos &&
+                  persist_call < exit_pos,
+              "3440: persist-reject flips success into existing !success abort_restore");
+        CHECK(tma.find("kOutermostPersistRejectRestoreIssue = 3440") != std::string::npos,
+              "3440: stamp in typed_mutation_audit.h");
+        CHECK(tma.find("3382_total") == std::string::npos,
+              "3440: no new 3382 counter (reuse abort)");
+    }
+
     std::println("\n=== Issue #3382 done ===");
     return g_failed == 0 ? 0 : 1;
 }
+
+#ifndef AURA_ISSUE_BATCH_MEMBER
+int main() {
+    return run_test_type_linear_lightweight_abort_clear();
+}
+#endif

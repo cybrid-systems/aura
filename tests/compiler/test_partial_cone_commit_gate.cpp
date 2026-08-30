@@ -982,6 +982,19 @@ int run_test_partial_cone_commit_gate() {
     // preserved.
     ac2716_1_production_hard_reject_on_face_hit();
     ac2716_2_soft_counter_only();
+    {
+        std::println("\n--- #3440: persist-reject restore does not invent a cone/query face ---");
+        const auto emb = read_file("src/compiler/evaluator_mutation_boundary.cpp");
+        const auto tma = read_file("src/compiler/typed_mutation_audit.h");
+        CHECK(tma.find("kOutermostPersistRejectRestoreIssue = 3440") != std::string::npos,
+              "3440: stamp");
+        CHECK(tma.find("g_3440_") == std::string::npos, "3440: no new g_3440_* counter");
+        CHECK(emb.find("schema-3440") == std::string::npos &&
+                  tma.find("schema-3440") == std::string::npos,
+              "3440: no schema-3440 query key");
+        CHECK(emb.find("abort_restore_dual_topology") != std::string::npos,
+              "3440: reuses abort_restore_dual_topology (no second restore)");
+    }
     ac2716_3_quiet_path_zero_cost();
     ac2716_4_additive_no_regression();
     ac2716_5_query_keys_added();

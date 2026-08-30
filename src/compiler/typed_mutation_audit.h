@@ -1759,6 +1759,27 @@ inline void note_3158_occurrence_abort_restore(std::uint64_t goals_dropped) noex
 inline void note_3158_occurrence_abort_observe() noexcept {
     g_3158_occurrence_abort_observe_total.fetch_add(1, std::memory_order_relaxed);
 }
+
+// Issue #3440: persist-reject under outermost && success must flip
+// success so exit_mutation_boundary's existing !success abort_restore
+// (dual topology + coercion rewind + #3158 occurrence restore) stays
+// SSOT. TLS flag, not a new metric key / query schema. Production/Full
+// only; Soft/Off note is a no-op (quiet SOLVED: one TLS load).
+inline constexpr int kOutermostPersistRejectRestoreIssue = 3440;
+inline thread_local bool g_tls_outermost_persist_reject_needs_restore = false;
+inline void note_outermost_persist_reject_needs_restore() noexcept {
+    if (production_defaults_active() || get_strategy() == AuditStrategy::Full)
+        g_tls_outermost_persist_reject_needs_restore = true;
+}
+[[nodiscard]] inline bool consume_outermost_persist_reject_needs_restore() noexcept {
+    const bool v = g_tls_outermost_persist_reject_needs_restore;
+    g_tls_outermost_persist_reject_needs_restore = false;
+    return v;
+}
+inline void reset_outermost_persist_reject_needs_restore_for_test() noexcept {
+    g_tls_outermost_persist_reject_needs_restore = false;
+}
+
 inline void reset_occurrence_provisional_discard_for_test() noexcept {
     g_occurrence_provisional_discard_total.store(0, std::memory_order_relaxed);
     g_occurrence_provisional_discard_goals_total.store(0, std::memory_order_relaxed);
