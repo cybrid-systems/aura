@@ -7,6 +7,7 @@ module;
 #include "observability_metrics.h"
 #include "messaging_bridge.h"
 #include "serve/gc_coordinator.h"
+#include "serve/fiber.h" // Issue #3438: scoped linear drain (g_current_fiber)
 #include "core/gc_hooks.h"
 #include "core/provenance_tracker.hh"    // Issue #2026 / #2197: validate_linear_provenance
 #include "coercion_provenance_policy.hh" // Issue #2197: note_provenance_miss force-audit
@@ -732,11 +733,16 @@ Evaluator::enforce_linear_post_failure(std::uint8_t path) noexcept {
     if (auto* m = static_cast<CompilerMetrics*>(compiler_metrics_))
         m->guard_failure_linear_enforce_total.fetch_add(1, std::memory_order_relaxed);
 
-    // Issue #3023: post-abort / mutate-fail owns leftover linear_roots
-    // unpin (Move/Drop did not consume them). Nested Guard fail still
-    // runs this helper only on outermost (call site). Soft empty
-    // registry: one lock + empty check. post-densify verify never unpins.
-    (void)aura::core::lifetime::unpin_all_linear_roots();
+    // Issue #3438: post-abort / mutate-fail drains SCOPED on-fiber —
+    // the outermost Guard's enter keep (published to the fiber) preserves
+    // sibling fibers' live linear roots. Off-fiber (standalone/test
+    // callers): legacy unpin_all fallback (Issue #3023; Soft empty = one lock +
+    // empty check). Nested Guard fail does not reach this helper.
+    // post-densify verify never unpins.
+    if (auto* f3438 = aura::serve::g_current_fiber)
+        (void)aura::serve::unpin_linear_roots_scoped_for_fiber(f3438);
+    else
+        (void)aura::core::lifetime::unpin_all_linear_roots();
 
     return out;
 }

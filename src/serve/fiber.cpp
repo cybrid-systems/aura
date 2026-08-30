@@ -1688,11 +1688,46 @@ std::size_t Fiber::release_orphan_roots() noexcept {
         }
     }
     orphan_roots_dropped_on_reclaim_total_.fetch_add(n, std::memory_order_relaxed);
-    // Issue #3023: post-join reclaim owns leftover linear_roots unpin
-    // (linear roots are not orphan-callback registered). Empty registry
+    // Issue #3438: post-join reclaim drains SCOPED — the fiber's
+    // outermost-Guard keep snapshot (set at production Guard enter)
+    // preserves sibling fibers' live linear roots. Unarmed (Soft / no
+    // Guard history): legacy unpin_all fallback (Issue #3023). Empty registry
     // is one lock + empty check. post-densify verify never unpins.
-    (void)aura::core::lifetime::unpin_all_linear_roots();
+    (void)unpin_linear_roots_scoped_for_fiber(this);
     return n;
+}
+
+// Issue #3438: outermost-Guard linear-keep management + scoped drain face.
+void Fiber::set_outermost_linear_keep(std::unordered_set<void*> keep) noexcept {
+    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    outermost_linear_keep_ = std::move(keep);
+    outermost_linear_keep_armed_ = true;
+}
+
+void Fiber::clear_outermost_linear_keep() noexcept {
+    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    outermost_linear_keep_.clear();
+    outermost_linear_keep_armed_ = false;
+}
+
+bool Fiber::take_outermost_linear_keep(std::unordered_set<void*>& out) noexcept {
+    std::lock_guard<std::mutex> lk(outermost_linear_keep_mtx_);
+    if (!outermost_linear_keep_armed_)
+        return false;
+    out = std::move(outermost_linear_keep_);
+    outermost_linear_keep_.clear();
+    outermost_linear_keep_armed_ = false;
+    return true;
+}
+
+std::size_t unpin_linear_roots_scoped_for_fiber(Fiber* f) noexcept {
+    if (!f)
+        return 0;
+    std::unordered_set<void*> keep;
+    if (f->take_outermost_linear_keep(keep))
+        return aura::core::lifetime::unpin_linear_roots_except(keep);
+    // Issue #3023 legacy fallback (Soft / no Guard history / tests).
+    return aura::core::lifetime::unpin_all_linear_roots();
 }
 
 [[nodiscard]] bool Fiber::has_orphan_roots() const noexcept {
