@@ -545,6 +545,16 @@ export inline std::atomic<std::uint64_t> g_moving_blocked_precondition_total{0};
 // distinguish production-hard from Soft observe-only. Mirrors the #2495
 // untracked counter.
 export inline std::atomic<std::uint64_t> g_moving_incomplete_remap_densify_hard_fail_total{0};
+// Issue #3435: test-only alloc-fail injection for the relocate
+// try_allocate phase. When > 0, relocate_tracked_objects_for_moving_
+// treats the next allocation as failed (after recycle already removed
+// the old slot) so the restore-to-old fail-closed path is exercised.
+// Production / uninjected: one relaxed load per pending, no behavior
+// change (AC4). Not a metrics counter — test seam only.
+export inline std::atomic<std::uint32_t> g_relocate_alloc_fail_inject_remaining{0};
+export inline void reset_relocate_alloc_fail_inject_for_test() noexcept {
+    g_relocate_alloc_fail_inject_remaining.store(0, std::memory_order_relaxed);
+}
 // Feature flag: default OFF (env AURA_ARENA_MOVING_COMPACT=1 enables).
 export inline std::atomic<int> g_moving_compact_enabled_pref{-1}; // -1 = env/default
 // Issue #2495: process-wide counter for Moving densify windows where the
@@ -2834,19 +2844,40 @@ private:
 
         std::size_t moved = 0;
         for (auto& p : pending) {
-            // Prefer freelist; skip allocate_raw_impl (auto-compact re-entry).
-            void* neu = small_pool_.try_allocate(p.size);
-            if (!neu) {
-                // Should be rare: freelist held recycled slots. Fall back pmr.
-                try {
-                    neu = resource_.allocate(p.size, p.align);
-                    stats_.used += p.size;
-                } catch (...) {
-                    neu = nullptr;
+            // Issue #3435: test-only alloc-fail injection (AC5). When armed,
+            // treat the post-recycle allocation as failed (skip try_allocate
+            // + pmr fallback) so the restore-to-old fail-closed path runs.
+            // Production: one relaxed load per pending, zero behavior change.
+            void* neu = nullptr;
+            if (g_relocate_alloc_fail_inject_remaining.load(std::memory_order_relaxed) != 0) {
+                g_relocate_alloc_fail_inject_remaining.fetch_sub(1, std::memory_order_relaxed);
+            } else {
+                // Prefer freelist; skip allocate_raw_impl (auto-compact re-entry).
+                neu = small_pool_.try_allocate(p.size);
+                if (!neu) {
+                    // Should be rare: freelist held recycled slots. Fall back pmr.
+                    try {
+                        neu = resource_.allocate(p.size, p.align);
+                        stats_.used += p.size;
+                    } catch (...) {
+                        neu = nullptr;
+                    }
                 }
             }
-            if (!neu)
-                continue; // fail closed: drop tracking (should not happen)
+            if (!neu) {
+                // Issue #3435: the object already left its old slot (recycled
+                // above). Do NOT drop it from dtors_ — restore tracking at the
+                // old address so no hole is committed (UAF / lost-object
+                // bypass: external pin / slot / canary may still hold old).
+                // The caller folds untracked_kept_count > 0 into
+                // moving_incomplete_remap + pin_contract_held=false +
+                // production sticky-off (#2495 face), so Phase-5 cannot
+                // publish a green Moving window after a partial relocate.
+                kept.push_back(DtorEntry{p.old, p.dtor, p.size, p.align});
+                if (out_untracked_kept_count)
+                    ++*out_untracked_kept_count;
+                continue;
+            }
             std::memcpy(neu, p.bytes.data(), p.size);
             kept.push_back(DtorEntry{neu, p.dtor, p.size, p.align});
             last_object_remap_[p.old] = neu;
