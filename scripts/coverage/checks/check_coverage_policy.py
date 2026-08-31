@@ -50,7 +50,7 @@ def classify(text: str) -> str:
         )
     ):
         return "custom"
-    if "subprocess." in text and "runner.py" not in text:
+    if "subprocess." in text:
         return "custom"
     if ".find(" in text and re.search(r"\[[^\]]+:[^\]]+\]", text):
         return "custom"

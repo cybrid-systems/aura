@@ -55,7 +55,7 @@ def classify(path: Path, text: str) -> str:
         )
     ):
         return "custom"
-    if "subprocess." in text and "runner.py" not in text:
+    if "subprocess." in text:
         return "custom"
     # Windowed source-cite (find + slice) is custom logic, not a manifest row.
     if ".find(" in text and re.search(r"\[[^\]]+:[^\]]+\]", text):
