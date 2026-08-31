@@ -54,7 +54,7 @@ def main() -> int:
     spawn = _read("src/orch/agent_spawn.h")
     test = _read("tests/orch/test_join_drain_reclaim.cpp")
     build = _read("build.py")
-    _read("scripts/coverage/checks/check_join_drain_reclaim_still_running_2397.py")
+    _read("scripts/coverage/manifests/2397.json")
 
     # ── AC1: join_agent auto-wait when Reclaimed + unset wait + production
     must("Issue #3110: auto-wait to close the host-forget cleanup window", "AC1 join_agent comment marker", spawn)

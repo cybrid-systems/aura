@@ -84,8 +84,15 @@ def main() -> int:
             fails.append(f"AC6: docs/design/{f.name} present (forbidden per #1655)")
 
     # Cross-check: #2495 / #2664 / #2682 still green
+    r = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "coverage" / "runner.py"), "--issue", "2495"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        fails.append(f"manifest #2495 regression:\n{r.stdout}\n{r.stderr}")
     for linter in (
-        "check_moving_densify_fail_closed_2495.py",
         "check_2664_coverage.py",
         "check_moving_unified_success_2682.py",
     ):

@@ -92,14 +92,16 @@ def main() -> int:
     r1 = subprocess.run(
         [
             sys.executable,
-            str(ROOT / "scripts" / "coverage" / "checks" / "check_moving_untracked_production_hard_2596.py"),
+            str(ROOT / "scripts" / "coverage" / "runner.py"),
+            "--issue",
+            "2596",
         ],
         cwd=ROOT,
         capture_output=True,
         text=True,
     )
     if r1.returncode != 0:
-        fails.append(f"check_moving_untracked_production_hard_2596 regression:\n{r1.stdout}\n{r1.stderr}")
+        fails.append(f"manifest #2596 regression:\n{r1.stdout}\n{r1.stderr}")
 
     # Cross-check: stamp-resolve --strict still green
     r2 = subprocess.run(

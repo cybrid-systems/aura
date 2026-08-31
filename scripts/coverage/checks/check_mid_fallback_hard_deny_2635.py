@@ -42,8 +42,8 @@ def main() -> int:
     slo = _read("src/compiler/audit_mid_fallback_slo.h")
     test = _read("tests/compiler/test_audit_mid_fallback_slo.cpp")
     build = _read("build.py")
-    linter_2493 = _read("scripts/coverage/checks/check_audit_mutation_id_unify_2493.py")
-    linter_2594 = _read("scripts/coverage/checks/check_audit_mid_fallback_slo_2594.py")
+    linter_2493 = _read("scripts/coverage/manifests/2493.json")
+    linter_2594 = _read("scripts/coverage/manifests/2594.json")
 
     # AC1: production/Full hard-deny face → return 0 (absolute after #2836)
     must("#2635", "AC1", tma)
@@ -64,9 +64,9 @@ def main() -> int:
     must("MidFallbackSloInput", "AC4", slo)
     must("would_arm_degraded", "AC4", slo)
 
-    # AC5: existing #2493 / #2594 coverage scripts still present
-    must("Issue #2493", "AC5", linter_2493)
-    must("Issue #2594", "AC5", linter_2594)
+    # AC5: existing #2493 / #2594 coverage manifests still present
+    must("2493", "AC5", linter_2493)
+    must("2594", "AC5", linter_2594)
     must("check_mid_fallback_hard_deny_2635", "AC5", build)
     must("#2635", "AC5", test)
 
@@ -74,16 +74,17 @@ def main() -> int:
     must("next_audit_mutation_id()", "AC6", tma)
     must("resolve_audit_mutation_id(std::uint64_t caller_mid = 0)", "AC6", tma)
 
-    # cross-check: existing linters must still be green
-    for linter in ("check_audit_mutation_id_unify_2493.py", "check_audit_mid_fallback_slo_2594.py"):
+    # cross-check: existing manifests must still be green
+    runner = ROOT / "scripts" / "coverage" / "runner.py"
+    for issue in ("2493", "2594"):
         r = subprocess.run(
-            [sys.executable, str(ROOT / "scripts" / "coverage" / "checks" / linter)],
+            [sys.executable, str(runner), "--issue", issue],
             cwd=ROOT,
             capture_output=True,
             text=True,
         )
         if r.returncode != 0:
-            fails.append(f"{linter} regression:\n{r.stdout}\n{r.stderr}")
+            fails.append(f"manifest #{issue} regression:\n{r.stdout}\n{r.stderr}")
 
     # cross-check: stamp-resolve --strict must still be green
     r = subprocess.run(
