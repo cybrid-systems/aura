@@ -3215,8 +3215,8 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
     // API — check_orch_mvp_scope.py --strict still guards the public surface.
 
     add("orch:spawn-agent",
-        [&ev, build_orch_hash, orch_keyword_key,
-         add_deny_class](std::span<const EvalValue> a) -> EvalValue {
+        [&ev, build_orch_hash, orch_keyword_key, add_deny_class,
+         add_reclaimed_pending_lifecycle](std::span<const EvalValue> a) -> EvalValue {
             if (a.empty() || !types::is_string(a[0])) {
                 return make_primitive_error(
                     ev.string_heap_, ev.error_values_,
@@ -3306,6 +3306,53 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
                     // Evaluator capability tenant fallback below.
                     tenant_id =
                         static_cast<std::uint64_t>(std::max<std::int64_t>(0, types::as_int(val)));
+                }
+            }
+
+            // Issue #3467: fail closed BEFORE spawn — a name-table slot
+            // that still owes Reclaimed cleanup (must_wait_reclaimed /
+            // reclaimed_deferred_cleanup, production auto-wait Timeout
+            // posture #3012/#3220) must not be replaced. Allowing the
+            // spawn would move-assign over the pending slot in
+            // AgentNameTable::put, running finish_reclaimed_cleanup_on_dtor
+            // and releasing the old arena reservation while the body may
+            // still be live (reclaimed_dtor_under_account_total, #3297).
+            // Typed deny: no spawn (no quota consumed, no orphan body),
+            // no put, old mailbox / body-stack untouched (#2661). Same
+            // shape as the quota-reject hash + existing #3220 lifecycle
+            // and #3251 deny-class keys (no new query key, AC1).
+            if (!name.empty()) {
+                const auto* pending = ev.agent_names_->find(name);
+                if (pending &&
+                    (pending->must_wait_reclaimed || pending->reclaimed_deferred_cleanup)) {
+                    aura::orch::g_orch_module_stats.host_forget_reclaimed_risk_total.fetch_add(
+                        1, std::memory_order_relaxed);
+                    auto ridx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(name);
+                    auto eidx = ev.string_heap_.size();
+                    ev.string_heap_.push_back(
+                        "orch:spawn-agent: name still reclaimed-pending — wait_reclaimed_body "
+                        "or abandon_reclaimed required before reuse");
+                    std::vector<std::pair<std::string, EvalValue>> rkv = {
+                        {"ok", make_bool(false)},
+                        {"id", make_int(0)},
+                        {"name", make_string(ridx)},
+                        {"schema", make_int(1588)},
+                        {"schema-2011", make_int(2011)},
+                        {"quota-exceeded", make_bool(false)},
+                        {"error", make_string(eidx)},
+                        // #3272 key shape: host still owes the SSOT
+                        // second-wait on this name (additive, no new key).
+                        {"cleanup-pending", make_bool(true)},
+                        {"cleanup-pending-wired", make_int(1)},
+                        {"schema-3272", make_int(aura::orch::kHostForgetWindowCloseIssue)},
+                        {"issue-3272", make_int(aura::orch::kHostForgetWindowCloseIssue)},
+                    };
+                    add_reclaimed_pending_lifecycle(rkv, /*pending=*/true);
+                    add_deny_class(rkv, aura::orch::AgentDenyClass::Other,
+                                   "name-reuse-while-reclaimed-pending", 0,
+                                   /*emit_retry=*/false);
+                    return build_orch_hash(rkv);
                 }
             }
 
@@ -4375,13 +4422,29 @@ void register_strategy_primitives(PrimRegistrar add_raw, Evaluator& ev) {
             const auto restart_attempted = scope->last_restart_attempted();
             const auto restart_skipped = scope->last_restart_skipped_no_spec();
             const auto restart_ok = scope->last_restart_ok();
-            // ~AgentScope semantics: after join_all, scope holds no live
-            // handles (drop the per-Evaluator storage slot so the next
-            // scope-spawn creates a fresh scope with empty handles_).
-            // Issue #3444: only drop the Evaluator slot when joining the
-            // root. Joining a child must not discard the parent tree.
-            if (scope == root && scope->empty())
-                aura::orch::drop_agent_scope(static_cast<void*>(&ev));
+            // Issue #2588 comment-vs-code contract, closed by #3467
+            // (option B1, strict): after join_all the per-Evaluator slot
+            // is dropped so the next scope-spawn creates a fresh tree —
+            // but ONLY when every handle is settled: no live body fiber
+            // and no pending Reclaimed flags (must_wait_reclaimed /
+            // reclaimed_deferred_cleanup). Pending handles stay (never
+            // cleared, #2661); directory / scope-resolve remain
+            // authoritative until ensure_reclaimed_cleanup /
+            // abandon_reclaimed / body exit. Issue #3444: only drop the
+            // Evaluator slot when joining the root. Joining a child must
+            // not discard the parent tree.
+            if (scope == root) {
+                bool all_settled = true;
+                for (const auto& hp : scope->handles()) {
+                    if ((hp.fiber && !hp.fiber->is_done()) || hp.must_wait_reclaimed ||
+                        hp.reclaimed_deferred_cleanup) {
+                        all_settled = false;
+                        break;
+                    }
+                }
+                if (all_settled)
+                    aura::orch::drop_agent_scope(static_cast<void*>(&ev));
+            }
             const char* st = "ok";
             switch (jr.status) {
                 case aura::serve::JoinStatus::Ok:

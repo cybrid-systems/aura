@@ -59,17 +59,36 @@ struct AgentNameTable {
     AgentNameTable& operator=(AgentNameTable&&) noexcept = default;
     ~AgentNameTable() = default;
 
-    aura::orch::AgentHandle& put(aura::orch::AgentHandle h) {
+    // Returns the stored slot on accept, nullptr on typed deny.
+    //
+    // Issue #3467: same-name put over a slot that still owes Reclaimed
+    // cleanup (must_wait_reclaimed / reclaimed_deferred_cleanup — the
+    // production auto-wait Timeout posture of #3012/#3220) is DENIED.
+    // The old move-assign ran ~AgentHandle / move-assign cleanup
+    // (finish_reclaimed_cleanup_on_dtor) on the pending handle, releasing
+    // the arena reservation while the body may still be live
+    // (reclaimed_dtor_under_account_total, #3297). Fail closed: the
+    // pending slot is left untouched; the denied handle is destroyed by
+    // the caller (its own flags are false on the fresh-spawn path, so
+    // its destructor is an idempotent no-op; #2661 mailbox / body-stack
+    // are never touched). Clean / done slots still replace — prior
+    // behavior preserved (#2078 "same-name spawn overrides prior").
+    // Cost when both flags are false: two bool loads, no atomic (AC2).
+    aura::orch::AgentHandle* put(aura::orch::AgentHandle h) {
         std::lock_guard<std::mutex> lock(impl_->mu_);
         auto name = h.name.empty() ? ("agent-" + std::to_string(h.id)) : h.name;
         h.name = name;
         auto [it, inserted] = impl_->agents_.try_emplace(name, std::move(h));
         if (!inserted) {
+            // Issue #3467: typed deny — do not move-assign over a slot
+            // that still owes Reclaimed cleanup.
+            if (it->second.must_wait_reclaimed || it->second.reclaimed_deferred_cleanup)
+                return nullptr;
             // Same-name spawn overrides prior handle. The replaced
             // AgentHandle destructor releases its arena reservation.
             it->second = std::move(h);
         }
-        return it->second;
+        return &it->second;
     }
 
     aura::orch::AgentHandle* find(const std::string& name) {

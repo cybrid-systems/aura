@@ -42,6 +42,7 @@
 #include "test_harness.hpp"
 #include "orch/sched_runner_test_helper.h"
 
+#include "compiler/agent_name_table.h"
 #include "orch/agent_spawn.h"
 #include "orch/agent_scope.h"
 #include "compiler/typed_mutation_audit.h"
@@ -634,6 +635,97 @@ static void ac3433_6_source_and_linter() {
     if (!docs.good())
         docs.open("../docs/design/3433-join-cleanup-fork.md");
     CHECK(!docs.good(), "3433 AC6: no docs/design/3433-* per #1655");
+}
+
+// Issue #3467: same-name put over a reclaimed-pending name-table slot is
+// typed-denied (fail closed): the pending handle is not replaced, its
+// arena reservation stays held, and no reclaimed_dtor_under_account bump
+// occurs from the deny. After the body exits and the Done-path second
+// wait (wait_reclaimed_body) clears the pending flags, same-name reuse
+// is allowed again (AC5). Fixture: #3433 AC1 (no SchedRunner → body
+// never runs → production join Timeout derives Reclaimed).
+static void ac3467_name_reuse_fail_closed() {
+    using aura::core::sandbox::SandboxMode;
+    using aura::core::sandbox::set_mode;
+    std::println("\n--- #3467 AC1/AC5: production pending slot → same-name put denied ---");
+    const char* prev_sb = std::getenv("AURA_SANDBOX");
+    std::string prev_sb_s = prev_sb ? prev_sb : "";
+    ::setenv("AURA_SANDBOX", "restricted", 1);
+    apply_production_audit_defaults();
+    set_mode(SandboxMode::Strict);
+
+    // Destruction order matters: table drops its handles (fiber pointers)
+    // BEFORE the scheduler destroys the fibers.
+    Scheduler sched(1);
+    aura::compiler::AgentNameTable table;
+
+    // Pending handle: production join Timeout + live body → Reclaimed-defer.
+    auto make_spec = [](const char* name) {
+        aura::orch::AgentSpec s;
+        s.name = name;
+        s.attach_mailbox = true;
+        s.body = [] {
+            for (;;) {
+            }
+        };
+        return s;
+    };
+
+    auto h = aura::orch::spawn_agent_with_mailbox(sched, make_spec("3467-pending"));
+    CHECK(h.ok && h.fiber, "3467 AC1: spawn ok");
+    const auto res0 = h.reserved_memory_bytes;
+    CHECK(res0 > 0, "3467 AC1: reservation recorded");
+    JoinPolicy policy;
+    policy.primary_ms = 50; // short primary → Timeout (body never Done)
+    policy.drain_ms = 0;    // cancel only; body stays live
+    const auto jr = join_agent(h, policy);
+    CHECK(jr.status == JoinStatus::Reclaimed, "3467 AC1: Timeout + !is_done → Reclaimed");
+    CHECK(h.reclaimed_deferred_cleanup, "3467 AC1: Reclaimed-defer pending");
+    CHECK(h.reserved_memory_bytes == res0, "3467 AC1: reservation still held");
+
+    // Register the pending handle under its name (mirrors the
+    // orch:spawn-agent put-on-ok registration).
+    auto* slot = table.put(std::move(h));
+    CHECK(slot != nullptr, "3467 AC1: pending handle registered in name table");
+    const auto under0 =
+        g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed);
+
+    // Same-name fresh spawn → put must be typed-denied (AC1: no put, no
+    // reservation release on the old handle, no dtor under-account bump).
+    auto h2 = aura::orch::spawn_agent_with_mailbox(sched, make_spec("3467-pending"));
+    CHECK(h2.ok, "3467 AC1: second spawn ok");
+    const auto id_new = h2.id;
+    CHECK(table.put(std::move(h2)) == nullptr, "3467 AC1: put over pending slot denied (nullptr)");
+    auto* p = table.find("3467-pending");
+    CHECK(p != nullptr && p->id != id_new, "3467 AC1: pending handle NOT replaced");
+    CHECK(p->reclaimed_deferred_cleanup, "3467 AC1: pending flags intact");
+    CHECK(p->reserved_memory_bytes == res0, "3467 AC1: no reservation release on old handle");
+    CHECK(g_orch_module_stats.reclaimed_dtor_under_account_total.load(std::memory_order_relaxed) ==
+              under0,
+          "3467 AC1: no reclaimed_dtor_under_account bump from deny");
+
+    // AC5: body exit + Done-path second wait clears the pending flags —
+    // then same-name put is allowed again.
+    if (p->fiber)
+        p->fiber->set_state(FiberState::Done);
+    const auto wr = wait_reclaimed_body(*p, std::optional<std::uint64_t>(2000));
+    CHECK(wr.status == JoinStatus::Ok, "3467 AC5: Done-path wait completes");
+    CHECK(wr.cleanup_completed, "3467 AC5: cleanup completed");
+    CHECK(p->reserved_memory_bytes == 0, "3467 AC5: reservation released by Done path");
+    CHECK(!p->reclaimed_deferred_cleanup && !p->must_wait_reclaimed,
+          "3467 AC5: pending flags cleared");
+    auto h3 = aura::orch::spawn_agent_with_mailbox(sched, make_spec("3467-pending"));
+    CHECK(h3.ok, "3467 AC5: third spawn ok");
+    const auto id3 = h3.id;
+    auto* accepted = table.put(std::move(h3));
+    CHECK(accepted != nullptr && accepted->id == id3,
+          "3467 AC5: put allowed after cleanup (flags cleared)");
+
+    apply_dev_audit_defaults();
+    if (!prev_sb_s.empty())
+        ::setenv("AURA_SANDBOX", prev_sb_s.c_str(), 1);
+    else
+        ::unsetenv("AURA_SANDBOX");
 }
 
 } // namespace
@@ -4211,6 +4303,9 @@ int run_test_join_drain_reclaim() {
     ac3433_4_batch_unified_and_held_flags();
     ac3433_5_abandon_attach_only();
     ac3433_6_source_and_linter();
+
+    std::println("\n=== Issue #3467: name-reuse fail-closed over reclaimed-pending slot ===");
+    ac3467_name_reuse_fail_closed();
 
     std::println("\n=== Results: {} passed, {} failed ===", aura::test::g_passed,
                  aura::test::g_failed);

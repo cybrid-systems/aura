@@ -234,15 +234,20 @@ int run_test_orch_scope() {
               "AC3: scope-cancel-all-total bumps per call");
 
         // Join-all with timeout/drain — returns structured status.
+        // Issue #3467 B1: a settled join-all drops the root slot, so each
+        // subsequent join-all round re-arms a fresh scope first.
         const auto join_hash = cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
         CHECK(join_hash, "AC1: orch:scope-join-all returns hash");
+        cs.eval(R"((orch:scope-spawn "rearm-3467-a"))");
         CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 1000 :drain-ms 1000))", "schema") ==
                   2588,
               "AC3: scope-join-all hash carries schema=2588");
         CHECK(href(cs, "scope-join-all-total") >= 2, "AC3: scope-join-all-total bumps per call");
+        cs.eval(R"((orch:scope-spawn "rearm-3467-b"))");
         CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))",
                        "schema-3250") == 3250,
               "3250: orch:scope-join-all hash schema-3250");
+        cs.eval(R"((orch:scope-spawn "rearm-3467-c"))");
         CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 500 :drain-ms 500))",
                        "restart-attempted") >= 0,
               "3250: orch:scope-join-all restart-attempted");
@@ -261,8 +266,11 @@ int run_test_orch_scope() {
         cs.eval(R"((orch:scope-spawn "parity-a"))");
         cs.eval(R"((orch:scope-spawn "parity-b"))");
         // join-all with timeout/drain returns structured status (ok|timeout|...).
+        // Issue #3467 B1: this round settles (trivial bodies) and DROPS the
+        // root slot, so the status round re-arms a fresh scope first.
         const auto join_hash = cs.eval(R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))");
         CHECK(join_hash, "AC4: join-all returns hash after spawn 2 + cancel-all");
+        cs.eval(R"((orch:scope-spawn "parity-rearm-3467"))");
         // Status is one of "ok" / "timeout" / "cancelled" / "invalid" / "reclaimed".
         const auto status_ev = cs.eval(
             R"((let ((r (orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))) (hash-ref r "status")))");
@@ -272,14 +280,55 @@ int run_test_orch_scope() {
         CHECK(href(cs, "scope-join-all-total") >= 2,
               "AC4: scope-join-all-total bumps per orch:scope-join-all call");
 
-        // Scope persists across join-all (MVP v1: no auto-drop; users
-        // can re-spawn or ~Evaluator cleanup). Subsequent spawn should
-        // still succeed on the same scope.
+        // Issue #3467 B1: a settled join-all drops the root slot, so the
+        // next scope-spawn creates a fresh tree (the spawn succeeds either
+        // way — parity with ~AgentHandle no-leak is preserved).
         const auto fresh =
             cs.eval(R"((let ((r (orch:scope-spawn "post-join-fresh"))) (hash-ref r "ok")))");
-        CHECK(
-            fresh && is_bool(*fresh) && as_bool(*fresh),
-            "AC4: post-join scope-spawn succeeds on same scope (parity with ~AgentHandle no-leak)");
+        CHECK(fresh && is_bool(*fresh) && as_bool(*fresh),
+              "AC4: post-join scope-spawn succeeds (fresh tree per #3467 B1 after settled drop)");
+    }
+
+    // ── #3467: scope-join-all drops the root slot only when settled ──
+    {
+        std::println("\n--- #3467 AC4: scope-join-all B1 drop contract ---");
+        reset_all();
+        CompilerService cs;
+
+        // Settled join-all (trivial bodies, generous timeout) → root slot
+        // dropped → directory and scope-resolve agree (empty / miss).
+        cs.eval(R"((orch:scope-spawn "settle-a"))");
+        cs.eval(R"((orch:scope-spawn "settle-b"))");
+        CHECK(hash_int(cs, R"((orch:scope-join-all :timeout-ms 2000 :drain-ms 2000))",
+                       "cleanup-pending-count") == 0,
+              "3467 AC4: settled join-all reports cleanup-pending-count=0");
+        const auto dir_count =
+            cs.eval(R"((let ((r (orch:agent-directory))) (hash-ref r "count")))");
+        CHECK(dir_count && is_int(*dir_count) && as_int(*dir_count) == 0,
+              "3467 AC4: directory empty after settled join-all (slot dropped)");
+        const auto resolve_miss =
+            cs.eval(R"((let ((r (orch:scope-resolve "settle-a"))) (if (hash-ref r "ok") 1 0)))");
+        CHECK(resolve_miss && is_int(*resolve_miss) && as_int(*resolve_miss) == 0,
+              "3467 AC4: scope-resolve misses after settled join-all");
+        const auto fresh =
+            cs.eval(R"((let ((r (orch:scope-spawn "settle-fresh"))) (hash-ref r "ok")))");
+        CHECK(fresh && is_bool(*fresh) && as_bool(*fresh),
+              "3467 AC4: scope-spawn after settled drop creates a fresh tree");
+
+        // Source-cite: the guarded drop (root only; live-fiber + both
+        // pending flags) and the spawn-side pre-deny.
+        const auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+        CHECK(src.find("all_settled") != std::string::npos, "3467 AC4: guarded drop present");
+        CHECK(src.find("(hp.fiber && !hp.fiber->is_done())") != std::string::npos,
+              "3467 AC4: drop gate checks live body fiber");
+        CHECK(src.find("hp.must_wait_reclaimed") != std::string::npos &&
+                  src.find("hp.reclaimed_deferred_cleanup") != std::string::npos,
+              "3467 AC4: drop gate checks both pending flags");
+        CHECK(src.find("name-reuse-while-reclaimed-pending") != std::string::npos,
+              "3467 AC1: spawn pre-deny deny-detail present");
+        CHECK(read_file("tests/orch/test_issue_3467.cpp").empty() &&
+                  read_file("tests/issues/test_issue_3467.cpp").empty(),
+              "3467 AC6: no test_issue_3467.cpp (src-aligned suites only)");
     }
 
     // ── AC5: Docs source-cite (already covered inline above) ──────────

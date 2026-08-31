@@ -12,6 +12,11 @@
 //        destructor + the table).
 //   AC6: test lives under tests/orch/ (src-aligned), not tests/issues/.
 //
+// Issue #3467: same-name put over a slot that still owes Reclaimed
+// cleanup (must_wait_reclaimed / reclaimed_deferred_cleanup) is
+// typed-denied (nullptr) — the pending handle is not replaced and its
+// reservation stays held. Clean slots still replace (AC2/AC5).
+//
 // Note: AC4 (check_orch_mvp_scope.py --strict stays green) and
 // AC5 (existing agent_primitives_2011.aura + fiber_orch tests remain
 // green) are linter/integration checks; not duplicated here.
@@ -89,6 +94,7 @@ static void ac1_source_and_no_static() {
     CHECK(!header_src.empty(), "agent_name_table.h exists");
     CHECK(header_src.find("drain_for_cleanup") != std::string::npos,
           "header exposes drain_for_cleanup");
+    CHECK(header_src.find("Issue #3467") != std::string::npos, "3467 AC: put guard cites #3467");
 }
 
 // ── AC2: two AgentNameTables with same name are isolated ──────────────
@@ -265,6 +271,84 @@ static void ac3442_message_plane_resolve() {
     CHECK(nt != nullptr && nt->id == 11, "3442 AC5: name-table holds dup-3442 id=11");
 }
 
+// ── #3467: same-name put over reclaimed-pending slot is typed-denied ──
+static void ac3467_put_deny_pending() {
+    std::println("\n--- #3467: put deny over reclaimed-pending slot ---");
+
+    // AC1: must_wait_reclaimed slot is not replaced; old handle intact.
+    {
+        AgentNameTable table;
+        auto old_h = make_minimal_handle("dup-3467", 1);
+        old_h.must_wait_reclaimed = true;
+        table.put(std::move(old_h));
+        {
+            auto denied = make_minimal_handle("dup-3467", 2);
+            auto* slot = table.put(std::move(denied));
+            CHECK(slot == nullptr,
+                  "3467 AC1: put over must_wait slot returns nullptr (typed deny)");
+        }
+        auto* p = table.find("dup-3467");
+        CHECK(p != nullptr && p->id == 1, "3467 AC1: pending handle NOT replaced");
+        CHECK(p->must_wait_reclaimed, "3467 AC1: pending flags intact on old handle");
+        CHECK(table.size() == 1, "3467 AC1: table size unchanged after deny");
+
+        // AC5: after the pending flag clears (Done-path wait_reclaimed_body /
+        // ensure_reclaimed_cleanup effect), same-name put is allowed again.
+        auto* done = table.find("dup-3467");
+        CHECK(done != nullptr, "3467 AC5: slot findable before retry");
+        done->must_wait_reclaimed = false; // Done-path cleanup effect
+        auto after = make_minimal_handle("dup-3467", 7);
+        auto* slot = table.put(std::move(after));
+        CHECK(slot != nullptr && slot->id == 7,
+              "3467 AC5: put allowed after cleanup (flags cleared)");
+        CHECK(table.find("dup-3467") != nullptr && table.find("dup-3467")->id == 7,
+              "3467 AC5: replacement visible after cleanup");
+    }
+
+    // AC1b: reclaimed_deferred_cleanup slot is not replaced either.
+    {
+        AgentNameTable t2;
+        auto deferred = make_minimal_handle("deferred-3467", 3);
+        deferred.reclaimed_deferred_cleanup = true;
+        t2.put(std::move(deferred));
+        {
+            auto denied = make_minimal_handle("deferred-3467", 4);
+            CHECK(t2.put(std::move(denied)) == nullptr,
+                  "3467 AC1: put over deferred-cleanup slot denied");
+        }
+        auto* dp = t2.find("deferred-3467");
+        CHECK(dp != nullptr && dp->id == 3 && dp->reclaimed_deferred_cleanup,
+              "3467 AC1: deferred slot intact after deny");
+    }
+
+    // AC2: flags false → same-name put still replaces (today's behavior;
+    // the guard is two bool loads, no atomic, no state).
+    {
+        AgentNameTable t3;
+        t3.put(make_minimal_handle("clean-3467", 5));
+        auto* cp = t3.find("clean-3467");
+        CHECK(cp != nullptr && !cp->must_wait_reclaimed && !cp->reclaimed_deferred_cleanup,
+              "3467 AC2: clean slot flags false");
+        auto* slot = t3.put(make_minimal_handle("clean-3467", 6));
+        CHECK(slot != nullptr && slot->id == 6, "3467 AC2: clean slot still replaces");
+        CHECK(t3.find("clean-3467") != nullptr && t3.find("clean-3467")->id == 6,
+              "3467 AC2: replacement visible");
+        CHECK(t3.size() == 1, "3467 AC2: size stays 1 after replace");
+    }
+
+    // Source-cite: spawn pre-check + guarded drop in the agent prims.
+    auto src = read_file("src/compiler/evaluator_primitives_agent.cpp");
+    CHECK(src.find("Issue #3467") != std::string::npos,
+          "3467 AC: evaluator_primitives_agent.cpp cites #3467");
+    CHECK(src.find("name-reuse-while-reclaimed-pending") != std::string::npos,
+          "3467 AC1: spawn deny carries deny-detail (AgentDenyClass::Other)");
+    CHECK(src.find("all_settled") != std::string::npos,
+          "3467 AC4: scope-join-all guarded drop present");
+    CHECK(read_file("tests/orch/test_issue_3467.cpp").empty() &&
+              read_file("tests/issues/test_issue_3467.cpp").empty(),
+          "3467 AC6: no test_issue_3467.cpp (src-aligned suites only)");
+}
+
 } // namespace
 
 int run_test_agent_name_table_isolation() {
@@ -276,7 +360,8 @@ int run_test_agent_name_table_isolation() {
     ac3b_same_name_overrides();
     ac3125_cross_scope_isolation();
     ac3442_message_plane_resolve();
-    std::println("\n=== #2078/#3125/#3442: passed={} failed={} ===", g_passed, g_failed);
+    ac3467_put_deny_pending();
+    std::println("\n=== #2078/#3125/#3442/#3467: passed={} failed={} ===", g_passed, g_failed);
     return g_failed == 0 ? 0 : 1;
 }
 
