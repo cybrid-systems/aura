@@ -2296,7819 +2296,2800 @@ inline constexpr int kIrTypedEntryCommitReadinessIssue = 3224;
 inline constexpr int kJitTypedEntryEveryFunctionIssue = 3419;
 // Issue #3414: residual of #3379 — Production/Full + no live commit TC
 // must not treat default solve_status=0 as authority. depth==0 IR/JIT
-// Compute depth first - so we can short-circuit at depth==0
-// BEFORE any pre-checks consult stale global atomics (chaos test
-// cross-contamination: AC2902 stamps, AC1 warm sees residual state
-// + a different TLS, hitting the "evaluate-before-stamp" half-green
-// at depth==0 entry). half-green protection is enforced at depth > 0
-// via the rest of this function + commit_readiness(live_policy) face
-// checks downstream.
-std::size_t depth = 0;
-if (g_linear_ir_fastpath_boundary_depth_override >= 0)
-    depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
-else
-    depth = aura_evaluator_mutation_boundary_depth();
-if (depth == 0) {
+// refuses Quiet / unbound last-proof (not only Reject). Soft/Off
+// unchanged. Reuses g_linear_fast_path_elide_blocked_production_total.
+inline constexpr int kNoTlsLivePolicyDefaultSolvedIssue = 3414;
+// Issue #3416: last-proof last-writer across steal × dual-Evaluator.
+// Stamp carries TLS eval identity; IR/JIT refuse unless stamper == TLS.
+[[nodiscard]] inline bool ir_typed_entry_commit_readiness_ok() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return true;
+    // Issue #3439: compute depth first and short-circuit at depth==0
+    // BEFORE any pre-checks consult stale global atomics (chaos test
+    // cross-contamination: AC2902 stamps, AC1 warm sees residual state
+    // + a different TLS, hitting the "evaluate-before-stamp" half-green
+    // at depth==0 entry). Half-green protection is enforced at depth > 0
+    // via the rest of this function + commit_readiness(live_policy) face
+    // checks downstream. Reuses
+    // g_linear_fast_path_elide_blocked_production_total — no new counter.
+    std::size_t depth = 0;
+    if (g_linear_ir_fastpath_boundary_depth_override >= 0)
+        depth = static_cast<std::size_t>(g_linear_ir_fastpath_boundary_depth_override);
+    else
+        depth = aura_evaluator_mutation_boundary_depth();
+    if (depth == 0) {
+        return true;
+    }
+    // Issue #3359: re-sample mid-abort outstanding before granting
+    // IR/JIT entry at depth > 0 (stale CastOp must not ship).
+    if (abort_or_mid_abort_blocks_elision()) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Issue #3379: dual-authority close at depth > 0 - consult
+    // last_proof_outcome + invalidate_gen. Resolves the half-green
+    // residual where depth > 0 IR/JIT ran after an outermost Reject
+    // proof or post-rebind invalidate. Two relaxed loads - no
+    // commit_readiness call, no extra CS walk. Soft path stays unchanged
+    // (early return at the production/Full guard).
+    if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
+        kTypeLinearProofOutcomeReject) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
+        g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Issue #3305: dual-authority close — also consult the last
+    // TypeLinearCommitProof face (same SSOT as linear_fast_path_ok /
+    // linear_move_drop_elision_ok). commit_readiness_live_policy()
+    // fills faces only; solve_status / linear_ok / blame_ok stay at
+    // their defaults (solve_status=0, linear_ok=true), so mid-boundary
+    // IR entry could return true after a Reject proof was stamped
+    // while Move/Drop correctly blocks. Close the gap by consulting
+    // the proof atomics directly (pure loads, no CS walk). Reuses the
+    // existing g_linear_fast_path_elide_blocked_production_total
+    // counter so #3305 ships additive — no new query key.
+    if (g_last_proof_would_allow_commit.load(std::memory_order_relaxed) == 0 ||
+        g_last_proof_linear_ok.load(std::memory_order_relaxed) == 0) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    // Issue #3416: mid-boundary IR also requires stamper == TLS eval.
+    if (!last_proof_bound_to_current_eval()) {
+        g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    const auto cr = commit_readiness(commit_readiness_live_policy());
+    if (cr.would_allow_commit)
+        return true;
+    g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
+    return false;
+}
+
+// Issue #3030: abort / force-rollback must drop the last TypeLinearCommitProof
+// + linear_fast_path face so a later IR Move/Drop cannot elide on a
+// pre-abort stamp (half-green). Reuses the existing stamp/face/outcome
+// atomics — no second proof model. Soft: observe-only counter; face
+// still cleared (Soft never relies on stamp for commit). Quiet (no
+// face): zero extra stores beyond the four face writes (idempotent).
+inline constexpr int kTypeLinearProofClearedOnAbortIssue = 3030;
+inline std::atomic<std::uint64_t> g_type_linear_proof_cleared_on_abort_total{0};
+inline std::atomic<std::uint64_t> g_type_linear_proof_cleared_on_abort_observe_total{0};
+inline std::atomic<std::uint32_t> g_type_linear_proof_cleared_on_abort_wired{1};
+
+[[nodiscard]] inline std::uint64_t type_linear_proof_cleared_on_abort_total_v_read() noexcept {
+    return g_type_linear_proof_cleared_on_abort_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_proof_cleared_on_abort_observe_total_v_read() noexcept {
+    return g_type_linear_proof_cleared_on_abort_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_type_linear_proof_cleared_on_abort_for_test() noexcept {
+    g_type_linear_proof_cleared_on_abort_total.store(0, std::memory_order_relaxed);
+    g_type_linear_proof_cleared_on_abort_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3102 AC4: coercion commit_readiness clear on abort. Sibling of
+// clear_type_linear_commit_proof_on_abort — paired with the proof clear
+// so any post-abort commit cannot stamp green on a stale coercion view.
+// Soft bumps the observe counter; Production/Full bumps the real counter.
+// Quiet (no abort) → zero cost.
+inline constexpr int kCoercionCommitReadinessClearedOnAbortIssue = 3102;
+inline std::atomic<std::uint64_t> g_coercion_commit_readiness_cleared_on_abort_total{0};
+inline std::atomic<std::uint64_t> g_coercion_commit_readiness_cleared_on_abort_observe_total{0};
+inline std::atomic<std::uint32_t> g_coercion_commit_readiness_cleared_on_abort_wired{1};
+
+[[nodiscard]] inline std::uint64_t
+coercion_commit_readiness_cleared_on_abort_total_v_read() noexcept {
+    return g_coercion_commit_readiness_cleared_on_abort_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+coercion_commit_readiness_cleared_on_abort_observe_total_v_read() noexcept {
+    return g_coercion_commit_readiness_cleared_on_abort_observe_total.load(
+        std::memory_order_relaxed);
+}
+inline void reset_coercion_commit_readiness_cleared_on_abort_for_test() noexcept {
+    g_coercion_commit_readiness_cleared_on_abort_total.store(0, std::memory_order_relaxed);
+    g_coercion_commit_readiness_cleared_on_abort_observe_total.store(0, std::memory_order_relaxed);
+}
+
+inline void clear_coercion_commit_readiness_on_abort() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard) {
+        g_coercion_commit_readiness_cleared_on_abort_total.fetch_add(1, std::memory_order_relaxed);
+        // Issue #3359: drop the grant face so identity CastOp cannot
+        // re-arm would_allow_commit while abort / densify interleave.
+        g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    } else
+        g_coercion_commit_readiness_cleared_on_abort_observe_total.fetch_add(
+            1, std::memory_order_relaxed);
+}
+
+// Issue #3091 / #3016: declared before abort-clear / proof-build (those
+// inlines sit above the #3016 helper block). noted=true even when mid==0.
+inline thread_local std::uint64_t g_tls_boundary_audit_mid = 0;
+inline thread_local bool g_tls_boundary_audit_noted = false;
+inline std::atomic<std::uint64_t> g_last_stamped_audit_mid{0};
+
+// Purpose: drop last TypeLinearCommitProof + densify-pending inject on abort
+// Pre: call after abort_restore_dual_topology / hard force-rollback
+// Post: stamp=0, would_allow=0, linear_ok=0, outcome=Reject when a face
+//       was live; linear_fast_path_ok() == false until a fresh stamp
+// Safety Class: P0 under production/Full (missing clear is a hard residual)
+// Issue: #3030
+// AI-Native Rationale: Agents correlate abort → proof-clear → next boundary
+inline void clear_type_linear_commit_proof_on_abort() noexcept {
+    const auto stamp = g_last_type_linear_commit_proof_stamp.load(std::memory_order_relaxed);
+    const auto would = g_last_proof_would_allow_commit.load(std::memory_order_relaxed);
+    const auto lok = g_last_proof_linear_ok.load(std::memory_order_relaxed);
+    const bool had_face = stamp != 0 || would != 0 || lok != 0;
+    g_last_type_linear_commit_proof_stamp.store(0, std::memory_order_relaxed);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    g_last_proof_stamper_eval.store(0, std::memory_order_relaxed);
+    // Issue #3091: abort / force-rollback must also clear
+    // g_last_stamped_audit_mid so the next build returns audit_mid = 0
+    // (AC5). The TLS boundary mid is independently cleared by
+    // clear_boundary_audit_mid() at the outermost boundary exit.
+    g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    if (had_face)
+        g_last_type_linear_proof_outcome.store(kTypeLinearProofOutcomeReject,
+                                               std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_densify_scan_mismatch_inject_pending.store(
+        0, std::memory_order_relaxed);
+    if (!had_face)
+        return;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard)
+        g_type_linear_proof_cleared_on_abort_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_type_linear_proof_cleared_on_abort_observe_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #3193: nested abort + concurrent densify/steal authority face.
+// Reuses g_rehydrate_miss_invalidate_gen (no second proof model). Hold
+// is published BEFORE topology restore / dual_clear / persist clear /
+// proof invalidate so observers cannot rehydrate or stamp a mixed
+// CoercionMap / Occurrence persist / TypeLinearCommitProof face.
+// Soft: observe-only (no in_flight, no gen bump). Quiet (no abort):
+// helper not constructed — zero extra.
+// Issue #3232: in_flight is a nested count (not 0/1). Inner abort end
+// must not drop the face while an outer/concurrent abort is still
+// restoring dual topology. Last end publishes 0.
+inline constexpr int kNestedAbortAuthorityFaceIssue = 3193;
+inline constexpr int kNestedAbortAuthorityFaceResidualIssue = 3232;
+inline std::atomic<std::uint32_t> g_abort_authority_in_flight{0};
+inline std::atomic<std::uint64_t> g_abort_authority_hold_total{0};
+inline std::atomic<std::uint64_t> g_abort_authority_hold_observe_total{0};
+inline std::atomic<std::uint32_t> g_abort_authority_hold_wired{1};
+
+[[nodiscard]] inline bool abort_authority_blocks_rehydrate() noexcept {
+    return g_abort_authority_in_flight.load(std::memory_order_acquire) != 0;
+}
+[[nodiscard]] inline std::uint64_t abort_authority_hold_total_v_read() noexcept {
+    return g_abort_authority_hold_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t abort_authority_hold_observe_total_v_read() noexcept {
+    return g_abort_authority_hold_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_abort_authority_hold_for_test() noexcept {
+    g_abort_authority_in_flight.store(0, std::memory_order_relaxed);
+    g_abort_authority_hold_total.store(0, std::memory_order_relaxed);
+    g_abort_authority_hold_observe_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3281: mid-bound abort authority version. The #3193/#3232 face is
+// process-wide (g_abort_authority_in_flight count) — it blocks rehydrate
+// for ANY mid during ANY abort. This adds the MID key so a densify/steal
+// rehydrate for the SAME mid that had an abort-restore refuses to freeze
+// a green proof / leave residual CoercionMap / Occurrence / proof entries
+// when the abort restore completed (process face dropped) but the interleave
+// with densify/steal rehydrate is still mid-flight (AC1). Bounded 8-slot
+// table keyed by mid; version bumps per begin (nested same-mid abort →
+// outer detects interleave → force full clear + reject proof). Soft/Off:
+// begin no-ops (zero extra), version/outstanding return 0 (AC4).
+inline constexpr int kMidBoundAbortAuthorityIssue = 3281;
+inline constexpr std::size_t kMidAbortAuthoritySlots = 8;
+struct MidAbortAuthoritySlot {
+    std::atomic<std::uint64_t> mid{0};
+    std::atomic<std::uint64_t> ver{0};
+};
+inline std::array<MidAbortAuthoritySlot, kMidAbortAuthoritySlots> g_mid_abort_authority{};
+inline std::atomic<std::uint64_t> g_mid_abort_authority_mismatch_total{0};
+inline std::atomic<std::uint32_t> g_mid_abort_authority_wired{1};
+
+[[nodiscard]] inline bool mid_abort_authority_hard() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
+[[nodiscard]] inline std::uint64_t mid_abort_authority_version(std::uint64_t mid) noexcept {
+    if (mid == 0 || !mid_abort_authority_hard())
+        return 0;
+    for (const auto& s : g_mid_abort_authority) {
+        if (s.mid.load(std::memory_order_acquire) == mid)
+            return s.ver.load(std::memory_order_acquire);
+    }
+    return 0;
+}
+
+// True when an abort-restore for THIS mid is outstanding. Densify/steal
+// rehydrate + outermost-success persist consult this to refuse freezing a
+// green proof on a mid whose abort clears are still in flight (AC1/AC2).
+[[nodiscard]] inline bool mid_abort_authority_outstanding(std::uint64_t mid) noexcept {
+    return mid_abort_authority_version(mid) != 0;
+}
+
+// Capture the mid-bound authority version at abort enter (production/Full
+// only). Returns 0 when not armed (Soft/Off or table full → process-wide
+// face still guards). Nested same-mid abort bumps the version so the outer
+// abort detects the interleave after its clears.
+[[nodiscard]] inline std::uint64_t begin_mid_abort_authority(std::uint64_t mid) noexcept {
+    if (mid == 0 || !mid_abort_authority_hard())
+        return 0;
+    for (auto& s : g_mid_abort_authority) {
+        std::uint64_t expected = 0;
+        if (s.mid.compare_exchange_strong(expected, mid, std::memory_order_acq_rel,
+                                          std::memory_order_relaxed)) {
+            s.ver.store(1, std::memory_order_release);
+            // Issue #3359: mid-bound abort enter also drops the CoercionMap
+            // commit-readiness face (identity CastOp cannot re-grant).
+            clear_coercion_commit_readiness_on_abort();
+            return 1;
+        }
+        if (s.mid.load(std::memory_order_acquire) == mid) {
+            const auto v = s.ver.load(std::memory_order_relaxed);
+            s.ver.store(v + 1, std::memory_order_release);
+            clear_coercion_commit_readiness_on_abort();
+            return v + 1;
+        }
+    }
+    return 0; // table full → process-wide in_flight face still blocks rehydrate
+}
+
+// Release the mid-bound authority slot at abort end. Nested same-mid
+// aborts decrement (matching the process-wide nested count semantics:
+// last end publishes 0 / clears the slot). A concurrent densify/steal
+// rehydrate that observes an outstanding mid version for THIS mid must
+// refuse to freeze a green proof (AC1).
+inline void end_mid_abort_authority(std::uint64_t mid) noexcept {
+    if (mid == 0)
+        return;
+    for (auto& s : g_mid_abort_authority) {
+        if (s.mid.load(std::memory_order_acquire) != mid)
+            continue;
+        auto v = s.ver.load(std::memory_order_relaxed);
+        while (v > 1 && !s.ver.compare_exchange_weak(v, v - 1, std::memory_order_release,
+                                                     std::memory_order_relaxed)) {
+        }
+        if (v <= 1) {
+            s.mid.store(0, std::memory_order_release);
+            s.ver.store(0, std::memory_order_release);
+        }
+        return;
+    }
+}
+
+inline void reset_mid_abort_authority_for_test() noexcept {
+    for (auto& s : g_mid_abort_authority) {
+        s.mid.store(0, std::memory_order_relaxed);
+        s.ver.store(0, std::memory_order_relaxed);
+    }
+    g_mid_abort_authority_mismatch_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #3359: Production/Full refuse elision while abort × densify
+// interleave is live. Soft: false (observe-only). Quiet: no abort →
+// four acquire loads that miss (zero extra stores).
+[[nodiscard]] inline bool abort_or_mid_abort_blocks_elision() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return false;
+    if (g_abort_authority_in_flight.load(std::memory_order_acquire) != 0)
+        return true;
+    const auto tls_mid = g_tls_boundary_audit_mid;
+    if (tls_mid != 0 && mid_abort_authority_outstanding(tls_mid))
+        return true;
+    for (const auto& s : g_mid_abort_authority) {
+        if (s.mid.load(std::memory_order_acquire) != 0)
+            return true;
+    }
+    // Issue #3225: odd persist seqlock → densify/abort write in flight.
+    if ((g_occurrence_persist_seq.load(std::memory_order_acquire) & 1ull) != 0)
+        return true;
+    return false;
+}
+
+// Returns true when production/Full actually armed the hold.
+[[nodiscard]] inline bool begin_abort_authority_hold() noexcept {
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_abort_authority_hold_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_abort_authority_in_flight.fetch_add(1, std::memory_order_release);
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_abort_authority_hold_total.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3359: clear CoercionMap commit-readiness at abort enter
+    // (symmetric to proof clear) so identity elision cannot re-grant
+    // while abort × densify is in flight.
+    clear_coercion_commit_readiness_on_abort();
     return true;
 }
-// Issue #3359: re-sample mid-abort outstanding before granting
-// IR/JIT entry at depth > 0 (stale CastOp must not ship).
-if (abort_or_mid_abort_blocks_elision()) {
-    g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
-    return false;
-}
-// Issue #3379: dual-authority close at depth > 0 - consult
-// last_proof_outcome + invalidate_gen. Resolves the half-green
-// residual where depth > 0 IR/JIT ran after an outermost Reject
-// proof or post-rebind invalidate. Two relaxed loads - no
-// commit_readiness call, no extra CS walk. Soft path stays unchanged
-// (early return at the production/Full guard).
-if (g_last_type_linear_proof_outcome.load(std::memory_order_relaxed) ==
-    kTypeLinearProofOutcomeReject) {
-    g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
-    return false;
-}
-if (g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) !=
-    g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed)) {
-    g_linear_fast_path_elide_blocked_production_total.fetch_add(1, std::memory_order_relaxed);
-    return false;
+inline void end_abort_authority_hold() noexcept {
+    // Issue #3232: nested/concurrent — last end drops the face.
+    std::uint32_t cur = g_abort_authority_in_flight.load(std::memory_order_relaxed);
+    while (cur > 0 && !g_abort_authority_in_flight.compare_exchange_weak(
+                          cur, cur - 1, std::memory_order_release, std::memory_order_relaxed)) {
+    }
 }
 
+struct AbortAuthorityHold {
+    AbortAuthorityHold() noexcept
+        : held_(begin_abort_authority_hold()) {}
+    ~AbortAuthorityHold() noexcept {
+        if (held_)
+            end_abort_authority_hold();
+    }
+    AbortAuthorityHold(const AbortAuthorityHold&) = delete;
+    AbortAuthorityHold& operator=(const AbortAuthorityHold&) = delete;
 
+private:
+    bool held_;
+};
+
+[[nodiscard]] inline std::uint64_t last_proof_live_goal_count_v_read() noexcept {
+    return g_last_proof_live_goal_count.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t last_proof_linear_root_count_v_read() noexcept {
+    return g_last_proof_linear_root_count.load(std::memory_order_relaxed);
+}
+
+// Issue #2984: arena compact vs last TypeLinearCommitProof.linear_root_count.
+// Quiet (last==0): no collect. Soft: observe only. Production/Full mismatch
+// latches a reject face so the next Success stamp cannot stay green.
+inline constexpr int kLinearCompactRootConsistencyIssue = 2984;
+inline std::atomic<std::uint8_t> g_linear_compact_root_mismatch_face{0};
+inline std::atomic<std::uint64_t> g_linear_compact_root_check_total{0};
+inline std::atomic<std::uint64_t> g_linear_compact_root_mismatch_observe_total{0};
+inline std::atomic<std::uint64_t> g_linear_compact_root_mismatch_total{0};
+inline std::atomic<std::uint32_t> g_linear_compact_root_mismatch_wired{1};
+
+inline void set_last_proof_linear_root_count_for_test(std::uint64_t n) noexcept {
+    g_last_proof_linear_root_count.store(n, std::memory_order_relaxed);
+}
+
+inline void reset_linear_compact_root_consistency_for_test() noexcept {
+    g_linear_compact_root_mismatch_face.store(0, std::memory_order_relaxed);
+    g_linear_compact_root_check_total.store(0, std::memory_order_relaxed);
+    g_linear_compact_root_mismatch_observe_total.store(0, std::memory_order_relaxed);
+    g_linear_compact_root_mismatch_total.store(0, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline std::uint64_t linear_compact_root_check_total_v_read() noexcept {
+    return g_linear_compact_root_check_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_compact_root_mismatch_observe_total_v_read() noexcept {
+    return g_linear_compact_root_mismatch_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t linear_compact_root_mismatch_total_v_read() noexcept {
+    return g_linear_compact_root_mismatch_total.load(std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool linear_compact_root_mismatch_blocks_proof() noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return false;
+    return g_linear_compact_root_mismatch_face.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint64_t last_proof_goal_fingerprint_v_read() noexcept {
+    return g_last_proof_goal_fingerprint.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t type_linear_commit_proof_counts_filled_total_v_read() noexcept {
+    return g_type_linear_commit_proof_counts_filled_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_commit_proof_goal_truth_stamped_total_v_read() noexcept {
+    return g_type_linear_commit_proof_goal_truth_stamped_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_commit_proof_goal_fingerprint_nonzero_total_v_read() noexcept {
+    return g_type_linear_commit_proof_goal_fingerprint_nonzero_total.load(
+        std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t
+type_linear_commit_proof_goal_truth_gauge_fallback_total_v_read() noexcept {
+    return g_type_linear_commit_proof_goal_truth_gauge_fallback_total.load(
+        std::memory_order_relaxed);
+}
+inline void publish_proof_live_goal_count(std::uint64_t n) noexcept {
+    g_proof_live_goal_count_gauge.store(n, std::memory_order_relaxed);
+}
+inline void clear_proof_goal_truth_for_test() noexcept {
+    g_last_proof_goal_fingerprint.store(0, std::memory_order_relaxed);
+    g_type_linear_commit_proof_goal_truth_stamped_total.store(0, std::memory_order_relaxed);
+    g_type_linear_commit_proof_goal_fingerprint_nonzero_total.store(0, std::memory_order_relaxed);
+    g_type_linear_commit_proof_goal_truth_gauge_fallback_total.store(0, std::memory_order_relaxed);
+    g_last_proof_live_goal_count.store(0, std::memory_order_relaxed);
+    g_proof_live_goal_count_gauge.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2842: mix one OccurrenceGoal into a bounded fingerprint.
+// Fields: var.index + refined.index + pred_nid + mid + epoch (issue AC).
+// Pure POD — stamp sites iterate CS goals and call this (header cannot
+// import TypeChecker / OccurrenceGoal module).
+[[nodiscard]] inline std::uint64_t
+mix_occurrence_goal_into_fingerprint(std::uint64_t h, std::uint32_t var_index,
+                                     std::uint32_t refined_index, std::uint32_t predicate_cond_node,
+                                     std::uint64_t source_mutation_id,
+                                     std::uint64_t epoch) noexcept {
+    // Boost-style hash_combine (stable, no heap).
+    auto mix = [](std::uint64_t seed, std::uint64_t v) noexcept -> std::uint64_t {
+        seed ^= v + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2);
+        return seed;
+    };
+    h = mix(h, static_cast<std::uint64_t>(var_index));
+    h = mix(h, static_cast<std::uint64_t>(refined_index));
+    h = mix(h, static_cast<std::uint64_t>(predicate_cond_node));
+    h = mix(h, source_mutation_id);
+    h = mix(h, epoch);
+    return h;
+}
+
+// Issue #2842: frozen goal truth at stamp. from_cs=true when caller read
+// occurrence_goals_size() + fingerprint from live CS (preferred). from_cs=
+// false means gauge fallback (production miss counter bumped by builder).
+struct ProofGoalTruth {
+    std::uint64_t live_goal_count = 0;
+    std::uint64_t goal_fingerprint = 0;
+    bool from_cs = false;
+    // Issue #3418: live_goal_count exceeded kProofGoalFingerprintMaxGoals.
+    // Appended at END. Production/Full treat as occurrence_consistent=false.
+    bool fingerprint_overflow = false;
+};
+
+// Quiet default (empty goals, zero extra cost).
+inline constexpr ProofGoalTruth kQuietProofGoalTruth{};
+
+// Apply goal truth into proof + gauges. from_cs path bumps truth-stamped
+// counter; non-empty fingerprint bumps nonzero counter. Gauge fallback
+// under production bumps miss counter (AC Soft vs production table).
+inline void apply_proof_goal_truth(TypeLinearCommitProof& p, const ProofGoalTruth& truth) noexcept {
+    p.live_goal_count = truth.live_goal_count;
+    p.goal_fingerprint = truth.goal_fingerprint;
+    g_proof_live_goal_count_gauge.store(truth.live_goal_count, std::memory_order_relaxed);
+    g_last_proof_live_goal_count.store(p.live_goal_count, std::memory_order_relaxed);
+    g_last_proof_goal_fingerprint.store(p.goal_fingerprint, std::memory_order_relaxed);
+    if (truth.from_cs) {
+        g_type_linear_commit_proof_goal_truth_stamped_total.fetch_add(1, std::memory_order_relaxed);
+    } else if (production_defaults_active()) {
+        // Gauge-only under production: CS pointer unavailable at stamp.
+        g_type_linear_commit_proof_goal_truth_gauge_fallback_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+    if (p.goal_fingerprint != 0) {
+        g_type_linear_commit_proof_goal_fingerprint_nonzero_total.fetch_add(
+            1, std::memory_order_relaxed);
+    }
+}
+
+// Resolve goal truth from optional CS hint. When live_goal_count_hint is
+// kProofLiveGoalCountHintAuto and fingerprint is 0 with !from_cs, use gauge
+// (legacy #2758 path). When hint is explicit CS size, from_cs should be true.
+[[nodiscard]] inline ProofGoalTruth resolve_proof_goal_truth(std::uint64_t live_goal_count_hint,
+                                                             std::uint64_t goal_fingerprint,
+                                                             bool goal_truth_from_cs) noexcept {
+    ProofGoalTruth t{};
+    if (goal_truth_from_cs || live_goal_count_hint != kProofLiveGoalCountHintAuto) {
+        t.live_goal_count =
+            (live_goal_count_hint == kProofLiveGoalCountHintAuto) ? 0 : live_goal_count_hint;
+        t.goal_fingerprint = goal_fingerprint;
+        // Non-empty goals with zero fingerprint is invalid under CS truth —
+        // force a non-zero sentinel so Agents still see content present.
+        if (t.live_goal_count > 0 && t.goal_fingerprint == 0)
+            t.goal_fingerprint = 1;
+        // Empty goals → fingerprint must be 0 (quiet).
+        if (t.live_goal_count == 0)
+            t.goal_fingerprint = 0;
+        t.from_cs = goal_truth_from_cs || (live_goal_count_hint != kProofLiveGoalCountHintAuto);
+        t.fingerprint_overflow = t.live_goal_count > kProofGoalFingerprintMaxGoals;
+        return t;
+    }
+    // Gauge fallback (no CS at stamp).
+    t.live_goal_count = g_proof_live_goal_count_gauge.load(std::memory_order_relaxed);
+    t.goal_fingerprint = g_last_proof_goal_fingerprint.load(std::memory_order_relaxed);
+    if (t.live_goal_count == 0)
+        t.goal_fingerprint = 0;
+    t.from_cs = false;
+    t.fingerprint_overflow = t.live_goal_count > kProofGoalFingerprintMaxGoals;
+    return t;
+}
+
+// Issue #3346: last-look immediately before TypeLinearCommitProof atomic
+// last_proof stores. Production success stamp re-reads live fingerprint +
+// live_goal_count (CS, when TLS tc was noted) + linear_root_count and
+// refuses green if they drifted vs the freeze/collect, or if
+// mid_abort_authority is outstanding for the stamp mid. Soft/Off: one
+// production_defaults_active / strategy load, then return (AC4). Reuses
+// mid_abort_authority_mismatch_total + invalidate_gen; no new query key.
+inline constexpr int kStampLastLookIssue = 3346;
+inline thread_local void* g_tls_stamp_last_look_tc = nullptr;
+inline thread_local bool g_tls_stamp_last_look_rejected = false;
+
+inline void note_stamp_last_look_tc(void* tc_handle) noexcept {
+    g_tls_stamp_last_look_tc = tc_handle;
+}
+inline void clear_stamp_last_look_tc() noexcept {
+    g_tls_stamp_last_look_tc = nullptr;
+    g_tls_stamp_last_look_rejected = false;
+}
+[[nodiscard]] inline bool stamp_last_look_rejected() noexcept {
+    return g_tls_stamp_last_look_rejected;
+}
+
+[[nodiscard]] inline bool stamp_last_look_hard() noexcept {
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
+[[nodiscard]] inline std::uint64_t stamp_last_look_join_mid(std::uint64_t stamp_mid) noexcept {
+    if (stamp_mid != 0)
+        return stamp_mid;
+    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        return g_tls_boundary_audit_mid;
+    return g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+}
+
+// Purpose: last-look live fingerprint / live_goal_count / linear_root_count
+//          + mid_abort_authority immediately before atomic last_proof stores
+// Pre: expected_* already resolved from freeze/collect (not hint sentinels)
+// Post: true → stamp may proceed; false → caller must reject (no green)
+// Soft/Off: true immediately (zero extra walks / CS consult)
+[[nodiscard]] inline bool stamp_last_look_live_matches(std::uint64_t expected_live_goal_count,
+                                                       std::uint64_t expected_fingerprint,
+                                                       std::uint64_t expected_linear_root_count,
+                                                       std::uint64_t stamp_mid) noexcept {
+    if (!stamp_last_look_hard())
+        return true; // AC4 Soft/Off zero extra
+    if (mid_abort_authority_outstanding(stamp_last_look_join_mid(stamp_mid))) {
+        g_mid_abort_authority_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    const auto live_roots =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    if (live_roots != expected_linear_root_count)
+        return false;
+    if (void* tc = g_tls_stamp_last_look_tc) {
+        if (aura_stamp_last_look_cs_matches(tc, expected_live_goal_count, expected_fingerprint) ==
+            0)
+            return false;
+    }
+    return true;
+}
+
+inline void reject_stamp_last_look_mismatch(TypeLinearCommitProof& p,
+                                            ProofGoalTruth& truth) noexcept {
+    g_tls_stamp_last_look_rejected = true;
+    p.would_allow_commit = false;
+    p.linear_ok = false;
+    p.occurrence_consistent = false;
+    p.force_reason_code = 16;
+    // Fail-closed gauges: do not publish the torn freeze as last_proof.
+    truth.live_goal_count = 0;
+    truth.goal_fingerprint = 0;
+    p.linear_root_count = 0;
+    if (void* tc = g_tls_stamp_last_look_tc)
+        (void)clear_occurrence_persist_buffer(tc);
+    (void)invalidate_fast_path_on_rehydrate_miss();
+}
+
+// Issue #3416 AC3: live_goal_count vs linear_root_count mismatch on the
+// stamper → Reject (force_reason 16), no green face. Soft/Off skip.
+// Issue #3418: prefix mix of kProofGoalFingerprintMaxGoals is not
+// authority when live_goal_count overflowed. Production/Full refuse
+// green (force_reason 16, occurrence_consistent=false). Soft/Off skip.
+inline void reject_fingerprint_cap_overflow(TypeLinearCommitProof& p,
+                                            const ProofGoalTruth& truth) noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    if (!p.would_allow_commit)
+        return;
+    if (!truth.fingerprint_overflow && truth.live_goal_count <= kProofGoalFingerprintMaxGoals)
+        return;
+    p.would_allow_commit = false;
+    p.linear_ok = false;
+    p.occurrence_consistent = false;
+    p.force_reason_code = 16;
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    (void)invalidate_fast_path_on_rehydrate_miss();
+}
+
+inline void reject_stamper_live_goal_linear_root_mismatch(TypeLinearCommitProof& p) noexcept {
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    if (!p.would_allow_commit)
+        return;
+    if (p.live_goal_count == p.linear_root_count)
+        return;
+    p.would_allow_commit = false;
+    p.linear_ok = false;
+    p.occurrence_consistent = false;
+    p.force_reason_code = 16;
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    (void)invalidate_fast_path_on_rehydrate_miss();
+}
+
+// Build a TypeLinearCommitProof from live state. Pure read of existing
+// surfaces + collect_linear_or_dirty_roots_for_rebind (#2723/#2742) for
+// linear_root_count. live_goal_count from optional hint (stamp site with
+// TypeChecker CS) or process gauge (default 0). Cheap on quiet path:
+// empty collect short-circuit + zero goals → both counts 0 (AC2 #2758).
+// Issue #2842: goal_fingerprint frozen with live_goal_count when CS truth
+// is passed (from_cs); gauge is fallback only when CS unavailable.
+// Fields:
+//   - readiness_bp / force_reason_code / would_allow_commit: from
+//     commit_readiness_live_policy().
+//   - linear_ok / occurrence_consistent: from live readiness input.
+//   - defuse_or_epoch_stamp: caller current_epoch_or_defuse.
+//   - live_goal_count + linear_root_count: real walks (#2758; was zero
+//     hard-code under #2717 / #2708 residual).
+//   - goal_fingerprint: #2842 bounded content hash of live goals.
+// live_goal_count_hint: UINT64_MAX = use process gauge; else use hint.
+// goal_truth_from_cs: true when hint came from occurrence_goals_size().
+inline TypeLinearCommitProof build_type_linear_commit_proof_from_live(
+    std::uint64_t current_epoch_or_defuse,
+    std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
+    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false) noexcept {
+    g_tls_stamp_last_look_rejected = false;
+    TypeLinearCommitProof p{};
+    const auto ready = commit_readiness_live_policy();
+    const auto live_r = commit_readiness(ready);
+    p.readiness_bp = live_r.readiness_bp;
+    p.force_reason_code = static_cast<std::uint32_t>(live_r.force_reason_code);
+    p.would_allow_commit = live_r.would_allow_commit;
+    p.linear_ok = ready.linear_ok;
+    p.occurrence_consistent = ready.cs_has_work || !ready.expected_partial;
+    p.defuse_or_epoch_stamp = current_epoch_or_defuse;
+    // Issue #2758: real linear_root_count via collect_linear_or_dirty_roots
+    // (#2723 nonempty span + #2742 dirty-pin fallback). Quiet path:
+    // empty span → 0, no extra alloc beyond existing short-circuit.
+    p.linear_root_count =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    // Issue #2842 / #2758: freeze goal truth (CS size + fingerprint preferred).
+    auto truth =
+        resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
+    // Issue #3091: stamp audit_mid from TLS boundary-noted mid (preferred)
+    // or fall back to g_last_stamped_audit_mid (last successful resolve).
+    // Soft / no boundary note → audit_mid = 0 (AC4 zero-cost contract).
+    p.audit_mid = g_tls_boundary_audit_noted
+                      ? g_tls_boundary_audit_mid
+                      : g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+    // Issue #3346 AC1/AC2: last-look live fingerprint + live_goal_count +
+    // linear_root_count + mid_abort_authority immediately before atomic
+    // last_proof stores. Mismatch → reject (clear persist + invalidate_gen
+    // + no green). Soft/Off: helper returns true with zero extra walks.
+    if (p.would_allow_commit &&
+        !stamp_last_look_live_matches(truth.live_goal_count, truth.goal_fingerprint,
+                                      p.linear_root_count, p.audit_mid))
+        reject_stamp_last_look_mismatch(p, truth);
+    apply_proof_goal_truth(p, truth);
+    reject_fingerprint_cap_overflow(p, truth);
+    reject_stamper_live_goal_linear_root_mismatch(p);
+    p.schema = kTypeLinearCommitProofIssue;
+    // Last stamped linear_root for query / Agent drift detect (AC3).
+    g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
+    if (p.linear_root_count > 0 || p.live_goal_count > 0) {
+        g_type_linear_commit_proof_counts_filled_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Bump the stamped total (additive — surface for Agent
+    // dashboards to attribute "active stamp fired" vs "face fired
+    // but Soft path observed only").
+    g_type_linear_commit_proof_stamped_total.fetch_add(1, std::memory_order_relaxed);
+    // Also stamp the epoch (existing low-level helper) so the
+    // existing query:last-type-linear-commit-proof path stays
+    // additive — query path returns the latest stamp epoch.
+    stamp_type_linear_commit_proof(current_epoch_or_defuse);
+    // Issue #2899: publish face bits for IR Move/Drop fast-path.
+    publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    // Issue #3346: stamp-site TLS is not valid after this builder returns
+    // (stack TypeCheckers in tests). Rejected flag stays for outermost.
+    g_tls_stamp_last_look_tc = nullptr;
+    return p;
+}
+
+// Issue #2854: stamp proof with explicit would_allow_commit + linear_ok
+// (set by caller from the rebind + scan outcome). Ensures no success
+// proof outlives a failed rebind on the same exit (#2854 AC2). The
+// caller MUST bump type_linear_proof_stamped_after_rebind_total (success)
+// or type_linear_proof_reject_after_rebind_fail_total (fail) separately
+// so dashboards can distinguish ordered stamps from pre-#2854 stamps.
+// Mirrors the existing live-stamp path (linear_root_count from post-remap
+// collect via linear_or_dirty_roots_count_for_rebind; epoch + last-count
+// gauges populated for Agent drift detect). Issue #2842: same goal truth
+// freeze as the live path.
+inline TypeLinearCommitProof build_type_linear_commit_proof_from_live_with_outcome(
+    std::uint64_t current_epoch_or_defuse, bool explicit_would_allow_commit,
+    bool explicit_linear_ok, std::uint64_t live_goal_count_hint = kProofLiveGoalCountHintAuto,
+    std::uint64_t goal_fingerprint = 0, bool goal_truth_from_cs = false,
+    std::uint32_t explicit_force_reason_code = static_cast<std::uint32_t>(-1)) noexcept {
+    g_tls_stamp_last_look_rejected = false;
+    TypeLinearCommitProof p{};
+    p.readiness_bp = 0;
+    p.force_reason_code = explicit_force_reason_code;
+    // Issue #2854: explicit outcome overrides the live-state defaults.
+    // linear_root_count still comes from the post-remap collect so AC1
+    // (success proof linear_root_count matches post-remap collect) holds.
+    p.would_allow_commit = explicit_would_allow_commit;
+    p.linear_ok = explicit_linear_ok;
+    p.occurrence_consistent = explicit_linear_ok;
+    p.defuse_or_epoch_stamp = current_epoch_or_defuse;
+    p.linear_root_count =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    auto truth =
+        resolve_proof_goal_truth(live_goal_count_hint, goal_fingerprint, goal_truth_from_cs);
+    // Issue #3091: stamp audit_mid same as the live-stamp path (TLS
+    // boundary-noted mid preferred; fallback to g_last_stamped_audit_mid;
+    // Soft / no boundary → 0). Same mid as the Typed trail / SE so Agent
+    // joins via single mid across proof ↔ SE ↔ trail.
+    p.audit_mid = g_tls_boundary_audit_noted
+                      ? g_tls_boundary_audit_mid
+                      : g_last_stamped_audit_mid.load(std::memory_order_relaxed);
+    // Issue #2981: same-txn safety net — never leave a green proof when
+    // #2704 hard face is latched and CS goals are empty (prefer CS
+    // truth over gauge). Soft never enters the helper.
+    if (p.would_allow_commit && occurrence_empty_after_fence_blocks_proof(truth.live_goal_count)) {
+        p.would_allow_commit = false;
+        p.linear_ok = false;
+        p.occurrence_consistent = false;
+        p.force_reason_code = 11; // occurrence_empty_after_fence
+        g_type_linear_proof_reject_empty_after_fence_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    // Issue #2984: compact mismatch latches reject before Success trail.
+    if (p.would_allow_commit && linear_compact_root_mismatch_blocks_proof()) {
+        p.would_allow_commit = false;
+        p.linear_ok = false;
+        p.occurrence_consistent = false;
+        p.force_reason_code = 3; // linear
+    }
+    // Issue #3346 AC1/AC2: last-look immediately before atomic last_proof
+    // stores (outermost + densify Phase-5 + steal success). Soft/Off skip.
+    if (p.would_allow_commit &&
+        !stamp_last_look_live_matches(truth.live_goal_count, truth.goal_fingerprint,
+                                      p.linear_root_count, p.audit_mid))
+        reject_stamp_last_look_mismatch(p, truth);
+    apply_proof_goal_truth(p, truth);
+    reject_fingerprint_cap_overflow(p, truth);
+    reject_stamper_live_goal_linear_root_mismatch(p);
+    p.schema = kTypeLinearCommitProofIssue;
+    // Last stamped linear_root for query / Agent drift detect (same as live path).
+    g_last_proof_linear_root_count.store(p.linear_root_count, std::memory_order_relaxed);
+    if (p.linear_root_count > 0 || p.live_goal_count > 0) {
+        g_type_linear_commit_proof_counts_filled_total.fetch_add(1, std::memory_order_relaxed);
+    }
+    g_type_linear_commit_proof_stamped_total.fetch_add(1, std::memory_order_relaxed);
+    stamp_type_linear_commit_proof(current_epoch_or_defuse);
+    // Issue #2899: publish face bits for IR Move/Drop fast-path.
+    publish_last_proof_face(p.would_allow_commit, p.linear_ok);
+    g_tls_stamp_last_look_tc = nullptr;
+    return p;
+}
+
+// Issue #2984: post-arena-compact linear_root_count vs last proof.
+// last==0 → return without collect (AC3). Mismatch: Soft observe;
+// production/Full latch face + stamp reject (force_reason linear=3).
+// Aligns with #2673 densify scan family (same linear-root consistency).
+inline bool note_arena_compact_linear_root_consistency() noexcept {
+    const auto last = last_proof_linear_root_count_v_read();
+    if (last == 0)
+        return false; // AC3: no extra collect
+    g_linear_compact_root_check_total.fetch_add(1, std::memory_order_relaxed);
+    const auto n =
+        static_cast<std::uint64_t>(aura::compiler::linear_or_dirty_roots_count_for_rebind());
+    if (n == last)
+        return false;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (!hard) {
+        g_linear_compact_root_mismatch_observe_total.fetch_add(1, std::memory_order_relaxed);
+        return false;
+    }
+    g_linear_compact_root_mismatch_total.fetch_add(1, std::memory_order_relaxed);
+    g_linear_compact_root_mismatch_face.store(1, std::memory_order_relaxed);
+    const auto epoch = last_type_linear_commit_proof_stamp_v_read();
+    (void)build_type_linear_commit_proof_from_live_with_outcome(
+        epoch == 0 ? 1 : epoch, /*would_allow=*/false, /*linear_ok=*/false,
+        kProofLiveGoalCountHintAuto, 0, false, /*force_reason=*/3);
+    publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    return true;
+}
+
+// Issue #3227: post-compact / hot-update remount must re-bind linear
+// proof before the next IR/JIT Move/Drop elision. Reuses #2984 compact
+// consistency + the densify/steal invalidate_gen (#3032/#3063) so
+// Agents see one face. Soft: #2984 observe-only. Production/Full: drop
+// green face + advance gen until the next outermost
+// publish_last_proof_face. Count-matched remaps still reject (root
+// identities may have moved). No new query key.
+// Issue #3448: last==0 is quiet only when there is no published green
+// face. A green stamp with linear_root_count==0 (non-linear stamp, or
+// stamp before roots were discovered) must still drop
+// g_last_proof_would_allow_commit / g_last_proof_linear_ok under
+// Production/Full so remount cannot keep Move/Drop elision green.
+// Soft last==0 green does not hard-drop. No second proof model.
+inline constexpr int kLinearPostMigrationProofRebindIssue = 3227;
+inline constexpr int kLinearZeroRootGreenFaceDropIssue = 3448;
+[[nodiscard]] inline bool rebind_linear_proof_after_root_migration() noexcept {
+    const auto last = last_proof_linear_root_count_v_read();
+    const bool green_face = g_last_proof_would_allow_commit.load(std::memory_order_relaxed) != 0 ||
+                            g_last_proof_linear_ok.load(std::memory_order_relaxed) != 0;
+    // last==0 && !green: still quiet (no extra collect). Issue #3448.
+    if (last == 0 && !green_face)
+        return false;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (last == 0) {
+        // last==0 + green face. Soft/Off: no hard-drop (AC4). Production:
+        // drop face + advance gen even though #2984 count-mismatch does
+        // not fire (last==0). One extra live-root count so remount
+        // introducing roots is observed; drop regardless of match.
+        if (!hard)
+            return false;
+        (void)aura::compiler::linear_or_dirty_roots_count_for_rebind();
+        g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+        g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+        g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+        return true;
+    }
+    const bool mismatch = note_arena_compact_linear_root_consistency();
+    if (!hard)
+        return mismatch;
+    g_rehydrate_miss_invalidate_gen.fetch_add(1, std::memory_order_release);
+    g_last_proof_would_allow_commit.store(0, std::memory_order_relaxed);
+    g_last_proof_linear_ok.store(0, std::memory_order_relaxed);
+    if (!mismatch)
+        publish_type_linear_proof_outcome(kTypeLinearProofOutcomeReject);
+    return true;
+}
+
+[[nodiscard]] inline std::int64_t commit_readiness_reason_code(std::string_view r) noexcept {
+    if (r == "cone_truncate")
+        return 9; // #2621
+    if (r == "cone_outside_goal_drop")
+        return 10; // #2703
+    if (r == "occurrence_empty_after_fence")
+        return 11; // #2704
+    if (r == "auto_partial")
+        return 6; // #2610
+    if (r == "log_forces_partial")
+        return 12; // #2851
+    if (r == "empty_cs")
+        return 5;
+    if (r == "truncate")
+        return 4;
+    if (r == "linear")
+        return 3;
+    if (r == "blame")
+        return 2;
+    if (r == "solve")
+        return 1;
+    if (r == "cone_outside_goal_drop")
+        return 10; // #2703 / #2716
+    if (r == "occurrence_empty_after_fence")
+        return 11; // #2704 / #2716
+    if (r == "region_type_cross_talk")
+        return 13; // #2847
+    if (r == "required_type")
+        return 14; // #2898
+    if (r == "refined_drift")
+        return 15; // #2911
+    if (r == "pending_full_solve_residual")
+        return 16; // #3031
+    return 0;      // ok
+}
+
+// Issue #2716 / #2750: occurrence hard-face recover state (must be declared
+// before commit_readiness uses them — inline header ODR-safe).
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_full_solve_recover_total{0};
+// Issue #2750: true recover success/fail (distinct from #2716 reject-arm bump).
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_success_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_hard_face_recover_fail_total{0};
+// Issue #3108: post-recover re-gate on solve_status==0 (anti half-green after
+// occurrence hard-face recover). The existing per-face guards
+// (`if (recovered && in.solve_status != 0) recovered = false;`) are local;
+// some fall-through paths (line 2406 direct `if` usage, future faces) may
+// still allow recovered==true under CONFLICT/TIMEOUT. The
+// `g_occurrence_recover_not_solved_total` counter tracks every time the
+// re-gate forces a recovered->false flip, so production-soak /
+// agent-self-modify gates can observe the half-green residual.
+//
+// Quiet path (no recover attempted) stays zero extra atomics: the bump
+// lives inside the `if (recovered && in.solve_status != 0)` branch which
+// is cold (only fires when a recover hook returns true under non-SOLVED).
+inline constexpr int kOccurrenceRecoverNotSolvedIssue = 3108;
+inline std::atomic<std::uint64_t> g_occurrence_recover_not_solved_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_recover_not_solved_wired{1};
+// Issue #2909: force-closure counters (must be before commit_readiness).
+// Full definitions / accessors also live near #2703 face section.
+inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_attempt_total{0};
+inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_total{0};
+inline std::atomic<std::uint64_t> g_cone_truncate_force_closure_reject_total{0};
+inline std::atomic<std::uint32_t> g_cone_truncate_force_closure_wired{1};
+// Issue #2962: Agent-facing residual of #2909 — recover must reach SOLVED
+// (goals consistent); hard-reject force_reason cone_outside_goal_drop when
+// recover fails or returns "success" without SOLVED (half-green close).
+// Soft: observe only (no hard path). Quiet: no extra atomics beyond face loads.
+inline constexpr int kConeOutsideGoalDropRecoverRejectIssue = 2962;
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_recover_ok_total{0};
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_reject_total{0};
+inline std::atomic<std::uint32_t> g_cone_outside_goal_drop_recover_reject_wired{1};
+// Issue #2911: unified refined-consistency face (must be before commit_readiness).
+// Soft vs production decision table (#2911 AC6 — code comments only):
+//   Soft + drift        → observe counter; allow
+//   production/Full + drift → hard reject or full-solve recover
+//   no refined activity → zero cost (face clear; no extra loads beyond faces)
+inline constexpr int kRefinedConsistencyGateIssue = 2911;
+inline std::atomic<std::uint8_t> g_refined_consistency_drift_face{0};
+// Issue #3031: pending_full_solve / locality residual at composite commit.
+// Quiet (count=0): no extra atomics beyond the two loads in drain.
+// Soft: observe only. Production/Full: escalate then latch face on reject.
+inline constexpr int kPendingFullSolveResidualIssue = 3031;
+inline std::atomic<std::uint8_t> g_pending_full_solve_residual_face{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_last{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_observe_total{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_escalate_total{0};
+inline std::atomic<std::uint64_t> g_pending_full_solve_residual_reject_total{0};
+inline std::atomic<std::uint32_t> g_pending_full_solve_residual_wired{1};
+
+[[nodiscard]] inline bool pending_full_solve_residual_face_hit() noexcept {
+    // Issue #3316: acquire so a concurrent densify release-latch is visible
+    // to grant / query:type (writer is note_pending_full_solve_residual).
+    return g_pending_full_solve_residual_face.load(std::memory_order_acquire) != 0;
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_last_v_read() noexcept {
+    return g_pending_full_solve_residual_last.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_observe_total_v_read() noexcept {
+    return g_pending_full_solve_residual_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_escalate_total_v_read() noexcept {
+    return g_pending_full_solve_residual_escalate_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t pending_full_solve_residual_reject_total_v_read() noexcept {
+    return g_pending_full_solve_residual_reject_total.load(std::memory_order_relaxed);
+}
+inline void reset_pending_full_solve_residual_for_test() noexcept {
+    g_pending_full_solve_residual_face.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_last.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_observe_total.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_escalate_total.store(0, std::memory_order_relaxed);
+    g_pending_full_solve_residual_reject_total.store(0, std::memory_order_relaxed);
+}
+inline void note_pending_full_solve_residual(std::uint64_t n, bool hard) noexcept {
+    g_pending_full_solve_residual_last.store(n, std::memory_order_relaxed);
+    if (n == 0) {
+        g_pending_full_solve_residual_face.store(0, std::memory_order_release);
+        return;
+    }
+    if (hard)
+        g_pending_full_solve_residual_face.store(1, std::memory_order_release);
+}
+
+// Issue #3237: query:type / type_export_is_authoritative residual gate.
+// Production/Full latches pending_full_solve_residual_face; Soft never
+// does (#3031). Quiet: one face load of 0. No production_defaults
+// load (#3203 AC4). Callers already refused TIMEOUT via last-solve.
+// Stamp lives on TypeChecker (kTypeExportFullAuditGateIssue).
+[[nodiscard]] inline bool type_export_residual_faces_clear() noexcept {
+    return !pending_full_solve_residual_face_hit();
+}
+
+// Issue #3316: residual of #3237 under steal / densify interleave.
+// grant_type_export_authority / type_export_is_authoritative resample
+// the residual face under the same persist seqlock used by
+// drain_pending_full_solve_before_commit / densify (#3225). Odd seq
+// (write in flight), seq change mid-sample, or either face sample set
+// → treat as residual (refuse grant / not-authoritative). Soft: seq
+// stays 0 even and face never latches → both samples 0. No new counter
+// / query key. Reuses force_reason 16 on the persist residual path.
+inline constexpr int kTypeExportAuthorityRaceIssue = 3316;
+[[nodiscard]] inline bool type_export_residual_faces_stable() noexcept {
+    const auto s0 = g_occurrence_persist_seq.load(std::memory_order_acquire);
+    if ((s0 & 1ull) != 0)
+        return false;
+    const auto f0 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const auto f1 = g_pending_full_solve_residual_face.load(std::memory_order_acquire);
+    const auto s1 = g_occurrence_persist_seq.load(std::memory_order_acquire);
+    if (s0 != s1 || (s1 & 1ull) != 0)
+        return false;
+    return f0 == 0 && f1 == 0;
+}
+inline std::atomic<std::uint64_t> g_refined_consistency_observe_total{0};
+inline std::atomic<std::uint64_t> g_refined_consistency_reject_total{0};
+inline std::atomic<std::uint64_t> g_refined_consistency_recover_total{0};
+inline std::atomic<std::uint32_t> g_refined_consistency_wired{1};
+// Issue #3294: Soft query:type export refused without an outermost success
+// face (residual of #3203/#3237 — Soft TIMEOUT "recovered" by a later local
+// SOLVED must still refuse). Soft observe counter only; production/Full
+// refuse via existing delta_timeout_reject_total / clear authority. Quiet
+// SOLVED outermost: zero extra (one bool load, no bump).
+inline std::atomic<std::uint64_t> g_type_export_soft_refuse_observe_total{0};
+inline std::atomic<std::uint32_t> g_type_export_soft_refuse_wired{1};
+[[nodiscard]] inline std::uint64_t type_export_soft_refuse_observe_v_read() noexcept {
+    return g_type_export_soft_refuse_observe_total.load(std::memory_order_relaxed);
+}
+inline void reset_type_export_soft_refuse_for_test() noexcept {
+    g_type_export_soft_refuse_observe_total.store(0, std::memory_order_relaxed);
+}
+// Issue #3380: occurrence full-solve recover is bound to the commit
+// TypeChecker used by persist (no process-global fn/ctx slot — that
+// was last-TC-wins: a stack TypeChecker built in
+// run_post_mutate_typecheck_no_lock / steal × dual-Evaluator would
+// overwrite the slot and a vacuous SOLVED on the wrong CS would clear
+// the victim's faces — half-green close of #2962).
+//
+// Recover call sites in commit_readiness() now invoke a C ABI that
+// looks up the live commit TC via the Evaluator TLS handle
+// (g_tls_audit_commit_readiness_evaluator — set at outermost
+// enter_mutation_boundary, cleared at outermost exit; same shape as
+// #3379's live_policy fill bridge). nullptr / no TLS → treat as
+// recover fail (AC2: hard-reject face, never silent green).
+//
+// Header stays TypeChecker-free (C ABI in evaluator_mutation_boundary.cpp
+// owns the cast + recover fn call — same separation as #3170/#3379).
+// File-scope decls (above the namespace) — tests call the unmangled names.
+// Forward decls — defined later with face counter clear helpers (#2703/#2704/#2847).
+inline void clear_cone_outside_goal_drop_for_test() noexcept;
+inline void clear_partial_cone_truncate_for_test() noexcept;
+inline void clear_occurrence_empty_after_fence_for_test() noexcept;
+[[nodiscard]] inline bool region_type_cross_talk_face_hit() noexcept;
+
+// Pure decision table (AC5: identical inputs → identical output; no atomics).
+[[nodiscard]] inline CommitReadiness commit_readiness(const CommitReadinessInput& in) noexcept {
+    CommitReadiness r;
+    auto set = [&](std::string_view reason, bool allow, std::uint32_t bp) {
+        r.force_reason = reason;
+        r.force_reason_code = commit_readiness_reason_code(reason);
+        r.would_allow_commit = allow;
+        r.readiness_bp = bp;
+    };
+
+    // 1) empty_cs — expected_partial (or #2610 auto) + empty CS (#2345 / #2509).
+    // Auto path uses force_reason "auto_partial" when soft so Agents can
+    // distinguish under-marked cone from explicit expected_partial.
+    const bool expected_eff = in.expected_partial || in.auto_partial_from_cone;
+    if (expected_eff && !in.cs_has_work) {
+        if (in.empty_cs_hard)
+            return (
+                set(in.auto_partial_from_cone && !in.expected_partial ? "auto_partial" : "empty_cs",
+                    false, 0),
+                r);
+        // Soft observe: auto path uses distinct reason; explicit keeps empty_cs.
+        if (in.auto_partial_from_cone && !in.expected_partial)
+            return (set("auto_partial", true, 7400), r);
+        return (set("empty_cs", true, 7500), r); // Soft observe
+    }
+
+    // 2) truncate — truncated reverify without full-solve recover (#2458)
+    //    OR partial cone truncate (#2621 / #2560 soft|hard overflow).
+    //    cone_truncate reason when only cone truncated (not reverify).
+    //
+    // Issue #2909 / #2962: production/Full + cone truncate + outside-If
+    // goal drop must force one full-solve recover (#2750 hook) before hard
+    // reject. Recover success allows commit only when SOLVED
+    // (solve_status==0) — #2962 residual half-green close (recover that
+    // reports true but leaves CONFLICT/TIMEOUT is force-rejected with
+    // force_reason cone_outside_goal_drop, Agent-visible code 10).
+    // Soft: observe only. Quiet (no outside drop): keep prior cone_truncate
+    // hard reject without extra recover cost when truncate_hard.
+    //
+    // Soft vs production decision table (#2962 AC2 / #2909 AC6):
+    //   Soft + truncate + outside drop  → Soft observe (cone_truncate allow)
+    //   production/Full + truncate + outside + recover SOLVED → allow (ok path)
+    //   production/Full + truncate + outside + recover fail/non-SOLVED
+    //       → hard-reject force_reason cone_outside_goal_drop
+    //   no truncate / no outside drop → zero extra recover (quiet)
+    const bool trunc_face =
+        (in.truncated_reverify && !in.truncated_full_solve_recovered) || in.partial_cone_truncated;
+    if (trunc_face) {
+        const bool cone_only = in.partial_cone_truncated &&
+                               !(in.truncated_reverify && !in.truncated_full_solve_recovered);
+        const std::string_view reason = cone_only ? "cone_truncate" : "truncate";
+        const bool hard = in.truncate_hard || in.occurrence_face_hard;
+        const bool outside_drop =
+            in.cone_outside_goal_drop_face || (hard && cone_outside_goal_drop_total_v_read() > 0);
+        if (hard && outside_drop) {
+            // Force-closure recover path (#2909) + SOLVED gate (#2962) +
+            // #3380 (live commit TC binding — no process-global fn/ctx).
+            g_cone_truncate_force_closure_attempt_total.fetch_add(1, std::memory_order_relaxed);
+            // Recover is invoked on the commit TC bound to the current
+            // Evaluator TLS handle (set at outermost enter, cleared at
+            // outermost exit per #3379). nullptr / no TLS → recover fail
+            // (AC2: hard-reject face, never silent green). #2962 SOLVED
+            // gate: try_occurrence_hard_face_full_solve_recover() returns
+            // true only when its solve() returned SOLVED — no need to
+            // re-sample a possibly-stale in.solve_status here.
+            const bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            if (recovered) {
+                g_cone_truncate_force_closure_total.fetch_add(1, std::memory_order_relaxed);
+                g_occurrence_hard_face_recover_success_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                g_cone_outside_goal_drop_recover_ok_total.fetch_add(1, std::memory_order_relaxed);
+                // Consume truncate + outside-drop so re-entry is clean.
+                clear_partial_cone_truncate_for_test();
+                clear_cone_outside_goal_drop_for_test();
+                // Fall through to later faces / ok (recovered SOLVED).
+            } else {
+                g_cone_truncate_force_closure_reject_total.fetch_add(1, std::memory_order_relaxed);
+                g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+                g_cone_outside_goal_drop_reject_total.fetch_add(1, std::memory_order_relaxed);
+                return (set("cone_outside_goal_drop", false, 800), r);
+            }
+        } else if (in.truncate_hard) {
+            return (set(reason, false, 1000), r);
+        } else {
+            return (set(reason, true, 7000), r); // Soft observe
+        }
+    }
+
+    // 3) linear — escape / invariant fail (#2108).
+    if (!in.linear_ok) {
+        if (in.linear_hard)
+            return (set("linear", false, 500), r);
+        return (set("linear", true, 5500), r); // Soft observe
+    }
+
+    // 4) blame — incomplete blame chain (#2221).
+    if (!in.blame_ok) {
+        if (in.blame_hard)
+            return (set("blame", false, 1500), r);
+        return (set("blame", true, 5000), r); // Soft observe
+    }
+
+    // 5) solve — CONFLICT / TIMEOUT (not SOLVED).
+    if (in.solve_status != 0) {
+        const auto bp = in.solve_status == 2 ? 2000u : 2500u;
+        return (set("solve", false, bp), r);
+    }
+
+    // 6) Issue #2716 / #2750: occurrence hard-faces. When production/Full
+    // + face counters advanced, try one full ConstraintSystem::solve()
+    // recover (hook) before hard-reject. Soft / baseline=0: counter-only
+    // (no full solve — preserves #2703/#2704 Soft ergonomics).
+    // Issue #2909: re-check live face atomics — step 2 force-closure may
+    // already have consumed truncate+outside-drop faces (avoid double solve).
+    if (in.occurrence_face_hard) {
+        const bool cone_face =
+            in.cone_outside_goal_drop_face && cone_outside_goal_drop_total_v_read() > 0;
+        const bool empty_face =
+            in.occurrence_empty_after_fence_face && occurrence_empty_after_fence_total_v_read() > 0;
+        if (cone_face || empty_face) {
+            // Issue #2750: Option A recover half — one full solve on the
+            // commit TC bound to the current Evaluator TLS (#3380 — no
+            // process-global fn/ctx slot; last-TC-wins was a half-green
+            // close of #2962 under steal × dual-Evaluator). Quiet path
+            // (no face) never reaches here → zero extra solve cost.
+            const bool recovered = aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
+            if (recovered) {
+                g_occurrence_hard_face_recover_success_total.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+                if (cone_face)
+                    g_cone_outside_goal_drop_recover_ok_total.fetch_add(1,
                                                                         std::memory_order_relaxed);
-                                                                        return false;
-                                                                        }
-                                                                        // Issue #3416: Stamped is
-                                                                        // unbound unless stamper ==
-                                                                        // TLS eval.
-                                                                        if (!last_proof_bound_to_current_eval()) {
-                                                                            g_linear_fast_path_elide_blocked_production_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            return false;
-                                                                        }
-                                                                        return true;
-                                                                        }
-                                                                        // Issue #3305:
-                                                                        // dual-authority close —
-                                                                        // also consult the last
-                                                                        // TypeLinearCommitProof
-                                                                        // face (same SSOT as
-                                                                        // linear_fast_path_ok /
-                                                                        // linear_move_drop_elision_ok).
-                                                                        // commit_readiness_live_policy()
-                                                                        // fills faces only;
-                                                                        // solve_status / linear_ok
-                                                                        // / blame_ok stay at their
-                                                                        // defaults (solve_status=0,
-                                                                        // linear_ok=true), so
-                                                                        // mid-boundary IR entry
-                                                                        // could return true after a
-                                                                        // Reject proof was stamped
-                                                                        // while Move/Drop correctly
-                                                                        // blocks. Close the gap by
-                                                                        // consulting the proof
-                                                                        // atomics directly (pure
-                                                                        // loads, no CS walk).
-                                                                        // Reuses the existing
-                                                                        // g_linear_fast_path_elide_blocked_production_total
-                                                                        // counter so #3305 ships
-                                                                        // additive — no new query
-                                                                        // key.
-                                                                        if (g_last_proof_would_allow_commit
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed) ==
-                                                                                0 ||
-                                                                            g_last_proof_linear_ok.load(
-                                                                                std::
-                                                                                    memory_order_relaxed) ==
-                                                                                0) {
-                                                                            g_linear_fast_path_elide_blocked_production_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            return false;
-                                                                        }
-                                                                        // Issue #3416: mid-boundary
-                                                                        // IR also requires stamper
-                                                                        // == TLS eval.
-                                                                        if (!last_proof_bound_to_current_eval()) {
-                                                                            g_linear_fast_path_elide_blocked_production_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            return false;
-                                                                        }
-                                                                        const auto cr = commit_readiness(
-                                                                            commit_readiness_live_policy());
-                                                                        if (cr.would_allow_commit)
-                                                                            return true;
-                                                                        g_linear_fast_path_elide_blocked_production_total
-                                                                            .fetch_add(
-                                                                                1,
-                                                                                std::
-                                                                                    memory_order_relaxed);
-                                                                        return false;
-                                                                        }
-
-                                                                        // Issue #3030: abort /
-                                                                        // force-rollback must drop
-                                                                        // the last
-                                                                        // TypeLinearCommitProof
-                                                                        // + linear_fast_path face
-                                                                        // so a later IR Move/Drop
-                                                                        // cannot elide on a
-                                                                        // pre-abort stamp
-                                                                        // (half-green). Reuses the
-                                                                        // existing
-                                                                        // stamp/face/outcome
-                                                                        // atomics — no second proof
-                                                                        // model. Soft: observe-only
-                                                                        // counter; face still
-                                                                        // cleared (Soft never
-                                                                        // relies on stamp for
-                                                                        // commit). Quiet (no face):
-                                                                        // zero extra stores beyond
-                                                                        // the four face writes
-                                                                        // (idempotent).
-                                                                        inline constexpr int
-                                                                            kTypeLinearProofClearedOnAbortIssue =
-                                                                                3030;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_type_linear_proof_cleared_on_abort_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_type_linear_proof_cleared_on_abort_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_type_linear_proof_cleared_on_abort_wired{
-                                                                                1};
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_linear_proof_cleared_on_abort_total_v_read() noexcept {
-                                                                            return g_type_linear_proof_cleared_on_abort_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_linear_proof_cleared_on_abort_observe_total_v_read() noexcept {
-                                                                            return g_type_linear_proof_cleared_on_abort_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        reset_type_linear_proof_cleared_on_abort_for_test() noexcept {
-                                                                            g_type_linear_proof_cleared_on_abort_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_type_linear_proof_cleared_on_abort_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #3102 AC4: coercion
-                                                                        // commit_readiness clear on
-                                                                        // abort. Sibling of
-                                                                        // clear_type_linear_commit_proof_on_abort
-                                                                        // — paired with the proof
-                                                                        // clear so any post-abort
-                                                                        // commit cannot stamp green
-                                                                        // on a stale coercion view.
-                                                                        // Soft bumps the observe
-                                                                        // counter; Production/Full
-                                                                        // bumps the real counter.
-                                                                        // Quiet (no abort) → zero
-                                                                        // cost.
-                                                                        inline constexpr int
-                                                                            kCoercionCommitReadinessClearedOnAbortIssue =
-                                                                                3102;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_coercion_commit_readiness_cleared_on_abort_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_coercion_commit_readiness_cleared_on_abort_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_coercion_commit_readiness_cleared_on_abort_wired{
-                                                                                1};
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        coercion_commit_readiness_cleared_on_abort_total_v_read() noexcept {
-                                                                            return g_coercion_commit_readiness_cleared_on_abort_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        coercion_commit_readiness_cleared_on_abort_observe_total_v_read() noexcept {
-                                                                            return g_coercion_commit_readiness_cleared_on_abort_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        reset_coercion_commit_readiness_cleared_on_abort_for_test() noexcept {
-                                                                            g_coercion_commit_readiness_cleared_on_abort_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_coercion_commit_readiness_cleared_on_abort_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        inline void
-                                                                        clear_coercion_commit_readiness_on_abort() noexcept {
-                                                                            const bool hard =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (hard) {
-                                                                                g_coercion_commit_readiness_cleared_on_abort_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // Issue #3359: drop
-                                                                                // the grant face so
-                                                                                // identity CastOp
-                                                                                // cannot re-arm
-                                                                                // would_allow_commit
-                                                                                // while abort /
-                                                                                // densify
-                                                                                // interleave.
-                                                                                g_last_proof_would_allow_commit
-                                                                                    .store(
-                                                                                        0,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            } else
-                                                                                g_coercion_commit_readiness_cleared_on_abort_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #3091 / #3016:
-                                                                        // declared before
-                                                                        // abort-clear / proof-build
-                                                                        // (those inlines sit above
-                                                                        // the #3016 helper block).
-                                                                        // noted=true even when
-                                                                        // mid==0.
-                                                                        inline thread_local std::uint64_t
-                                                                            g_tls_boundary_audit_mid =
-                                                                                0;
-                                                                        inline thread_local bool
-                                                                            g_tls_boundary_audit_noted =
-                                                                                false;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_last_stamped_audit_mid{
-                                                                                0};
-
-                                                                        // Purpose: drop last
-                                                                        // TypeLinearCommitProof +
-                                                                        // densify-pending inject on
-                                                                        // abort Pre: call after
-                                                                        // abort_restore_dual_topology
-                                                                        // / hard force-rollback
-                                                                        // Post: stamp=0,
-                                                                        // would_allow=0,
-                                                                        // linear_ok=0,
-                                                                        // outcome=Reject when a
-                                                                        // face
-                                                                        //       was live;
-                                                                        //       linear_fast_path_ok()
-                                                                        //       == false until a
-                                                                        //       fresh stamp
-                                                                        // Safety Class: P0 under
-                                                                        // production/Full (missing
-                                                                        // clear is a hard residual)
-                                                                        // Issue: #3030
-                                                                        // AI-Native Rationale:
-                                                                        // Agents correlate abort →
-                                                                        // proof-clear → next
-                                                                        // boundary
-                                                                        inline void
-                                                                        clear_type_linear_commit_proof_on_abort() noexcept {
-                                                                            const auto stamp =
-                                                                                g_last_type_linear_commit_proof_stamp
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            const auto would =
-                                                                                g_last_proof_would_allow_commit
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            const auto lok =
-                                                                                g_last_proof_linear_ok
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            const bool had_face =
-                                                                                stamp != 0 ||
-                                                                                would != 0 ||
-                                                                                lok != 0;
-                                                                            g_last_type_linear_commit_proof_stamp
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_proof_would_allow_commit
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_proof_linear_ok.store(
-                                                                                0,
-                                                                                std::
-                                                                                    memory_order_relaxed);
-                                                                            g_last_proof_stamper_eval
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #3091: abort /
-                                                                            // force-rollback must
-                                                                            // also clear
-                                                                            // g_last_stamped_audit_mid
-                                                                            // so the next build
-                                                                            // returns audit_mid = 0
-                                                                            // (AC5). The TLS
-                                                                            // boundary mid is
-                                                                            // independently cleared
-                                                                            // by
-                                                                            // clear_boundary_audit_mid()
-                                                                            // at the outermost
-                                                                            // boundary exit.
-                                                                            g_last_stamped_audit_mid
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (had_face)
-                                                                                g_last_type_linear_proof_outcome
-                                                                                    .store(
-                                                                                        kTypeLinearProofOutcomeReject,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_densify_scan_mismatch_inject_pending
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (!had_face)
-                                                                                return;
-                                                                            const bool hard =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (hard)
-                                                                                g_type_linear_proof_cleared_on_abort_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                g_type_linear_proof_cleared_on_abort_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #3193: nested abort
-                                                                        // + concurrent
-                                                                        // densify/steal authority
-                                                                        // face. Reuses
-                                                                        // g_rehydrate_miss_invalidate_gen
-                                                                        // (no second proof model).
-                                                                        // Hold is published BEFORE
-                                                                        // topology restore /
-                                                                        // dual_clear / persist
-                                                                        // clear / proof invalidate
-                                                                        // so observers cannot
-                                                                        // rehydrate or stamp a
-                                                                        // mixed CoercionMap /
-                                                                        // Occurrence persist /
-                                                                        // TypeLinearCommitProof
-                                                                        // face. Soft: observe-only
-                                                                        // (no in_flight, no gen
-                                                                        // bump). Quiet (no abort):
-                                                                        // helper not constructed —
-                                                                        // zero extra. Issue #3232:
-                                                                        // in_flight is a nested
-                                                                        // count (not 0/1). Inner
-                                                                        // abort end must not drop
-                                                                        // the face while an
-                                                                        // outer/concurrent abort is
-                                                                        // still restoring dual
-                                                                        // topology. Last end
-                                                                        // publishes 0.
-                                                                        inline constexpr int
-                                                                            kNestedAbortAuthorityFaceIssue =
-                                                                                3193;
-                                                                        inline constexpr int
-                                                                            kNestedAbortAuthorityFaceResidualIssue =
-                                                                                3232;
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_abort_authority_in_flight{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_abort_authority_hold_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_abort_authority_hold_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_abort_authority_hold_wired{
-                                                                                1};
-
-                                                                        [[nodiscard]] inline bool
-                                                                        abort_authority_blocks_rehydrate() noexcept {
-                                                                            return g_abort_authority_in_flight
-                                                                                       .load(
-                                                                                           std::
-                                                                                               memory_order_acquire) !=
-                                                                                   0;
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        abort_authority_hold_total_v_read() noexcept {
-                                                                            return g_abort_authority_hold_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        abort_authority_hold_observe_total_v_read() noexcept {
-                                                                            return g_abort_authority_hold_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        reset_abort_authority_hold_for_test() noexcept {
-                                                                            g_abort_authority_in_flight
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_abort_authority_hold_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_abort_authority_hold_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #3281: mid-bound
-                                                                        // abort authority version.
-                                                                        // The #3193/#3232 face is
-                                                                        // process-wide
-                                                                        // (g_abort_authority_in_flight
-                                                                        // count) — it blocks
-                                                                        // rehydrate for ANY mid
-                                                                        // during ANY abort. This
-                                                                        // adds the MID key so a
-                                                                        // densify/steal rehydrate
-                                                                        // for the SAME mid that had
-                                                                        // an abort-restore refuses
-                                                                        // to freeze a green proof /
-                                                                        // leave residual
-                                                                        // CoercionMap / Occurrence
-                                                                        // / proof entries when the
-                                                                        // abort restore completed
-                                                                        // (process face dropped)
-                                                                        // but the interleave with
-                                                                        // densify/steal rehydrate
-                                                                        // is still mid-flight
-                                                                        // (AC1). Bounded 8-slot
-                                                                        // table keyed by mid;
-                                                                        // version bumps per begin
-                                                                        // (nested same-mid abort →
-                                                                        // outer detects interleave
-                                                                        // → force full clear +
-                                                                        // reject proof). Soft/Off:
-                                                                        // begin no-ops (zero
-                                                                        // extra),
-                                                                        // version/outstanding
-                                                                        // return 0 (AC4).
-                                                                        inline constexpr int
-                                                                            kMidBoundAbortAuthorityIssue =
-                                                                                3281;
-                                                                        inline constexpr std::size_t
-                                                                            kMidAbortAuthoritySlots =
-                                                                                8;
-                                                                        struct
-                                                                            MidAbortAuthoritySlot {
-                                                                            std::atomic<
-                                                                                std::uint64_t>
-                                                                                mid{0};
-                                                                            std::atomic<
-                                                                                std::uint64_t>
-                                                                                ver{0};
-                                                                        };
-                                                                        inline std::array<
-                                                                            MidAbortAuthoritySlot,
-                                                                            kMidAbortAuthoritySlots>
-                                                                            g_mid_abort_authority{};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_mid_abort_authority_mismatch_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_mid_abort_authority_wired{
-                                                                                1};
-
-                                                                        [[nodiscard]] inline bool
-                                                                        mid_abort_authority_hard() noexcept {
-                                                                            return production_defaults_active() ||
-                                                                                   get_strategy() ==
-                                                                                       AuditStrategy::
-                                                                                           Full;
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        mid_abort_authority_version(
-                                                                            std::uint64_t
-                                                                                mid) noexcept {
-                                                                            if (mid == 0 ||
-                                                                                !mid_abort_authority_hard())
-                                                                                return 0;
-                                                                            for (
-                                                                                const auto& s :
-                                                                                g_mid_abort_authority) {
-                                                                                if (s.mid.load(
-                                                                                        std::
-                                                                                            memory_order_acquire) ==
-                                                                                    mid)
-                                                                                    return s.ver.load(
-                                                                                        std::
-                                                                                            memory_order_acquire);
-                                                                            }
-                                                                            return 0;
-                                                                        }
-
-                                                                        // True when an
-                                                                        // abort-restore for THIS
-                                                                        // mid is outstanding.
-                                                                        // Densify/steal rehydrate +
-                                                                        // outermost-success persist
-                                                                        // consult this to refuse
-                                                                        // freezing a green proof on
-                                                                        // a mid whose abort clears
-                                                                        // are still in flight
-                                                                        // (AC1/AC2).
-                                                                        [[nodiscard]] inline bool
-                                                                        mid_abort_authority_outstanding(
-                                                                            std::uint64_t
-                                                                                mid) noexcept {
-                                                                            return mid_abort_authority_version(
-                                                                                       mid) != 0;
-                                                                        }
-
-                                                                        // Capture the mid-bound
-                                                                        // authority version at
-                                                                        // abort enter
-                                                                        // (production/Full only).
-                                                                        // Returns 0 when not armed
-                                                                        // (Soft/Off or table full →
-                                                                        // process-wide face still
-                                                                        // guards). Nested same-mid
-                                                                        // abort bumps the version
-                                                                        // so the outer abort
-                                                                        // detects the interleave
-                                                                        // after its clears.
-                                                                        [[nodiscard]] inline std::
-                                                                            uint64_t
-                                                                            begin_mid_abort_authority(
-                                                                                std::uint64_t
-                                                                                    mid) noexcept {
-                                                                            if (mid == 0 ||
-                                                                                !mid_abort_authority_hard())
-                                                                                return 0;
-                                                                            for (
-                                                                                auto& s :
-                                                                                g_mid_abort_authority) {
-                                                                                std::uint64_t
-                                                                                    expected = 0;
-                                                                                if (s.mid.compare_exchange_strong(
-                                                                                        expected,
-                                                                                        mid,
-                                                                                        std::
-                                                                                            memory_order_acq_rel,
-                                                                                        std::
-                                                                                            memory_order_relaxed)) {
-                                                                                    s.ver.store(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                                    // Issue #3359:
-                                                                                    // mid-bound
-                                                                                    // abort enter
-                                                                                    // also drops
-                                                                                    // the
-                                                                                    // CoercionMap
-                                                                                    // commit-readiness
-                                                                                    // face
-                                                                                    // (identity
-                                                                                    // CastOp cannot
-                                                                                    // re-grant).
-                                                                                    clear_coercion_commit_readiness_on_abort();
-                                                                                    return 1;
-                                                                                }
-                                                                                if (s.mid.load(
-                                                                                        std::
-                                                                                            memory_order_acquire) ==
-                                                                                    mid) {
-                                                                                    const auto v =
-                                                                                        s.ver.load(
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    s.ver.store(
-                                                                                        v + 1,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                                    clear_coercion_commit_readiness_on_abort();
-                                                                                    return v + 1;
-                                                                                }
-                                                                            }
-                                                                            return 0; // table full
-                                                                                      // →
-                                                                                      // process-wide
-                                                                                      // in_flight
-                                                                                      // face still
-                                                                                      // blocks
-                                                                                      // rehydrate
-                                                                        }
-
-                                                                        // Release the mid-bound
-                                                                        // authority slot at abort
-                                                                        // end. Nested same-mid
-                                                                        // aborts decrement
-                                                                        // (matching the
-                                                                        // process-wide nested count
-                                                                        // semantics: last end
-                                                                        // publishes 0 / clears the
-                                                                        // slot). A concurrent
-                                                                        // densify/steal rehydrate
-                                                                        // that observes an
-                                                                        // outstanding mid version
-                                                                        // for THIS mid must refuse
-                                                                        // to freeze a green proof
-                                                                        // (AC1).
-                                                                        inline void
-                                                                        end_mid_abort_authority(
-                                                                            std::uint64_t
-                                                                                mid) noexcept {
-                                                                            if (mid == 0)
-                                                                                return;
-                                                                            for (
-                                                                                auto& s :
-                                                                                g_mid_abort_authority) {
-                                                                                if (s.mid.load(
-                                                                                        std::
-                                                                                            memory_order_acquire) !=
-                                                                                    mid)
-                                                                                    continue;
-                                                                                auto v = s.ver.load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                                while (
-                                                                                    v > 1 &&
-                                                                                    !s.ver.compare_exchange_weak(
-                                                                                        v, v - 1,
-                                                                                        std::
-                                                                                            memory_order_release,
-                                                                                        std::
-                                                                                            memory_order_relaxed)) {
-                                                                                }
-                                                                                if (v <= 1) {
-                                                                                    s.mid.store(
-                                                                                        0,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                                    s.ver.store(
-                                                                                        0,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                                }
-                                                                                return;
-                                                                            }
-                                                                        }
-
-                                                                        inline void
-                                                                        reset_mid_abort_authority_for_test() noexcept {
-                                                                            for (
-                                                                                auto& s :
-                                                                                g_mid_abort_authority) {
-                                                                                s.mid.store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                                s.ver.store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            }
-                                                                            g_mid_abort_authority_mismatch_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #3359:
-                                                                        // Production/Full refuse
-                                                                        // elision while abort ×
-                                                                        // densify interleave is
-                                                                        // live. Soft: false
-                                                                        // (observe-only). Quiet: no
-                                                                        // abort → four acquire
-                                                                        // loads that miss (zero
-                                                                        // extra stores).
-                                                                        [[nodiscard]] inline bool
-                                                                        abort_or_mid_abort_blocks_elision() noexcept {
-                                                                            if (!(production_defaults_active() ||
-                                                                                  get_strategy() ==
-                                                                                      AuditStrategy::
-                                                                                          Full))
-                                                                                return false;
-                                                                            if (g_abort_authority_in_flight
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_acquire) !=
-                                                                                0)
-                                                                                return true;
-                                                                            const auto tls_mid =
-                                                                                g_tls_boundary_audit_mid;
-                                                                            if (tls_mid != 0 &&
-                                                                                mid_abort_authority_outstanding(
-                                                                                    tls_mid))
-                                                                                return true;
-                                                                            for (
-                                                                                const auto& s :
-                                                                                g_mid_abort_authority) {
-                                                                                if (s.mid.load(
-                                                                                        std::
-                                                                                            memory_order_acquire) !=
-                                                                                    0)
-                                                                                    return true;
-                                                                            }
-                                                                            // Issue #3225: odd
-                                                                            // persist seqlock →
-                                                                            // densify/abort write
-                                                                            // in flight.
-                                                                            if ((g_occurrence_persist_seq
-                                                                                     .load(
-                                                                                         std::
-                                                                                             memory_order_acquire) &
-                                                                                 1ull) != 0)
-                                                                                return true;
-                                                                            return false;
-                                                                        }
-
-                                                                        // Returns true when
-                                                                        // production/Full actually
-                                                                        // armed the hold.
-                                                                        [[nodiscard]] inline bool
-                                                                        begin_abort_authority_hold() noexcept {
-                                                                            const bool hard =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (!hard) {
-                                                                                g_abort_authority_hold_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                return false;
-                                                                            }
-                                                                            g_abort_authority_in_flight
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_release);
-                                                                            g_rehydrate_miss_invalidate_gen
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_release);
-                                                                            g_abort_authority_hold_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #3359: clear
-                                                                            // CoercionMap
-                                                                            // commit-readiness at
-                                                                            // abort enter
-                                                                            // (symmetric to proof
-                                                                            // clear) so identity
-                                                                            // elision cannot
-                                                                            // re-grant while abort
-                                                                            // × densify is in
-                                                                            // flight.
-                                                                            clear_coercion_commit_readiness_on_abort();
-                                                                            return true;
-                                                                        }
-                                                                        inline void
-                                                                        end_abort_authority_hold() noexcept {
-                                                                            // Issue #3232:
-                                                                            // nested/concurrent —
-                                                                            // last end drops the
-                                                                            // face.
-                                                                            std::uint32_t cur =
-                                                                                g_abort_authority_in_flight
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            while (
-                                                                                cur > 0 &&
-                                                                                !g_abort_authority_in_flight
-                                                                                     .compare_exchange_weak(
-                                                                                         cur,
-                                                                                         cur - 1,
-                                                                                         std::
-                                                                                             memory_order_release,
-                                                                                         std::
-                                                                                             memory_order_relaxed)) {
-                                                                            }
-                                                                        }
-
-                                                                        struct AbortAuthorityHold {
-                                                                            AbortAuthorityHold() noexcept
-                                                                                : held_(
-                                                                                      begin_abort_authority_hold()) {
-                                                                            }
-                                                                            ~AbortAuthorityHold() noexcept {
-                                                                                if (held_)
-                                                                                    end_abort_authority_hold();
-                                                                            }
-                                                                            AbortAuthorityHold(
-                                                                                const AbortAuthorityHold&) =
-                                                                                delete;
-                                                                            AbortAuthorityHold&
-                                                                            operator=(
-                                                                                const AbortAuthorityHold&) =
-                                                                                delete;
-
-                                                                        private:
-                                                                            bool held_;
-                                                                        };
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        last_proof_live_goal_count_v_read() noexcept {
-                                                                            return g_last_proof_live_goal_count
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        last_proof_linear_root_count_v_read() noexcept {
-                                                                            return g_last_proof_linear_root_count
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2984: arena
-                                                                        // compact vs last
-                                                                        // TypeLinearCommitProof.linear_root_count.
-                                                                        // Quiet (last==0): no
-                                                                        // collect. Soft: observe
-                                                                        // only. Production/Full
-                                                                        // mismatch latches a reject
-                                                                        // face so the next Success
-                                                                        // stamp cannot stay green.
-                                                                        inline constexpr int
-                                                                            kLinearCompactRootConsistencyIssue =
-                                                                                2984;
-                                                                        inline std::atomic<
-                                                                            std::uint8_t>
-                                                                            g_linear_compact_root_mismatch_face{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_linear_compact_root_check_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_linear_compact_root_mismatch_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_linear_compact_root_mismatch_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_linear_compact_root_mismatch_wired{
-                                                                                1};
-
-                                                                        inline void
-                                                                        set_last_proof_linear_root_count_for_test(
-                                                                            std::uint64_t
-                                                                                n) noexcept {
-                                                                            g_last_proof_linear_root_count
-                                                                                .store(
-                                                                                    n,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        inline void
-                                                                        reset_linear_compact_root_consistency_for_test() noexcept {
-                                                                            g_linear_compact_root_mismatch_face
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_linear_compact_root_check_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_linear_compact_root_mismatch_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_linear_compact_root_mismatch_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        linear_compact_root_check_total_v_read() noexcept {
-                                                                            return g_linear_compact_root_check_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        linear_compact_root_mismatch_observe_total_v_read() noexcept {
-                                                                            return g_linear_compact_root_mismatch_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        linear_compact_root_mismatch_total_v_read() noexcept {
-                                                                            return g_linear_compact_root_mismatch_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        [[nodiscard]] inline bool
-                                                                        linear_compact_root_mismatch_blocks_proof() noexcept {
-                                                                            if (!(production_defaults_active() ||
-                                                                                  get_strategy() ==
-                                                                                      AuditStrategy::
-                                                                                          Full))
-                                                                                return false;
-                                                                            return g_linear_compact_root_mismatch_face
-                                                                                       .load(
-                                                                                           std::
-                                                                                               memory_order_relaxed) !=
-                                                                                   0;
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        last_proof_goal_fingerprint_v_read() noexcept {
-                                                                            return g_last_proof_goal_fingerprint
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_linear_commit_proof_counts_filled_total_v_read() noexcept {
-                                                                            return g_type_linear_commit_proof_counts_filled_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_linear_commit_proof_goal_truth_stamped_total_v_read() noexcept {
-                                                                            return g_type_linear_commit_proof_goal_truth_stamped_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_linear_commit_proof_goal_fingerprint_nonzero_total_v_read() noexcept {
-                                                                            return g_type_linear_commit_proof_goal_fingerprint_nonzero_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_linear_commit_proof_goal_truth_gauge_fallback_total_v_read() noexcept {
-                                                                            return g_type_linear_commit_proof_goal_truth_gauge_fallback_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        publish_proof_live_goal_count(
-                                                                            std::uint64_t
-                                                                                n) noexcept {
-                                                                            g_proof_live_goal_count_gauge
-                                                                                .store(
-                                                                                    n,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        clear_proof_goal_truth_for_test() noexcept {
-                                                                            g_last_proof_goal_fingerprint
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_type_linear_commit_proof_goal_truth_stamped_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_type_linear_commit_proof_goal_fingerprint_nonzero_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_type_linear_commit_proof_goal_truth_gauge_fallback_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_proof_live_goal_count
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_proof_live_goal_count_gauge
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2842: mix one
-                                                                        // OccurrenceGoal into a
-                                                                        // bounded fingerprint.
-                                                                        // Fields: var.index +
-                                                                        // refined.index + pred_nid
-                                                                        // + mid + epoch (issue AC).
-                                                                        // Pure POD — stamp sites
-                                                                        // iterate CS goals and call
-                                                                        // this (header cannot
-                                                                        // import TypeChecker /
-                                                                        // OccurrenceGoal module).
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        mix_occurrence_goal_into_fingerprint(
-                                                                            std::uint64_t h,
-                                                                            std::uint32_t var_index,
-                                                                            std::uint32_t
-                                                                                refined_index,
-                                                                            std::uint32_t
-                                                                                predicate_cond_node,
-                                                                            std::uint64_t
-                                                                                source_mutation_id,
-                                                                            std::uint64_t
-                                                                                epoch) noexcept {
-                                                                            // Boost-style
-                                                                            // hash_combine (stable,
-                                                                            // no heap).
-                                                                            auto mix =
-                                                                                [](std::uint64_t
-                                                                                       seed,
-                                                                                   std::uint64_t
-                                                                                       v) noexcept
-                                                                                -> std::uint64_t {
-                                                                                seed ^=
-                                                                                    v +
-                                                                                    0x9e3779b97f4a7c15ULL +
-                                                                                    (seed << 6) +
-                                                                                    (seed >> 2);
-                                                                                return seed;
-                                                                            };
-                                                                            h = mix(
-                                                                                h,
-                                                                                static_cast<
-                                                                                    std::uint64_t>(
-                                                                                    var_index));
-                                                                            h = mix(
-                                                                                h,
-                                                                                static_cast<
-                                                                                    std::uint64_t>(
-                                                                                    refined_index));
-                                                                            h = mix(
-                                                                                h,
-                                                                                static_cast<
-                                                                                    std::uint64_t>(
-                                                                                    predicate_cond_node));
-                                                                            h = mix(
-                                                                                h,
-                                                                                source_mutation_id);
-                                                                            h = mix(h, epoch);
-                                                                            return h;
-                                                                        }
-
-                                                                        // Issue #2842: frozen goal
-                                                                        // truth at stamp.
-                                                                        // from_cs=true when caller
-                                                                        // read
-                                                                        // occurrence_goals_size() +
-                                                                        // fingerprint from live CS
-                                                                        // (preferred). from_cs=
-                                                                        // false means gauge
-                                                                        // fallback (production miss
-                                                                        // counter bumped by
-                                                                        // builder).
-                                                                        struct ProofGoalTruth {
-                                                                            std::uint64_t
-                                                                                live_goal_count = 0;
-                                                                            std::uint64_t
-                                                                                goal_fingerprint =
-                                                                                    0;
-                                                                            bool from_cs = false;
-                                                                            // Issue #3418:
-                                                                            // live_goal_count
-                                                                            // exceeded
-                                                                            // kProofGoalFingerprintMaxGoals.
-                                                                            // Appended at END.
-                                                                            // Production/Full treat
-                                                                            // as
-                                                                            // occurrence_consistent=false.
-                                                                            bool
-                                                                                fingerprint_overflow =
-                                                                                    false;
-                                                                        };
-
-                                                                        // Quiet default (empty
-                                                                        // goals, zero extra cost).
-                                                                        inline constexpr ProofGoalTruth
-                                                                            kQuietProofGoalTruth{};
-
-                                                                        // Apply goal truth into
-                                                                        // proof + gauges. from_cs
-                                                                        // path bumps truth-stamped
-                                                                        // counter; non-empty
-                                                                        // fingerprint bumps nonzero
-                                                                        // counter. Gauge fallback
-                                                                        // under production bumps
-                                                                        // miss counter (AC Soft vs
-                                                                        // production table).
-                                                                        inline void
-                                                                        apply_proof_goal_truth(
-                                                                            TypeLinearCommitProof&
-                                                                                p,
-                                                                            const ProofGoalTruth&
-                                                                                truth) noexcept {
-                                                                            p.live_goal_count =
-                                                                                truth
-                                                                                    .live_goal_count;
-                                                                            p.goal_fingerprint =
-                                                                                truth
-                                                                                    .goal_fingerprint;
-                                                                            g_proof_live_goal_count_gauge
-                                                                                .store(
-                                                                                    truth
-                                                                                        .live_goal_count,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_proof_live_goal_count
-                                                                                .store(
-                                                                                    p.live_goal_count,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_proof_goal_fingerprint
-                                                                                .store(
-                                                                                    p.goal_fingerprint,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (truth.from_cs) {
-                                                                                g_type_linear_commit_proof_goal_truth_stamped_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            } else if (
-                                                                                production_defaults_active()) {
-                                                                                // Gauge-only under
-                                                                                // production: CS
-                                                                                // pointer
-                                                                                // unavailable at
-                                                                                // stamp.
-                                                                                g_type_linear_commit_proof_goal_truth_gauge_fallback_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                            if (p.goal_fingerprint !=
-                                                                                0) {
-                                                                                g_type_linear_commit_proof_goal_fingerprint_nonzero_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                        }
-
-                                                                        // Resolve goal truth from
-                                                                        // optional CS hint. When
-                                                                        // live_goal_count_hint is
-                                                                        // kProofLiveGoalCountHintAuto
-                                                                        // and fingerprint is 0 with
-                                                                        // !from_cs, use gauge
-                                                                        // (legacy #2758 path). When
-                                                                        // hint is explicit CS size,
-                                                                        // from_cs should be true.
-                                                                        [[nodiscard]] inline ProofGoalTruth
-                                                                        resolve_proof_goal_truth(
-                                                                            std::uint64_t
-                                                                                live_goal_count_hint,
-                                                                            std::uint64_t
-                                                                                goal_fingerprint,
-                                                                            bool
-                                                                                goal_truth_from_cs) noexcept {
-                                                                            ProofGoalTruth t{};
-                                                                            if (goal_truth_from_cs ||
-                                                                                live_goal_count_hint !=
-                                                                                    kProofLiveGoalCountHintAuto) {
-                                                                                t.live_goal_count =
-                                                                                    (live_goal_count_hint ==
-                                                                                     kProofLiveGoalCountHintAuto)
-                                                                                        ? 0
-                                                                                        : live_goal_count_hint;
-                                                                                t.goal_fingerprint =
-                                                                                    goal_fingerprint;
-                                                                                // Non-empty goals
-                                                                                // with zero
-                                                                                // fingerprint is
-                                                                                // invalid under CS
-                                                                                // truth — force a
-                                                                                // non-zero sentinel
-                                                                                // so Agents still
-                                                                                // see content
-                                                                                // present.
-                                                                                if (t.live_goal_count >
-                                                                                        0 &&
-                                                                                    t.goal_fingerprint ==
-                                                                                        0)
-                                                                                    t.goal_fingerprint =
-                                                                                        1;
-                                                                                // Empty goals →
-                                                                                // fingerprint must
-                                                                                // be 0 (quiet).
-                                                                                if (t.live_goal_count ==
-                                                                                    0)
-                                                                                    t.goal_fingerprint =
-                                                                                        0;
-                                                                                t.from_cs =
-                                                                                    goal_truth_from_cs ||
-                                                                                    (live_goal_count_hint !=
-                                                                                     kProofLiveGoalCountHintAuto);
-                                                                                t.fingerprint_overflow =
-                                                                                    t.live_goal_count >
-                                                                                    kProofGoalFingerprintMaxGoals;
-                                                                                return t;
-                                                                            }
-                                                                            // Gauge fallback (no CS
-                                                                            // at stamp).
-                                                                            t.live_goal_count =
-                                                                                g_proof_live_goal_count_gauge
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            t.goal_fingerprint =
-                                                                                g_last_proof_goal_fingerprint
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (t.live_goal_count ==
-                                                                                0)
-                                                                                t.goal_fingerprint =
-                                                                                    0;
-                                                                            t.from_cs = false;
-                                                                            t.fingerprint_overflow =
-                                                                                t.live_goal_count >
-                                                                                kProofGoalFingerprintMaxGoals;
-                                                                            return t;
-                                                                        }
-
-                                                                        // Issue #3346: last-look
-                                                                        // immediately before
-                                                                        // TypeLinearCommitProof
-                                                                        // atomic last_proof stores.
-                                                                        // Production success stamp
-                                                                        // re-reads live fingerprint
-                                                                        // + live_goal_count (CS,
-                                                                        // when TLS tc was noted) +
-                                                                        // linear_root_count and
-                                                                        // refuses green if they
-                                                                        // drifted vs the
-                                                                        // freeze/collect, or if
-                                                                        // mid_abort_authority is
-                                                                        // outstanding for the stamp
-                                                                        // mid. Soft/Off: one
-                                                                        // production_defaults_active
-                                                                        // / strategy load, then
-                                                                        // return (AC4). Reuses
-                                                                        // mid_abort_authority_mismatch_total
-                                                                        // + invalidate_gen; no new
-                                                                        // query key.
-                                                                        inline constexpr int
-                                                                            kStampLastLookIssue =
-                                                                                3346;
-                                                                        inline thread_local void*
-                                                                            g_tls_stamp_last_look_tc =
-                                                                                nullptr;
-                                                                        inline thread_local bool
-                                                                            g_tls_stamp_last_look_rejected =
-                                                                                false;
-
-                                                                        inline void
-                                                                        note_stamp_last_look_tc(
-                                                                            void*
-                                                                                tc_handle) noexcept {
-                                                                            g_tls_stamp_last_look_tc =
-                                                                                tc_handle;
-                                                                        }
-                                                                        inline void
-                                                                        clear_stamp_last_look_tc() noexcept {
-                                                                            g_tls_stamp_last_look_tc =
-                                                                                nullptr;
-                                                                            g_tls_stamp_last_look_rejected =
-                                                                                false;
-                                                                        }
-                                                                        [[nodiscard]] inline bool
-                                                                        stamp_last_look_rejected() noexcept {
-                                                                            return g_tls_stamp_last_look_rejected;
-                                                                        }
-
-                                                                        [[nodiscard]] inline bool
-                                                                        stamp_last_look_hard() noexcept {
-                                                                            return production_defaults_active() ||
-                                                                                   get_strategy() ==
-                                                                                       AuditStrategy::
-                                                                                           Full;
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        stamp_last_look_join_mid(
-                                                                            std::uint64_t
-                                                                                stamp_mid) noexcept {
-                                                                            if (stamp_mid != 0)
-                                                                                return stamp_mid;
-                                                                            if (g_tls_boundary_audit_noted &&
-                                                                                g_tls_boundary_audit_mid !=
-                                                                                    0)
-                                                                                return g_tls_boundary_audit_mid;
-                                                                            return g_last_stamped_audit_mid
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Purpose: last-look live
-                                                                        // fingerprint /
-                                                                        // live_goal_count /
-                                                                        // linear_root_count
-                                                                        //          +
-                                                                        //          mid_abort_authority
-                                                                        //          immediately
-                                                                        //          before atomic
-                                                                        //          last_proof
-                                                                        //          stores
-                                                                        // Pre: expected_* already
-                                                                        // resolved from
-                                                                        // freeze/collect (not hint
-                                                                        // sentinels) Post: true →
-                                                                        // stamp may proceed; false
-                                                                        // → caller must reject (no
-                                                                        // green) Soft/Off: true
-                                                                        // immediately (zero extra
-                                                                        // walks / CS consult)
-                                                                        [[nodiscard]] inline bool
-                                                                        stamp_last_look_live_matches(
-                                                                            std::uint64_t
-                                                                                expected_live_goal_count,
-                                                                            std::uint64_t
-                                                                                expected_fingerprint,
-                                                                            std::uint64_t
-                                                                                expected_linear_root_count,
-                                                                            std::uint64_t
-                                                                                stamp_mid) noexcept {
-                                                                            if (!stamp_last_look_hard())
-                                                                                return true; // AC4
-                                                                                             // Soft/Off
-                                                                                             // zero
-                                                                                             // extra
-                                                                            if (mid_abort_authority_outstanding(
-                                                                                    stamp_last_look_join_mid(
-                                                                                        stamp_mid))) {
-                                                                                g_mid_abort_authority_mismatch_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                return false;
-                                                                            }
-                                                                            const auto live_roots =
-                                                                                static_cast<
-                                                                                    std::uint64_t>(
-                                                                                    aura::compiler::
-                                                                                        linear_or_dirty_roots_count_for_rebind());
-                                                                            if (live_roots !=
-                                                                                expected_linear_root_count)
-                                                                                return false;
-                                                                            if (void* tc =
-                                                                                    g_tls_stamp_last_look_tc) {
-                                                                                if (aura_stamp_last_look_cs_matches(
-                                                                                        tc,
-                                                                                        expected_live_goal_count,
-                                                                                        expected_fingerprint) ==
-                                                                                    0)
-                                                                                    return false;
-                                                                            }
-                                                                            return true;
-                                                                        }
-
-                                                                        inline void
-                                                                        reject_stamp_last_look_mismatch(
-                                                                            TypeLinearCommitProof&
-                                                                                p,
-                                                                            ProofGoalTruth&
-                                                                                truth) noexcept {
-                                                                            g_tls_stamp_last_look_rejected =
-                                                                                true;
-                                                                            p.would_allow_commit =
-                                                                                false;
-                                                                            p.linear_ok = false;
-                                                                            p.occurrence_consistent =
-                                                                                false;
-                                                                            p.force_reason_code =
-                                                                                16;
-                                                                            // Fail-closed gauges:
-                                                                            // do not publish the
-                                                                            // torn freeze as
-                                                                            // last_proof.
-                                                                            truth.live_goal_count =
-                                                                                0;
-                                                                            truth.goal_fingerprint =
-                                                                                0;
-                                                                            p.linear_root_count = 0;
-                                                                            if (void* tc =
-                                                                                    g_tls_stamp_last_look_tc)
-                                                                                (void)
-                                                                                    clear_occurrence_persist_buffer(
-                                                                                        tc);
-                                                                            (void)
-                                                                                invalidate_fast_path_on_rehydrate_miss();
-                                                                        }
-
-                                                                        // Issue #3416 AC3:
-                                                                        // live_goal_count vs
-                                                                        // linear_root_count
-                                                                        // mismatch on the stamper →
-                                                                        // Reject (force_reason 16),
-                                                                        // no green face. Soft/Off
-                                                                        // skip. Issue #3418: prefix
-                                                                        // mix of
-                                                                        // kProofGoalFingerprintMaxGoals
-                                                                        // is not authority when
-                                                                        // live_goal_count
-                                                                        // overflowed.
-                                                                        // Production/Full refuse
-                                                                        // green (force_reason 16,
-                                                                        // occurrence_consistent=false).
-                                                                        // Soft/Off skip.
-                                                                        inline void
-                                                                        reject_fingerprint_cap_overflow(
-                                                                            TypeLinearCommitProof&
-                                                                                p,
-                                                                            const ProofGoalTruth&
-                                                                                truth) noexcept {
-                                                                            if (!(production_defaults_active() ||
-                                                                                  get_strategy() ==
-                                                                                      AuditStrategy::
-                                                                                          Full))
-                                                                                return;
-                                                                            if (!p.would_allow_commit)
-                                                                                return;
-                                                                            if (!truth
-                                                                                     .fingerprint_overflow &&
-                                                                                truth.live_goal_count <=
-                                                                                    kProofGoalFingerprintMaxGoals)
-                                                                                return;
-                                                                            p.would_allow_commit =
-                                                                                false;
-                                                                            p.linear_ok = false;
-                                                                            p.occurrence_consistent =
-                                                                                false;
-                                                                            p.force_reason_code =
-                                                                                16;
-                                                                            publish_type_linear_proof_outcome(
-                                                                                kTypeLinearProofOutcomeReject);
-                                                                            (void)
-                                                                                invalidate_fast_path_on_rehydrate_miss();
-                                                                        }
-
-                                                                        inline void
-                                                                        reject_stamper_live_goal_linear_root_mismatch(
-                                                                            TypeLinearCommitProof&
-                                                                                p) noexcept {
-                                                                            if (!(production_defaults_active() ||
-                                                                                  get_strategy() ==
-                                                                                      AuditStrategy::
-                                                                                          Full))
-                                                                                return;
-                                                                            if (!p.would_allow_commit)
-                                                                                return;
-                                                                            if (p.live_goal_count ==
-                                                                                p.linear_root_count)
-                                                                                return;
-                                                                            p.would_allow_commit =
-                                                                                false;
-                                                                            p.linear_ok = false;
-                                                                            p.occurrence_consistent =
-                                                                                false;
-                                                                            p.force_reason_code =
-                                                                                16;
-                                                                            publish_type_linear_proof_outcome(
-                                                                                kTypeLinearProofOutcomeReject);
-                                                                            (void)
-                                                                                invalidate_fast_path_on_rehydrate_miss();
-                                                                        }
-
-                                                                        // Build a
-                                                                        // TypeLinearCommitProof
-                                                                        // from live state. Pure
-                                                                        // read of existing surfaces
-                                                                        // +
-                                                                        // collect_linear_or_dirty_roots_for_rebind
-                                                                        // (#2723/#2742) for
-                                                                        // linear_root_count.
-                                                                        // live_goal_count from
-                                                                        // optional hint (stamp site
-                                                                        // with TypeChecker CS) or
-                                                                        // process gauge (default
-                                                                        // 0). Cheap on quiet path:
-                                                                        // empty collect
-                                                                        // short-circuit + zero
-                                                                        // goals → both counts 0
-                                                                        // (AC2 #2758). Issue #2842:
-                                                                        // goal_fingerprint frozen
-                                                                        // with live_goal_count when
-                                                                        // CS truth is passed
-                                                                        // (from_cs); gauge is
-                                                                        // fallback only when CS
-                                                                        // unavailable. Fields:
-                                                                        //   - readiness_bp /
-                                                                        //   force_reason_code /
-                                                                        //   would_allow_commit:
-                                                                        //   from
-                                                                        //     commit_readiness_live_policy().
-                                                                        //   - linear_ok /
-                                                                        //   occurrence_consistent:
-                                                                        //   from live readiness
-                                                                        //   input.
-                                                                        //   -
-                                                                        //   defuse_or_epoch_stamp:
-                                                                        //   caller
-                                                                        //   current_epoch_or_defuse.
-                                                                        //   - live_goal_count +
-                                                                        //   linear_root_count: real
-                                                                        //   walks (#2758; was zero
-                                                                        //     hard-code under #2717
-                                                                        //     / #2708 residual).
-                                                                        //   - goal_fingerprint:
-                                                                        //   #2842 bounded content
-                                                                        //   hash of live goals.
-                                                                        // live_goal_count_hint:
-                                                                        // UINT64_MAX = use process
-                                                                        // gauge; else use hint.
-                                                                        // goal_truth_from_cs: true
-                                                                        // when hint came from
-                                                                        // occurrence_goals_size().
-                                                                        inline TypeLinearCommitProof
-                                                                        build_type_linear_commit_proof_from_live(
-                                                                            std::uint64_t
-                                                                                current_epoch_or_defuse,
-                                                                            std::uint64_t
-                                                                                live_goal_count_hint =
-                                                                                    kProofLiveGoalCountHintAuto,
-                                                                            std::uint64_t
-                                                                                goal_fingerprint =
-                                                                                    0,
-                                                                            bool goal_truth_from_cs =
-                                                                                false) noexcept {
-                                                                            g_tls_stamp_last_look_rejected =
-                                                                                false;
-                                                                            TypeLinearCommitProof
-                                                                                p{};
-                                                                            const auto ready =
-                                                                                commit_readiness_live_policy();
-                                                                            const auto live_r =
-                                                                                commit_readiness(
-                                                                                    ready);
-                                                                            p.readiness_bp =
-                                                                                live_r.readiness_bp;
-                                                                            p.force_reason_code =
-                                                                                static_cast<
-                                                                                    std::uint32_t>(
-                                                                                    live_r
-                                                                                        .force_reason_code);
-                                                                            p.would_allow_commit =
-                                                                                live_r
-                                                                                    .would_allow_commit;
-                                                                            p.linear_ok =
-                                                                                ready.linear_ok;
-                                                                            p.occurrence_consistent =
-                                                                                ready.cs_has_work ||
-                                                                                !ready
-                                                                                     .expected_partial;
-                                                                            p.defuse_or_epoch_stamp =
-                                                                                current_epoch_or_defuse;
-                                                                            // Issue #2758: real
-                                                                            // linear_root_count via
-                                                                            // collect_linear_or_dirty_roots
-                                                                            // (#2723 nonempty span
-                                                                            // + #2742 dirty-pin
-                                                                            // fallback). Quiet
-                                                                            // path: empty span → 0,
-                                                                            // no extra alloc beyond
-                                                                            // existing
-                                                                            // short-circuit.
-                                                                            p.linear_root_count = static_cast<
-                                                                                std::uint64_t>(
-                                                                                aura::compiler::
-                                                                                    linear_or_dirty_roots_count_for_rebind());
-                                                                            // Issue #2842 / #2758:
-                                                                            // freeze goal truth (CS
-                                                                            // size + fingerprint
-                                                                            // preferred).
-                                                                            auto truth = resolve_proof_goal_truth(
-                                                                                live_goal_count_hint,
-                                                                                goal_fingerprint,
-                                                                                goal_truth_from_cs);
-                                                                            // Issue #3091: stamp
-                                                                            // audit_mid from TLS
-                                                                            // boundary-noted mid
-                                                                            // (preferred) or fall
-                                                                            // back to
-                                                                            // g_last_stamped_audit_mid
-                                                                            // (last successful
-                                                                            // resolve). Soft / no
-                                                                            // boundary note →
-                                                                            // audit_mid = 0 (AC4
-                                                                            // zero-cost contract).
-                                                                            p.audit_mid =
-                                                                                g_tls_boundary_audit_noted
-                                                                                    ? g_tls_boundary_audit_mid
-                                                                                    : g_last_stamped_audit_mid
-                                                                                          .load(
-                                                                                              std::
-                                                                                                  memory_order_relaxed);
-                                                                            // Issue #3346 AC1/AC2:
-                                                                            // last-look live
-                                                                            // fingerprint +
-                                                                            // live_goal_count +
-                                                                            // linear_root_count +
-                                                                            // mid_abort_authority
-                                                                            // immediately before
-                                                                            // atomic last_proof
-                                                                            // stores. Mismatch →
-                                                                            // reject (clear persist
-                                                                            // + invalidate_gen
-                                                                            // + no green).
-                                                                            // Soft/Off: helper
-                                                                            // returns true with
-                                                                            // zero extra walks.
-                                                                            if (p.would_allow_commit &&
-                                                                                !stamp_last_look_live_matches(
-                                                                                    truth
-                                                                                        .live_goal_count,
-                                                                                    truth
-                                                                                        .goal_fingerprint,
-                                                                                    p.linear_root_count,
-                                                                                    p.audit_mid))
-                                                                                reject_stamp_last_look_mismatch(
-                                                                                    p, truth);
-                                                                            apply_proof_goal_truth(
-                                                                                p, truth);
-                                                                            reject_fingerprint_cap_overflow(
-                                                                                p, truth);
-                                                                            reject_stamper_live_goal_linear_root_mismatch(
-                                                                                p);
-                                                                            p.schema =
-                                                                                kTypeLinearCommitProofIssue;
-                                                                            // Last stamped
-                                                                            // linear_root for query
-                                                                            // / Agent drift detect
-                                                                            // (AC3).
-                                                                            g_last_proof_linear_root_count
-                                                                                .store(
-                                                                                    p.linear_root_count,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (p.linear_root_count >
-                                                                                    0 ||
-                                                                                p.live_goal_count >
-                                                                                    0) {
-                                                                                g_type_linear_commit_proof_counts_filled_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                            // Bump the stamped
-                                                                            // total (additive —
-                                                                            // surface for Agent
-                                                                            // dashboards to
-                                                                            // attribute "active
-                                                                            // stamp fired" vs "face
-                                                                            // fired but Soft path
-                                                                            // observed only").
-                                                                            g_type_linear_commit_proof_stamped_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Also stamp the epoch
-                                                                            // (existing low-level
-                                                                            // helper) so the
-                                                                            // existing
-                                                                            // query:last-type-linear-commit-proof
-                                                                            // path stays additive —
-                                                                            // query path returns
-                                                                            // the latest stamp
-                                                                            // epoch.
-                                                                            stamp_type_linear_commit_proof(
-                                                                                current_epoch_or_defuse);
-                                                                            // Issue #2899: publish
-                                                                            // face bits for IR
-                                                                            // Move/Drop fast-path.
-                                                                            publish_last_proof_face(
-                                                                                p.would_allow_commit,
-                                                                                p.linear_ok);
-                                                                            // Issue #3346:
-                                                                            // stamp-site TLS is not
-                                                                            // valid after this
-                                                                            // builder returns
-                                                                            // (stack TypeCheckers
-                                                                            // in tests). Rejected
-                                                                            // flag stays for
-                                                                            // outermost.
-                                                                            g_tls_stamp_last_look_tc =
-                                                                                nullptr;
-                                                                            return p;
-                                                                        }
-
-                                                                        // Issue #2854: stamp proof
-                                                                        // with explicit
-                                                                        // would_allow_commit +
-                                                                        // linear_ok (set by caller
-                                                                        // from the rebind + scan
-                                                                        // outcome). Ensures no
-                                                                        // success proof outlives a
-                                                                        // failed rebind on the same
-                                                                        // exit (#2854 AC2). The
-                                                                        // caller MUST bump
-                                                                        // type_linear_proof_stamped_after_rebind_total
-                                                                        // (success) or
-                                                                        // type_linear_proof_reject_after_rebind_fail_total
-                                                                        // (fail) separately so
-                                                                        // dashboards can
-                                                                        // distinguish ordered
-                                                                        // stamps from pre-#2854
-                                                                        // stamps. Mirrors the
-                                                                        // existing live-stamp path
-                                                                        // (linear_root_count from
-                                                                        // post-remap collect via
-                                                                        // linear_or_dirty_roots_count_for_rebind;
-                                                                        // epoch + last-count gauges
-                                                                        // populated for Agent drift
-                                                                        // detect). Issue #2842:
-                                                                        // same goal truth freeze as
-                                                                        // the live path.
-                                                                        inline TypeLinearCommitProof
-                                                                        build_type_linear_commit_proof_from_live_with_outcome(
-                                                                            std::uint64_t
-                                                                                current_epoch_or_defuse,
-                                                                            bool
-                                                                                explicit_would_allow_commit,
-                                                                            bool explicit_linear_ok,
-                                                                            std::uint64_t
-                                                                                live_goal_count_hint =
-                                                                                    kProofLiveGoalCountHintAuto,
-                                                                            std::uint64_t
-                                                                                goal_fingerprint =
-                                                                                    0,
-                                                                            bool
-                                                                                goal_truth_from_cs =
-                                                                                    false,
-                                                                            std::uint32_t
-                                                                                explicit_force_reason_code =
-                                                                                    static_cast<
-                                                                                        std::
-                                                                                            uint32_t>(
-                                                                                        -1)) noexcept {
-                                                                            g_tls_stamp_last_look_rejected =
-                                                                                false;
-                                                                            TypeLinearCommitProof
-                                                                                p{};
-                                                                            p.readiness_bp = 0;
-                                                                            p.force_reason_code =
-                                                                                explicit_force_reason_code;
-                                                                            // Issue #2854: explicit
-                                                                            // outcome overrides the
-                                                                            // live-state defaults.
-                                                                            // linear_root_count
-                                                                            // still comes from the
-                                                                            // post-remap collect so
-                                                                            // AC1 (success proof
-                                                                            // linear_root_count
-                                                                            // matches post-remap
-                                                                            // collect) holds.
-                                                                            p.would_allow_commit =
-                                                                                explicit_would_allow_commit;
-                                                                            p.linear_ok =
-                                                                                explicit_linear_ok;
-                                                                            p.occurrence_consistent =
-                                                                                explicit_linear_ok;
-                                                                            p.defuse_or_epoch_stamp =
-                                                                                current_epoch_or_defuse;
-                                                                            p.linear_root_count = static_cast<
-                                                                                std::uint64_t>(
-                                                                                aura::compiler::
-                                                                                    linear_or_dirty_roots_count_for_rebind());
-                                                                            auto truth = resolve_proof_goal_truth(
-                                                                                live_goal_count_hint,
-                                                                                goal_fingerprint,
-                                                                                goal_truth_from_cs);
-                                                                            // Issue #3091: stamp
-                                                                            // audit_mid same as the
-                                                                            // live-stamp path (TLS
-                                                                            // boundary-noted mid
-                                                                            // preferred; fallback
-                                                                            // to
-                                                                            // g_last_stamped_audit_mid;
-                                                                            // Soft / no boundary →
-                                                                            // 0). Same mid as the
-                                                                            // Typed trail / SE so
-                                                                            // Agent joins via
-                                                                            // single mid across
-                                                                            // proof ↔ SE ↔ trail.
-                                                                            p.audit_mid =
-                                                                                g_tls_boundary_audit_noted
-                                                                                    ? g_tls_boundary_audit_mid
-                                                                                    : g_last_stamped_audit_mid
-                                                                                          .load(
-                                                                                              std::
-                                                                                                  memory_order_relaxed);
-                                                                            // Issue #2981: same-txn
-                                                                            // safety net — never
-                                                                            // leave a green proof
-                                                                            // when #2704 hard face
-                                                                            // is latched and CS
-                                                                            // goals are empty
-                                                                            // (prefer CS truth over
-                                                                            // gauge). Soft never
-                                                                            // enters the helper.
-                                                                            if (p.would_allow_commit &&
-                                                                                occurrence_empty_after_fence_blocks_proof(
-                                                                                    truth
-                                                                                        .live_goal_count)) {
-                                                                                p.would_allow_commit =
-                                                                                    false;
-                                                                                p.linear_ok = false;
-                                                                                p.occurrence_consistent =
-                                                                                    false;
-                                                                                p.force_reason_code =
-                                                                                    11; // occurrence_empty_after_fence
-                                                                                g_type_linear_proof_reject_empty_after_fence_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                            // Issue #2984: compact
-                                                                            // mismatch latches
-                                                                            // reject before Success
-                                                                            // trail.
-                                                                            if (p.would_allow_commit &&
-                                                                                linear_compact_root_mismatch_blocks_proof()) {
-                                                                                p.would_allow_commit =
-                                                                                    false;
-                                                                                p.linear_ok = false;
-                                                                                p.occurrence_consistent =
-                                                                                    false;
-                                                                                p.force_reason_code =
-                                                                                    3; // linear
-                                                                            }
-                                                                            // Issue #3346 AC1/AC2:
-                                                                            // last-look immediately
-                                                                            // before atomic
-                                                                            // last_proof stores
-                                                                            // (outermost + densify
-                                                                            // Phase-5 + steal
-                                                                            // success). Soft/Off
-                                                                            // skip.
-                                                                            if (p.would_allow_commit &&
-                                                                                !stamp_last_look_live_matches(
-                                                                                    truth
-                                                                                        .live_goal_count,
-                                                                                    truth
-                                                                                        .goal_fingerprint,
-                                                                                    p.linear_root_count,
-                                                                                    p.audit_mid))
-                                                                                reject_stamp_last_look_mismatch(
-                                                                                    p, truth);
-                                                                            apply_proof_goal_truth(
-                                                                                p, truth);
-                                                                            reject_fingerprint_cap_overflow(
-                                                                                p, truth);
-                                                                            reject_stamper_live_goal_linear_root_mismatch(
-                                                                                p);
-                                                                            p.schema =
-                                                                                kTypeLinearCommitProofIssue;
-                                                                            // Last stamped
-                                                                            // linear_root for query
-                                                                            // / Agent drift detect
-                                                                            // (same as live path).
-                                                                            g_last_proof_linear_root_count
-                                                                                .store(
-                                                                                    p.linear_root_count,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (p.linear_root_count >
-                                                                                    0 ||
-                                                                                p.live_goal_count >
-                                                                                    0) {
-                                                                                g_type_linear_commit_proof_counts_filled_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                            g_type_linear_commit_proof_stamped_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            stamp_type_linear_commit_proof(
-                                                                                current_epoch_or_defuse);
-                                                                            // Issue #2899: publish
-                                                                            // face bits for IR
-                                                                            // Move/Drop fast-path.
-                                                                            publish_last_proof_face(
-                                                                                p.would_allow_commit,
-                                                                                p.linear_ok);
-                                                                            g_tls_stamp_last_look_tc =
-                                                                                nullptr;
-                                                                            return p;
-                                                                        }
-
-                                                                        // Issue #2984:
-                                                                        // post-arena-compact
-                                                                        // linear_root_count vs last
-                                                                        // proof. last==0 → return
-                                                                        // without collect (AC3).
-                                                                        // Mismatch: Soft observe;
-                                                                        // production/Full latch
-                                                                        // face + stamp reject
-                                                                        // (force_reason linear=3).
-                                                                        // Aligns with #2673 densify
-                                                                        // scan family (same
-                                                                        // linear-root consistency).
-                                                                        inline bool
-                                                                        note_arena_compact_linear_root_consistency() noexcept {
-                                                                            const auto last =
-                                                                                last_proof_linear_root_count_v_read();
-                                                                            if (last == 0)
-                                                                                return false; // AC3:
-                                                                                              // no
-                                                                                              // extra
-                                                                                              // collect
-                                                                            g_linear_compact_root_check_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            const auto n = static_cast<
-                                                                                std::uint64_t>(
-                                                                                aura::compiler::
-                                                                                    linear_or_dirty_roots_count_for_rebind());
-                                                                            if (n == last)
-                                                                                return false;
-                                                                            const bool hard =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (!hard) {
-                                                                                g_linear_compact_root_mismatch_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                return false;
-                                                                            }
-                                                                            g_linear_compact_root_mismatch_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_linear_compact_root_mismatch_face
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            const auto epoch =
-                                                                                last_type_linear_commit_proof_stamp_v_read();
-                                                                            (void)build_type_linear_commit_proof_from_live_with_outcome(
-                                                                                epoch == 0 ? 1
-                                                                                           : epoch,
-                                                                                /*would_allow=*/
-                                                                                false,
-                                                                                /*linear_ok=*/false,
-                                                                                kProofLiveGoalCountHintAuto,
-                                                                                0, false,
-                                                                                /*force_reason=*/3);
-                                                                            publish_type_linear_proof_outcome(
-                                                                                kTypeLinearProofOutcomeReject);
-                                                                            return true;
-                                                                        }
-
-                                                                        // Issue #3227: post-compact
-                                                                        // / hot-update remount must
-                                                                        // re-bind linear proof
-                                                                        // before the next IR/JIT
-                                                                        // Move/Drop elision. Reuses
-                                                                        // #2984 compact consistency
-                                                                        // + the densify/steal
-                                                                        // invalidate_gen
-                                                                        // (#3032/#3063) so Agents
-                                                                        // see one face. Soft: #2984
-                                                                        // observe-only.
-                                                                        // Production/Full: drop
-                                                                        // green face + advance gen
-                                                                        // until the next outermost
-                                                                        // publish_last_proof_face.
-                                                                        // Count-matched remaps
-                                                                        // still reject (root
-                                                                        // identities may have
-                                                                        // moved). No new query key.
-                                                                        // Issue #3448: last==0 is
-                                                                        // quiet only when there is
-                                                                        // no published green face.
-                                                                        // A green stamp with
-                                                                        // linear_root_count==0
-                                                                        // (non-linear stamp, or
-                                                                        // stamp before roots were
-                                                                        // discovered) must still
-                                                                        // drop
-                                                                        // g_last_proof_would_allow_commit
-                                                                        // / g_last_proof_linear_ok
-                                                                        // under Production/Full so
-                                                                        // remount cannot keep
-                                                                        // Move/Drop elision green.
-                                                                        // Soft last==0 green does
-                                                                        // not hard-drop. No second
-                                                                        // proof model.
-                                                                        inline constexpr int
-                                                                            kLinearPostMigrationProofRebindIssue =
-                                                                                3227;
-                                                                        inline constexpr int
-                                                                            kLinearZeroRootGreenFaceDropIssue =
-                                                                                3448;
-                                                                        [[nodiscard]] inline bool
-                                                                        rebind_linear_proof_after_root_migration() noexcept {
-                                                                            const auto last =
-                                                                                last_proof_linear_root_count_v_read();
-                                                                            const bool green_face =
-                                                                                g_last_proof_would_allow_commit
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_relaxed) !=
-                                                                                    0 ||
-                                                                                g_last_proof_linear_ok
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_relaxed) !=
-                                                                                    0;
-                                                                            // last==0 && !green:
-                                                                            // still quiet (no extra
-                                                                            // collect). Issue
-                                                                            // #3448.
-                                                                            if (last == 0 &&
-                                                                                !green_face)
-                                                                                return false;
-                                                                            const bool hard =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (last == 0) {
-                                                                                // last==0 + green
-                                                                                // face. Soft/Off:
-                                                                                // no hard-drop
-                                                                                // (AC4).
-                                                                                // Production: drop
-                                                                                // face + advance
-                                                                                // gen even though
-                                                                                // #2984
-                                                                                // count-mismatch
-                                                                                // does not fire
-                                                                                // (last==0). One
-                                                                                // extra live-root
-                                                                                // count so remount
-                                                                                // introducing roots
-                                                                                // is observed; drop
-                                                                                // regardless of
-                                                                                // match.
-                                                                                if (!hard)
-                                                                                    return false;
-                                                                                (void)aura::compiler::
-                                                                                    linear_or_dirty_roots_count_for_rebind();
-                                                                                g_rehydrate_miss_invalidate_gen
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                                g_last_proof_would_allow_commit
-                                                                                    .store(
-                                                                                        0,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                g_last_proof_linear_ok
-                                                                                    .store(
-                                                                                        0,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                publish_type_linear_proof_outcome(
-                                                                                    kTypeLinearProofOutcomeReject);
-                                                                                return true;
-                                                                            }
-                                                                            const bool mismatch =
-                                                                                note_arena_compact_linear_root_consistency();
-                                                                            if (!hard)
-                                                                                return mismatch;
-                                                                            g_rehydrate_miss_invalidate_gen
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_release);
-                                                                            g_last_proof_would_allow_commit
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_proof_linear_ok.store(
-                                                                                0,
-                                                                                std::
-                                                                                    memory_order_relaxed);
-                                                                            if (!mismatch)
-                                                                                publish_type_linear_proof_outcome(
-                                                                                    kTypeLinearProofOutcomeReject);
-                                                                            return true;
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::int64_t
-                                                                        commit_readiness_reason_code(
-                                                                            std::string_view
-                                                                                r) noexcept {
-                                                                            if (r ==
-                                                                                "cone_truncate")
-                                                                                return 9; // #2621
-                                                                            if (r == "cone_outside_"
-                                                                                     "goal_drop")
-                                                                                return 10; // #2703
-                                                                            if (r ==
-                                                                                "occurrence_empty_"
-                                                                                "after_fence")
-                                                                                return 11; // #2704
-                                                                            if (r == "auto_partial")
-                                                                                return 6; // #2610
-                                                                            if (r == "log_forces_"
-                                                                                     "partial")
-                                                                                return 12; // #2851
-                                                                            if (r == "empty_cs")
-                                                                                return 5;
-                                                                            if (r == "truncate")
-                                                                                return 4;
-                                                                            if (r == "linear")
-                                                                                return 3;
-                                                                            if (r == "blame")
-                                                                                return 2;
-                                                                            if (r == "solve")
-                                                                                return 1;
-                                                                            if (r == "cone_outside_"
-                                                                                     "goal_drop")
-                                                                                return 10; // #2703
-                                                                                           // /
-                                                                                           // #2716
-                                                                            if (r ==
-                                                                                "occurrence_empty_"
-                                                                                "after_fence")
-                                                                                return 11; // #2704
-                                                                                           // /
-                                                                                           // #2716
-                                                                            if (r == "region_type_"
-                                                                                     "cross_talk")
-                                                                                return 13; // #2847
-                                                                            if (r ==
-                                                                                "required_type")
-                                                                                return 14; // #2898
-                                                                            if (r ==
-                                                                                "refined_drift")
-                                                                                return 15; // #2911
-                                                                            if (r ==
-                                                                                "pending_full_"
-                                                                                "solve_residual")
-                                                                                return 16; // #3031
-                                                                            return 0;      // ok
-                                                                        }
-
-                                                                        // Issue #2716 / #2750:
-                                                                        // occurrence hard-face
-                                                                        // recover state (must be
-                                                                        // declared before
-                                                                        // commit_readiness uses
-                                                                        // them — inline header
-                                                                        // ODR-safe).
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_occurrence_hard_face_full_solve_recover_total{
-                                                                                0};
-                                                                        // Issue #2750: true recover
-                                                                        // success/fail (distinct
-                                                                        // from #2716 reject-arm
-                                                                        // bump).
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_occurrence_hard_face_recover_success_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_occurrence_hard_face_recover_fail_total{
-                                                                                0};
-                                                                        // Issue #3108: post-recover
-                                                                        // re-gate on
-                                                                        // solve_status==0 (anti
-                                                                        // half-green after
-                                                                        // occurrence hard-face
-                                                                        // recover). The existing
-                                                                        // per-face guards
-                                                                        // (`if (recovered &&
-                                                                        // in.solve_status != 0)
-                                                                        // recovered = false;`) are
-                                                                        // local; some fall-through
-                                                                        // paths (line 2406 direct
-                                                                        // `if` usage, future faces)
-                                                                        // may still allow
-                                                                        // recovered==true under
-                                                                        // CONFLICT/TIMEOUT. The
-                                                                        // `g_occurrence_recover_not_solved_total`
-                                                                        // counter tracks every time
-                                                                        // the re-gate forces a
-                                                                        // recovered->false flip, so
-                                                                        // production-soak /
-                                                                        // agent-self-modify gates
-                                                                        // can observe the
-                                                                        // half-green residual.
-                                                                        //
-                                                                        // Quiet path (no recover
-                                                                        // attempted) stays zero
-                                                                        // extra atomics: the bump
-                                                                        // lives inside the `if
-                                                                        // (recovered &&
-                                                                        // in.solve_status != 0)`
-                                                                        // branch which is cold
-                                                                        // (only fires when a
-                                                                        // recover hook returns true
-                                                                        // under non-SOLVED).
-                                                                        inline constexpr int
-                                                                            kOccurrenceRecoverNotSolvedIssue =
-                                                                                3108;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_occurrence_recover_not_solved_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_occurrence_recover_not_solved_wired{
-                                                                                1};
-                                                                        // Issue #2909:
-                                                                        // force-closure counters
-                                                                        // (must be before
-                                                                        // commit_readiness). Full
-                                                                        // definitions / accessors
-                                                                        // also live near #2703 face
-                                                                        // section.
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_truncate_force_closure_attempt_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_truncate_force_closure_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_truncate_force_closure_reject_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_cone_truncate_force_closure_wired{
-                                                                                1};
-                                                                        // Issue #2962: Agent-facing
-                                                                        // residual of #2909 —
-                                                                        // recover must reach SOLVED
-                                                                        // (goals consistent);
-                                                                        // hard-reject force_reason
-                                                                        // cone_outside_goal_drop
-                                                                        // when recover fails or
-                                                                        // returns "success" without
-                                                                        // SOLVED (half-green
-                                                                        // close). Soft: observe
-                                                                        // only (no hard path).
-                                                                        // Quiet: no extra atomics
-                                                                        // beyond face loads.
-                                                                        inline constexpr int
-                                                                            kConeOutsideGoalDropRecoverRejectIssue =
-                                                                                2962;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_outside_goal_drop_recover_ok_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_outside_goal_drop_reject_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_cone_outside_goal_drop_recover_reject_wired{
-                                                                                1};
-                                                                        // Issue #2911: unified
-                                                                        // refined-consistency face
-                                                                        // (must be before
-                                                                        // commit_readiness). Soft
-                                                                        // vs production decision
-                                                                        // table (#2911 AC6 — code
-                                                                        // comments only):
-                                                                        //   Soft + drift        →
-                                                                        //   observe counter; allow
-                                                                        //   production/Full + drift
-                                                                        //   → hard reject or
-                                                                        //   full-solve recover no
-                                                                        //   refined activity → zero
-                                                                        //   cost (face clear; no
-                                                                        //   extra loads beyond
-                                                                        //   faces)
-                                                                        inline constexpr int
-                                                                            kRefinedConsistencyGateIssue =
-                                                                                2911;
-                                                                        inline std::atomic<
-                                                                            std::uint8_t>
-                                                                            g_refined_consistency_drift_face{
-                                                                                0};
-                                                                        // Issue #3031:
-                                                                        // pending_full_solve /
-                                                                        // locality residual at
-                                                                        // composite commit. Quiet
-                                                                        // (count=0): no extra
-                                                                        // atomics beyond the two
-                                                                        // loads in drain. Soft:
-                                                                        // observe only.
-                                                                        // Production/Full: escalate
-                                                                        // then latch face on
-                                                                        // reject.
-                                                                        inline constexpr int
-                                                                            kPendingFullSolveResidualIssue =
-                                                                                3031;
-                                                                        inline std::atomic<
-                                                                            std::uint8_t>
-                                                                            g_pending_full_solve_residual_face{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_pending_full_solve_residual_last{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_pending_full_solve_residual_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_pending_full_solve_residual_escalate_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_pending_full_solve_residual_reject_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_pending_full_solve_residual_wired{
-                                                                                1};
-
-                                                                        [[nodiscard]] inline bool
-                                                                        pending_full_solve_residual_face_hit() noexcept {
-                                                                            // Issue #3316: acquire
-                                                                            // so a concurrent
-                                                                            // densify release-latch
-                                                                            // is visible to grant /
-                                                                            // query:type (writer is
-                                                                            // note_pending_full_solve_residual).
-                                                                            return g_pending_full_solve_residual_face
-                                                                                       .load(
-                                                                                           std::
-                                                                                               memory_order_acquire) !=
-                                                                                   0;
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        pending_full_solve_residual_last_v_read() noexcept {
-                                                                            return g_pending_full_solve_residual_last
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        pending_full_solve_residual_observe_total_v_read() noexcept {
-                                                                            return g_pending_full_solve_residual_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        pending_full_solve_residual_escalate_total_v_read() noexcept {
-                                                                            return g_pending_full_solve_residual_escalate_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        pending_full_solve_residual_reject_total_v_read() noexcept {
-                                                                            return g_pending_full_solve_residual_reject_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        reset_pending_full_solve_residual_for_test() noexcept {
-                                                                            g_pending_full_solve_residual_face
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_pending_full_solve_residual_last
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_pending_full_solve_residual_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_pending_full_solve_residual_escalate_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_pending_full_solve_residual_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        note_pending_full_solve_residual(
-                                                                            std::uint64_t n,
-                                                                            bool hard) noexcept {
-                                                                            g_pending_full_solve_residual_last
-                                                                                .store(
-                                                                                    n,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (n == 0) {
-                                                                                g_pending_full_solve_residual_face
-                                                                                    .store(
-                                                                                        0,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                                return;
-                                                                            }
-                                                                            if (hard)
-                                                                                g_pending_full_solve_residual_face
-                                                                                    .store(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                        }
-
-                                                                        // Issue #3237: query:type /
-                                                                        // type_export_is_authoritative
-                                                                        // residual gate.
-                                                                        // Production/Full latches
-                                                                        // pending_full_solve_residual_face;
-                                                                        // Soft never does (#3031).
-                                                                        // Quiet: one face load of
-                                                                        // 0. No production_defaults
-                                                                        // load (#3203 AC4). Callers
-                                                                        // already refused TIMEOUT
-                                                                        // via last-solve. Stamp
-                                                                        // lives on TypeChecker
-                                                                        // (kTypeExportFullAuditGateIssue).
-                                                                        [[nodiscard]] inline bool
-                                                                        type_export_residual_faces_clear() noexcept {
-                                                                            return !pending_full_solve_residual_face_hit();
-                                                                        }
-
-                                                                        // Issue #3316: residual of
-                                                                        // #3237 under steal /
-                                                                        // densify interleave.
-                                                                        // grant_type_export_authority
-                                                                        // /
-                                                                        // type_export_is_authoritative
-                                                                        // resample the residual
-                                                                        // face under the same
-                                                                        // persist seqlock used by
-                                                                        // drain_pending_full_solve_before_commit
-                                                                        // / densify (#3225). Odd
-                                                                        // seq (write in flight),
-                                                                        // seq change mid-sample, or
-                                                                        // either face sample set →
-                                                                        // treat as residual (refuse
-                                                                        // grant /
-                                                                        // not-authoritative). Soft:
-                                                                        // seq stays 0 even and face
-                                                                        // never latches → both
-                                                                        // samples 0. No new counter
-                                                                        // / query key. Reuses
-                                                                        // force_reason 16 on the
-                                                                        // persist residual path.
-                                                                        inline constexpr int
-                                                                            kTypeExportAuthorityRaceIssue =
-                                                                                3316;
-                                                                        [[nodiscard]] inline bool
-                                                                        type_export_residual_faces_stable() noexcept {
-                                                                            const auto s0 =
-                                                                                g_occurrence_persist_seq
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_acquire);
-                                                                            if ((s0 & 1ull) != 0)
-                                                                                return false;
-                                                                            const auto f0 =
-                                                                                g_pending_full_solve_residual_face
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_acquire);
-                                                                            std::atomic_thread_fence(
-                                                                                std::
-                                                                                    memory_order_acquire);
-                                                                            const auto f1 =
-                                                                                g_pending_full_solve_residual_face
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_acquire);
-                                                                            const auto s1 =
-                                                                                g_occurrence_persist_seq
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_acquire);
-                                                                            if (s0 != s1 ||
-                                                                                (s1 & 1ull) != 0)
-                                                                                return false;
-                                                                            return f0 == 0 &&
-                                                                                   f1 == 0;
-                                                                        }
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_refined_consistency_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_refined_consistency_reject_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_refined_consistency_recover_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_refined_consistency_wired{
-                                                                                1};
-                                                                        // Issue #3294: Soft
-                                                                        // query:type export refused
-                                                                        // without an outermost
-                                                                        // success face (residual of
-                                                                        // #3203/#3237 — Soft
-                                                                        // TIMEOUT "recovered" by a
-                                                                        // later local SOLVED must
-                                                                        // still refuse). Soft
-                                                                        // observe counter only;
-                                                                        // production/Full refuse
-                                                                        // via existing
-                                                                        // delta_timeout_reject_total
-                                                                        // / clear authority. Quiet
-                                                                        // SOLVED outermost: zero
-                                                                        // extra (one bool load, no
-                                                                        // bump).
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_type_export_soft_refuse_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_type_export_soft_refuse_wired{
-                                                                                1};
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        type_export_soft_refuse_observe_v_read() noexcept {
-                                                                            return g_type_export_soft_refuse_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        reset_type_export_soft_refuse_for_test() noexcept {
-                                                                            g_type_export_soft_refuse_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        // Issue #3380: occurrence
-                                                                        // full-solve recover is
-                                                                        // bound to the commit
-                                                                        // TypeChecker used by
-                                                                        // persist (no
-                                                                        // process-global fn/ctx
-                                                                        // slot — that was
-                                                                        // last-TC-wins: a stack
-                                                                        // TypeChecker built in
-                                                                        // run_post_mutate_typecheck_no_lock
-                                                                        // / steal × dual-Evaluator
-                                                                        // would overwrite the slot
-                                                                        // and a vacuous SOLVED on
-                                                                        // the wrong CS would clear
-                                                                        // the victim's faces —
-                                                                        // half-green close of
-                                                                        // #2962).
-                                                                        //
-                                                                        // Recover call sites in
-                                                                        // commit_readiness() now
-                                                                        // invoke a C ABI that looks
-                                                                        // up the live commit TC via
-                                                                        // the Evaluator TLS handle
-                                                                        // (g_tls_audit_commit_readiness_evaluator
-                                                                        // — set at outermost
-                                                                        // enter_mutation_boundary,
-                                                                        // cleared at outermost
-                                                                        // exit; same shape as
-                                                                        // #3379's live_policy fill
-                                                                        // bridge). nullptr / no TLS
-                                                                        // → treat as recover fail
-                                                                        // (AC2: hard-reject face,
-                                                                        // never silent green).
-                                                                        //
-                                                                        // Header stays
-                                                                        // TypeChecker-free (C ABI
-                                                                        // in
-                                                                        // evaluator_mutation_boundary.cpp
-                                                                        // owns the cast + recover
-                                                                        // fn call — same separation
-                                                                        // as #3170/#3379).
-                                                                        // File-scope decls (above
-                                                                        // the namespace) — tests
-                                                                        // call the unmangled names.
-                                                                        // Forward decls — defined
-                                                                        // later with face counter
-                                                                        // clear helpers
-                                                                        // (#2703/#2704/#2847).
-                                                                        inline void
-                                                                        clear_cone_outside_goal_drop_for_test() noexcept;
-                                                                        inline void
-                                                                        clear_partial_cone_truncate_for_test() noexcept;
-                                                                        inline void
-                                                                        clear_occurrence_empty_after_fence_for_test() noexcept;
-                                                                        [[nodiscard]] inline bool
-                                                                        region_type_cross_talk_face_hit() noexcept;
-
-                                                                        // Pure decision table (AC5:
-                                                                        // identical inputs →
-                                                                        // identical output; no
-                                                                        // atomics).
-                                                                        [[nodiscard]] inline CommitReadiness
-                                                                        commit_readiness(
-                                                                            const CommitReadinessInput&
-                                                                                in) noexcept {
-                                                                            CommitReadiness r;
-                                                                            auto set = [&](std::string_view
-                                                                                               reason,
-                                                                                           bool
-                                                                                               allow,
-                                                                                           std::uint32_t
-                                                                                               bp) {
-                                                                                r.force_reason =
-                                                                                    reason;
-                                                                                r.force_reason_code =
-                                                                                    commit_readiness_reason_code(
-                                                                                        reason);
-                                                                                r.would_allow_commit =
-                                                                                    allow;
-                                                                                r.readiness_bp = bp;
-                                                                            };
-
-                                                                            // 1) empty_cs —
-                                                                            // expected_partial (or
-                                                                            // #2610 auto) + empty
-                                                                            // CS (#2345 / #2509).
-                                                                            // Auto path uses
-                                                                            // force_reason
-                                                                            // "auto_partial" when
-                                                                            // soft so Agents can
-                                                                            // distinguish
-                                                                            // under-marked cone
-                                                                            // from explicit
-                                                                            // expected_partial.
-                                                                            const bool expected_eff =
-                                                                                in.expected_partial ||
-                                                                                in.auto_partial_from_cone;
-                                                                            if (expected_eff &&
-                                                                                !in.cs_has_work) {
-                                                                                if (in.empty_cs_hard)
-                                                                                    return (
-                                                                                        set(in.auto_partial_from_cone &&
-                                                                                                    !in.expected_partial
-                                                                                                ? "auto_partial"
-                                                                                                : "empty_cs",
-                                                                                            false,
-                                                                                            0),
-                                                                                        r);
-                                                                                // Soft observe:
-                                                                                // auto path uses
-                                                                                // distinct reason;
-                                                                                // explicit keeps
-                                                                                // empty_cs.
-                                                                                if (in.auto_partial_from_cone &&
-                                                                                    !in.expected_partial)
-                                                                                    return (
-                                                                                        set("auto_"
-                                                                                            "partia"
-                                                                                            "l",
-                                                                                            true,
-                                                                                            7400),
-                                                                                        r);
-                                                                                return (
-                                                                                    set("empty_cs",
-                                                                                        true, 7500),
-                                                                                    r); // Soft
-                                                                                        // observe
-                                                                            }
-
-                                                                            // 2) truncate —
-                                                                            // truncated reverify
-                                                                            // without full-solve
-                                                                            // recover (#2458)
-                                                                            //    OR partial cone
-                                                                            //    truncate (#2621 /
-                                                                            //    #2560 soft|hard
-                                                                            //    overflow).
-                                                                            //    cone_truncate
-                                                                            //    reason when only
-                                                                            //    cone truncated
-                                                                            //    (not reverify).
-                                                                            //
-                                                                            // Issue #2909 / #2962:
-                                                                            // production/Full +
-                                                                            // cone truncate +
-                                                                            // outside-If goal drop
-                                                                            // must force one
-                                                                            // full-solve recover
-                                                                            // (#2750 hook) before
-                                                                            // hard reject. Recover
-                                                                            // success allows commit
-                                                                            // only when SOLVED
-                                                                            // (solve_status==0) —
-                                                                            // #2962 residual
-                                                                            // half-green close
-                                                                            // (recover that reports
-                                                                            // true but leaves
-                                                                            // CONFLICT/TIMEOUT is
-                                                                            // force-rejected with
-                                                                            // force_reason
-                                                                            // cone_outside_goal_drop,
-                                                                            // Agent-visible code
-                                                                            // 10). Soft: observe
-                                                                            // only. Quiet (no
-                                                                            // outside drop): keep
-                                                                            // prior cone_truncate
-                                                                            // hard reject without
-                                                                            // extra recover cost
-                                                                            // when truncate_hard.
-                                                                            //
-                                                                            // Soft vs production
-                                                                            // decision table (#2962
-                                                                            // AC2 / #2909 AC6):
-                                                                            //   Soft + truncate +
-                                                                            //   outside drop  →
-                                                                            //   Soft observe
-                                                                            //   (cone_truncate
-                                                                            //   allow)
-                                                                            //   production/Full +
-                                                                            //   truncate + outside
-                                                                            //   + recover SOLVED →
-                                                                            //   allow (ok path)
-                                                                            //   production/Full +
-                                                                            //   truncate + outside
-                                                                            //   + recover
-                                                                            //   fail/non-SOLVED
-                                                                            //       → hard-reject
-                                                                            //       force_reason
-                                                                            //       cone_outside_goal_drop
-                                                                            //   no truncate / no
-                                                                            //   outside drop → zero
-                                                                            //   extra recover
-                                                                            //   (quiet)
-                                                                            const bool trunc_face =
-                                                                                (in.truncated_reverify &&
-                                                                                 !in.truncated_full_solve_recovered) ||
-                                                                                in.partial_cone_truncated;
-                                                                            if (trunc_face) {
-                                                                                const bool cone_only =
-                                                                                    in.partial_cone_truncated &&
-                                                                                    !(in.truncated_reverify &&
-                                                                                      !in.truncated_full_solve_recovered);
-                                                                                const std::string_view
-                                                                                    reason =
-                                                                                        cone_only
-                                                                                            ? "cone"
-                                                                                              "_tru"
-                                                                                              "ncat"
-                                                                                              "e"
-                                                                                            : "trun"
-                                                                                              "cat"
-                                                                                              "e";
-                                                                                const bool hard =
-                                                                                    in.truncate_hard ||
-                                                                                    in.occurrence_face_hard;
-                                                                                const bool outside_drop =
-                                                                                    in.cone_outside_goal_drop_face ||
-                                                                                    (hard &&
-                                                                                     cone_outside_goal_drop_total_v_read() >
-                                                                                         0);
-                                                                                if (hard &&
-                                                                                    outside_drop) {
-                                                                                    // Force-closure
-                                                                                    // recover path
-                                                                                    // (#2909) +
-                                                                                    // SOLVED gate
-                                                                                    // (#2962) +
-                                                                                    // #3380 (live
-                                                                                    // commit TC
-                                                                                    // binding — no
-                                                                                    // process-global
-                                                                                    // fn/ctx).
-                                                                                    g_cone_truncate_force_closure_attempt_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    // Recover is
-                                                                                    // invoked on
-                                                                                    // the commit TC
-                                                                                    // bound to the
-                                                                                    // current
-                                                                                    // Evaluator TLS
-                                                                                    // handle (set
-                                                                                    // at outermost
-                                                                                    // enter,
-                                                                                    // cleared at
-                                                                                    // outermost
-                                                                                    // exit per
-                                                                                    // #3379).
-                                                                                    // nullptr / no
-                                                                                    // TLS → recover
-                                                                                    // fail (AC2:
-                                                                                    // hard-reject
-                                                                                    // face, never
-                                                                                    // silent
-                                                                                    // green). #2962
-                                                                                    // SOLVED gate:
-                                                                                    // try_occurrence_hard_face_full_solve_recover()
-                                                                                    // returns true
-                                                                                    // only when its
-                                                                                    // solve()
-                                                                                    // returned
-                                                                                    // SOLVED — no
-                                                                                    // need to
-                                                                                    // re-sample a
-                                                                                    // possibly-stale
-                                                                                    // in.solve_status
-                                                                                    // here.
-                                                                                    const bool recovered =
-                                                                                        aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
-                                                                                    if (recovered) {
-                                                                                        g_cone_truncate_force_closure_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        g_occurrence_hard_face_recover_success_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        g_cone_outside_goal_drop_recover_ok_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        // Consume
-                                                                                        // truncate
-                                                                                        // +
-                                                                                        // outside-drop
-                                                                                        // so
-                                                                                        // re-entry
-                                                                                        // is clean.
-                                                                                        clear_partial_cone_truncate_for_test();
-                                                                                        clear_cone_outside_goal_drop_for_test();
-                                                                                        // Fall
-                                                                                        // through
-                                                                                        // to later
-                                                                                        // faces /
-                                                                                        // ok
-                                                                                        // (recovered
-                                                                                        // SOLVED).
-                                                                                    } else {
-                                                                                        g_cone_truncate_force_closure_reject_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        g_occurrence_hard_face_recover_fail_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        g_cone_outside_goal_drop_reject_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        return (
-                                                                                            set("co"
-                                                                                                "ne"
-                                                                                                "_o"
-                                                                                                "ut"
-                                                                                                "si"
-                                                                                                "de"
-                                                                                                "_g"
-                                                                                                "oa"
-                                                                                                "l_"
-                                                                                                "dr"
-                                                                                                "o"
-                                                                                                "p",
-                                                                                                false,
-                                                                                                800),
-                                                                                            r);
-                                                                                    }
-                                                                                } else if (
-                                                                                    in.truncate_hard) {
-                                                                                    return (
-                                                                                        set(reason,
-                                                                                            false,
-                                                                                            1000),
-                                                                                        r);
-                                                                                } else {
-                                                                                    return (
-                                                                                        set(reason,
-                                                                                            true,
-                                                                                            7000),
-                                                                                        r); // Soft
-                                                                                            // observe
-                                                                                }
-                                                                            }
-
-                                                                            // 3) linear — escape /
-                                                                            // invariant fail
-                                                                            // (#2108).
-                                                                            if (!in.linear_ok) {
-                                                                                if (in.linear_hard)
-                                                                                    return (
-                                                                                        set("linea"
-                                                                                            "r",
-                                                                                            false,
-                                                                                            500),
-                                                                                        r);
-                                                                                return (
-                                                                                    set("linear",
-                                                                                        true, 5500),
-                                                                                    r); // Soft
-                                                                                        // observe
-                                                                            }
-
-                                                                            // 4) blame — incomplete
-                                                                            // blame chain (#2221).
-                                                                            if (!in.blame_ok) {
-                                                                                if (in.blame_hard)
-                                                                                    return (
-                                                                                        set("blame",
-                                                                                            false,
-                                                                                            1500),
-                                                                                        r);
-                                                                                return (
-                                                                                    set("blame",
-                                                                                        true, 5000),
-                                                                                    r); // Soft
-                                                                                        // observe
-                                                                            }
-
-                                                                            // 5) solve — CONFLICT /
-                                                                            // TIMEOUT (not SOLVED).
-                                                                            if (in.solve_status !=
-                                                                                0) {
-                                                                                const auto bp =
-                                                                                    in.solve_status ==
-                                                                                            2
-                                                                                        ? 2000u
-                                                                                        : 2500u;
-                                                                                return (set("solve",
-                                                                                            false,
-                                                                                            bp),
-                                                                                        r);
-                                                                            }
-
-                                                                            // 6) Issue #2716 /
-                                                                            // #2750: occurrence
-                                                                            // hard-faces. When
-                                                                            // production/Full
-                                                                            // + face counters
-                                                                            // advanced, try one
-                                                                            // full
-                                                                            // ConstraintSystem::solve()
-                                                                            // recover (hook) before
-                                                                            // hard-reject. Soft /
-                                                                            // baseline=0:
-                                                                            // counter-only (no full
-                                                                            // solve — preserves
-                                                                            // #2703/#2704 Soft
-                                                                            // ergonomics). Issue
-                                                                            // #2909: re-check live
-                                                                            // face atomics — step 2
-                                                                            // force-closure may
-                                                                            // already have consumed
-                                                                            // truncate+outside-drop
-                                                                            // faces (avoid double
-                                                                            // solve).
-                                                                            if (in.occurrence_face_hard) {
-                                                                                const bool cone_face =
-                                                                                    in.cone_outside_goal_drop_face &&
-                                                                                    cone_outside_goal_drop_total_v_read() >
-                                                                                        0;
-                                                                                const bool empty_face =
-                                                                                    in.occurrence_empty_after_fence_face &&
-                                                                                    occurrence_empty_after_fence_total_v_read() >
-                                                                                        0;
-                                                                                if (cone_face ||
-                                                                                    empty_face) {
-                                                                                    // Issue #2750:
-                                                                                    // Option A
-                                                                                    // recover half
-                                                                                    // — one full
-                                                                                    // solve on the
-                                                                                    // commit TC
-                                                                                    // bound to the
-                                                                                    // current
-                                                                                    // Evaluator TLS
-                                                                                    // (#3380 — no
-                                                                                    // process-global
-                                                                                    // fn/ctx slot;
-                                                                                    // last-TC-wins
-                                                                                    // was a
-                                                                                    // half-green
-                                                                                    // close of
-                                                                                    // #2962 under
-                                                                                    // steal ×
-                                                                                    // dual-Evaluator).
-                                                                                    // Quiet path
-                                                                                    // (no face)
-                                                                                    // never reaches
-                                                                                    // here → zero
-                                                                                    // extra solve
-                                                                                    // cost.
-                                                                                    const bool recovered =
-                                                                                        aura_typed_audit_try_occurrence_hard_face_full_solve_recover();
-                                                                                    if (recovered) {
-                                                                                        g_occurrence_hard_face_recover_success_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        if (cone_face)
-                                                                                            g_cone_outside_goal_drop_recover_ok_total
-                                                                                                .fetch_add(
-                                                                                                    1,
-                                                                                                    std::
-                                                                                                        memory_order_relaxed);
-                                                                                        // Consume
-                                                                                        // faces so
-                                                                                        // re-entry
-                                                                                        // does not
-                                                                                        // immediately
-                                                                                        // re-reject.
-                                                                                        clear_cone_outside_goal_drop_for_test();
-                                                                                        clear_occurrence_empty_after_fence_for_test();
-                                                                                        // Fall
-                                                                                        // through
-                                                                                        // to step 7
-                                                                                        // region
-                                                                                        // face / ok
-                                                                                        // (recovered).
-                                                                                    } else {
-                                                                                        g_occurrence_hard_face_recover_fail_total
-                                                                                            .fetch_add(
-                                                                                                1,
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                        if (cone_face) {
-                                                                                            // Issue
-                                                                                            // #2962:
-                                                                                            // Agent-facing
-                                                                                            // reject
-                                                                                            // total
-                                                                                            // (outside-drop
-                                                                                            // face).
-                                                                                            g_cone_outside_goal_drop_reject_total
-                                                                                                .fetch_add(
-                                                                                                    1,
-                                                                                                    std::
-                                                                                                        memory_order_relaxed);
-                                                                                            return (
-                                                                                                set("cone_outside_goal_drop",
-                                                                                                    false,
-                                                                                                    800),
-                                                                                                r);
-                                                                                        }
-                                                                                        return (
-                                                                                            set("oc"
-                                                                                                "cu"
-                                                                                                "rr"
-                                                                                                "en"
-                                                                                                "ce"
-                                                                                                "_e"
-                                                                                                "mp"
-                                                                                                "ty"
-                                                                                                "_a"
-                                                                                                "ft"
-                                                                                                "er"
-                                                                                                "_f"
-                                                                                                "en"
-                                                                                                "c"
-                                                                                                "e",
-                                                                                                false,
-                                                                                                850),
-                                                                                            r);
-                                                                                    }
-                                                                                }
-                                                                            }
-
-                                                                            // 6b) Issue #2847:
-                                                                            // region
-                                                                            // type/occurrence
-                                                                            // cross-talk under
-                                                                            // concurrent admit.
-                                                                            // production/Full +
-                                                                            // face latch → hard
-                                                                            // reject. Soft leaves
-                                                                            // face unset
-                                                                            // (observe-only via
-                                                                            // note_region_type_cross_talk(false)).
-                                                                            if (in.occurrence_face_hard &&
-                                                                                in.region_type_cross_talk_face) {
-                                                                                return (set("region"
-                                                                                            "_type_"
-                                                                                            "cross_"
-                                                                                            "talk",
-                                                                                            false,
-                                                                                            900),
-                                                                                        r);
-                                                                            }
-
-                                                                            // 6c) Issue #2911:
-                                                                            // unified
-                                                                            // refined-consistency
-                                                                            // hard gate.
-                                                                            // Production/Full +
-                                                                            // refined drift
-                                                                            // (explicit latch or
-                                                                            // multi-face refined
-                                                                            // signals) → one
-                                                                            // full-solve recover
-                                                                            // (#2750 hook) or hard
-                                                                            // reject with
-                                                                            // force_reason
-                                                                            // refined_drift (code
-                                                                            // 15). Soft: observe
-                                                                            // only
-                                                                            // (would_allow_commit
-                                                                            // stays true when
-                                                                            // refined_consistency_hard
-                                                                            // is false). Quiet:
-                                                                            // face clear → zero
-                                                                            // cost (no recover
-                                                                            // attempt).
-                                                                            if (in.refined_consistency_hard &&
-                                                                                in.refined_consistency_drift) {
-                                                                                // #3380: recover is
-                                                                                // bound to the live
-                                                                                // commit TC (C ABI
-                                                                                // looks up the
-                                                                                // Evaluator TLS
-                                                                                // handle +
-                                                                                // commit_type_checker_handle).
-                                                                                // AC2: nullptr / no
-                                                                                // TLS → recover fn
-                                                                                // returns false →
-                                                                                // hard reject with
-                                                                                // force_reason
-                                                                                // refined_drift
-                                                                                // (code 15).
-                                                                                if (aura_typed_audit_try_occurrence_hard_face_full_solve_recover()) {
-                                                                                    g_refined_consistency_recover_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    g_occurrence_hard_face_recover_success_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    g_refined_consistency_drift_face
-                                                                                        .store(
-                                                                                            0,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    // Fall through
-                                                                                    // to ok
-                                                                                    // (recovered
-                                                                                    // refined
-                                                                                    // scheme).
-                                                                                } else {
-                                                                                    g_refined_consistency_reject_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    g_occurrence_hard_face_recover_fail_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    return (
-                                                                                        set("refine"
-                                                                                            "d_"
-                                                                                            "drift",
-                                                                                            false,
-                                                                                            750),
-                                                                                        r);
-                                                                                }
-                                                                            } else if (
-                                                                                !in.refined_consistency_hard &&
-                                                                                in.refined_consistency_drift) {
-                                                                                // Soft observe path
-                                                                                // (hermetic tests
-                                                                                // may set drift
-                                                                                // without hard).
-                                                                                g_refined_consistency_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // Allow commit
-                                                                                // under Soft.
-                                                                            }
-
-                                                                            // 6d) Issue #3031:
-                                                                            // pending_full_solve /
-                                                                            // locality residual.
-                                                                            // Production/Full +
-                                                                            // residual face →
-                                                                            // hard-reject (escalate
-                                                                            // already attempted at
-                                                                            // composite drain).
-                                                                            // Soft: observe allow.
-                                                                            // Quiet: residual flag
-                                                                            // false → zero extra.
-                                                                            if (in.pending_full_solve_residual) {
-                                                                                if (in.pending_full_solve_hard)
-                                                                                    return (
-                                                                                        set("pendin"
-                                                                                            "g_"
-                                                                                            "full_"
-                                                                                            "solve_"
-                                                                                            "residu"
-                                                                                            "al",
-                                                                                            false,
-                                                                                            700),
-                                                                                        r);
-                                                                                return (
-                                                                                    set("pending_"
-                                                                                        "full_"
-                                                                                        "solve_"
-                                                                                        "residual",
-                                                                                        true, 7200),
-                                                                                    r);
-                                                                            }
-
-                                                                            // 7) ok — clean SOLVED
-                                                                            // + linear + blame +
-                                                                            // !truncated + no face
-                                                                            // hit.
-                                                                            return (set("ok", true,
-                                                                                        10000),
-                                                                                    r);
-                                                                        }
-
-                                                                        // Fill hard flags from live
-                                                                        // audit process state
-                                                                        // (still pure w.r.t. inputs
-                                                                        // once copied; callers that
-                                                                        // want hermetic tests pass
-                                                                        // CommitReadinessInput
-                                                                        // directly without this
-                                                                        // helper). Issue #2716 /
-                                                                        // #2750 recover counters +
-                                                                        // hook live above
-                                                                        // commit_readiness.
-                                                                        [[nodiscard]] inline CommitReadinessInput
-                                                                        commit_readiness_live_policy() noexcept {
-                                                                            CommitReadinessInput in;
-                                                                            // Issue #3347: remirror
-                                                                            // residual CastOp
-                                                                            // persist BEFORE
-                                                                            // auto_partial /
-                                                                            // empty_cs faces.
-                                                                            // Single-boundary /
-                                                                            // lockless readiness
-                                                                            // skipped the #3228
-                                                                            // force (only composite
-                                                                            // + selective
-                                                                            // dirty-txn). Soft /
-                                                                            // empty persist → 0
-                                                                            // extra. Pending latch
-                                                                            // (C ABI n>0, not yet
-                                                                            // re-inferred) drives
-                                                                            // auto_partial so empty
-                                                                            // CS hard-rejects until
-                                                                            // infer_flat_partial
-                                                                            // clears it. Last cone
-                                                                            // staying nonempty
-                                                                            // after infer must not
-                                                                            // latch forever —
-                                                                            // remirror n==0 once
-                                                                            // nodes are already in
-                                                                            // cone.
-                                                                            (void)
-                                                                                aura_force_residual_castop_undermark_into_cone();
-                                                                            if (aura_residual_castop_undermark_pending())
-                                                                                in.auto_partial_from_cone =
-                                                                                    true;
-                                                                            const bool prod =
-                                                                                production_defaults_active();
-                                                                            const bool full =
-                                                                                get_strategy() ==
-                                                                                AuditStrategy::Full;
-                                                                            in.empty_cs_hard =
-                                                                                composite_empty_cs_hard_reject_enabled();
-                                                                            // Issue #2621: cone
-                                                                            // truncate uses same
-                                                                            // hard family as #2458
-                                                                            // truncate +
-                                                                            // AURA_PARTIAL_CONE_COMMIT_HARD.
-                                                                            in.truncate_hard =
-                                                                                truncate_commit_hard_enabled() ||
-                                                                                partial_cone_commit_hard_enabled();
-                                                                            // Linear escape +
-                                                                            // blame-complete hard
-                                                                            // under production /
-                                                                            // Full (lineage).
-                                                                            in.linear_hard =
-                                                                                prod || full;
-                                                                            in.blame_hard =
-                                                                                prod || full;
-                                                                            // Live last partial
-                                                                            // cone truncate stamp
-                                                                            // (#2621 / #2560).
-                                                                            in.partial_cone_truncated =
-                                                                                last_partial_cone_truncated();
-                                                                            // Issue #2716:
-                                                                            // occurrence hard-faces
-                                                                            // (active wiring).
-                                                                            // Under production /
-                                                                            // Full, capture the
-                                                                            // face counter values.
-                                                                            // The active branch in
-                                                                            // commit_readiness
-                                                                            // rejects when the face
-                                                                            // has fired (counter >
-                                                                            // 0 — i.e., face has
-                                                                            // been bumped since the
-                                                                            // last clear). Soft
-                                                                            // path leaves
-                                                                            // occurrence_face_hard=false
-                                                                            // so the counter-only
-                                                                            // path stays metric (no
-                                                                            // reject, no full-solve
-                                                                            // — preserves the
-                                                                            // existing Soft
-                                                                            // ergonomics from #2703
-                                                                            // / #2704). Per AC3:
-                                                                            // quiet path costs 2
-                                                                            // atomics on prod/Full
-                                                                            // when neither face has
-                                                                            // fired. No extra
-                                                                            // atomics when not in
-                                                                            // prod/Full.
-                                                                            const bool face_hard =
-                                                                                prod || full;
-                                                                            in.occurrence_face_hard =
-                                                                                face_hard;
-                                                                            // Issue #2911:
-                                                                            // refined-consistency
-                                                                            // hard under same
-                                                                            // production/Full face.
-                                                                            in.refined_consistency_hard =
-                                                                                face_hard;
-                                                                            // Issue #3031:
-                                                                            // pending_full_solve
-                                                                            // residual face.
-                                                                            in.pending_full_solve_hard =
-                                                                                face_hard;
-                                                                            in.pending_full_solve_residual =
-                                                                                pending_full_solve_residual_face_hit();
-                                                                            if (face_hard) {
-                                                                                in.cone_outside_goal_drop_face =
-                                                                                    (cone_outside_goal_drop_total_v_read() >
-                                                                                     0);
-                                                                                in.occurrence_empty_after_fence_face =
-                                                                                    (occurrence_empty_after_fence_total_v_read() >
-                                                                                     0);
-                                                                                // Issue #2847:
-                                                                                // region type
-                                                                                // cross-talk face
-                                                                                // latch.
-                                                                                in.region_type_cross_talk_face =
-                                                                                    region_type_cross_talk_face_hit();
-                                                                                // Issue #2911:
-                                                                                // unified refined
-                                                                                // drift — explicit
-                                                                                // latch OR
-                                                                                // multi-face
-                                                                                // refined signals
-                                                                                // (e.g. occurrence
-                                                                                // empty after fence
-                                                                                // + outside drop).
-                                                                                // Quiet: all clear
-                                                                                // →
-                                                                                // refined_consistency_drift
-                                                                                // stays false (zero
-                                                                                // cost beyond the
-                                                                                // face loads
-                                                                                // already paid
-                                                                                // above).
-                                                                                int refined_hits =
-                                                                                    0;
-                                                                                if (g_refined_consistency_drift_face
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_relaxed) !=
-                                                                                    0)
-                                                                                    refined_hits =
-                                                                                        2; // explicit
-                                                                                           // latch
-                                                                                           // always
-                                                                                           // enough
-                                                                                else {
-                                                                                    if (in.cone_outside_goal_drop_face)
-                                                                                        ++refined_hits;
-                                                                                    if (in.occurrence_empty_after_fence_face)
-                                                                                        ++refined_hits;
-                                                                                }
-                                                                                in.refined_consistency_drift =
-                                                                                    refined_hits >=
-                                                                                    2;
-                                                                                // Issue #2716:
-                                                                                // face-hit observe
-                                                                                // counter (not true
-                                                                                // recover). #2750
-                                                                                // moves true
-                                                                                // recover success
-                                                                                // to
-                                                                                // recover_success_total.
-                                                                                if (in.cone_outside_goal_drop_face ||
-                                                                                    in.occurrence_empty_after_fence_face) {
-                                                                                    g_occurrence_hard_face_full_solve_recover_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                }
-                                                                            }
-                                                                            // Issue #3379: fill
-                                                                            // from live TypeChecker
-                                                                            // when a current
-                                                                            // Evaluator with live
-                                                                            // commit TC is in TLS.
-                                                                            // Quiet (no TLS) → keep
-                                                                            // today's face-only
-                                                                            // fill (no extra CS
-                                                                            // walk). Soft path: TLS
-                                                                            // slot is read here too
-                                                                            // — production never
-                                                                            // depends on a hidden
-                                                                            // field.
-                                                                            if (g_tls_audit_commit_readiness_evaluator !=
-                                                                                nullptr) {
-                                                                                aura_typed_audit_fill_from_live_tc(
-                                                                                    g_tls_audit_commit_readiness_evaluator,
-                                                                                    &in);
-                                                                            } else if (prod ||
-                                                                                       full) {
-                                                                                // Issue #3414: no
-                                                                                // live commit TC.
-                                                                                // Default
-                                                                                // solve_status=0
-                                                                                // (SOLVED) is not
-                                                                                // authority. Deny
-                                                                                // via existing
-                                                                                // "solve"
-                                                                                // (TIMEOUT-class)
-                                                                                // unless last proof
-                                                                                // is Stamped AND
-                                                                                // invalidate_gen==green_bind_gen
-                                                                                // AND
-                                                                                // pending/cone/refined
-                                                                                // faces are already
-                                                                                // clear (those
-                                                                                // faces keep their
-                                                                                // own force_reason
-                                                                                // — do not
-                                                                                // overwrite with
-                                                                                // "solve").
-                                                                                // Soft/Off skips
-                                                                                // this arm (no
-                                                                                // extra CS walk).
-                                                                                // Two relaxed loads
-                                                                                // + two
-                                                                                // acquire/relaxed
-                                                                                // gen loads; no
-                                                                                // ConstraintSystem
-                                                                                // walk.
-                                                                                const auto outcome =
-                                                                                    g_last_type_linear_proof_outcome
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                const bool stamped =
-                                                                                    outcome ==
-                                                                                    kTypeLinearProofOutcomeStamped;
-                                                                                const bool gen_ok =
-                                                                                    g_rehydrate_miss_invalidate_gen
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_acquire) ==
-                                                                                    g_rehydrate_miss_green_bind_gen
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                const bool faces_clear =
-                                                                                    !in.pending_full_solve_residual &&
-                                                                                    !in.cone_outside_goal_drop_face &&
-                                                                                    !in.occurrence_empty_after_fence_face &&
-                                                                                    !in.refined_consistency_drift &&
-                                                                                    !in.region_type_cross_talk_face;
-                                                                                if (faces_clear &&
-                                                                                    !(stamped &&
-                                                                                      gen_ok) &&
-                                                                                    in.solve_status ==
-                                                                                        0)
-                                                                                    in.solve_status =
-                                                                                        2; // TIMEOUT-class
-                                                                                           // →
-                                                                                           // commit_readiness
-                                                                                           // "solve"
-                                                                            }
-                                                                            return in;
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        occurrence_hard_face_recover_success_total_v_read() noexcept {
-                                                                            return g_occurrence_hard_face_recover_success_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        occurrence_hard_face_recover_fail_total_v_read() noexcept {
-                                                                            return g_occurrence_hard_face_recover_fail_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2145: Agent-stable
-                                                                        // deny reason (mirror #2076
-                                                                        // format_deny_reason
-                                                                        // shape). Shape:
-                                                                        // "invariant-denied: <kind>
-                                                                        // tenant=<id> op=<op>"
-                                                                        [[nodiscard]] inline std::string
-                                                                        format_invariant_deny_reason(
-                                                                            std::string_view kind,
-                                                                            std::uint64_t tenant_id,
-                                                                            std::string_view op) {
-                                                                            return std::format(
-                                                                                "invariant-denied: "
-                                                                                "{} tenant={} "
-                                                                                "op={}",
-                                                                                kind, tenant_id,
-                                                                                op);
-                                                                        }
-
-                                                                        [[nodiscard]] inline MutationKind
-                                                                        classify_kind(
-                                                                            std::string_view
-                                                                                op) noexcept {
-                                                                            if (op.empty())
-                                                                                return MutationKind::
-                                                                                    Unknown;
-                                                                            if (op.find(
-                                                                                    "aot-"
-                                                                                    "hotupdate") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos ||
-                                                                                op.find(
-                                                                                    "aot_"
-                                                                                    "hotupdate") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos)
-                                                                                return MutationKind::
-                                                                                    AotHotUpdate;
-                                                                            if (op.find("jit-") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos ||
-                                                                                op.find("jit_") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos)
-                                                                                return MutationKind::
-                                                                                    JitHotpath;
-                                                                            if (op.find(
-                                                                                    "hygiene") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos ||
-                                                                                op.find("macro") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos)
-                                                                                return MutationKind::
-                                                                                    MacroHygiene;
-                                                                            if (op.find("replace-"
-                                                                                        "type") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos ||
-                                                                                op ==
-                                                                                    "replace-type")
-                                                                                return MutationKind::
-                                                                                    ReplaceType;
-                                                                            if (op.find("replace-"
-                                                                                        "value") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos ||
-                                                                                op ==
-                                                                                    "replace-value")
-                                                                                return MutationKind::
-                                                                                    ReplaceValue;
-                                                                            if (op.find("record-"
-                                                                                        "patch") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos ||
-                                                                                op ==
-                                                                                    "record-patch")
-                                                                                return MutationKind::
-                                                                                    RecordPatch;
-                                                                            if (op ==
-                                                                                    "structural" ||
-                                                                                op.find("mutate") !=
-                                                                                    std::
-                                                                                        string_view::
-                                                                                            npos)
-                                                                                return MutationKind::
-                                                                                    Structural;
-                                                                            return MutationKind::
-                                                                                Other;
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        next_audit_mutation_id() noexcept {
-                                                                            return g_typed_mutation_audit_counters
-                                                                                       .audit_mutation_id_gen
-                                                                                       .fetch_add(
-                                                                                           1,
-                                                                                           std::
-                                                                                               memory_order_relaxed) +
-                                                                                   1;
-                                                                        }
-
-                                                                        // Issue #2493: canonical
-                                                                        // mid resolution for audit
-                                                                        // paths that did not thread
-                                                                        // a caller mid. Preference
-                                                                        // order (mirrors #2384
-                                                                        // require_effect stamping
-                                                                        // so SE ↔
-                                                                        // TypedMutationAudit ↔
-                                                                        // grant epoch stay joined):
-                                                                        //   1. caller mid when
-                                                                        //   non-zero
-                                                                        //   2.
-                                                                        //   current_mutation_epoch()
-                                                                        //   when non-zero
-                                                                        //   (WorkspaceEpoch
-                                                                        //   Mutation — #2149)
-                                                                        //   3. ResourceQuota host
-                                                                        //   mid when set
-                                                                        //   4. Soft/Sampled only:
-                                                                        //   next_audit_mutation_id()
-                                                                        //   last-resort join stamp
-                                                                        //      (process-origin);
-                                                                        //      bumps
-                                                                        //      audit_mid_fallback_gen_total.
-                                                                        // Issue #2836: under
-                                                                        // production_defaults_active()
-                                                                        // || Full, step 4 is
-                                                                        // absolute zero-tolerance —
-                                                                        // refuse process-origin
-                                                                        // stamp (return 0) and bump
-                                                                        // audit_mid_fallback_refused_total.
-                                                                        // Supersedes #2635
-                                                                        // rate-based resolve-time
-                                                                        // hard-deny (SLO gate
-                                                                        // remains on schedule
-                                                                        // admission #2630). Soft /
-                                                                        // Sampled keep Soft
-                                                                        // fallback (#2493 AC4,
-                                                                        // #2635 AC3, #2836 AC2).
-                                                                        // #2636 note: AuditStrategy
-                                                                        // has {Off, Sampled, Full}
-                                                                        // only — no Strict enum.
-                                                                        [[nodiscard]] inline std::
-                                                                            uint64_t
-                                                                            resolve_audit_mutation_id(
-                                                                                std::uint64_t
-                                                                                    caller_mid =
-                                                                                        0) noexcept {
-                                                                            if (caller_mid != 0)
-                                                                                return caller_mid;
-                                                                            // Issue #3296 AC1:
-                                                                            // TypedMid SSOT must
-                                                                            // precede epoch under
-                                                                            // production so audit
-                                                                            // mid joins
-                                                                            // grant.bound_mutation_id
-                                                                            // / SE.mutation_id /
-                                                                            // AuditWalRecord.provenance_mutation_id
-                                                                            // on the same
-                                                                            // boundary-stamped
-                                                                            // value. Drop the
-                                                                            // host-quota mid from
-                                                                            // the production
-                                                                            // cascade (drift / lag
-                                                                            // under steal × abort).
-                                                                            // TypedMid is
-                                                                            // authoritative only
-                                                                            // while a boundary is
-                                                                            // live on this thread
-                                                                            // (TLS-noted); a stale
-                                                                            // process-global stamp
-                                                                            // from a completed /
-                                                                            // foreign boundary must
-                                                                            // not shadow the
-                                                                            // current epoch (#3016
-                                                                            // AC4 cross-evaluator
-                                                                            // isolation).
-                                                                            const auto tm =
-                                                                                (g_tls_boundary_audit_noted &&
-                                                                                 g_tls_boundary_audit_mid !=
-                                                                                     0)
-                                                                                    ? last_type_linear_commit_proof_stamp_v_read()
-                                                                                    : 0;
-                                                                            if (tm != 0)
-                                                                                return tm;
-                                                                            const auto ep = ::aura::core::
-                                                                                current_mutation_epoch();
-                                                                            if (ep != 0)
-                                                                                return ep;
-                                                                            // Issue #2836 / #2635
-                                                                            // lineage: production
-                                                                            // mid-fallback absolute
-                                                                            // zero-tolerance.
-                                                                            // hard_deny_eligible =
-                                                                            // production_defaults
-                                                                            // || Full (same gate
-                                                                            // shape as #2635;
-                                                                            // behavior is now
-                                                                            // absolute refuse, not
-                                                                            // rate-based
-                                                                            // would_arm_degraded).
-                                                                            // Soft/Sampled fall
-                                                                            // through.
-                                                                            const bool hard_deny_eligible =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (hard_deny_eligible) {
-                                                                                // Absolute refuse:
-                                                                                // no process-origin
-                                                                                // join stamp into
-                                                                                // the trail.
-                                                                                // Callers treat
-                                                                                // mid==0 as deny /
-                                                                                // re-stamp or
-                                                                                // surface
-                                                                                // "mid-fallback-refused"
-                                                                                // (#2836 AC4).
-                                                                                // Distinct refuse
-                                                                                // metric — does NOT
-                                                                                // bump
-                                                                                // audit_mid_fallback_gen_total
-                                                                                // (#2836 AC1).
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .audit_mid_fallback_refused_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // Issue #3054:
-                                                                                // exactly one
-                                                                                // joinable SE (ring
-                                                                                // + WAL when
-                                                                                // enabled). Soft
-                                                                                // never reaches
-                                                                                // this branch. TLS
-                                                                                // suppresses nested
-                                                                                // re-resolve.
-                                                                                if (!g_tls_mid_fallback_refuse_se_emitted) {
-                                                                                    g_tls_mid_fallback_refuse_se_emitted =
-                                                                                        true;
-                                                                                    using ::aura::core::
-                                                                                        security_event::
-                                                                                            g_security_event_ring;
-                                                                                    using ::aura::core::
-                                                                                        security_event::
-                                                                                            SecurityEventKind;
-                                                                                    using ::aura::core::
-                                                                                        security_event_wal::
-                                                                                            emit_security_event_durable;
-                                                                                    emit_security_event_durable(
-                                                                                        SecurityEventKind::
-                                                                                            InvariantFail,
-                                                                                        /*tenant=*/
-                                                                                        0,
-                                                                                        /*mid=*/0,
-                                                                                        /*epoch=*/
-                                                                                        ep,
-                                                                                        /*effect_bits=*/
-                                                                                        0,
-                                                                                        "resolve-"
-                                                                                        "audit-mid",
-                                                                                        "mid-"
-                                                                                        "fallback-"
-                                                                                        "refused",
-                                                                                        /*denied=*/
-                                                                                        true,
-                                                                                        /*fiber=*/
-                                                                                        0);
-                                                                                    const auto seq =
-                                                                                        g_security_event_ring()
-                                                                                            .seq
-                                                                                            .load(
-                                                                                                std::
-                                                                                                    memory_order_relaxed);
-                                                                                    g_typed_mutation_audit_counters
-                                                                                        .audit_mid_fallback_refuse_se_seq
-                                                                                        .store(
-                                                                                            seq == 0
-                                                                                                ? 0
-                                                                                                : seq -
-                                                                                                      1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                    g_typed_mutation_audit_counters
-                                                                                        .audit_mid_fallback_refuse_se_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                }
-                                                                                return 0;
-                                                                            }
-                                                                            // Soft / Sampled:
-                                                                            // last-resort
-                                                                            // process-origin stamp
-                                                                            // + gen counter.
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_mid_fallback_gen_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            return next_audit_mutation_id();
-                                                                        }
-
-                                                                        // Issue #2814 M7: TLS link
-                                                                        // between trail Success and
-                                                                        // invariant enforcement.
-                                                                        // record_invariant_audit_result
-                                                                        // → note_ran; Guard
-                                                                        // intentional skip →
-                                                                        // note_skipped.
-                                                                        // capture_audit_event_forced(Success,
-                                                                        // mutate-class kind)
-                                                                        // without either → gap.
-                                                                        enum class
-                                                                            EnforcementLinkKind : std::
-                                                                                uint8_t {
-                                                                                    None = 0,
-                                                                                    Ran = 1,
-                                                                                    Skipped = 2
-                                                                                };
-                                                                        inline thread_local std::uint64_t
-                                                                            g_tls_enforcement_link_mid =
-                                                                                0;
-                                                                        inline thread_local EnforcementLinkKind
-                                                                            g_tls_enforcement_link =
-                                                                                EnforcementLinkKind::
-                                                                                    None;
-
-                                                                        // Issue #3016: mid resolved
-                                                                        // at outermost Guard enter.
-                                                                        // Trail / SE / grant /
-                                                                        // occurrence / proof read
-                                                                        // this — never
-                                                                        // Evaluator::total_mutations_
-                                                                        // (volume metric only).
-                                                                        // noted=true even when
-                                                                        // mid==0 (production
-                                                                        // refuse) so stamp sites do
-                                                                        // not re-resolve and
-                                                                        // double-count
-                                                                        // refused_total.
-                                                                        inline constexpr int
-                                                                            kBoundaryAuditMidIssue =
-                                                                                3016;
-
-                                                                        inline void
-                                                                        note_boundary_audit_mid(
-                                                                            std::uint64_t
-                                                                                mid) noexcept {
-                                                                            g_tls_boundary_audit_mid =
-                                                                                mid;
-                                                                            g_tls_boundary_audit_noted =
-                                                                                true;
-                                                                        }
-
-                                                                        // Issue #3066: single join
-                                                                        // mid for composite /
-                                                                        // lockless batch so typed
-                                                                        // deny + SE trail share
-                                                                        // last_stamped_audit_mid.
-                                                                        // Soft/quiet: no extra.
-                                                                        inline constexpr int
-                                                                            kCompositeAuditSeJoinIssue =
-                                                                                3066;
-                                                                        inline thread_local std::uint64_t
-                                                                            g_tls_composite_batch_join_mid =
-                                                                                0;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_last_composite_batch_join_mid{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_composite_batch_join_pin_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_composite_batch_se_join_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_composite_audit_se_join_wired{
-                                                                                1};
-
-                                                                        inline void
-                                                                        clear_boundary_audit_mid() noexcept {
-                                                                            g_tls_boundary_audit_mid =
-                                                                                0;
-                                                                            g_tls_boundary_audit_noted =
-                                                                                false;
-                                                                            g_tls_composite_batch_join_mid =
-                                                                                0;
-                                                                            clear_mid_fallback_refuse_se_tls();
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        current_boundary_audit_mid() noexcept {
-                                                                            return g_tls_boundary_audit_mid;
-                                                                        }
-
-                                                                        // Prefer enter-resolved TLS
-                                                                        // mid. 0 under production
-                                                                        // refuse is sticky. If no
-                                                                        // boundary noted yet,
-                                                                        // resolve (Soft fallback /
-                                                                        // epoch).
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        stamp_boundary_audit_mid() noexcept {
-                                                                            if (g_tls_boundary_audit_noted)
-                                                                                return g_tls_boundary_audit_mid;
-                                                                            return resolve_audit_mutation_id();
-                                                                        }
-
-                                                                        // Issue #3066: SE + typed
-                                                                        // trail join key. Caller
-                                                                        // mid wins; else pinned
-                                                                        // composite/batch mid; else
-                                                                        // non-zero boundary mid;
-                                                                        // else resolve. Soft/quiet
-                                                                        // with nothing pinned →
-                                                                        // resolve (existing
-                                                                        // Sampled/Off path).
-                                                                        [[nodiscard]] inline std::
-                                                                            uint64_t
-                                                                            join_audit_and_se_mid(
-                                                                                std::uint64_t
-                                                                                    caller_mid =
-                                                                                        0) noexcept {
-                                                                            if (caller_mid != 0)
-                                                                                return caller_mid;
-                                                                            if (g_tls_composite_batch_join_mid !=
-                                                                                0)
-                                                                                return g_tls_composite_batch_join_mid;
-                                                                            if (g_tls_boundary_audit_noted &&
-                                                                                g_tls_boundary_audit_mid !=
-                                                                                    0)
-                                                                                return g_tls_boundary_audit_mid;
-                                                                            return resolve_audit_mutation_id(
-                                                                                0);
-                                                                        }
-
-                                                                        // Issue #3280 / #3319:
-                                                                        // dual-write
-                                                                        // SecurityEvent(InvariantFail)
-                                                                        // for invariant / boundary
-                                                                        // / hygiene / hard-gate
-                                                                        // denies. Production
-                                                                        // defaults (any strategy,
-                                                                        // including Sampled) OR
-                                                                        // Full always emit mid +
-                                                                        // stable reason so Agent
-                                                                        // query:security-audit can
-                                                                        // join by mid even when
-                                                                        // should_audit() skipped
-                                                                        // the Typed trail. Soft/Off
-                                                                        // zero-cost. Sampled
-                                                                        // without production stays
-                                                                        // zero-cost (dev). Reuses
-                                                                        // format_invariant_deny_reason
-                                                                        // shape ("invariant-denied:
-                                                                        // <kind> tenant=<id>
-                                                                        // op=<op>") +
-                                                                        // join_audit_and_se_mid
-                                                                        // (#3066 composite/batch
-                                                                        // pin). One SE per deny:
-                                                                        // TLS mid-keyed guard so
-                                                                        // record_invariant_audit_result
-                                                                        // +
-                                                                        // record_boundary_deny_after_restore
-                                                                        // + hygiene/hard-gate never
-                                                                        // double-emit for the same
-                                                                        // deny. #3217 order: call
-                                                                        // AFTER structural restore
-                                                                        // +
-                                                                        // coercion/occurrence/proof
-                                                                        // clear. mid=0 under
-                                                                        // production refuse → no
-                                                                        // invented SE (the
-                                                                        // mid-fallback-refused SE
-                                                                        // from
-                                                                        // resolve_audit_mutation_id
-                                                                        // is the joinable evidence,
-                                                                        // AC4).
-                                                                        inline thread_local std::uint64_t
-                                                                            g_tls_invariant_deny_se_mid =
-                                                                                0;
-
-                                                                        inline void
-                                                                        clear_invariant_deny_se_tls() noexcept {
-                                                                            g_tls_invariant_deny_se_mid =
-                                                                                0;
-                                                                        }
-
-                                                                        inline void
-                                                                        emit_invariant_deny_se(
-                                                                            std::uint64_t mid,
-                                                                            std::uint64_t tenant_id,
-                                                                            std::int64_t fiber_id,
-                                                                            std::uint64_t epoch,
-                                                                            std::string_view op,
-                                                                            std::string_view
-                                                                                deny_kind) noexcept {
-                                                                            if (mid == 0)
-                                                                                return; // production
-                                                                                        // refuse
-                                                                                        // path
-                                                                                        // already
-                                                                                        // emitted
-                                                                                        // mid-fallback-refused
-                                                                                        // (#3054)
-                                                                            // Issue #3319:
-                                                                            // production_defaults_active
-                                                                            // (any strategy) always
-                                                                            // emits. Soft/Off and
-                                                                            // Sampled-without-production
-                                                                            // stay zero-cost.
-                                                                            if (!(production_defaults_active() ||
-                                                                                  get_strategy() ==
-                                                                                      AuditStrategy::
-                                                                                          Full))
-                                                                                return;
-                                                                            if (g_tls_invariant_deny_se_mid ==
-                                                                                mid)
-                                                                                return; // one SE
-                                                                                        // per deny
-                                                                                        // (both
-                                                                                        // helpers
-                                                                                        // may run
-                                                                                        // for the
-                                                                                        // same
-                                                                                        // deny)
-                                                                            g_tls_invariant_deny_se_mid =
-                                                                                mid;
-                                                                            using ::aura::core::
-                                                                                security_event::
-                                                                                    SecurityEventKind;
-                                                                            using ::aura::core::
-                                                                                security_event_wal::
-                                                                                    emit_security_event_durable;
-                                                                            emit_security_event_durable(
-                                                                                SecurityEventKind::
-                                                                                    InvariantFail,
-                                                                                tenant_id, mid,
-                                                                                epoch,
-                                                                                /*effect_bits=*/0,
-                                                                                op,
-                                                                                format_invariant_deny_reason(
-                                                                                    deny_kind,
-                                                                                    tenant_id, op),
-                                                                                /*denied=*/true,
-                                                                                fiber_id);
-                                                                        }
-
-                                                                        // Issue #3066: pin one join
-                                                                        // mid for the composite /
-                                                                        // lockless batch and
-                                                                        // publish to TLS +
-                                                                        // last_stamped (queryable)
-                                                                        // before sub-mutates. Soft
-                                                                        // / quiet (no caller, no
-                                                                        // epoch, not
-                                                                        // production/Full) → 0
-                                                                        // extra, no alloc.
-                                                                        // Production/Full with
-                                                                        // empty upstream: one
-                                                                        // batch-join stamp + SE.
-                                                                        inline std::uint64_t
-                                                                        pin_composite_batch_join_mid(
-                                                                            std::uint64_t
-                                                                                caller_mid =
-                                                                                    0) noexcept {
-                                                                            if (g_tls_composite_batch_join_mid !=
-                                                                                0)
-                                                                                return g_tls_composite_batch_join_mid;
-                                                                            std::uint64_t mid =
-                                                                                caller_mid;
-                                                                            if (mid == 0 &&
-                                                                                g_tls_boundary_audit_noted &&
-                                                                                g_tls_boundary_audit_mid !=
-                                                                                    0)
-                                                                                mid =
-                                                                                    g_tls_boundary_audit_mid;
-                                                                            if (mid == 0)
-                                                                                mid = ::aura::core::
-                                                                                    current_mutation_epoch();
-                                                                            if (mid == 0) {
-                                                                                // Issue #3296 AC1:
-                                                                                // TypedMid SSOT
-                                                                                // under production;
-                                                                                // drops the
-                                                                                // host-quota mid
-                                                                                // from the cascade
-                                                                                // (drift / lag
-                                                                                // under steal ×
-                                                                                // abort). TypedMid
-                                                                                // is authoritative
-                                                                                // only while a
-                                                                                // boundary is live
-                                                                                // on this thread
-                                                                                // (TLS-noted); a
-                                                                                // stale
-                                                                                // process-global
-                                                                                // stamp must not
-                                                                                // pin a fresh
-                                                                                // composite batch
-                                                                                // to an old join
-                                                                                // mid (#3066
-                                                                                // AC1/AC3).
-                                                                                mid =
-                                                                                    (g_tls_boundary_audit_noted &&
-                                                                                     g_tls_boundary_audit_mid !=
-                                                                                         0)
-                                                                                        ? last_type_linear_commit_proof_stamp_v_read()
-                                                                                        : 0;
-                                                                            }
-                                                                            // Issue #3367: hard
-                                                                            // 门面与 resolve 同表 —
-                                                                            // `mid==0` 不发明
-                                                                            // process-origin mid
-                                                                            // (resolve's
-                                                                            // mid-fallback-refused
-                                                                            // SE is emitted by the
-                                                                            // pin caller via TLS
-                                                                            // suppression;
-                                                                            // Soft/Sampled quiet —
-                                                                            // no caller, no epoch,
-                                                                            // not production/Full —
-                                                                            // zero extra, no alloc
-                                                                            // per #3066 AC3). The
-                                                                            // previous code mints a
-                                                                            // gen N under hard mode
-                                                                            // and emitted an
-                                                                            // EffectAllow SE with
-                                                                            // tenant=0/epoch=N —
-                                                                            // bypassing the #2836
-                                                                            // refuse contract on
-                                                                            // the same hard face
-                                                                            // and binding
-                                                                            // grant/SE/typed rows
-                                                                            // to a non- correlating
-                                                                            // gen mid.
-                                                                            if (mid == 0)
-                                                                                return 0;
-                                                                            g_tls_composite_batch_join_mid =
-                                                                                mid;
-                                                                            note_boundary_audit_mid(
-                                                                                mid);
-                                                                            g_last_composite_batch_join_mid
-                                                                                .store(
-                                                                                    mid,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_stamped_audit_mid
-                                                                                .store(
-                                                                                    mid,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            return mid;
-                                                                        }
-
-                                                                        // Issue #3066 AC2: Sampled
-                                                                        // + force-reason — pin deny
-                                                                        // mid so later SE emits
-                                                                        // join the same key (no
-                                                                        // silent fallback
-                                                                        // divergence).
-                                                                        inline std::uint64_t
-                                                                        promote_sampled_force_join_mid(
-                                                                            std::uint64_t deny_mid =
-                                                                                0) noexcept {
-                                                                            auto mid =
-                                                                                deny_mid != 0
-                                                                                    ? deny_mid
-                                                                                    : join_audit_and_se_mid(
-                                                                                          0);
-                                                                            if (mid == 0)
-                                                                                mid =
-                                                                                    next_audit_mutation_id();
-                                                                            g_tls_composite_batch_join_mid =
-                                                                                mid;
-                                                                            note_boundary_audit_mid(
-                                                                                mid);
-                                                                            g_last_composite_batch_join_mid
-                                                                                .store(
-                                                                                    mid,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_stamped_audit_mid
-                                                                                .store(
-                                                                                    mid,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            return mid;
-                                                                        }
-
-                                                                        // Issue #2814: mark that
-                                                                        // post_mutation_invariant
-                                                                        // suite (or equivalent) ran
-                                                                        // for this mutation_id.
-                                                                        // Call before/during
-                                                                        // record_invariant_audit_result.
-                                                                        inline void
-                                                                        note_invariant_enforcement_ran(
-                                                                            std::uint64_t
-                                                                                mutation_id) noexcept {
-                                                                            if (mutation_id == 0)
-                                                                                return;
-                                                                            g_tls_enforcement_link_mid =
-                                                                                mutation_id;
-                                                                            g_tls_enforcement_link =
-                                                                                EnforcementLinkKind::
-                                                                                    Ran;
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_enforcement_ran_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2814: intentional
-                                                                        // non-enforcement (Sampled
-                                                                        // skip, RenderFastExit,
-                                                                        // strategy Off quiet path).
-                                                                        // Prevents false gap on
-                                                                        // legitimate soft paths.
-                                                                        inline void
-                                                                        note_invariant_enforcement_skipped(
-                                                                            std::uint64_t
-                                                                                mutation_id) noexcept {
-                                                                            if (mutation_id == 0)
-                                                                                return;
-                                                                            g_tls_enforcement_link_mid =
-                                                                                mutation_id;
-                                                                            g_tls_enforcement_link =
-                                                                                EnforcementLinkKind::
-                                                                                    Skipped;
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_enforcement_skipped_intentional_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        [[nodiscard]] inline bool
-                                                                        enforcement_linked_for(
-                                                                            std::uint64_t
-                                                                                mutation_id) noexcept {
-                                                                            return mutation_id !=
-                                                                                       0 &&
-                                                                                   g_tls_enforcement_link_mid ==
-                                                                                       mutation_id &&
-                                                                                   g_tls_enforcement_link !=
-                                                                                       EnforcementLinkKind::
-                                                                                           None;
-                                                                        }
-
-                                                                        // Mutate-class kinds that
-                                                                        // should be
-                                                                        // enforcement-linked on
-                                                                        // Success trails.
-                                                                        // MacroHygiene / Aot / Jit
-                                                                        // / security-correlation
-                                                                        // paths are excluded.
-                                                                        [[nodiscard]] inline bool
-                                                                        mutate_class_kind_requires_enforcement_link(
-                                                                            MutationKind
-                                                                                kind) noexcept {
-                                                                            switch (kind) {
-                                                                                case MutationKind::
-                                                                                    Structural:
-                                                                                case MutationKind::
-                                                                                    ReplaceType:
-                                                                                case MutationKind::
-                                                                                    ReplaceValue:
-                                                                                case MutationKind::
-                                                                                    RecordPatch:
-                                                                                    return true;
-                                                                                default:
-                                                                                    return false;
-                                                                            }
-                                                                        }
-
-                                                                        // Core trail write (no
-                                                                        // Sampled gate). Used by
-                                                                        // capture_audit_event and
-                                                                        // by #2054
-                                                                        // security-correlated emit
-                                                                        // (always-on so rings stay
-                                                                        // joined by mutation_id
-                                                                        // even under Sampled
-                                                                        // strategy).
-                                                                        //
-                                                                        // Issue #2814 M7: this
-                                                                        // function is pure
-                                                                        // observability (trail +
-                                                                        // counters). It does NOT
-                                                                        // run
-                                                                        // type/linear/provenance
-                                                                        // checks. Enforcement lives
-                                                                        // in
-                                                                        // run_typed_mutation_invariant_audit
-                                                                        // →
-                                                                        // record_invariant_audit_result.
-                                                                        // On Success for
-                                                                        // mutate-class kinds, if
-                                                                        // neither
-                                                                        // note_invariant_enforcement_ran
-                                                                        // nor
-                                                                        // note_invariant_enforcement_skipped
-                                                                        // was called for this mid,
-                                                                        // bump
-                                                                        // audit_enforcement_gap_total
-                                                                        // (silent enforcement
-                                                                        // degradation signal).
-                                                                        inline void
-                                                                        capture_audit_event_forced(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            std::string_view name,
-                                                                            MutationKind kind,
-                                                                            std::uint64_t
-                                                                                before_epoch,
-                                                                            std::uint64_t
-                                                                                after_epoch,
-                                                                            AuditOutcome outcome,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::uint32_t
-                                                                                nodes_changed = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0,
-                                                                            std::uint32_t
-                                                                                affected_ref_count =
-                                                                                    0) noexcept {
-                                                                            // Issue #3016 / #2836:
-                                                                            // never stamp mid=0
-                                                                            // into the trail
-                                                                            // (production refuse /
-                                                                            // missing resolve).
-                                                                            // Soft resolve already
-                                                                            // produced a gen.
-                                                                            if (mutation_id == 0)
-                                                                                return;
-                                                                            TypedMutationAuditEvent
-                                                                                ev{};
-                                                                            ev.mutation_id =
-                                                                                mutation_id;
-                                                                            g_last_stamped_audit_mid
-                                                                                .store(
-                                                                                    mutation_id,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            const auto seq =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .trail_seq
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            ev.seq = seq;
-                                                                            const auto n =
-                                                                                name.size() <
-                                                                                        (kAuditNameCap -
-                                                                                         1)
-                                                                                    ? name.size()
-                                                                                    : (kAuditNameCap -
-                                                                                       1);
-                                                                            if (n > 0)
-                                                                                std::memcpy(
-                                                                                    ev.name,
-                                                                                    name.data(), n);
-                                                                            ev.name[n] = '\0';
-                                                                            ev.kind = kind;
-                                                                            ev.before_epoch =
-                                                                                before_epoch;
-                                                                            ev.after_epoch =
-                                                                                after_epoch;
-                                                                            ev.outcome = outcome;
-                                                                            ev.target_node =
-                                                                                target_node;
-                                                                            ev.nodes_changed =
-                                                                                nodes_changed;
-                                                                            ev.fiber_id = fiber_id;
-                                                                            ev.timestamp_ms = static_cast<
-                                                                                std::uint64_t>(
-                                                                                std::chrono::duration_cast<
-                                                                                    std::chrono::
-                                                                                        milliseconds>(
-                                                                                    std::chrono::
-                                                                                        steady_clock::
-                                                                                            now()
-                                                                                                .time_since_epoch())
-                                                                                    .count());
-                                                                            ev.affected_ref_count =
-                                                                                affected_ref_count;
-
-                                                                            // Issue #2819:
-                                                                            // lock-free ring
-                                                                            // publish (no mutex on
-                                                                            // capture hot path).
-                                                                            // trail_seq was already
-                                                                            // claimed via
-                                                                            // fetch_add; each seq
-                                                                            // maps to a unique slot
-                                                                            // until wrap.
-                                                                            // Concurrent writers
-                                                                            // hit different slots
-                                                                            // until size wraps.
-                                                                            // Readers
-                                                                            // (trail_at_seq)
-                                                                            // validate out.seq ==
-                                                                            // expected to drop
-                                                                            // torn/stale.
-                                                                            g_trail().ring
-                                                                                [seq %
-                                                                                 kTypedMutationAuditTrailSize] =
-                                                                                ev;
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_trail_lockfree_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // mutex_wait_us stays
-                                                                            // 0: lock-free path
-                                                                            // never waits.
-
-                                                                            g_typed_mutation_audit_counters
-                                                                                .contextual_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .trail_writes
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .typed_mutation_audit_triggered_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (outcome ==
-                                                                                AuditOutcome::
-                                                                                    Rollback)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .rollbacks
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (outcome ==
-                                                                                AuditOutcome::Error)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .errors
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-
-                                                                            // Issue #2814 M7:
-                                                                            // enforcement-link gap
-                                                                            // detection (metric
-                                                                            // always). Stderr warn
-                                                                            // is opt-in only: bash
-                                                                            // regression / agent
-                                                                            // harnesses capture
-                                                                            // combined streams and
-                                                                            // treat any gap banner
-                                                                            // as polluting
-                                                                            // stdout/expect
-                                                                            // (agent:mutate-rebind,
-                                                                            // edsl-ir-cache:cascade-*).
-                                                                            // Set
-                                                                            // AURA_AUDIT_GAP_WARN=1
-                                                                            // for local diagnosis.
-                                                                            // Metric
-                                                                            // audit_enforcement_gap_total
-                                                                            // remains the
-                                                                            // Agent-facing signal
-                                                                            // (query schema-2814).
-                                                                            if (outcome ==
-                                                                                    AuditOutcome::
-                                                                                        Success &&
-                                                                                mutation_id != 0 &&
-                                                                                mutate_class_kind_requires_enforcement_link(
-                                                                                    kind) &&
-                                                                                !enforcement_linked_for(
-                                                                                    mutation_id)) {
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .audit_enforcement_gap_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                static std::atomic<
-                                                                                    int>
-                                                                                    s_gap_warned{0};
-                                                                                const char* warn =
-                                                                                    std::getenv(
-                                                                                        "AURA_"
-                                                                                        "AUDIT_GAP_"
-                                                                                        "WARN");
-                                                                                if (warn &&
-                                                                                    warn[0] ==
-                                                                                        '1' &&
-                                                                                    warn[1] ==
-                                                                                        '\0' &&
-                                                                                    s_gap_warned.exchange(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed) ==
-                                                                                        0) {
-                                                                                    std::fprintf(
-                                                                                        stderr,
-                                                                                        "[#2814 M7 "
-                                                                                        "audit] "
-                                                                                        "Success "
-                                                                                        "trail "
-                                                                                        "without "
-                                                                                        "invariant "
-                                                                                        "enforcemen"
-                                                                                        "t "
-                                                                                        "link "
-                                                                                        "(mid=%llu "
-                                                                                        "name=%.*s)"
-                                                                                        ". Call "
-                                                                                        "note_"
-                                                                                        "invariant_"
-                                                                                        "enforcemen"
-                                                                                        "t_ran "
-                                                                                        "or "
-                                                                                        "note_"
-                                                                                        "invariant_"
-                                                                                        "enforcemen"
-                                                                                        "t_skipped "
-                                                                                        "before "
-                                                                                        "trail "
-                                                                                        "write. "
-                                                                                        "Metric: "
-                                                                                        "audit_"
-                                                                                        "enforcemen"
-                                                                                        "t_gap_"
-                                                                                        "total.\n",
-                                                                                        static_cast<
-                                                                                            unsigned long long>(
-                                                                                            mutation_id),
-                                                                                        static_cast<
-                                                                                            int>(n),
-                                                                                        ev.name);
-                                                                                }
-                                                                            }
-                                                                            // Issue #3066 AC2:
-                                                                            // Error/Rollback pins
-                                                                            // the deny mid for SE
-                                                                            // join.
-                                                                            if (outcome ==
-                                                                                    AuditOutcome::
-                                                                                        Error ||
-                                                                                outcome ==
-                                                                                    AuditOutcome::
-                                                                                        Rollback) {
-                                                                                if (g_tls_composite_batch_join_mid ==
-                                                                                    0)
-                                                                                    (void)promote_sampled_force_join_mid(
-                                                                                        mutation_id);
-                                                                            }
-                                                                            // Issue #3113: mirror
-                                                                            // SecurityEvent
-                                                                            // ring_wrap_total —
-                                                                            // bump once per
-                                                                            // overwrite after the
-                                                                            // in-memory window
-                                                                            // fills. After the
-                                                                            // #2814 window so the
-                                                                            // enforcement-link
-                                                                            // linter scan stays
-                                                                            // intact.
-                                                                            if (seq >=
-                                                                                kTypedMutationAuditTrailSize)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .typed_trail_wrap_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            // Issue #3242:
-                                                                            // production + mutation
-                                                                            // WAL persist
-                                                                            // (out-of-line).
-                                                                            maybe_persist_typed_summary(
-                                                                                ev);
-                                                                        }
-
-                                                                        inline void
-                                                                        capture_audit_event(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            std::string_view name,
-                                                                            MutationKind kind,
-                                                                            std::uint64_t
-                                                                                before_epoch,
-                                                                            std::uint64_t
-                                                                                after_epoch,
-                                                                            AuditOutcome outcome,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::uint32_t
-                                                                                nodes_changed = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0,
-                                                                            std::uint32_t
-                                                                                affected_ref_count =
-                                                                                    0) noexcept {
-                                                                            if (!should_audit(
-                                                                                    mutation_id))
-                                                                                return; // Issue
-                                                                                        // #3319:
-                                                                                        // trail
-                                                                                        // Sampled-skip;
-                                                                                        // deny
-                                                                                        // callers
-                                                                                        // emit SE
-                                                                            // Issue #1589 / #3016:
-                                                                            // capture_audit_event_forced
-                                                                            // drops mid=0 (never
-                                                                            // stamp a refuse-zero
-                                                                            // into the ring).
-                                                                            // Callers that passed
-                                                                            // the Sampled/Full gate
-                                                                            // still need a trail
-                                                                            // row — empty-Guard
-                                                                            // rollback and
-                                                                            // synthetic captures
-                                                                            // use mid=0 as "no
-                                                                            // caller mid". Generate
-                                                                            // a last-resort id so
-                                                                            // contextual_total /
-                                                                            // trail_writes stay
-                                                                            // honest. Issue #3217
-                                                                            // AC4: production /
-                                                                            // Full refuse mid=0 —
-                                                                            // never invent a
-                                                                            // Success row
-                                                                            // (mid-fallback-refused
-                                                                            // SE is the joinable
-                                                                            // evidence). Soft still
-                                                                            // generates a
-                                                                            // last-resort id
-                                                                            // (observe-only, no new
-                                                                            // I/O).
-                                                                            if (mutation_id == 0) {
-                                                                                if (production_defaults_active() ||
-                                                                                    get_strategy() ==
-                                                                                        AuditStrategy::
-                                                                                            Full) {
-                                                                                    if (outcome ==
-                                                                                        AuditOutcome::
-                                                                                            Success)
-                                                                                        return;
-                                                                                    capture_audit_event_forced(
-                                                                                        0, name,
-                                                                                        kind,
-                                                                                        before_epoch,
-                                                                                        after_epoch,
-                                                                                        outcome,
-                                                                                        target_node,
-                                                                                        nodes_changed,
-                                                                                        fiber_id,
-                                                                                        affected_ref_count);
-                                                                                    return;
-                                                                                }
-                                                                                mutation_id =
-                                                                                    next_audit_mutation_id();
-                                                                            }
-                                                                            capture_audit_event_forced(
-                                                                                mutation_id, name,
-                                                                                kind, before_epoch,
-                                                                                after_epoch,
-                                                                                outcome,
-                                                                                target_node,
-                                                                                nodes_changed,
-                                                                                fiber_id,
-                                                                                affected_ref_count);
-                                                                        }
-
-                                                                        // Issue #2054: always-on
-                                                                        // security correlation emit
-                                                                        // from
-                                                                        // check_and_record_effect
-                                                                        // (allow + deny). Bypasses
-                                                                        // Sampled so Agents can
-                                                                        // join
-                                                                        // SecurityEvent.mutation_id
-                                                                        // ↔
-                                                                        // TypedMutationAuditEvent.mutation_id.
-                                                                        // Issue #2493: caller_mid
-                                                                        // == 0 falls into the
-                                                                        // resolve_audit_mutation_id
-                                                                        // preference order
-                                                                        // (caller_mid →
-                                                                        // current_mutation_epoch →
-                                                                        // ResourceQuota →
-                                                                        // last-resort audit gen +
-                                                                        // fallback counter bump).
-                                                                        // Epoch field also falls
-                                                                        // back to
-                                                                        // current_mutation_epoch()
-                                                                        // when caller passes 0 so
-                                                                        // SE.epoch stays Mutation
-                                                                        // vocabulary (#2149).
-                                                                        inline void
-                                                                        capture_security_correlated_audit(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            std::string_view op,
-                                                                            std::uint64_t epoch,
-                                                                            bool denied,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0) noexcept {
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audits_considered
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #3066: prefer
-                                                                            // pinned
-                                                                            // composite/batch mid
-                                                                            // so SE + typed share
-                                                                            // one join key.
-                                                                            // Fallback remains
-                                                                            // resolve_audit_mutation_id(mutation_id).
-                                                                            const std::uint64_t mid =
-                                                                                join_audit_and_se_mid(
-                                                                                    mutation_id);
-                                                                            const auto use_epoch =
-                                                                                epoch != 0
-                                                                                    ? epoch
-                                                                                    : ::aura::core::
-                                                                                          current_mutation_epoch();
-                                                                            capture_audit_event_forced(
-                                                                                mid, op,
-                                                                                classify_kind(op),
-                                                                                use_epoch,
-                                                                                use_epoch,
-                                                                                denied
-                                                                                    ? AuditOutcome::
-                                                                                          Error
-                                                                                    : AuditOutcome::
-                                                                                          Success,
-                                                                                target_node,
-                                                                                /*nodes_changed=*/0,
-                                                                                fiber_id,
-                                                                                /*affected_ref_count=*/
-                                                                                0);
-                                                                        }
-
-                                                                        // Issue #1882: AOT
-                                                                        // hot-update boundary
-                                                                        // audit. Sampled on success
-                                                                        // (should_audit); failures
-                                                                        // always enter the trail
-                                                                        // (AI self-evolution must
-                                                                        // not drop
-                                                                        // reject/rollback). Issue
-                                                                        // #3217: fail stamps Error
-                                                                        // only after the reload has
-                                                                        // refused the swap (epoch
-                                                                        // not advanced / staging
-                                                                        // not committed). Success
-                                                                        // is the last write after
-                                                                        // commit — never
-                                                                        // Success-then-rollback.
-                                                                        inline void
-                                                                        capture_aot_hotupdate_audit(
-                                                                            bool success,
-                                                                            std::uint64_t
-                                                                                before_epoch,
-                                                                            std::uint64_t
-                                                                                after_epoch,
-                                                                            std::string_view
-                                                                                reason =
-                                                                                    "aot-"
-                                                                                    "hotupdat"
-                                                                                    "e") noexcept {
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_attempts
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2493: prefer
-                                                                            // Mutation epoch /
-                                                                            // ResourceQuota host
-                                                                            // mid over the
-                                                                            // last-resort audit gen
-                                                                            // so AOT trail joins
-                                                                            // the same mid
-                                                                            // vocabulary as
-                                                                            // require_effect /
-                                                                            // grant / isolation SE.
-                                                                            const std::uint64_t mid =
-                                                                                resolve_audit_mutation_id();
-                                                                            if (success) {
-                                                                                if (!should_audit(
-                                                                                        mid))
-                                                                                    return;
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .aot_hotupdate_audits
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .aot_hotupdate_ok
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                capture_audit_event(
-                                                                                    mid, reason,
-                                                                                    MutationKind::
-                                                                                        AotHotUpdate,
-                                                                                    before_epoch,
-                                                                                    after_epoch,
-                                                                                    AuditOutcome::
-                                                                                        Success);
-                                                                                return;
-                                                                            }
-                                                                            // Always-on failure
-                                                                            // path (mirrors
-                                                                            // capture_macro_hygiene_audit).
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_audits
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_fail
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_invariant_fail_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            const auto prev =
-                                                                                get_strategy();
-                                                                            set_strategy(
-                                                                                AuditStrategy::
-                                                                                    Full);
-                                                                            capture_audit_event(
-                                                                                mid, reason,
-                                                                                MutationKind::
-                                                                                    AotHotUpdate,
-                                                                                before_epoch,
-                                                                                after_epoch,
-                                                                                AuditOutcome::
-                                                                                    Error);
-                                                                            set_strategy(prev);
-                                                                            // Issue #3319:
-                                                                            // production/Full
-                                                                            // always emit joinable
-                                                                            // SE on AOT deny.
-                                                                            // Soft/Off:
-                                                                            // emit_invariant_deny_se
-                                                                            // no-ops. TLS
-                                                                            // one-SE-per-mid.
-                                                                            if (mid != 0)
-                                                                                emit_invariant_deny_se(
-                                                                                    mid,
-                                                                                    /*tenant_id=*/0,
-                                                                                    /*fiber_id=*/0,
-                                                                                    after_epoch,
-                                                                                    reason,
-                                                                                    "aot-"
-                                                                                    "hotupdate");
-                                                                        }
-
-                                                                        // Issue #1882: lightweight
-                                                                        // JIT L2 / apply hotpath
-                                                                        // sample (never forces
-                                                                        // Full).
-                                                                        inline void
-                                                                        capture_jit_hotpath_audit(
-                                                                            std::string_view
-                                                                                tag) noexcept {
-                                                                            // Issue #2493: same
-                                                                            // preference order as
-                                                                            // AOT (Mutation epoch
-                                                                            // preferred).
-                                                                            const std::uint64_t mid =
-                                                                                resolve_audit_mutation_id();
-                                                                            if (!should_audit(mid))
-                                                                                return;
-                                                                            g_typed_mutation_audit_counters
-                                                                                .jit_hotpath_audits
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            capture_audit_event(
-                                                                                mid, tag,
-                                                                                MutationKind::
-                                                                                    JitHotpath,
-                                                                                /*before_epoch=*/0,
-                                                                                /*after_epoch=*/0,
-                                                                                AuditOutcome::
-                                                                                    Success);
-                                                                        }
-
-                                                                        // Issue #1613: always-on
-                                                                        // macro hygiene audit
-                                                                        // (bypasses Sampled gate so
-                                                                        // blocked macro mutates are
-                                                                        // never lost from the
-                                                                        // trail). Issue #1877: on
-                                                                        // Error/Rollback also stamp
-                                                                        // provenance tracker with
-                                                                        // tenant_id so
-                                                                        // MacroIntroduced hygiene
-                                                                        // blocks are visible to
-                                                                        // both audit trail and
-                                                                        // StableNodeRef provenance
-                                                                        // / truncated blame chains.
-                                                                        inline void
-                                                                        capture_macro_hygiene_audit(
-                                                                            std::string_view name,
-                                                                            AuditOutcome outcome,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0,
-                                                                            std::uint64_t
-                                                                                tenant_id = 0,
-                                                                            std::uint64_t
-                                                                                mutation_id =
-                                                                                    0) noexcept {
-                                                                            g_typed_mutation_audit_counters
-                                                                                .macro_hygiene_events
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (outcome ==
-                                                                                    AuditOutcome::
-                                                                                        Error ||
-                                                                                outcome ==
-                                                                                    AuditOutcome::
-                                                                                        Rollback) {
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .macro_hygiene_blocked
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // Dual-record:
-                                                                                // audit trail
-                                                                                // (below) +
-                                                                                // provenance
-                                                                                // tracker (#1877).
-                                                                                aura::core::provenance::
-                                                                                    record_macro_hygiene_provenance(
-                                                                                        target_node,
-                                                                                        tenant_id,
-                                                                                        mutation_id,
-                                                                                        static_cast<
-                                                                                            std::
-                                                                                                uint32_t>(
-                                                                                            fiber_id));
-                                                                            } else {
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .macro_hygiene_allowed
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                            // Issue #3319: join mid
-                                                                            // so trail + SE share
-                                                                            // one key. Production
-                                                                            // refuse of mid=0
-                                                                            // leaves join_mid=0
-                                                                            // (mid-fallback-refused
-                                                                            // is the evidence).
-                                                                            const auto join_mid =
-                                                                                join_audit_and_se_mid(
-                                                                                    mutation_id);
-                                                                            const auto trail_mid =
-                                                                                join_mid != 0
-                                                                                    ? join_mid
-                                                                                    : mutation_id;
-                                                                            const auto prev =
-                                                                                get_strategy();
-                                                                            set_strategy(
-                                                                                AuditStrategy::
-                                                                                    Full);
-                                                                            capture_audit_event(
-                                                                                trail_mid, name,
-                                                                                MutationKind::
-                                                                                    MacroHygiene,
-                                                                                /*before_epoch=*/0,
-                                                                                /*after_epoch=*/0,
-                                                                                outcome,
-                                                                                target_node,
-                                                                                /*nodes_changed=*/0,
-                                                                                fiber_id,
-                                                                                /*affected_ref_count=*/
-                                                                                0);
-                                                                            set_strategy(prev);
-                                                                            // Production (any
-                                                                            // strategy, including
-                                                                            // Sampled) / Full:
-                                                                            // always emit SE on
-                                                                            // hygiene deny.
-                                                                            // Soft/Off: no-op. TLS
-                                                                            // one-SE-per-mid.
-                                                                            if ((outcome ==
-                                                                                     AuditOutcome::
-                                                                                         Error ||
-                                                                                 outcome ==
-                                                                                     AuditOutcome::
-                                                                                         Rollback) &&
-                                                                                join_mid != 0)
-                                                                                emit_invariant_deny_se(
-                                                                                    join_mid,
-                                                                                    tenant_id,
-                                                                                    fiber_id,
-                                                                                    /*epoch=*/0,
-                                                                                    name,
-                                                                                    "hygiene");
-                                                                        }
-
-                                                                        // Convenience for mutation
-                                                                        // boundary integration.
-                                                                        // Issue #2814: Success
-                                                                        // trails for mutate-class
-                                                                        // kinds require an
-                                                                        // enforcement link
-                                                                        // (note_invariant_enforcement_ran
-                                                                        // or
-                                                                        // note_invariant_enforcement_skipped)
-                                                                        // before this write, or
-                                                                        // capture_audit_event_forced
-                                                                        // bumps gap total.
-                                                                        inline void
-                                                                        record_boundary_outcome(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            std::string_view op,
-                                                                            std::uint64_t
-                                                                                before_epoch,
-                                                                            std::uint64_t
-                                                                                after_epoch,
-                                                                            bool success,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::uint32_t
-                                                                                nodes_changed = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0) noexcept {
-                                                                            // Issue #3217 AC4:
-                                                                            // production refuse
-                                                                            // mid=0 never stamps
-                                                                            // fake Success.
-                                                                            if (success &&
-                                                                                mutation_id == 0 &&
-                                                                                (production_defaults_active() ||
-                                                                                 get_strategy() ==
-                                                                                     AuditStrategy::
-                                                                                         Full))
-                                                                                return;
-                                                                            capture_audit_event(
-                                                                                mutation_id, op,
-                                                                                classify_kind(op),
-                                                                                before_epoch,
-                                                                                after_epoch,
-                                                                                success
-                                                                                    ? AuditOutcome::
-                                                                                          Success
-                                                                                    : AuditOutcome::
-                                                                                          Rollback,
-                                                                                target_node,
-                                                                                nodes_changed,
-                                                                                fiber_id,
-                                                                                nodes_changed > 0
-                                                                                    ? 1u
-                                                                                    : 0u);
-                                                                        }
-
-                                                                        // Issue #3217: deny stamp
-                                                                        // after restore+clear.
-                                                                        // Callers MUST complete
-                                                                        // structural restore and
-                                                                        // coercion/occurrence/proof
-                                                                        // clear first. Soft: same
-                                                                        // trail write as
-                                                                        // record_boundary_outcome(success=false);
-                                                                        // no extra I/O. Production
-                                                                        // mid=0 drops (SE
-                                                                        // mid-fallback-refused).
-                                                                        // Issue #3280: dual-write
-                                                                        // SecurityEvent(InvariantFail)
-                                                                        // after the trail stamp
-                                                                        // (restore-before-stamp
-                                                                        // order preserved) so
-                                                                        // SE-primary surfaces
-                                                                        // (query:security-audit /
-                                                                        // query:evolution-audit-decision)
-                                                                        // see boundary
-                                                                        // force-rollbacks. One SE
-                                                                        // per deny (TLS mid-keyed
-                                                                        // guard).
-                                                                        inline void
-                                                                        record_boundary_deny_after_restore(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            std::string_view op,
-                                                                            std::uint64_t
-                                                                                before_epoch,
-                                                                            std::uint64_t
-                                                                                after_epoch,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::uint32_t
-                                                                                nodes_changed = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0) noexcept {
-                                                                            record_boundary_outcome(
-                                                                                mutation_id, op,
-                                                                                before_epoch,
-                                                                                after_epoch,
-                                                                                /*success=*/false,
-                                                                                target_node,
-                                                                                nodes_changed,
-                                                                                fiber_id);
-                                                                            // Issue #3280: SE
-                                                                            // dual-write for the
-                                                                            // boundary deny. mid
-                                                                            // resolved via
-                                                                            // join_audit_and_se_mid
-                                                                            // (composite/batch pin
-                                                                            // #3066);
-                                                                            // production/Full only;
-                                                                            // one SE per deny (TLS
-                                                                            // guard suppresses the
-                                                                            // second helper run).
-                                                                            const auto join_mid =
-                                                                                join_audit_and_se_mid(
-                                                                                    mutation_id);
-                                                                            if (join_mid != 0) {
-                                                                                emit_invariant_deny_se(
-                                                                                    join_mid,
-                                                                                    /*tenant_id=*/0,
-                                                                                    fiber_id,
-                                                                                    after_epoch, op,
-                                                                                    /*deny_kind=*/
-                                                                                    "boundary");
-                                                                            }
-                                                                        }
-
-                                                                        // Issue #1614: record
-                                                                        // result of type + linear +
-                                                                        // provenance invariant
-                                                                        // suite. Issue #2027:
-                                                                        // composite_mode /
-                                                                        // cross_batch_linear_escape
-                                                                        // feed partial recovery.
-                                                                        // Issue #2223: adt_ok =
-                                                                        // match exhaustiveness in
-                                                                        // dirty / workspace match
-                                                                        // sites.
-                                                                        struct
-                                                                            InvariantAuditResult {
-                                                                            bool type_ok = true;
-                                                                            bool linear_ok = true;
-                                                                            bool provenance_ok =
-                                                                                true;
-                                                                            bool adt_ok =
-                                                                                true; // Issue
-                                                                                      // #2223:
-                                                                                      // non-exhaustive
-                                                                                      // match fails
-                                                                                      // under Full
-                                                                            bool composite_mode =
-                                                                                false;
-                                                                            bool
-                                                                                cross_batch_linear_escape =
-                                                                                    false;
-                                                                            // Issue #2563:
-                                                                            // free-capture of dirty
-                                                                            // linear into Lambda
-                                                                            // (one-level).
-                                                                            bool
-                                                                                cross_closure_linear_escape =
-                                                                                    false;
-                                                                            // Issue #2223: true
-                                                                            // when ≥1 match site
-                                                                            // was
-                                                                            // exhaustiveness-checked.
-                                                                            bool
-                                                                                adt_match_sites_present =
-                                                                                    false;
-                                                                            std::uint32_t
-                                                                                notes_count = 0;
-                                                                            std::uint32_t
-                                                                                adt_sites_checked =
-                                                                                    0;
-                                                                            std::uint32_t
-                                                                                adt_non_exhaustive =
-                                                                                    0;
-                                                                            [[nodiscard]] bool
-                                                                            all_ok()
-                                                                                const noexcept {
-                                                                                return type_ok &&
-                                                                                       linear_ok &&
-                                                                                       provenance_ok &&
-                                                                                       adt_ok &&
-                                                                                       !cross_batch_linear_escape &&
-                                                                                       !cross_closure_linear_escape;
-                                                                            }
-                                                                        };
-
-                                                                        // Issue #2563: hard-gate
-                                                                        // for cross-closure
-                                                                        // free-capture escape. Soft
-                                                                        // default: observe-only.
-                                                                        // AURA_LINEAR_CROSS_CLOSURE_HARD=1|on
-                                                                        // forces; 0|off forces soft
-                                                                        // observe. Unset →
-                                                                        // production_defaults ||
-                                                                        // Full.
-                                                                        [[nodiscard]] inline bool
-                                                                        linear_cross_closure_hard_enabled() noexcept {
-                                                                            const char* e =
-                                                                                std::getenv(
-                                                                                    "AURA_LINEAR_"
-                                                                                    "CROSS_CLOSURE_"
-                                                                                    "HARD");
-                                                                            if (e && *e) {
-                                                                                if (e[0] == '0' ||
-                                                                                    e[0] == 'f' ||
-                                                                                    e[0] == 'F' ||
-                                                                                    e[0] == 'n' ||
-                                                                                    e[0] == 'N')
-                                                                                    return false;
-                                                                                if ((e[0] == 'o' ||
-                                                                                     e[0] == 'O') &&
-                                                                                    e[1] != '\0' &&
-                                                                                    (e[1] == 'f' ||
-                                                                                     e[1] == 'F'))
-                                                                                    return false;
-                                                                                if (e[0] == 's' ||
-                                                                                    e[0] ==
-                                                                                        'S') // soft
-                                                                                    return false;
-                                                                                return true;
-                                                                            }
-                                                                            return production_defaults_active() ||
-                                                                                   get_strategy() ==
-                                                                                       AuditStrategy::
-                                                                                           Full;
-                                                                        }
-
-                                                                        // Issue #2612 / #2623:
-                                                                        // free-capture discovery
-                                                                        // depth.
-                                                                        //   Soft/dev unset → 1
-                                                                        //   (legacy #2563
-                                                                        //   one-level; no nested
-                                                                        //   walk)
-                                                                        //   production_defaults
-                                                                        //   unset → 2 (nested
-                                                                        //   free-capture; still
-                                                                        //   cone-capped)
-                                                                        //   AURA_LINEAR_CROSS_CLOSURE_DEPTH=0
-                                                                        //   → disable discovery
-                                                                        //   (zero cost) 1..3 → use
-                                                                        //   value; values >3 clamp
-                                                                        //   to hard max 3
-                                                                        // Hard force path still
-                                                                        // linear_cross_closure_hard_enabled()
-                                                                        // only (depth alone never
-                                                                        // forces; trunc under hard
-                                                                        // is fail-closed — #2623).
-                                                                        [[nodiscard]] inline int
-                                                                        linear_cross_closure_depth_cap() noexcept {
-                                                                            constexpr int kMax = 3;
-                                                                            const char* e =
-                                                                                std::getenv(
-                                                                                    "AURA_LINEAR_"
-                                                                                    "CROSS_CLOSURE_"
-                                                                                    "DEPTH");
-                                                                            if (!e || !*e) {
-                                                                                // Issue #2623:
-                                                                                // production
-                                                                                // default depth 2;
-                                                                                // Soft/dev
-                                                                                // remains 1.
-                                                                                if (production_defaults_active())
-                                                                                    return 2;
-                                                                                return 1;
-                                                                            }
-                                                                            if (e[0] == '0')
-                                                                                return 0; // emergency
-                                                                                          // disable
-                                                                                          // (#2623
-                                                                                          // AC5)
-                                                                            if (e[0] == '1')
-                                                                                return 1;
-                                                                            if (e[0] == '2')
-                                                                                return 2;
-                                                                            if (e[0] == '3')
-                                                                                return 3;
-                                                                            // Non-numeric or larger
-                                                                            // digits → clamp to
-                                                                            // hard max.
-                                                                            if (e[0] >= '4' &&
-                                                                                e[0] <= '9')
-                                                                                return kMax;
-                                                                            return 1;
-                                                                        }
-
-                                                                        // Issue #2027: stamp
-                                                                        // composite audit outcome
-                                                                        // (nested and/or
-                                                                        // atomic_batch).
-                                                                        inline void
-                                                                        record_composite_invariant_audit(
-                                                                            bool nested,
-                                                                            bool batch_active,
-                                                                            const InvariantAuditResult&
-                                                                                r) noexcept {
-                                                                            auto& c =
-                                                                                g_typed_mutation_audit_counters;
-                                                                            c.composite_invariant_audits_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (nested)
-                                                                                c.composite_nested_audit_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (batch_active)
-                                                                                c.composite_batch_audit_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (r.cross_batch_linear_escape)
-                                                                                c.composite_cross_batch_linear_escape_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (r.all_ok())
-                                                                                c.composite_invariant_ok_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                c.composite_invariant_fail_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2105: result of
-                                                                        // ordered
-                                                                        // composite_txn_commit
-                                                                        // barrier.
-                                                                        struct
-                                                                            CompositeTxnCommitResult {
-                                                                            bool committed = false;
-                                                                            bool solve_ok = true;
-                                                                            bool linear_ok = true;
-                                                                            bool audit_ok = true;
-                                                                            bool partial_recovered =
-                                                                                false;
-                                                                            bool rejected = false;
-                                                                            // Issue #2221:
-                                                                            // blame-complete gate
-                                                                            // result (true when not
-                                                                            // checked, vacuous
-                                                                            // empty CS, or
-                                                                            // last_blame_chain.is_complete()).
-                                                                            bool blame_ok = true;
-                                                                            // Issue #2898: required
-                                                                            // TypeId set all
-                                                                            // concrete (true when
-                                                                            // span empty or every
-                                                                            // required id has a
-                                                                            // non-var UF binding
-                                                                            // after solve).
-                                                                            bool required_type_ok =
-                                                                                true;
-                                                                            std::uint32_t
-                                                                                required_type_fail_count =
-                                                                                    0;
-                                                                            InvariantAuditResult
-                                                                                audit{};
-                                                                        };
-
-                                                                        // Issue #1884: stamp last
-                                                                        // TypePropagationPass / DCE
-                                                                        // narrow metrics for the
-                                                                        // next invariant audit
-                                                                        // correlation window.
-                                                                        inline void
-                                                                        note_type_propagation_pass(
-                                                                            std::uint64_t
-                                                                                fixpoint_rounds,
-                                                                            std::uint64_t
-                                                                                narrow_hits,
-                                                                            std::uint64_t
-                                                                                extended_ops) noexcept {
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_type_prop_fixpoint_rounds
-                                                                                .store(
-                                                                                    fixpoint_rounds,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_type_prop_narrow_hits
-                                                                                .store(
-                                                                                    narrow_hits,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_type_prop_extended_ops
-                                                                                .store(
-                                                                                    extended_ops,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        inline void
-                                                                        note_dce_narrow_hits(
-                                                                            std::uint64_t
-                                                                                narrow_hits) noexcept {
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_dce_narrow_hits
-                                                                                .store(
-                                                                                    narrow_hits,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        inline void
-                                                                        note_predicate_memo_eviction(
-                                                                            std::uint64_t
-                                                                                n) noexcept {
-                                                                            if (n == 0)
-                                                                                return;
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_predicate_memo_evictions
-                                                                                .fetch_add(
-                                                                                    n,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Correlate with last
-                                                                            // invariant outcome
-                                                                            // (self-evo thrash
-                                                                            // under fail).
-                                                                            if (g_typed_mutation_audit_counters
-                                                                                    .last_invariant_all_ok
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed) ==
-                                                                                0) {
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .predicate_memo_evict_correlated_total
-                                                                                    .fetch_add(
-                                                                                        n,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                        }
-
-                                                                        // Purpose: correlate last
-                                                                        // TypeProp/DCE/memo
-                                                                        // snapshot with one
-                                                                        // invariant audit Pre:
-                                                                        // note_type_propagation_pass
-                                                                        // / note_dce_narrow_hits
-                                                                        // may have stamped last_*
-                                                                        // Post: bumps
-                                                                        // correlation_total; may
-                                                                        // bump
-                                                                        // pass/fail-with-evidence
-                                                                        // and evidence_lost Safety
-                                                                        // Class: P2 (observability;
-                                                                        // relaxed atomics; no
-                                                                        // throw) Issue: #1884 /
-                                                                        // #1886 AI-Native
-                                                                        // Rationale: self-evo maps
-                                                                        // type_invariant_fail to
-                                                                        // narrow_evidence
-                                                                        //   via
-                                                                        //   query:type-propagation-invariant-stats
-                                                                        //   without replaying the
-                                                                        //   pipeline
-                                                                        inline void
-                                                                        correlate_invariant_with_type_system(
-                                                                            const InvariantAuditResult&
-                                                                                r) noexcept {
-                                                                            auto& c =
-                                                                                g_typed_mutation_audit_counters;
-                                                                            c.type_prop_invariant_correlation_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            c.last_invariant_all_ok.store(
-                                                                                r.all_ok() ? 1 : 0,
-                                                                                std::
-                                                                                    memory_order_relaxed);
-                                                                            const auto narrow =
-                                                                                c.last_type_prop_narrow_hits
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed) +
-                                                                                c.last_dce_narrow_hits
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            const auto fixpoint =
-                                                                                c.last_type_prop_fixpoint_rounds
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            const bool had_evidence =
-                                                                                narrow > 0 ||
-                                                                                fixpoint > 0 ||
-                                                                                c.last_type_prop_extended_ops
-                                                                                        .load(
-                                                                                            std::
-                                                                                                memory_order_relaxed) >
-                                                                                    0;
-                                                                            if (r.all_ok()) {
-                                                                                if (had_evidence)
-                                                                                    c.type_prop_invariant_pass_with_evidence_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                            } else {
-                                                                                if (had_evidence)
-                                                                                    c.type_prop_invariant_fail_with_evidence_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                // Evidence present
-                                                                                // but type
-                                                                                // invariant failed
-                                                                                // → "lost" for AI
-                                                                                // debug.
-                                                                                if (!r.type_ok &&
-                                                                                    narrow > 0)
-                                                                                    c.type_prop_evidence_lost_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                            }
-                                                                        }
-
-                                                                        inline void
-                                                                        record_invariant_audit_result(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            std::string_view op,
-                                                                            const InvariantAuditResult&
-                                                                                r,
-                                                                            std::uint64_t
-                                                                                before_epoch = 0,
-                                                                            std::uint64_t
-                                                                                after_epoch = 0,
-                                                                            std::uint32_t
-                                                                                target_node = 0,
-                                                                            std::int64_t fiber_id =
-                                                                                0,
-                                                                            std::uint64_t
-                                                                                tenant_id =
-                                                                                    0) noexcept {
-                                                                            // Issue #2814: link
-                                                                            // trail Success/Error
-                                                                            // to real enforcement
-                                                                            // suite.
-                                                                            note_invariant_enforcement_ran(
-                                                                                mutation_id);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .invariant_audits
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // #1894 AC: exact
-                                                                            // metric name for audit
-                                                                            // triggers.
-                                                                            g_typed_mutation_audit_counters
-                                                                                .typed_mutation_audit_triggered_total
-                                                                                .fetch_add(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            if (r.type_ok)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .type_invariant_ok
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .type_invariant_fail
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (r.linear_ok)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .linear_invariant_ok
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .linear_invariant_fail
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (r.provenance_ok)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .provenance_invariant_ok
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .provenance_invariant_fail
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            // Issue #2223 / #2264:
-                                                                            // ADT exhaustiveness
-                                                                            // dimension.
-                                                                            if (r.adt_ok)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .adt_invariant_ok
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .adt_invariant_fail
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            // Issue #2264: one
-                                                                            // audit sample that
-                                                                            // exercised ADT
-                                                                            // exhaustiveness (or
-                                                                            // inject).
-                                                                            if (r.adt_sites_checked >
-                                                                                    0 ||
-                                                                                r.adt_match_sites_present ||
-                                                                                !r.adt_ok)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .adt_exhaustiveness_audit_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (r.adt_sites_checked >
-                                                                                0)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .adt_exhaustiveness_sites_checked_total
-                                                                                    .fetch_add(
-                                                                                        r.adt_sites_checked,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            if (r.adt_non_exhaustive >
-                                                                                0)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .adt_non_exhaustive_sites_total
-                                                                                    .fetch_add(
-                                                                                        r.adt_non_exhaustive,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            // Issue #2264: fail
-                                                                            // total once per audit
-                                                                            // when adt_ok is false.
-                                                                            if (!r.adt_ok)
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .adt_exhaustiveness_fail_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            // Issue #1884:
-                                                                            // correlate with last
-                                                                            // TypePropagation / DCE
-                                                                            // / memo snapshot.
-                                                                            correlate_invariant_with_type_system(
-                                                                                r);
-                                                                            if (r.all_ok()) {
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .invariant_all_pass
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // Issue #1924:
-                                                                                // successful
-                                                                                // invariant suite
-                                                                                // with mutation_id
-                                                                                // ⇒ blame chain
-                                                                                // considered
-                                                                                // complete for this
-                                                                                // audit sample.
-                                                                                if (mutation_id !=
-                                                                                    0) {
-                                                                                    g_typed_mutation_audit_counters
-                                                                                        .blame_chain_complete_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                }
-                                                                                capture_audit_event(
-                                                                                    mutation_id, op,
-                                                                                    classify_kind(
-                                                                                        op),
-                                                                                    before_epoch,
-                                                                                    after_epoch,
-                                                                                    AuditOutcome::
-                                                                                        Success,
-                                                                                    target_node,
-                                                                                    r.notes_count,
-                                                                                    fiber_id,
-                                                                                    r.notes_count);
-                                                                            } else {
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .invariant_violations_caught
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .typed_mutation_violations_caught_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // #1894:
-                                                                                // dual-record blame
-                                                                                // for forensic
-                                                                                // self-evo rollback
-                                                                                // trails.
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .provenance_blame_chain_hits_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                // Issue #1924:
-                                                                                // invariant fail
-                                                                                // under mutation ⇒
-                                                                                // potential blame
-                                                                                // miss.
-                                                                                if (mutation_id !=
-                                                                                    0) {
-                                                                                    g_typed_mutation_audit_counters
-                                                                                        .blame_propagation_miss_total
-                                                                                        .fetch_add(
-                                                                                            1,
-                                                                                            std::
-                                                                                                memory_order_relaxed);
-                                                                                }
-                                                                                aura::core::provenance::
-                                                                                    record_macro_hygiene_provenance(
-                                                                                        target_node,
-                                                                                        tenant_id,
-                                                                                        mutation_id,
-                                                                                        static_cast<
-                                                                                            std::
-                                                                                                uint32_t>(
-                                                                                            fiber_id));
-                                                                                capture_audit_event(
-                                                                                    mutation_id,
-                                                                                    "invariant-"
-                                                                                    "fail",
-                                                                                    MutationKind::
-                                                                                        Other,
-                                                                                    before_epoch,
-                                                                                    after_epoch,
-                                                                                    AuditOutcome::
-                                                                                        Error,
-                                                                                    target_node,
-                                                                                    r.notes_count,
-                                                                                    fiber_id,
-                                                                                    r.notes_count);
-                                                                                // Issue #3280:
-                                                                                // dual-write
-                                                                                // SecurityEvent(InvariantFail)
-                                                                                // after the trail
-                                                                                // Error stamp so
-                                                                                // SE-primary
-                                                                                // surfaces
-                                                                                // (query:security-audit
-                                                                                // /
-                                                                                // query:evolution-audit-decision)
-                                                                                // see
-                                                                                // type/linear/ADT
-                                                                                // force-rollbacks —
-                                                                                // the most common
-                                                                                // self-evo reject
-                                                                                // class. mid
-                                                                                // resolved via
-                                                                                // join_audit_and_se_mid
-                                                                                // (#3066
-                                                                                // composite/batch
-                                                                                // pin);
-                                                                                // production/Full
-                                                                                // only; one SE per
-                                                                                // deny (TLS
-                                                                                // mid-keyed guard
-                                                                                // suppresses the
-                                                                                // boundary-deny
-                                                                                // second emit).
-                                                                                // #3217 order:
-                                                                                // callers restore +
-                                                                                // clear before this
-                                                                                // function runs (SE
-                                                                                // after restore).
-                                                                                const auto join_mid =
-                                                                                    join_audit_and_se_mid(
-                                                                                        mutation_id);
-                                                                                if (join_mid != 0) {
-                                                                                    std::string_view
-                                                                                        deny_kind =
-                                                                                            "invari"
-                                                                                            "ant";
-                                                                                    if (!r.type_ok)
-                                                                                        deny_kind =
-                                                                                            "type";
-                                                                                    else if (
-                                                                                        !r.linear_ok)
-                                                                                        deny_kind =
-                                                                                            "linea"
-                                                                                            "r";
-                                                                                    else if (
-                                                                                        !r.provenance_ok)
-                                                                                        deny_kind =
-                                                                                            "proven"
-                                                                                            "ance";
-                                                                                    else if (
-                                                                                        !r.adt_ok)
-                                                                                        deny_kind =
-                                                                                            "adt";
-                                                                                    else if (
-                                                                                        r.cross_batch_linear_escape)
-                                                                                        deny_kind =
-                                                                                            "linear"
-                                                                                            "-cross"
-                                                                                            "-batc"
-                                                                                            "h";
-                                                                                    else if (
-                                                                                        r.cross_closure_linear_escape)
-                                                                                        deny_kind =
-                                                                                            "linear"
-                                                                                            "-cross"
-                                                                                            "-closu"
-                                                                                            "re";
-                                                                                    emit_invariant_deny_se(
-                                                                                        join_mid,
-                                                                                        tenant_id,
-                                                                                        fiber_id,
-                                                                                        after_epoch,
-                                                                                        op,
-                                                                                        deny_kind);
-                                                                                }
-                                                                            }
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::
-                                                                            uint64_t
-                                                                            trail_size() noexcept {
-                                                                            const auto writes =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .trail_writes
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            return writes <
-                                                                                           kTypedMutationAuditTrailSize
-                                                                                       ? writes
-                                                                                       : kTypedMutationAuditTrailSize;
-                                                                        }
-
-                                                                        [[nodiscard]] inline std::
-                                                                            uint64_t
-                                                                            trail_seq() noexcept {
-                                                                            return g_typed_mutation_audit_counters
-                                                                                .trail_seq.load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Copy latest event (seq-1)
-                                                                        // or empty if none. Issue
-                                                                        // #2819: lock-free read (no
-                                                                        // mu); best-effort under
-                                                                        // concurrent wrap.
-                                                                        [[nodiscard]] inline bool
-                                                                        trail_latest(
-                                                                            TypedMutationAuditEvent&
-                                                                                out) noexcept {
-                                                                            const auto head =
-                                                                                trail_seq();
-                                                                            if (head == 0)
-                                                                                return false;
-                                                                            out =
-                                                                                g_trail().ring
-                                                                                    [(head - 1) %
-                                                                                     kTypedMutationAuditTrailSize];
-                                                                            return true;
-                                                                        }
-
-                                                                        // Copy event by absolute
-                                                                        // seq if still in ring
-                                                                        // window. Issue #2819:
-                                                                        // lock-free read; require
-                                                                        // out.seq == seq (drop
-                                                                        // torn/overwritten).
-                                                                        [[nodiscard]] inline bool
-                                                                        trail_at_seq(
-                                                                            std::uint64_t seq,
-                                                                            TypedMutationAuditEvent&
-                                                                                out) noexcept {
-                                                                            const auto head =
-                                                                                trail_seq();
-                                                                            if (head == 0 ||
-                                                                                seq >= head)
-                                                                                return false;
-                                                                            if (head >
-                                                                                    kTypedMutationAuditTrailSize &&
-                                                                                seq <
-                                                                                    head -
-                                                                                        kTypedMutationAuditTrailSize)
-                                                                                return false;
-                                                                            out =
-                                                                                g_trail().ring
-                                                                                    [seq %
-                                                                                     kTypedMutationAuditTrailSize];
-                                                                            return out.seq == seq;
-                                                                        }
-
-                                                                        // Issue #2054: newest-first
-                                                                        // scan for mutation_id
-                                                                        // correlation join. Returns
-                                                                        // true and copies the most
-                                                                        // recent matching event
-                                                                        // still in ring. Issue
-                                                                        // #2819: lock-free scan
-                                                                        // (best-effort under
-                                                                        // concurrent wrap). Issue
-                                                                        // #3113: window is only the
-                                                                        // last
-                                                                        // kTypedMutationAuditTrailSize
-                                                                        // events. A miss is not "no
-                                                                        // audit" — the mid may
-                                                                        // still live in the
-                                                                        // SecurityEvent ring (1024)
-                                                                        // or WAL. Callers must
-                                                                        // surface typed-trail-miss.
-                                                                        [[nodiscard]] inline bool
-                                                                        trail_find_by_mutation_id(
-                                                                            std::uint64_t
-                                                                                mutation_id,
-                                                                            TypedMutationAuditEvent&
-                                                                                out) noexcept {
-                                                                            if (mutation_id == 0)
-                                                                                return false;
-                                                                            const auto head =
-                                                                                trail_seq();
-                                                                            if (head == 0)
-                                                                                return false;
-                                                                            const std::size_t window =
-                                                                                head < kTypedMutationAuditTrailSize
-                                                                                    ? static_cast<
-                                                                                          std::
-                                                                                              size_t>(
-                                                                                          head)
-                                                                                    : kTypedMutationAuditTrailSize;
-                                                                            for (std::size_t i = 0;
-                                                                                 i < window; ++i) {
-                                                                                const auto e =
-                                                                                    g_trail().ring
-                                                                                        [(head - 1 -
-                                                                                          i) %
-                                                                                         kTypedMutationAuditTrailSize];
-                                                                                if (e.mutation_id ==
-                                                                                    mutation_id) {
-                                                                                    out = e;
-                                                                                    return true;
-                                                                                }
-                                                                            }
-                                                                            return false;
-                                                                        }
-
-                                                                        inline void snapshot_global(
-                                                                            std::uint64_t&
-                                                                                considered,
-                                                                            std::uint64_t& skipped,
-                                                                            std::uint64_t&
-                                                                                contextual,
-                                                                            std::uint64_t& trail_sz,
-                                                                            std::uint64_t&
-                                                                                rollbacks,
-                                                                            std::uint64_t& errors,
-                                                                            std::uint32_t& strategy,
-                                                                            std::uint32_t&
-                                                                                sample_ratio) noexcept {
-                                                                            considered =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .audits_considered
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            skipped =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .samples_skipped
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            contextual =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .contextual_total
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            trail_sz = trail_size();
-                                                                            rollbacks =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .rollbacks.load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            errors =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .errors.load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            strategy =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .strategy.load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            sample_ratio =
-                                                                                g_typed_mutation_audit_counters
-                                                                                    .sample_ratio
-                                                                                    .load(
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                        }
-
-                                                                        // Test helper: reset
-                                                                        // counters + trail (not for
-                                                                        // production hot path).
-                                                                        // Ends with
-                                                                        // apply_dev_audit_defaults()
-                                                                        // (Sampled/4 +
-                                                                        // dev_audit_opt_in) so unit
-                                                                        // tests keep the
-                                                                        // fast-iteration path;
-                                                                        // cold-start process
-                                                                        // default is Full (#2818)
-                                                                        // until this or apply_dev
-                                                                        // is called.
-                                                                        inline void
-                                                                        reset_for_test() noexcept {
-                                                                            g_last_stamped_audit_mid
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_last_composite_batch_join_mid
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_composite_batch_join_pin_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_composite_batch_se_join_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            clear_boundary_audit_mid();
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audits_considered
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .samples_skipped
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2818
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_strategy_default_warnings_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_strategy_default_warning_fired
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .contextual_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .trail_writes.store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2819
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_trail_lockfree_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_trail_mutex_wait_us_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_trail_lockfree_wired
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .rollbacks.store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .errors.store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .trail_seq.store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #3113
-                                                                            g_typed_mutation_audit_counters
-                                                                                .typed_trail_wrap_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #3242
-                                                                            g_typed_mutation_audit_counters
-                                                                                .typed_summary_wal_persisted_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .macro_hygiene_events
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .macro_hygiene_blocked
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .macro_hygiene_allowed
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .invariant_audits
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .type_invariant_ok
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .type_invariant_fail
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_invariant_ok
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_invariant_fail
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .provenance_invariant_ok
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .provenance_invariant_fail
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .adt_invariant_ok
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .adt_invariant_fail
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .adt_exhaustiveness_sites_checked_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .adt_non_exhaustive_sites_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .adt_exhaustiveness_audit_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .adt_exhaustiveness_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .invariant_violations_caught
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .invariant_all_pass
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .typed_mutation_audit_triggered_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .typed_mutation_violations_caught_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .provenance_blame_chain_hits_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .blame_chain_complete_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .blame_propagation_miss_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .full_strategy_force_rollback_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .contextual_force_audit_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .hard_gate_audits_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .hard_gate_force_rollback_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .hard_gate_strict_hold_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .hard_gate_sampled_skip_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .hard_gate_wired
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2814 M7
-                                                                            // enforcement-link
-                                                                            // counters.
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_enforcement_link_wired
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_enforcement_ran_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_enforcement_skipped_intentional_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_enforcement_gap_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_tls_enforcement_link_mid =
-                                                                                0;
-                                                                            g_tls_enforcement_link =
-                                                                                EnforcementLinkKind::
-                                                                                    None;
-                                                                            g_typed_mutation_audit_counters
-                                                                                .boundary_solve_hard_gate_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .boundary_solve_full_resync_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .boundary_solve_force_rollback_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .boundary_solve_truncated_seen_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .boundary_solve_hard_gate_wired
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_attempts
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_audits
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_ok
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_fail
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .aot_hotupdate_invariant_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .jit_hotpath_audits
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_mutation_id_gen
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_mid_fallback_gen_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2836
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_mid_fallback_refused_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_mid_fallback_refuse_se_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .audit_mid_fallback_refuse_se_seq
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .type_prop_invariant_correlation_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .type_prop_invariant_pass_with_evidence_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .type_prop_invariant_fail_with_evidence_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .type_prop_evidence_lost_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .predicate_memo_evict_correlated_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_type_prop_fixpoint_rounds
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_type_prop_narrow_hits
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_type_prop_extended_ops
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_dce_narrow_hits
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_predicate_memo_evictions
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .last_invariant_all_ok
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2027 composite
-                                                                            // counters
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_invariant_audits_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_invariant_ok_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_invariant_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_partial_recover_type_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_partial_recover_linear_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_partial_recover_success_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_full_rollback_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_nested_audit_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_batch_audit_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2105 composite
-                                                                            // commit barrier
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_revalidate_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_ok_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_solve_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_linear_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2180
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_solve_reuse_hit_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_solve_empty_cs_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2345
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_empty_cs_hard_miss_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_empty_cs_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2509
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_unexpected_cs_work_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_expected_has_work_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_sdo_entered_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2610
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_auto_partial_from_cone_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_auto_partial_from_cone_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2851
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_log_forces_partial_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_commit_log_forces_partial_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2898
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_required_type_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_required_type_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_required_type_checked_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_required_type_auto_fill_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_required_type_auto_fill_capped_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_required_type_reject_over_infer_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            clear_composite_required_solved();
-                                                                            reset_composite_required_reject_over_infer_for_test();
-                                                                            // Issue #2458
-                                                                            g_typed_mutation_audit_counters
-                                                                                .truncate_commit_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .truncate_commit_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .truncate_commit_full_solve_recover_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2221
-                                                                            g_typed_mutation_audit_counters
-                                                                                .blame_commit_check_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .blame_commit_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .blame_commit_incomplete_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_cross_batch_linear_escape_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_escape_commit_blocked_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .composite_partial_recover_attempt_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2029 Full
-                                                                            // per-category partial
-                                                                            // recovery
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_attempt_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_success_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_fail_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_type_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_linear_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_provenance_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .partial_recovery_adt_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2514 / #2545
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_synth_boundary_force_rollback_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_synth_boundary_skip_recovery_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_synth_authority_unified
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_force_unified_2545
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2563
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_escape_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_force_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_cap_trunc_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_wired
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2612
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_depth2_entries_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_depth2_escape_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_depth_wired
-                                                                                .store(
-                                                                                    1,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2623
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_trunc_force_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_depth_max
-                                                                                .store(
-                                                                                    3,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_typed_mutation_audit_counters
-                                                                                .linear_cross_closure_prod_depth_default
-                                                                                .store(
-                                                                                    2,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            reset_linear_compact_root_consistency_for_test();
-                                                                            set_last_proof_linear_root_count_for_test(
-                                                                                0);
-                                                                            apply_dev_audit_defaults(); // Sampled/4 + dev_audit_opt_in; clears production
-                                                                            std::lock_guard lock(
-                                                                                g_trail().mu);
-                                                                            for (auto& e :
-                                                                                 g_trail().ring)
-                                                                                e = TypedMutationAuditEvent{};
-                                                                        }
-
-                                                                        // Issue #2703 / #2909:
-                                                                        // production hard-face when
-                                                                        // partial cone truncates
-                                                                        // outside-If
-                                                                        // OccurrenceGoals. Under
-                                                                        // infer_flat_partial
-                                                                        // soft/hard cone overflow
-                                                                        // (#2560), goals whose
-                                                                        // predicate If sits outside
-                                                                        // the truncated cone are
-                                                                        // dropped. Issue #2703
-                                                                        // surfaces force_reason
-                                                                        // "cone_outside_goal_drop"
-                                                                        // (code 10). Issue #2909:
-                                                                        // production/Full +
-                                                                        // truncate + outside drop
-                                                                        // MUST force full-solve
-                                                                        // recover (or hard reject)
-                                                                        // before green commit — no
-                                                                        // silent half-green. Soft:
-                                                                        // counter-only. Quiet (no
-                                                                        // truncate / empty outside
-                                                                        // set): zero cost.
-                                                                        //
-                                                                        // Soft vs production
-                                                                        // decision table (#2909 AC6
-                                                                        // — code comments only):
-                                                                        //   Soft + truncate +
-                                                                        //   outside drop  → soft
-                                                                        //   counter; allow
-                                                                        //   (observe)
-                                                                        //   production/Full +
-                                                                        //   truncate + outside drop
-                                                                        //   → force recover OR
-                                                                        //   reject no truncate /
-                                                                        //   empty outside set →
-                                                                        //   zero cost (no counter /
-                                                                        //   no solve)
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_outside_goal_drop_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_cone_outside_goal_drop_soft_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_cone_outside_goal_drop_wired{
-                                                                                1};
-                                                                        inline constexpr int
-                                                                            kConeOutsideGoalDropIssue =
-                                                                                2703;
-                                                                        // Issue #2909:
-                                                                        // force-closure recover
-                                                                        // after cone truncate +
-                                                                        // outside drop. Counters
-                                                                        // declared earlier (before
-                                                                        // commit_readiness);
-                                                                        // accessors here.
-                                                                        inline constexpr int
-                                                                            kConeTruncateForceClosureIssue =
-                                                                                2909;
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_outside_goal_drop_total_v_read() noexcept {
-                                                                            return g_cone_outside_goal_drop_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_outside_goal_drop_soft_total_v_read() noexcept {
-                                                                            return g_cone_outside_goal_drop_soft_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint32_t
-                                                                        cone_outside_goal_drop_wired_v_read() noexcept {
-                                                                            return g_cone_outside_goal_drop_wired
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_truncate_force_closure_attempt_total_v_read() noexcept {
-                                                                            return g_cone_truncate_force_closure_attempt_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_truncate_force_closure_total_v_read() noexcept {
-                                                                            return g_cone_truncate_force_closure_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_truncate_force_closure_reject_total_v_read() noexcept {
-                                                                            return g_cone_truncate_force_closure_reject_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint32_t
-                                                                        cone_truncate_force_closure_wired_v_read() noexcept {
-                                                                            return g_cone_truncate_force_closure_wired
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Publish outside-If goal
-                                                                        // drop from
-                                                                        // infer_flat_partial (#2703
-                                                                        // / #2909). Soft →
-                                                                        // soft_total only;
-                                                                        // production/Full → face
-                                                                        // total (commit hard path).
-                                                                        inline void
-                                                                        publish_cone_outside_goal_drop(
-                                                                            std::uint64_t n =
-                                                                                1) noexcept {
-                                                                            if (n == 0)
-                                                                                return;
-                                                                            const bool hard =
-                                                                                production_defaults_active() ||
-                                                                                get_strategy() ==
-                                                                                    AuditStrategy::
-                                                                                        Full;
-                                                                            if (hard)
-                                                                                g_cone_outside_goal_drop_total
-                                                                                    .fetch_add(
-                                                                                        n,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            else
-                                                                                g_cone_outside_goal_drop_soft_total
-                                                                                    .fetch_add(
-                                                                                        n,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2911: publish
-                                                                        // unified
-                                                                        // refined-consistency drift
-                                                                        // face. Soft → observe
-                                                                        // only; production/Full →
-                                                                        // face latch for
-                                                                        // commit_readiness.
-                                                                        // Counters declared earlier
-                                                                        // (before
-                                                                        // commit_readiness);
-                                                                        // accessors here.
-                                                                        inline void
-                                                                        note_refined_consistency_drift(
-                                                                            bool
-                                                                                production_hard) noexcept {
-                                                                            if (production_hard) {
-                                                                                g_refined_consistency_drift_face
-                                                                                    .store(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            } else {
-                                                                                g_refined_consistency_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                        }
-                                                                        [[nodiscard]] inline bool
-                                                                        refined_consistency_drift_face_hit() noexcept {
-                                                                            return g_refined_consistency_drift_face
-                                                                                       .load(
-                                                                                           std::
-                                                                                               memory_order_relaxed) !=
-                                                                                   0;
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        refined_consistency_observe_total_v_read() noexcept {
-                                                                            return g_refined_consistency_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        refined_consistency_reject_total_v_read() noexcept {
-                                                                            return g_refined_consistency_reject_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        refined_consistency_recover_total_v_read() noexcept {
-                                                                            return g_refined_consistency_recover_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint32_t
-                                                                        refined_consistency_wired_v_read() noexcept {
-                                                                            return g_refined_consistency_wired
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        clear_refined_consistency_drift_for_test() noexcept {
-                                                                            g_refined_consistency_drift_face
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_refined_consistency_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_refined_consistency_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_refined_consistency_recover_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Test / recover reset.
-                                                                        inline void
-                                                                        clear_cone_outside_goal_drop_for_test() noexcept {
-                                                                            g_cone_outside_goal_drop_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_cone_outside_goal_drop_soft_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        clear_cone_truncate_force_closure_for_test() noexcept {
-                                                                            g_cone_truncate_force_closure_attempt_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_cone_truncate_force_closure_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_cone_truncate_force_closure_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            // Issue #2962:
-                                                                            // Agent-facing residual
-                                                                            // counters (same test
-                                                                            // reset surface).
-                                                                            g_cone_outside_goal_drop_recover_ok_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_cone_outside_goal_drop_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_outside_goal_drop_recover_ok_total_v_read() noexcept {
-                                                                            return g_cone_outside_goal_drop_recover_ok_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        cone_outside_goal_drop_reject_total_v_read() noexcept {
-                                                                            return g_cone_outside_goal_drop_reject_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint32_t
-                                                                        cone_outside_goal_drop_recover_reject_wired_v_read() noexcept {
-                                                                            return g_cone_outside_goal_drop_recover_reject_wired
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // ── Issue #2847: region
-                                                                        // type/occurrence commit
-                                                                        // bind ────────────────────
-                                                                        // Residual of
-                                                                        // #2724/#2760/#2761: region
-                                                                        // concurrent admit isolates
-                                                                        // AST topology mutation but
-                                                                        // type/occurrence state is
-                                                                        // still per-Evaluator
-                                                                        // shared (solve_delta_cs_ /
-                                                                        // occurrence_goals_ /
-                                                                        // type_dep). Two fibers on
-                                                                        // "disjoint" regions can
-                                                                        // cross-talk via shared CS.
-                                                                        // This face rejects commit
-                                                                        // when any touched
-                                                                        // OccurrenceGoal predicate
-                                                                        // node bit falls outside
-                                                                        // the admitted
-                                                                        // cone/ImpactScope mask.
-                                                                        //
-                                                                        // Soft: metric only
-                                                                        // (region_type_cross_talk_observe_total).
-                                                                        // production / Full: reject
-                                                                        // (region_type_cross_talk_reject_total)
-                                                                        // + face for
-                                                                        // commit_readiness
-                                                                        // force_reason
-                                                                        // "region_type_cross_talk"
-                                                                        // (code 13). mask==0 /
-                                                                        // GlobalExclusive: zero
-                                                                        // cost
-                                                                        // (region_type_commit_ok
-                                                                        // short-circuit).
-                                                                        inline constexpr int
-                                                                            kRegionTypeCrossTalkIssue =
-                                                                                2847;
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_region_type_cross_talk_observe_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_region_type_cross_talk_reject_total{
-                                                                                0};
-                                                                        // Face latch for
-                                                                        // commit_readiness (1 =
-                                                                        // hit; cleared for tests /
-                                                                        // recover).
-                                                                        inline std::atomic<
-                                                                            std::uint8_t>
-                                                                            g_region_type_cross_talk_face{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_region_type_cross_talk_wired{
-                                                                                1};
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        region_type_cross_talk_observe_total_v_read() noexcept {
-                                                                            return g_region_type_cross_talk_observe_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        region_type_cross_talk_reject_total_v_read() noexcept {
-                                                                            return g_region_type_cross_talk_reject_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint32_t
-                                                                        region_type_cross_talk_wired_v_read() noexcept {
-                                                                            return g_region_type_cross_talk_wired
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline bool
-                                                                        region_type_cross_talk_face_hit() noexcept {
-                                                                            return g_region_type_cross_talk_face
-                                                                                       .load(
-                                                                                           std::
-                                                                                               memory_order_relaxed) !=
-                                                                                   0;
-                                                                        }
-                                                                        inline void
-                                                                        clear_region_type_cross_talk_for_test() noexcept {
-                                                                            g_region_type_cross_talk_observe_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_region_type_cross_talk_reject_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_region_type_cross_talk_face
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Map OccurrenceGoal
-                                                                        // predicate NodeId → one
-                                                                        // bit of a 64-bit cone mask
-                                                                        // (same 63-bit packing as
-                                                                        // impact_block_to_region_mask_bit
-                                                                        // / region_key — no tree
-                                                                        // walk). Hot path remains
-                                                                        // pure arithmetic.
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        node_id_to_region_mask_bit(
-                                                                            std::uint32_t
-                                                                                node_id) noexcept {
-                                                                            if (node_id == 0)
-                                                                                return 0;
-                                                                            return 1ULL
-                                                                                   << (static_cast<
-                                                                                           std::
-                                                                                               uint64_t>(
-                                                                                           node_id) %
-                                                                                       63ull);
-                                                                        }
-
-                                                                        // Pure gate:
-                                                                        // admitted_mask==0 → ok
-                                                                        // (global exclusive /
-                                                                        // quiet). touched==0 → ok
-                                                                        // (no type/occurrence work
-                                                                        // this boundary). Else:
-                                                                        // every touched bit must
-                                                                        // sit inside admitted_mask.
-                                                                        [[nodiscard]] inline bool
-                                                                        region_type_commit_ok(
-                                                                            std::uint64_t
-                                                                                admitted_mask,
-                                                                            std::uint64_t
-                                                                                touched_type_mask) noexcept {
-                                                                            if (admitted_mask == 0)
-                                                                                return true;
-                                                                            if (touched_type_mask ==
-                                                                                0)
-                                                                                return true;
-                                                                            return (touched_type_mask &
-                                                                                    ~admitted_mask) ==
-                                                                                   0;
-                                                                        }
-
-                                                                        // Note cross-talk.
-                                                                        // production_hard → reject
-                                                                        // counter + face latch;
-                                                                        // Soft → observe counter
-                                                                        // only (commit may still
-                                                                        // succeed).
-                                                                        inline void
-                                                                        note_region_type_cross_talk(
-                                                                            bool
-                                                                                production_hard) noexcept {
-                                                                            if (production_hard) {
-                                                                                g_region_type_cross_talk_reject_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                                g_region_type_cross_talk_face
-                                                                                    .store(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_release);
-                                                                            } else {
-                                                                                g_region_type_cross_talk_observe_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                        }
-
-                                                                        // Issue #2704: production
-                                                                        // hard-face on
-                                                                        // OccurrenceGoal rehydrate
-                                                                        // miss after steal /
-                                                                        // densify fence.
-                                                                        // TypeChecker::note_steal_or_densify_epoch_fence
-                                                                        // advances cache epoch +
-                                                                        // prunes stale
-                                                                        // OccurrenceGoals +
-                                                                        // attempts
-                                                                        // rehydrate_occurrence_from_persist.
-                                                                        // When rehydrate returns 0
-                                                                        // under production (persist
-                                                                        // enabled but buffer empty
-                                                                        // / wrong mid / no prior
-                                                                        // snapshot), the code only
-                                                                        // bumps
-                                                                        // occurrence_persist_rehydrate_miss_total
-                                                                        // and continues. After
-                                                                        // steal / Moving densify,
-                                                                        // live occurrence priority
-                                                                        // roots can be empty while
-                                                                        // Agents still see a green
-                                                                        // commit path. This issue
-                                                                        // surfaces the distinct
-                                                                        // force_reason
-                                                                        // "occurrence_empty_after_fence"
-                                                                        // (code 11) and bumps
-                                                                        // g_occurrence_empty_after_fence_total.
-                                                                        // Soft path bumps counter
-                                                                        // only; production path
-                                                                        // hard-rejects commit (no
-                                                                        // silent allow).
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_occurrence_empty_after_fence_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint64_t>
-                                                                            g_occurrence_empty_after_fence_soft_total{
-                                                                                0};
-                                                                        inline std::atomic<
-                                                                            std::uint32_t>
-                                                                            g_occurrence_empty_after_fence_wired{
-                                                                                1};
-                                                                        inline constexpr int
-                                                                            kOccurrenceEmptyAfterFenceIssue =
-                                                                                2704;
-
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        occurrence_empty_after_fence_total_v_read() noexcept {
-                                                                            return g_occurrence_empty_after_fence_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        occurrence_empty_after_fence_soft_total_v_read() noexcept {
-                                                                            return g_occurrence_empty_after_fence_soft_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        [[nodiscard]] inline std::uint32_t
-                                                                        occurrence_empty_after_fence_wired_v_read() noexcept {
-                                                                            return g_occurrence_empty_after_fence_wired
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Test reset.
-                                                                        inline void
-                                                                        clear_occurrence_empty_after_fence_for_test() noexcept {
-                                                                            g_occurrence_empty_after_fence_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                            g_occurrence_empty_after_fence_soft_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        // Issue #2896: fence
-                                                                        // rehydrate miss → latch
-                                                                        // #2704 face so
-                                                                        // commit_readiness_live_policy
-                                                                        // hard-rejects under
-                                                                        // production/Full. Soft
-                                                                        // (hard=false) bumps
-                                                                        // soft_total only
-                                                                        // (observe). Call from
-                                                                        // TypeChecker::note_steal_or_densify_epoch_fence
-                                                                        // after rehydrate returns 0
-                                                                        // while persist is enabled.
-                                                                        inline void
-                                                                        note_occurrence_empty_after_fence(
-                                                                            bool
-                                                                                production_hard) noexcept {
-                                                                            if (production_hard) {
-                                                                                g_occurrence_empty_after_fence_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            } else {
-                                                                                g_occurrence_empty_after_fence_soft_total
-                                                                                    .fetch_add(
-                                                                                        1,
-                                                                                        std::
-                                                                                            memory_order_relaxed);
-                                                                            }
-                                                                        }
-
-                                                                        // Issue #2716: counter for
-                                                                        // the occurrence hard-face
-                                                                        // active branch (production
-                                                                        // / Full + face hit).
-                                                                        // Bumped when
-                                                                        // commit_readiness_live_policy
-                                                                        // detects a face hit under
-                                                                        // prod/Full — surface for
-                                                                        // Agent dashboards to
-                                                                        // attribute "active face
-                                                                        // wired in" vs "face fired
-                                                                        // but Soft path observed
-                                                                        // only". Additive — no
-                                                                        // regression on #2703 /
-                                                                        // #2704 / #2621 / #2458 /
-                                                                        // #2608 query keys. NOTE:
-                                                                        // the inline std::atomic
-                                                                        // definition was hoisted to
-                                                                        // before
-                                                                        // commit_readiness_live_policy
-                                                                        // (search #2728 ship
-                                                                        // co-traveler); the v_read
-                                                                        // accessor below references
-                                                                        // it by name.
-                                                                        [[nodiscard]] inline std::uint64_t
-                                                                        occurrence_hard_face_full_solve_recover_total_v_read() noexcept {
-                                                                            return g_occurrence_hard_face_full_solve_recover_total
-                                                                                .load(
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-                                                                        inline void
-                                                                        reset_occurrence_hard_face_full_solve_recover_total_for_test() noexcept {
-                                                                            g_occurrence_hard_face_full_solve_recover_total
-                                                                                .store(
-                                                                                    0,
-                                                                                    std::
-                                                                                        memory_order_relaxed);
-                                                                        }
-
-                                                                        } // namespace
-                                                                          // aura::compiler::typed_audit
+                // Consume faces so re-entry does not immediately re-reject.
+                clear_cone_outside_goal_drop_for_test();
+                clear_occurrence_empty_after_fence_for_test();
+                // Fall through to step 7 region face / ok (recovered).
+            } else {
+                g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+                if (cone_face) {
+                    // Issue #2962: Agent-facing reject total (outside-drop face).
+                    g_cone_outside_goal_drop_reject_total.fetch_add(1, std::memory_order_relaxed);
+                    return (set("cone_outside_goal_drop", false, 800), r);
+                }
+                return (set("occurrence_empty_after_fence", false, 850), r);
+            }
+        }
+    }
+
+    // 6b) Issue #2847: region type/occurrence cross-talk under concurrent
+    // admit. production/Full + face latch → hard reject. Soft leaves
+    // face unset (observe-only via note_region_type_cross_talk(false)).
+    if (in.occurrence_face_hard && in.region_type_cross_talk_face) {
+        return (set("region_type_cross_talk", false, 900), r);
+    }
+
+    // 6c) Issue #2911: unified refined-consistency hard gate.
+    // Production/Full + refined drift (explicit latch or multi-face
+    // refined signals) → one full-solve recover (#2750 hook) or hard
+    // reject with force_reason refined_drift (code 15). Soft: observe
+    // only (would_allow_commit stays true when refined_consistency_hard
+    // is false). Quiet: face clear → zero cost (no recover attempt).
+    if (in.refined_consistency_hard && in.refined_consistency_drift) {
+        // #3380: recover is bound to the live commit TC (C ABI looks up
+        // the Evaluator TLS handle + commit_type_checker_handle). AC2:
+        // nullptr / no TLS → recover fn returns false → hard reject with
+        // force_reason refined_drift (code 15).
+        if (aura_typed_audit_try_occurrence_hard_face_full_solve_recover()) {
+            g_refined_consistency_recover_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_hard_face_recover_success_total.fetch_add(1, std::memory_order_relaxed);
+            g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+            // Fall through to ok (recovered refined scheme).
+        } else {
+            g_refined_consistency_reject_total.fetch_add(1, std::memory_order_relaxed);
+            g_occurrence_hard_face_recover_fail_total.fetch_add(1, std::memory_order_relaxed);
+            return (set("refined_drift", false, 750), r);
+        }
+    } else if (!in.refined_consistency_hard && in.refined_consistency_drift) {
+        // Soft observe path (hermetic tests may set drift without hard).
+        g_refined_consistency_observe_total.fetch_add(1, std::memory_order_relaxed);
+        // Allow commit under Soft.
+    }
+
+    // 6d) Issue #3031: pending_full_solve / locality residual.
+    // Production/Full + residual face → hard-reject (escalate already
+    // attempted at composite drain). Soft: observe allow.
+    // Quiet: residual flag false → zero extra.
+    if (in.pending_full_solve_residual) {
+        if (in.pending_full_solve_hard)
+            return (set("pending_full_solve_residual", false, 700), r);
+        return (set("pending_full_solve_residual", true, 7200), r);
+    }
+
+    // 7) ok — clean SOLVED + linear + blame + !truncated + no face hit.
+    return (set("ok", true, 10000), r);
+}
+
+// Fill hard flags from live audit process state (still pure w.r.t. inputs
+// once copied; callers that want hermetic tests pass CommitReadinessInput
+// directly without this helper).
+// Issue #2716 / #2750 recover counters + hook live above commit_readiness.
+[[nodiscard]] inline CommitReadinessInput commit_readiness_live_policy() noexcept {
+    CommitReadinessInput in;
+    // Issue #3347: remirror residual CastOp persist BEFORE auto_partial /
+    // empty_cs faces. Single-boundary / lockless readiness skipped the
+    // #3228 force (only composite + selective dirty-txn). Soft / empty
+    // persist → 0 extra. Pending latch (C ABI n>0, not yet re-inferred)
+    // drives auto_partial so empty CS hard-rejects until infer_flat_partial
+    // clears it. Last cone staying nonempty after infer must not latch
+    // forever — remirror n==0 once nodes are already in cone.
+    (void)aura_force_residual_castop_undermark_into_cone();
+    if (aura_residual_castop_undermark_pending())
+        in.auto_partial_from_cone = true;
+    const bool prod = production_defaults_active();
+    const bool full = get_strategy() == AuditStrategy::Full;
+    in.empty_cs_hard = composite_empty_cs_hard_reject_enabled();
+    // Issue #2621: cone truncate uses same hard family as #2458 truncate +
+    // AURA_PARTIAL_CONE_COMMIT_HARD.
+    in.truncate_hard = truncate_commit_hard_enabled() || partial_cone_commit_hard_enabled();
+    // Linear escape + blame-complete hard under production / Full (lineage).
+    in.linear_hard = prod || full;
+    in.blame_hard = prod || full;
+    // Live last partial cone truncate stamp (#2621 / #2560).
+    in.partial_cone_truncated = last_partial_cone_truncated();
+    // Issue #2716: occurrence hard-faces (active wiring). Under
+    // production / Full, capture the face counter values. The
+    // active branch in commit_readiness rejects when the face has
+    // fired (counter > 0 — i.e., face has been bumped since the
+    // last clear). Soft path leaves occurrence_face_hard=false so
+    // the counter-only path stays metric (no reject, no full-solve
+    // — preserves the existing Soft ergonomics from #2703 / #2704).
+    // Per AC3: quiet path costs 2 atomics on prod/Full when
+    // neither face has fired. No extra atomics when not in
+    // prod/Full.
+    const bool face_hard = prod || full;
+    in.occurrence_face_hard = face_hard;
+    // Issue #2911: refined-consistency hard under same production/Full face.
+    in.refined_consistency_hard = face_hard;
+    // Issue #3031: pending_full_solve residual face.
+    in.pending_full_solve_hard = face_hard;
+    in.pending_full_solve_residual = pending_full_solve_residual_face_hit();
+    if (face_hard) {
+        in.cone_outside_goal_drop_face = (cone_outside_goal_drop_total_v_read() > 0);
+        in.occurrence_empty_after_fence_face = (occurrence_empty_after_fence_total_v_read() > 0);
+        // Issue #2847: region type cross-talk face latch.
+        in.region_type_cross_talk_face = region_type_cross_talk_face_hit();
+        // Issue #2911: unified refined drift — explicit latch OR multi-face
+        // refined signals (e.g. occurrence empty after fence + outside drop).
+        // Quiet: all clear → refined_consistency_drift stays false (zero cost
+        // beyond the face loads already paid above).
+        int refined_hits = 0;
+        if (g_refined_consistency_drift_face.load(std::memory_order_relaxed) != 0)
+            refined_hits = 2; // explicit latch always enough
+        else {
+            if (in.cone_outside_goal_drop_face)
+                ++refined_hits;
+            if (in.occurrence_empty_after_fence_face)
+                ++refined_hits;
+        }
+        in.refined_consistency_drift = refined_hits >= 2;
+        // Issue #2716: face-hit observe counter (not true recover).
+        // #2750 moves true recover success to recover_success_total.
+        if (in.cone_outside_goal_drop_face || in.occurrence_empty_after_fence_face) {
+            g_occurrence_hard_face_full_solve_recover_total.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+    // Issue #3379: fill from live TypeChecker when a current Evaluator
+    // with live commit TC is in TLS. Quiet (no TLS) → keep today's
+    // face-only fill (no extra CS walk). Soft path: TLS slot is read
+    // here too — production never depends on a hidden field.
+    if (g_tls_audit_commit_readiness_evaluator != nullptr) {
+        aura_typed_audit_fill_from_live_tc(g_tls_audit_commit_readiness_evaluator, &in);
+    } else if (prod || full) {
+        // Issue #3414: no live commit TC. Default solve_status=0 (SOLVED)
+        // is not authority. Deny via existing "solve" (TIMEOUT-class)
+        // unless last proof is Stamped AND invalidate_gen==green_bind_gen
+        // AND pending/cone/refined faces are already clear (those faces
+        // keep their own force_reason — do not overwrite with "solve").
+        // Soft/Off skips this arm (no extra CS walk). Two relaxed loads
+        // + two acquire/relaxed gen loads; no ConstraintSystem walk.
+        const auto outcome = g_last_type_linear_proof_outcome.load(std::memory_order_relaxed);
+        const bool stamped = outcome == kTypeLinearProofOutcomeStamped;
+        const bool gen_ok = g_rehydrate_miss_invalidate_gen.load(std::memory_order_acquire) ==
+                            g_rehydrate_miss_green_bind_gen.load(std::memory_order_relaxed);
+        const bool faces_clear = !in.pending_full_solve_residual &&
+                                 !in.cone_outside_goal_drop_face &&
+                                 !in.occurrence_empty_after_fence_face &&
+                                 !in.refined_consistency_drift && !in.region_type_cross_talk_face;
+        if (faces_clear && !(stamped && gen_ok) && in.solve_status == 0)
+            in.solve_status = 2; // TIMEOUT-class → commit_readiness "solve"
+    }
+    return in;
+}
+
+[[nodiscard]] inline std::uint64_t occurrence_hard_face_recover_success_total_v_read() noexcept {
+    return g_occurrence_hard_face_recover_success_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_hard_face_recover_fail_total_v_read() noexcept {
+    return g_occurrence_hard_face_recover_fail_total.load(std::memory_order_relaxed);
+}
+
+// Issue #2145: Agent-stable deny reason (mirror #2076 format_deny_reason shape).
+// Shape: "invariant-denied: <kind> tenant=<id> op=<op>"
+[[nodiscard]] inline std::string
+format_invariant_deny_reason(std::string_view kind, std::uint64_t tenant_id, std::string_view op) {
+    return std::format("invariant-denied: {} tenant={} op={}", kind, tenant_id, op);
+}
+
+[[nodiscard]] inline MutationKind classify_kind(std::string_view op) noexcept {
+    if (op.empty())
+        return MutationKind::Unknown;
+    if (op.find("aot-hotupdate") != std::string_view::npos ||
+        op.find("aot_hotupdate") != std::string_view::npos)
+        return MutationKind::AotHotUpdate;
+    if (op.find("jit-") != std::string_view::npos || op.find("jit_") != std::string_view::npos)
+        return MutationKind::JitHotpath;
+    if (op.find("hygiene") != std::string_view::npos || op.find("macro") != std::string_view::npos)
+        return MutationKind::MacroHygiene;
+    if (op.find("replace-type") != std::string_view::npos || op == "replace-type")
+        return MutationKind::ReplaceType;
+    if (op.find("replace-value") != std::string_view::npos || op == "replace-value")
+        return MutationKind::ReplaceValue;
+    if (op.find("record-patch") != std::string_view::npos || op == "record-patch")
+        return MutationKind::RecordPatch;
+    if (op == "structural" || op.find("mutate") != std::string_view::npos)
+        return MutationKind::Structural;
+    return MutationKind::Other;
+}
+
+[[nodiscard]] inline std::uint64_t next_audit_mutation_id() noexcept {
+    return g_typed_mutation_audit_counters.audit_mutation_id_gen.fetch_add(
+               1, std::memory_order_relaxed) +
+           1;
+}
+
+// Issue #2493: canonical mid resolution for audit paths that did not
+// thread a caller mid. Preference order (mirrors #2384 require_effect
+// stamping so SE ↔ TypedMutationAudit ↔ grant epoch stay joined):
+//   1. caller mid when non-zero
+//   2. current_mutation_epoch() when non-zero  (WorkspaceEpoch Mutation — #2149)
+//   3. ResourceQuota host mid when set
+//   4. Soft/Sampled only: next_audit_mutation_id() last-resort join stamp
+//      (process-origin); bumps audit_mid_fallback_gen_total.
+// Issue #2836: under production_defaults_active() || Full, step 4 is
+// absolute zero-tolerance — refuse process-origin stamp (return 0) and
+// bump audit_mid_fallback_refused_total. Supersedes #2635 rate-based
+// resolve-time hard-deny (SLO gate remains on schedule admission #2630).
+// Soft / Sampled keep Soft fallback (#2493 AC4, #2635 AC3, #2836 AC2).
+// #2636 note: AuditStrategy has {Off, Sampled, Full} only — no Strict enum.
+[[nodiscard]] inline std::uint64_t
+resolve_audit_mutation_id(std::uint64_t caller_mid = 0) noexcept {
+    if (caller_mid != 0)
+        return caller_mid;
+    // Issue #3296 AC1: TypedMid SSOT must precede epoch under production
+    // so audit mid joins grant.bound_mutation_id / SE.mutation_id /
+    // AuditWalRecord.provenance_mutation_id on the same boundary-stamped
+    // value. Drop the host-quota mid from the production cascade (drift /
+    // lag under steal × abort). TypedMid is authoritative only while a
+    // boundary is live on this thread (TLS-noted); a stale process-global
+    // stamp from a completed / foreign boundary must not shadow the
+    // current epoch (#3016 AC4 cross-evaluator isolation).
+    const auto tm = (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+                        ? last_type_linear_commit_proof_stamp_v_read()
+                        : 0;
+    if (tm != 0)
+        return tm;
+    const auto ep = ::aura::core::current_mutation_epoch();
+    if (ep != 0)
+        return ep;
+    // Issue #2836 / #2635 lineage: production mid-fallback absolute
+    // zero-tolerance. hard_deny_eligible = production_defaults || Full
+    // (same gate shape as #2635; behavior is now absolute refuse, not
+    // rate-based would_arm_degraded). Soft/Sampled fall through.
+    const bool hard_deny_eligible =
+        production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard_deny_eligible) {
+        // Absolute refuse: no process-origin join stamp into the trail.
+        // Callers treat mid==0 as deny / re-stamp or surface
+        // "mid-fallback-refused" (#2836 AC4). Distinct refuse metric —
+        // does NOT bump audit_mid_fallback_gen_total (#2836 AC1).
+        g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // Issue #3054: exactly one joinable SE (ring + WAL when enabled).
+        // Soft never reaches this branch. TLS suppresses nested re-resolve.
+        if (!g_tls_mid_fallback_refuse_se_emitted) {
+            g_tls_mid_fallback_refuse_se_emitted = true;
+            using ::aura::core::security_event::g_security_event_ring;
+            using ::aura::core::security_event::SecurityEventKind;
+            using ::aura::core::security_event_wal::emit_security_event_durable;
+            emit_security_event_durable(SecurityEventKind::InvariantFail, /*tenant=*/0,
+                                        /*mid=*/0, /*epoch=*/ep, /*effect_bits=*/0,
+                                        "resolve-audit-mid", "mid-fallback-refused",
+                                        /*denied=*/true, /*fiber=*/0);
+            const auto seq = g_security_event_ring().seq.load(std::memory_order_relaxed);
+            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
+                seq == 0 ? 0 : seq - 1, std::memory_order_relaxed);
+            g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        return 0;
+    }
+    // Soft / Sampled: last-resort process-origin stamp + gen counter.
+    g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.fetch_add(
+        1, std::memory_order_relaxed);
+    return next_audit_mutation_id();
+}
+
+// Issue #2814 M7: TLS link between trail Success and invariant enforcement.
+// record_invariant_audit_result → note_ran; Guard intentional skip → note_skipped.
+// capture_audit_event_forced(Success, mutate-class kind) without either → gap.
+enum class EnforcementLinkKind : std::uint8_t { None = 0, Ran = 1, Skipped = 2 };
+inline thread_local std::uint64_t g_tls_enforcement_link_mid = 0;
+inline thread_local EnforcementLinkKind g_tls_enforcement_link = EnforcementLinkKind::None;
+
+// Issue #3016: mid resolved at outermost Guard enter. Trail / SE / grant
+// / occurrence / proof read this — never Evaluator::total_mutations_
+// (volume metric only). noted=true even when mid==0 (production refuse)
+// so stamp sites do not re-resolve and double-count refused_total.
+inline constexpr int kBoundaryAuditMidIssue = 3016;
+
+inline void note_boundary_audit_mid(std::uint64_t mid) noexcept {
+    g_tls_boundary_audit_mid = mid;
+    g_tls_boundary_audit_noted = true;
+}
+
+// Issue #3066: single join mid for composite / lockless batch so typed
+// deny + SE trail share last_stamped_audit_mid. Soft/quiet: no extra.
+inline constexpr int kCompositeAuditSeJoinIssue = 3066;
+inline thread_local std::uint64_t g_tls_composite_batch_join_mid = 0;
+inline std::atomic<std::uint64_t> g_last_composite_batch_join_mid{0};
+inline std::atomic<std::uint64_t> g_composite_batch_join_pin_total{0};
+inline std::atomic<std::uint64_t> g_composite_batch_se_join_total{0};
+inline std::atomic<std::uint32_t> g_composite_audit_se_join_wired{1};
+
+inline void clear_boundary_audit_mid() noexcept {
+    g_tls_boundary_audit_mid = 0;
+    g_tls_boundary_audit_noted = false;
+    g_tls_composite_batch_join_mid = 0;
+    clear_mid_fallback_refuse_se_tls();
+}
+
+[[nodiscard]] inline std::uint64_t current_boundary_audit_mid() noexcept {
+    return g_tls_boundary_audit_mid;
+}
+
+// Prefer enter-resolved TLS mid. 0 under production refuse is sticky.
+// If no boundary noted yet, resolve (Soft fallback / epoch).
+[[nodiscard]] inline std::uint64_t stamp_boundary_audit_mid() noexcept {
+    if (g_tls_boundary_audit_noted)
+        return g_tls_boundary_audit_mid;
+    return resolve_audit_mutation_id();
+}
+
+// Issue #3066: SE + typed trail join key. Caller mid wins; else pinned
+// composite/batch mid; else non-zero boundary mid; else resolve.
+// Soft/quiet with nothing pinned → resolve (existing Sampled/Off path).
+[[nodiscard]] inline std::uint64_t join_audit_and_se_mid(std::uint64_t caller_mid = 0) noexcept {
+    if (caller_mid != 0)
+        return caller_mid;
+    if (g_tls_composite_batch_join_mid != 0)
+        return g_tls_composite_batch_join_mid;
+    if (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        return g_tls_boundary_audit_mid;
+    return resolve_audit_mutation_id(0);
+}
+
+// Issue #3280 / #3319: dual-write SecurityEvent(InvariantFail) for
+// invariant / boundary / hygiene / hard-gate denies. Production defaults
+// (any strategy, including Sampled) OR Full always emit mid + stable
+// reason so Agent query:security-audit can join by mid even when
+// should_audit() skipped the Typed trail. Soft/Off zero-cost. Sampled
+// without production stays zero-cost (dev). Reuses
+// format_invariant_deny_reason shape ("invariant-denied: <kind> tenant=<id>
+// op=<op>") + join_audit_and_se_mid (#3066 composite/batch pin). One SE
+// per deny: TLS mid-keyed guard so record_invariant_audit_result +
+// record_boundary_deny_after_restore + hygiene/hard-gate never double-emit
+// for the same deny. #3217 order: call AFTER structural restore +
+// coercion/occurrence/proof clear. mid=0 under production refuse → no
+// invented SE (the mid-fallback-refused SE from resolve_audit_mutation_id
+// is the joinable evidence, AC4).
+inline thread_local std::uint64_t g_tls_invariant_deny_se_mid = 0;
+
+inline void clear_invariant_deny_se_tls() noexcept {
+    g_tls_invariant_deny_se_mid = 0;
+}
+
+inline void emit_invariant_deny_se(std::uint64_t mid, std::uint64_t tenant_id,
+                                   std::int64_t fiber_id, std::uint64_t epoch, std::string_view op,
+                                   std::string_view deny_kind) noexcept {
+    if (mid == 0)
+        return; // production refuse path already emitted mid-fallback-refused (#3054)
+    // Issue #3319: production_defaults_active (any strategy) always emits.
+    // Soft/Off and Sampled-without-production stay zero-cost.
+    if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    if (g_tls_invariant_deny_se_mid == mid)
+        return; // one SE per deny (both helpers may run for the same deny)
+    g_tls_invariant_deny_se_mid = mid;
+    using ::aura::core::security_event::SecurityEventKind;
+    using ::aura::core::security_event_wal::emit_security_event_durable;
+    emit_security_event_durable(SecurityEventKind::InvariantFail, tenant_id, mid, epoch,
+                                /*effect_bits=*/0, op,
+                                format_invariant_deny_reason(deny_kind, tenant_id, op),
+                                /*denied=*/true, fiber_id);
+}
+
+// Issue #3066: pin one join mid for the composite / lockless batch and
+// publish to TLS + last_stamped (queryable) before sub-mutates. Soft /
+// quiet (no caller, no epoch, not production/Full) → 0 extra, no alloc.
+// Production/Full with empty upstream: one batch-join stamp + SE.
+inline std::uint64_t pin_composite_batch_join_mid(std::uint64_t caller_mid = 0) noexcept {
+    if (g_tls_composite_batch_join_mid != 0)
+        return g_tls_composite_batch_join_mid;
+    std::uint64_t mid = caller_mid;
+    if (mid == 0 && g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+        mid = g_tls_boundary_audit_mid;
+    if (mid == 0)
+        mid = ::aura::core::current_mutation_epoch();
+    if (mid == 0) {
+        // Issue #3296 AC1: TypedMid SSOT under production; drops
+        // the host-quota mid from the cascade (drift / lag under
+        // steal × abort). TypedMid is authoritative only while a
+        // boundary is live on this thread (TLS-noted); a stale
+        // process-global stamp must not pin a fresh composite batch
+        // to an old join mid (#3066 AC1/AC3).
+        mid = (g_tls_boundary_audit_noted && g_tls_boundary_audit_mid != 0)
+                  ? last_type_linear_commit_proof_stamp_v_read()
+                  : 0;
+    }
+    // Issue #3367: hard 门面与 resolve 同表 — `mid==0` 不发明 process-origin
+    // mid (resolve's mid-fallback-refused SE is emitted by the pin caller
+    // via TLS suppression; Soft/Sampled quiet — no caller, no epoch, not
+    // production/Full — zero extra, no alloc per #3066 AC3). The previous
+    // code mints a gen N under hard mode and emitted an EffectAllow SE
+    // with tenant=0/epoch=N — bypassing the #2836 refuse contract on
+    // the same hard face and binding grant/SE/typed rows to a non-
+    // correlating gen mid.
+    if (mid == 0)
+        return 0;
+    g_tls_composite_batch_join_mid = mid;
+    note_boundary_audit_mid(mid);
+    g_last_composite_batch_join_mid.store(mid, std::memory_order_relaxed);
+    g_last_stamped_audit_mid.store(mid, std::memory_order_relaxed);
+    return mid;
+}
+
+// Issue #3066 AC2: Sampled + force-reason — pin deny mid so later SE
+// emits join the same key (no silent fallback divergence).
+inline std::uint64_t promote_sampled_force_join_mid(std::uint64_t deny_mid = 0) noexcept {
+    auto mid = deny_mid != 0 ? deny_mid : join_audit_and_se_mid(0);
+    if (mid == 0)
+        mid = next_audit_mutation_id();
+    g_tls_composite_batch_join_mid = mid;
+    note_boundary_audit_mid(mid);
+    g_last_composite_batch_join_mid.store(mid, std::memory_order_relaxed);
+    g_last_stamped_audit_mid.store(mid, std::memory_order_relaxed);
+    return mid;
+}
+
+// Issue #2814: mark that post_mutation_invariant suite (or equivalent)
+// ran for this mutation_id. Call before/during record_invariant_audit_result.
+inline void note_invariant_enforcement_ran(std::uint64_t mutation_id) noexcept {
+    if (mutation_id == 0)
+        return;
+    g_tls_enforcement_link_mid = mutation_id;
+    g_tls_enforcement_link = EnforcementLinkKind::Ran;
+    g_typed_mutation_audit_counters.audit_enforcement_ran_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+// Issue #2814: intentional non-enforcement (Sampled skip, RenderFastExit,
+// strategy Off quiet path). Prevents false gap on legitimate soft paths.
+inline void note_invariant_enforcement_skipped(std::uint64_t mutation_id) noexcept {
+    if (mutation_id == 0)
+        return;
+    g_tls_enforcement_link_mid = mutation_id;
+    g_tls_enforcement_link = EnforcementLinkKind::Skipped;
+    g_typed_mutation_audit_counters.audit_enforcement_skipped_intentional_total.fetch_add(
+        1, std::memory_order_relaxed);
+}
+
+[[nodiscard]] inline bool enforcement_linked_for(std::uint64_t mutation_id) noexcept {
+    return mutation_id != 0 && g_tls_enforcement_link_mid == mutation_id &&
+           g_tls_enforcement_link != EnforcementLinkKind::None;
+}
+
+// Mutate-class kinds that should be enforcement-linked on Success trails.
+// MacroHygiene / Aot / Jit / security-correlation paths are excluded.
+[[nodiscard]] inline bool mutate_class_kind_requires_enforcement_link(MutationKind kind) noexcept {
+    switch (kind) {
+        case MutationKind::Structural:
+        case MutationKind::ReplaceType:
+        case MutationKind::ReplaceValue:
+        case MutationKind::RecordPatch:
+            return true;
+        default:
+            return false;
+    }
+}
+
+// Core trail write (no Sampled gate). Used by capture_audit_event and by
+// #2054 security-correlated emit (always-on so rings stay joined by
+// mutation_id even under Sampled strategy).
+//
+// Issue #2814 M7: this function is pure observability (trail + counters).
+// It does NOT run type/linear/provenance checks. Enforcement lives in
+// run_typed_mutation_invariant_audit → record_invariant_audit_result.
+// On Success for mutate-class kinds, if neither note_invariant_enforcement_ran
+// nor note_invariant_enforcement_skipped was called for this mid, bump
+// audit_enforcement_gap_total (silent enforcement degradation signal).
+inline void capture_audit_event_forced(std::uint64_t mutation_id, std::string_view name,
+                                       MutationKind kind, std::uint64_t before_epoch,
+                                       std::uint64_t after_epoch, AuditOutcome outcome,
+                                       std::uint32_t target_node = 0,
+                                       std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
+                                       std::uint32_t affected_ref_count = 0) noexcept {
+    // Issue #3016 / #2836: never stamp mid=0 into the trail (production
+    // refuse / missing resolve). Soft resolve already produced a gen.
+    if (mutation_id == 0)
+        return;
+    TypedMutationAuditEvent ev{};
+    ev.mutation_id = mutation_id;
+    g_last_stamped_audit_mid.store(mutation_id, std::memory_order_relaxed);
+    const auto seq =
+        g_typed_mutation_audit_counters.trail_seq.fetch_add(1, std::memory_order_relaxed);
+    ev.seq = seq;
+    const auto n = name.size() < (kAuditNameCap - 1) ? name.size() : (kAuditNameCap - 1);
+    if (n > 0)
+        std::memcpy(ev.name, name.data(), n);
+    ev.name[n] = '\0';
+    ev.kind = kind;
+    ev.before_epoch = before_epoch;
+    ev.after_epoch = after_epoch;
+    ev.outcome = outcome;
+    ev.target_node = target_node;
+    ev.nodes_changed = nodes_changed;
+    ev.fiber_id = fiber_id;
+    ev.timestamp_ms =
+        static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+                                       std::chrono::steady_clock::now().time_since_epoch())
+                                       .count());
+    ev.affected_ref_count = affected_ref_count;
+
+    // Issue #2819: lock-free ring publish (no mutex on capture hot path).
+    // trail_seq was already claimed via fetch_add; each seq maps to a unique
+    // slot until wrap. Concurrent writers hit different slots until size wraps.
+    // Readers (trail_at_seq) validate out.seq == expected to drop torn/stale.
+    g_trail().ring[seq % kTypedMutationAuditTrailSize] = ev;
+    g_typed_mutation_audit_counters.audit_trail_lockfree_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    // mutex_wait_us stays 0: lock-free path never waits.
+
+    g_typed_mutation_audit_counters.contextual_total.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.trail_writes.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.fetch_add(
+        1, std::memory_order_relaxed);
+    if (outcome == AuditOutcome::Rollback)
+        g_typed_mutation_audit_counters.rollbacks.fetch_add(1, std::memory_order_relaxed);
+    if (outcome == AuditOutcome::Error)
+        g_typed_mutation_audit_counters.errors.fetch_add(1, std::memory_order_relaxed);
+
+    // Issue #2814 M7: enforcement-link gap detection (metric always).
+    // Stderr warn is opt-in only: bash regression / agent harnesses capture
+    // combined streams and treat any gap banner as polluting stdout/expect
+    // (agent:mutate-rebind, edsl-ir-cache:cascade-*). Set AURA_AUDIT_GAP_WARN=1
+    // for local diagnosis. Metric audit_enforcement_gap_total remains the
+    // Agent-facing signal (query schema-2814).
+    if (outcome == AuditOutcome::Success && mutation_id != 0 &&
+        mutate_class_kind_requires_enforcement_link(kind) && !enforcement_linked_for(mutation_id)) {
+        g_typed_mutation_audit_counters.audit_enforcement_gap_total.fetch_add(
+            1, std::memory_order_relaxed);
+        static std::atomic<int> s_gap_warned{0};
+        const char* warn = std::getenv("AURA_AUDIT_GAP_WARN");
+        if (warn && warn[0] == '1' && warn[1] == '\0' &&
+            s_gap_warned.exchange(1, std::memory_order_relaxed) == 0) {
+            std::fprintf(stderr,
+                         "[#2814 M7 audit] Success trail without invariant enforcement "
+                         "link (mid=%llu name=%.*s). Call note_invariant_enforcement_ran "
+                         "or note_invariant_enforcement_skipped before trail write. "
+                         "Metric: audit_enforcement_gap_total.\n",
+                         static_cast<unsigned long long>(mutation_id), static_cast<int>(n),
+                         ev.name);
+        }
+    }
+    // Issue #3066 AC2: Error/Rollback pins the deny mid for SE join.
+    if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) {
+        if (g_tls_composite_batch_join_mid == 0)
+            (void)promote_sampled_force_join_mid(mutation_id);
+    }
+    // Issue #3113: mirror SecurityEvent ring_wrap_total — bump once per
+    // overwrite after the in-memory window fills. After the #2814 window
+    // so the enforcement-link linter scan stays intact.
+    if (seq >= kTypedMutationAuditTrailSize)
+        g_typed_mutation_audit_counters.typed_trail_wrap_total.fetch_add(1,
+                                                                         std::memory_order_relaxed);
+    // Issue #3242: production + mutation WAL persist (out-of-line).
+    maybe_persist_typed_summary(ev);
+}
+
+inline void capture_audit_event(std::uint64_t mutation_id, std::string_view name, MutationKind kind,
+                                std::uint64_t before_epoch, std::uint64_t after_epoch,
+                                AuditOutcome outcome, std::uint32_t target_node = 0,
+                                std::uint32_t nodes_changed = 0, std::int64_t fiber_id = 0,
+                                std::uint32_t affected_ref_count = 0) noexcept {
+    if (!should_audit(mutation_id))
+        return; // Issue #3319: trail Sampled-skip; deny callers emit SE
+    // Issue #1589 / #3016: capture_audit_event_forced drops mid=0 (never
+    // stamp a refuse-zero into the ring). Callers that passed the
+    // Sampled/Full gate still need a trail row — empty-Guard rollback
+    // and synthetic captures use mid=0 as "no caller mid". Generate a
+    // last-resort id so contextual_total / trail_writes stay honest.
+    // Issue #3217 AC4: production / Full refuse mid=0 — never invent a
+    // Success row (mid-fallback-refused SE is the joinable evidence).
+    // Soft still generates a last-resort id (observe-only, no new I/O).
+    if (mutation_id == 0) {
+        if (production_defaults_active() || get_strategy() == AuditStrategy::Full) {
+            if (outcome == AuditOutcome::Success)
+                return;
+            capture_audit_event_forced(0, name, kind, before_epoch, after_epoch, outcome,
+                                       target_node, nodes_changed, fiber_id, affected_ref_count);
+            return;
+        }
+        mutation_id = next_audit_mutation_id();
+    }
+    capture_audit_event_forced(mutation_id, name, kind, before_epoch, after_epoch, outcome,
+                               target_node, nodes_changed, fiber_id, affected_ref_count);
+}
+
+// Issue #2054: always-on security correlation emit from
+// check_and_record_effect (allow + deny). Bypasses Sampled so Agents
+// can join SecurityEvent.mutation_id ↔ TypedMutationAuditEvent.mutation_id.
+// Issue #2493: caller_mid == 0 falls into the resolve_audit_mutation_id
+// preference order (caller_mid → current_mutation_epoch → ResourceQuota →
+// last-resort audit gen + fallback counter bump). Epoch field also falls
+// back to current_mutation_epoch() when caller passes 0 so SE.epoch stays
+// Mutation vocabulary (#2149).
+inline void capture_security_correlated_audit(std::uint64_t mutation_id, std::string_view op,
+                                              std::uint64_t epoch, bool denied,
+                                              std::uint32_t target_node = 0,
+                                              std::int64_t fiber_id = 0) noexcept {
+    g_typed_mutation_audit_counters.audits_considered.fetch_add(1, std::memory_order_relaxed);
+    // Issue #3066: prefer pinned composite/batch mid so SE + typed share
+    // one join key. Fallback remains resolve_audit_mutation_id(mutation_id).
+    const std::uint64_t mid = join_audit_and_se_mid(mutation_id);
+    const auto use_epoch = epoch != 0 ? epoch : ::aura::core::current_mutation_epoch();
+    capture_audit_event_forced(mid, op, classify_kind(op), use_epoch, use_epoch,
+                               denied ? AuditOutcome::Error : AuditOutcome::Success, target_node,
+                               /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
+}
+
+// Issue #1882: AOT hot-update boundary audit. Sampled on success (should_audit);
+// failures always enter the trail (AI self-evolution must not drop reject/rollback).
+// Issue #3217: fail stamps Error only after the reload has refused the
+// swap (epoch not advanced / staging not committed). Success is the last
+// write after commit — never Success-then-rollback.
+inline void capture_aot_hotupdate_audit(bool success, std::uint64_t before_epoch,
+                                        std::uint64_t after_epoch,
+                                        std::string_view reason = "aot-hotupdate") noexcept {
+    g_typed_mutation_audit_counters.aot_hotupdate_attempts.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2493: prefer Mutation epoch / ResourceQuota host mid over the
+    // last-resort audit gen so AOT trail joins the same mid vocabulary as
+    // require_effect / grant / isolation SE.
+    const std::uint64_t mid = resolve_audit_mutation_id();
+    if (success) {
+        if (!should_audit(mid))
+            return;
+        g_typed_mutation_audit_counters.aot_hotupdate_audits.fetch_add(1,
+                                                                       std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.aot_hotupdate_ok.fetch_add(1, std::memory_order_relaxed);
+        capture_audit_event(mid, reason, MutationKind::AotHotUpdate, before_epoch, after_epoch,
+                            AuditOutcome::Success);
+        return;
+    }
+    // Always-on failure path (mirrors capture_macro_hygiene_audit).
+    g_typed_mutation_audit_counters.aot_hotupdate_audits.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_fail.fetch_add(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_invariant_fail_total.fetch_add(
+        1, std::memory_order_relaxed);
+    const auto prev = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    capture_audit_event(mid, reason, MutationKind::AotHotUpdate, before_epoch, after_epoch,
+                        AuditOutcome::Error);
+    set_strategy(prev);
+    // Issue #3319: production/Full always emit joinable SE on AOT deny.
+    // Soft/Off: emit_invariant_deny_se no-ops. TLS one-SE-per-mid.
+    if (mid != 0)
+        emit_invariant_deny_se(mid, /*tenant_id=*/0, /*fiber_id=*/0, after_epoch, reason,
+                               "aot-hotupdate");
+}
+
+// Issue #1882: lightweight JIT L2 / apply hotpath sample (never forces Full).
+inline void capture_jit_hotpath_audit(std::string_view tag) noexcept {
+    // Issue #2493: same preference order as AOT (Mutation epoch preferred).
+    const std::uint64_t mid = resolve_audit_mutation_id();
+    if (!should_audit(mid))
+        return;
+    g_typed_mutation_audit_counters.jit_hotpath_audits.fetch_add(1, std::memory_order_relaxed);
+    capture_audit_event(mid, tag, MutationKind::JitHotpath, /*before_epoch=*/0, /*after_epoch=*/0,
+                        AuditOutcome::Success);
+}
+
+// Issue #1613: always-on macro hygiene audit (bypasses Sampled gate so
+// blocked macro mutates are never lost from the trail).
+// Issue #1877: on Error/Rollback also stamp provenance tracker with
+// tenant_id so MacroIntroduced hygiene blocks are visible to both audit
+// trail and StableNodeRef provenance / truncated blame chains.
+inline void capture_macro_hygiene_audit(std::string_view name, AuditOutcome outcome,
+                                        std::uint32_t target_node = 0, std::int64_t fiber_id = 0,
+                                        std::uint64_t tenant_id = 0,
+                                        std::uint64_t mutation_id = 0) noexcept {
+    g_typed_mutation_audit_counters.macro_hygiene_events.fetch_add(1, std::memory_order_relaxed);
+    if (outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) {
+        g_typed_mutation_audit_counters.macro_hygiene_blocked.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+        // Dual-record: audit trail (below) + provenance tracker (#1877).
+        aura::core::provenance::record_macro_hygiene_provenance(
+            target_node, tenant_id, mutation_id, static_cast<std::uint32_t>(fiber_id));
+    } else {
+        g_typed_mutation_audit_counters.macro_hygiene_allowed.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    }
+    // Issue #3319: join mid so trail + SE share one key. Production refuse
+    // of mid=0 leaves join_mid=0 (mid-fallback-refused is the evidence).
+    const auto join_mid = join_audit_and_se_mid(mutation_id);
+    const auto trail_mid = join_mid != 0 ? join_mid : mutation_id;
+    const auto prev = get_strategy();
+    set_strategy(AuditStrategy::Full);
+    capture_audit_event(trail_mid, name, MutationKind::MacroHygiene,
+                        /*before_epoch=*/0, /*after_epoch=*/0, outcome, target_node,
+                        /*nodes_changed=*/0, fiber_id, /*affected_ref_count=*/0);
+    set_strategy(prev);
+    // Production (any strategy, including Sampled) / Full: always emit SE
+    // on hygiene deny. Soft/Off: no-op. TLS one-SE-per-mid.
+    if ((outcome == AuditOutcome::Error || outcome == AuditOutcome::Rollback) && join_mid != 0)
+        emit_invariant_deny_se(join_mid, tenant_id, fiber_id, /*epoch=*/0, name, "hygiene");
+}
+
+// Convenience for mutation boundary integration.
+// Issue #2814: Success trails for mutate-class kinds require an enforcement
+// link (note_invariant_enforcement_ran or note_invariant_enforcement_skipped)
+// before this write, or capture_audit_event_forced bumps gap total.
+inline void record_boundary_outcome(std::uint64_t mutation_id, std::string_view op,
+                                    std::uint64_t before_epoch, std::uint64_t after_epoch,
+                                    bool success, std::uint32_t target_node = 0,
+                                    std::uint32_t nodes_changed = 0,
+                                    std::int64_t fiber_id = 0) noexcept {
+    // Issue #3217 AC4: production refuse mid=0 never stamps fake Success.
+    if (success && mutation_id == 0 &&
+        (production_defaults_active() || get_strategy() == AuditStrategy::Full))
+        return;
+    capture_audit_event(mutation_id, op, classify_kind(op), before_epoch, after_epoch,
+                        success ? AuditOutcome::Success : AuditOutcome::Rollback, target_node,
+                        nodes_changed, fiber_id, nodes_changed > 0 ? 1u : 0u);
+}
+
+// Issue #3217: deny stamp after restore+clear. Callers MUST complete
+// structural restore and coercion/occurrence/proof clear first.
+// Soft: same trail write as record_boundary_outcome(success=false);
+// no extra I/O. Production mid=0 drops (SE mid-fallback-refused).
+// Issue #3280: dual-write SecurityEvent(InvariantFail) after the trail
+// stamp (restore-before-stamp order preserved) so SE-primary surfaces
+// (query:security-audit / query:evolution-audit-decision) see boundary
+// force-rollbacks. One SE per deny (TLS mid-keyed guard).
+inline void record_boundary_deny_after_restore(std::uint64_t mutation_id, std::string_view op,
+                                               std::uint64_t before_epoch,
+                                               std::uint64_t after_epoch,
+                                               std::uint32_t target_node = 0,
+                                               std::uint32_t nodes_changed = 0,
+                                               std::int64_t fiber_id = 0) noexcept {
+    record_boundary_outcome(mutation_id, op, before_epoch, after_epoch, /*success=*/false,
+                            target_node, nodes_changed, fiber_id);
+    // Issue #3280: SE dual-write for the boundary deny. mid resolved via
+    // join_audit_and_se_mid (composite/batch pin #3066); production/Full
+    // only; one SE per deny (TLS guard suppresses the second helper run).
+    const auto join_mid = join_audit_and_se_mid(mutation_id);
+    if (join_mid != 0) {
+        emit_invariant_deny_se(join_mid, /*tenant_id=*/0, fiber_id, after_epoch, op,
+                               /*deny_kind=*/"boundary");
+    }
+}
+
+// Issue #1614: record result of type + linear + provenance invariant suite.
+// Issue #2027: composite_mode / cross_batch_linear_escape feed partial recovery.
+// Issue #2223: adt_ok = match exhaustiveness in dirty / workspace match sites.
+struct InvariantAuditResult {
+    bool type_ok = true;
+    bool linear_ok = true;
+    bool provenance_ok = true;
+    bool adt_ok = true; // Issue #2223: non-exhaustive match fails under Full
+    bool composite_mode = false;
+    bool cross_batch_linear_escape = false;
+    // Issue #2563: free-capture of dirty linear into Lambda (one-level).
+    bool cross_closure_linear_escape = false;
+    // Issue #2223: true when ≥1 match site was exhaustiveness-checked.
+    bool adt_match_sites_present = false;
+    std::uint32_t notes_count = 0;
+    std::uint32_t adt_sites_checked = 0;
+    std::uint32_t adt_non_exhaustive = 0;
+    [[nodiscard]] bool all_ok() const noexcept {
+        return type_ok && linear_ok && provenance_ok && adt_ok && !cross_batch_linear_escape &&
+               !cross_closure_linear_escape;
+    }
+};
+
+// Issue #2563: hard-gate for cross-closure free-capture escape.
+// Soft default: observe-only. AURA_LINEAR_CROSS_CLOSURE_HARD=1|on forces;
+// 0|off forces soft observe. Unset → production_defaults || Full.
+[[nodiscard]] inline bool linear_cross_closure_hard_enabled() noexcept {
+    const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_HARD");
+    if (e && *e) {
+        if (e[0] == '0' || e[0] == 'f' || e[0] == 'F' || e[0] == 'n' || e[0] == 'N')
+            return false;
+        if ((e[0] == 'o' || e[0] == 'O') && e[1] != '\0' && (e[1] == 'f' || e[1] == 'F'))
+            return false;
+        if (e[0] == 's' || e[0] == 'S') // soft
+            return false;
+        return true;
+    }
+    return production_defaults_active() || get_strategy() == AuditStrategy::Full;
+}
+
+// Issue #2612 / #2623: free-capture discovery depth.
+//   Soft/dev unset → 1 (legacy #2563 one-level; no nested walk)
+//   production_defaults unset → 2 (nested free-capture; still cone-capped)
+//   AURA_LINEAR_CROSS_CLOSURE_DEPTH=0 → disable discovery (zero cost)
+//   1..3 → use value; values >3 clamp to hard max 3
+// Hard force path still linear_cross_closure_hard_enabled() only
+// (depth alone never forces; trunc under hard is fail-closed — #2623).
+[[nodiscard]] inline int linear_cross_closure_depth_cap() noexcept {
+    constexpr int kMax = 3;
+    const char* e = std::getenv("AURA_LINEAR_CROSS_CLOSURE_DEPTH");
+    if (!e || !*e) {
+        // Issue #2623: production default depth 2; Soft/dev remains 1.
+        if (production_defaults_active())
+            return 2;
+        return 1;
+    }
+    if (e[0] == '0')
+        return 0; // emergency disable (#2623 AC5)
+    if (e[0] == '1')
+        return 1;
+    if (e[0] == '2')
+        return 2;
+    if (e[0] == '3')
+        return 3;
+    // Non-numeric or larger digits → clamp to hard max.
+    if (e[0] >= '4' && e[0] <= '9')
+        return kMax;
+    return 1;
+}
+
+// Issue #2027: stamp composite audit outcome (nested and/or atomic_batch).
+inline void record_composite_invariant_audit(bool nested, bool batch_active,
+                                             const InvariantAuditResult& r) noexcept {
+    auto& c = g_typed_mutation_audit_counters;
+    c.composite_invariant_audits_total.fetch_add(1, std::memory_order_relaxed);
+    if (nested)
+        c.composite_nested_audit_total.fetch_add(1, std::memory_order_relaxed);
+    if (batch_active)
+        c.composite_batch_audit_total.fetch_add(1, std::memory_order_relaxed);
+    if (r.cross_batch_linear_escape)
+        c.composite_cross_batch_linear_escape_total.fetch_add(1, std::memory_order_relaxed);
+    if (r.all_ok())
+        c.composite_invariant_ok_total.fetch_add(1, std::memory_order_relaxed);
+    else
+        c.composite_invariant_fail_total.fetch_add(1, std::memory_order_relaxed);
+}
+
+// Issue #2105: result of ordered composite_txn_commit barrier.
+struct CompositeTxnCommitResult {
+    bool committed = false;
+    bool solve_ok = true;
+    bool linear_ok = true;
+    bool audit_ok = true;
+    bool partial_recovered = false;
+    bool rejected = false;
+    // Issue #2221: blame-complete gate result (true when not checked,
+    // vacuous empty CS, or last_blame_chain.is_complete()).
+    bool blame_ok = true;
+    // Issue #2898: required TypeId set all concrete (true when span empty
+    // or every required id has a non-var UF binding after solve).
+    bool required_type_ok = true;
+    std::uint32_t required_type_fail_count = 0;
+    InvariantAuditResult audit{};
+};
+
+// Issue #1884: stamp last TypePropagationPass / DCE narrow metrics for
+// the next invariant audit correlation window.
+inline void note_type_propagation_pass(std::uint64_t fixpoint_rounds, std::uint64_t narrow_hits,
+                                       std::uint64_t extended_ops) noexcept {
+    g_typed_mutation_audit_counters.last_type_prop_fixpoint_rounds.store(fixpoint_rounds,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_narrow_hits.store(narrow_hits,
+                                                                     std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_extended_ops.store(extended_ops,
+                                                                      std::memory_order_relaxed);
+}
+
+inline void note_dce_narrow_hits(std::uint64_t narrow_hits) noexcept {
+    g_typed_mutation_audit_counters.last_dce_narrow_hits.store(narrow_hits,
+                                                               std::memory_order_relaxed);
+}
+
+inline void note_predicate_memo_eviction(std::uint64_t n) noexcept {
+    if (n == 0)
+        return;
+    g_typed_mutation_audit_counters.last_predicate_memo_evictions.fetch_add(
+        n, std::memory_order_relaxed);
+    // Correlate with last invariant outcome (self-evo thrash under fail).
+    if (g_typed_mutation_audit_counters.last_invariant_all_ok.load(std::memory_order_relaxed) ==
+        0) {
+        g_typed_mutation_audit_counters.predicate_memo_evict_correlated_total.fetch_add(
+            n, std::memory_order_relaxed);
+    }
+}
+
+// Purpose: correlate last TypeProp/DCE/memo snapshot with one invariant audit
+// Pre: note_type_propagation_pass / note_dce_narrow_hits may have stamped last_*
+// Post: bumps correlation_total; may bump pass/fail-with-evidence and evidence_lost
+// Safety Class: P2 (observability; relaxed atomics; no throw)
+// Issue: #1884 / #1886
+// AI-Native Rationale: self-evo maps type_invariant_fail to narrow_evidence
+//   via query:type-propagation-invariant-stats without replaying the pipeline
+inline void correlate_invariant_with_type_system(const InvariantAuditResult& r) noexcept {
+    auto& c = g_typed_mutation_audit_counters;
+    c.type_prop_invariant_correlation_total.fetch_add(1, std::memory_order_relaxed);
+    c.last_invariant_all_ok.store(r.all_ok() ? 1 : 0, std::memory_order_relaxed);
+    const auto narrow = c.last_type_prop_narrow_hits.load(std::memory_order_relaxed) +
+                        c.last_dce_narrow_hits.load(std::memory_order_relaxed);
+    const auto fixpoint = c.last_type_prop_fixpoint_rounds.load(std::memory_order_relaxed);
+    const bool had_evidence = narrow > 0 || fixpoint > 0 ||
+                              c.last_type_prop_extended_ops.load(std::memory_order_relaxed) > 0;
+    if (r.all_ok()) {
+        if (had_evidence)
+            c.type_prop_invariant_pass_with_evidence_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        if (had_evidence)
+            c.type_prop_invariant_fail_with_evidence_total.fetch_add(1, std::memory_order_relaxed);
+        // Evidence present but type invariant failed → "lost" for AI debug.
+        if (!r.type_ok && narrow > 0)
+            c.type_prop_evidence_lost_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+inline void record_invariant_audit_result(std::uint64_t mutation_id, std::string_view op,
+                                          const InvariantAuditResult& r,
+                                          std::uint64_t before_epoch = 0,
+                                          std::uint64_t after_epoch = 0,
+                                          std::uint32_t target_node = 0, std::int64_t fiber_id = 0,
+                                          std::uint64_t tenant_id = 0) noexcept {
+    // Issue #2814: link trail Success/Error to real enforcement suite.
+    note_invariant_enforcement_ran(mutation_id);
+    g_typed_mutation_audit_counters.invariant_audits.fetch_add(1, std::memory_order_relaxed);
+    // #1894 AC: exact metric name for audit triggers.
+    g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.fetch_add(
+        1, std::memory_order_relaxed);
+    if (r.type_ok)
+        g_typed_mutation_audit_counters.type_invariant_ok.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.type_invariant_fail.fetch_add(1, std::memory_order_relaxed);
+    if (r.linear_ok)
+        g_typed_mutation_audit_counters.linear_invariant_ok.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.linear_invariant_fail.fetch_add(1,
+                                                                        std::memory_order_relaxed);
+    if (r.provenance_ok)
+        g_typed_mutation_audit_counters.provenance_invariant_ok.fetch_add(
+            1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.provenance_invariant_fail.fetch_add(
+            1, std::memory_order_relaxed);
+    // Issue #2223 / #2264: ADT exhaustiveness dimension.
+    if (r.adt_ok)
+        g_typed_mutation_audit_counters.adt_invariant_ok.fetch_add(1, std::memory_order_relaxed);
+    else
+        g_typed_mutation_audit_counters.adt_invariant_fail.fetch_add(1, std::memory_order_relaxed);
+    // Issue #2264: one audit sample that exercised ADT exhaustiveness (or inject).
+    if (r.adt_sites_checked > 0 || r.adt_match_sites_present || !r.adt_ok)
+        g_typed_mutation_audit_counters.adt_exhaustiveness_audit_total.fetch_add(
+            1, std::memory_order_relaxed);
+    if (r.adt_sites_checked > 0)
+        g_typed_mutation_audit_counters.adt_exhaustiveness_sites_checked_total.fetch_add(
+            r.adt_sites_checked, std::memory_order_relaxed);
+    if (r.adt_non_exhaustive > 0)
+        g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.fetch_add(
+            r.adt_non_exhaustive, std::memory_order_relaxed);
+    // Issue #2264: fail total once per audit when adt_ok is false.
+    if (!r.adt_ok)
+        g_typed_mutation_audit_counters.adt_exhaustiveness_fail_total.fetch_add(
+            1, std::memory_order_relaxed);
+    // Issue #1884: correlate with last TypePropagation / DCE / memo snapshot.
+    correlate_invariant_with_type_system(r);
+    if (r.all_ok()) {
+        g_typed_mutation_audit_counters.invariant_all_pass.fetch_add(1, std::memory_order_relaxed);
+        // Issue #1924: successful invariant suite with mutation_id ⇒
+        // blame chain considered complete for this audit sample.
+        if (mutation_id != 0) {
+            g_typed_mutation_audit_counters.blame_chain_complete_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        capture_audit_event(mutation_id, op, classify_kind(op), before_epoch, after_epoch,
+                            AuditOutcome::Success, target_node, r.notes_count, fiber_id,
+                            r.notes_count);
+    } else {
+        g_typed_mutation_audit_counters.invariant_violations_caught.fetch_add(
+            1, std::memory_order_relaxed);
+        g_typed_mutation_audit_counters.typed_mutation_violations_caught_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // #1894: dual-record blame for forensic self-evo rollback trails.
+        g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.fetch_add(
+            1, std::memory_order_relaxed);
+        // Issue #1924: invariant fail under mutation ⇒ potential blame miss.
+        if (mutation_id != 0) {
+            g_typed_mutation_audit_counters.blame_propagation_miss_total.fetch_add(
+                1, std::memory_order_relaxed);
+        }
+        aura::core::provenance::record_macro_hygiene_provenance(
+            target_node, tenant_id, mutation_id, static_cast<std::uint32_t>(fiber_id));
+        capture_audit_event(mutation_id, "invariant-fail", MutationKind::Other, before_epoch,
+                            after_epoch, AuditOutcome::Error, target_node, r.notes_count, fiber_id,
+                            r.notes_count);
+        // Issue #3280: dual-write SecurityEvent(InvariantFail) after the
+        // trail Error stamp so SE-primary surfaces (query:security-audit /
+        // query:evolution-audit-decision) see type/linear/ADT
+        // force-rollbacks — the most common self-evo reject class. mid
+        // resolved via join_audit_and_se_mid (#3066 composite/batch pin);
+        // production/Full only; one SE per deny (TLS mid-keyed guard
+        // suppresses the boundary-deny second emit). #3217 order: callers
+        // restore + clear before this function runs (SE after restore).
+        const auto join_mid = join_audit_and_se_mid(mutation_id);
+        if (join_mid != 0) {
+            std::string_view deny_kind = "invariant";
+            if (!r.type_ok)
+                deny_kind = "type";
+            else if (!r.linear_ok)
+                deny_kind = "linear";
+            else if (!r.provenance_ok)
+                deny_kind = "provenance";
+            else if (!r.adt_ok)
+                deny_kind = "adt";
+            else if (r.cross_batch_linear_escape)
+                deny_kind = "linear-cross-batch";
+            else if (r.cross_closure_linear_escape)
+                deny_kind = "linear-cross-closure";
+            emit_invariant_deny_se(join_mid, tenant_id, fiber_id, after_epoch, op, deny_kind);
+        }
+    }
+}
+
+[[nodiscard]] inline std::uint64_t trail_size() noexcept {
+    const auto writes =
+        g_typed_mutation_audit_counters.trail_writes.load(std::memory_order_relaxed);
+    return writes < kTypedMutationAuditTrailSize ? writes : kTypedMutationAuditTrailSize;
+}
+
+[[nodiscard]] inline std::uint64_t trail_seq() noexcept {
+    return g_typed_mutation_audit_counters.trail_seq.load(std::memory_order_relaxed);
+}
+
+// Copy latest event (seq-1) or empty if none.
+// Issue #2819: lock-free read (no mu); best-effort under concurrent wrap.
+[[nodiscard]] inline bool trail_latest(TypedMutationAuditEvent& out) noexcept {
+    const auto head = trail_seq();
+    if (head == 0)
+        return false;
+    out = g_trail().ring[(head - 1) % kTypedMutationAuditTrailSize];
+    return true;
+}
+
+// Copy event by absolute seq if still in ring window.
+// Issue #2819: lock-free read; require out.seq == seq (drop torn/overwritten).
+[[nodiscard]] inline bool trail_at_seq(std::uint64_t seq, TypedMutationAuditEvent& out) noexcept {
+    const auto head = trail_seq();
+    if (head == 0 || seq >= head)
+        return false;
+    if (head > kTypedMutationAuditTrailSize && seq < head - kTypedMutationAuditTrailSize)
+        return false;
+    out = g_trail().ring[seq % kTypedMutationAuditTrailSize];
+    return out.seq == seq;
+}
+
+// Issue #2054: newest-first scan for mutation_id correlation join.
+// Returns true and copies the most recent matching event still in ring.
+// Issue #2819: lock-free scan (best-effort under concurrent wrap).
+// Issue #3113: window is only the last kTypedMutationAuditTrailSize
+// events. A miss is not "no audit" — the mid may still live in the
+// SecurityEvent ring (1024) or WAL. Callers must surface typed-trail-miss.
+[[nodiscard]] inline bool trail_find_by_mutation_id(std::uint64_t mutation_id,
+                                                    TypedMutationAuditEvent& out) noexcept {
+    if (mutation_id == 0)
+        return false;
+    const auto head = trail_seq();
+    if (head == 0)
+        return false;
+    const std::size_t window = head < kTypedMutationAuditTrailSize ? static_cast<std::size_t>(head)
+                                                                   : kTypedMutationAuditTrailSize;
+    for (std::size_t i = 0; i < window; ++i) {
+        const auto e = g_trail().ring[(head - 1 - i) % kTypedMutationAuditTrailSize];
+        if (e.mutation_id == mutation_id) {
+            out = e;
+            return true;
+        }
+    }
+    return false;
+}
+
+inline void snapshot_global(std::uint64_t& considered, std::uint64_t& skipped,
+                            std::uint64_t& contextual, std::uint64_t& trail_sz,
+                            std::uint64_t& rollbacks, std::uint64_t& errors,
+                            std::uint32_t& strategy, std::uint32_t& sample_ratio) noexcept {
+    considered = g_typed_mutation_audit_counters.audits_considered.load(std::memory_order_relaxed);
+    skipped = g_typed_mutation_audit_counters.samples_skipped.load(std::memory_order_relaxed);
+    contextual = g_typed_mutation_audit_counters.contextual_total.load(std::memory_order_relaxed);
+    trail_sz = trail_size();
+    rollbacks = g_typed_mutation_audit_counters.rollbacks.load(std::memory_order_relaxed);
+    errors = g_typed_mutation_audit_counters.errors.load(std::memory_order_relaxed);
+    strategy = g_typed_mutation_audit_counters.strategy.load(std::memory_order_relaxed);
+    sample_ratio = g_typed_mutation_audit_counters.sample_ratio.load(std::memory_order_relaxed);
+}
+
+// Test helper: reset counters + trail (not for production hot path).
+// Ends with apply_dev_audit_defaults() (Sampled/4 + dev_audit_opt_in) so
+// unit tests keep the fast-iteration path; cold-start process default is
+// Full (#2818) until this or apply_dev is called.
+inline void reset_for_test() noexcept {
+    g_last_stamped_audit_mid.store(0, std::memory_order_relaxed);
+    g_last_composite_batch_join_mid.store(0, std::memory_order_relaxed);
+    g_composite_batch_join_pin_total.store(0, std::memory_order_relaxed);
+    g_composite_batch_se_join_total.store(0, std::memory_order_relaxed);
+    clear_boundary_audit_mid();
+    g_typed_mutation_audit_counters.audits_considered.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.samples_skipped.store(0, std::memory_order_relaxed);
+    // Issue #2818
+    g_typed_mutation_audit_counters.audit_strategy_default_warnings_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_strategy_default_warning_fired.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.contextual_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.trail_writes.store(0, std::memory_order_relaxed);
+    // Issue #2819
+    g_typed_mutation_audit_counters.audit_trail_lockfree_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_trail_mutex_wait_us_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_trail_lockfree_wired.store(1, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.rollbacks.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.errors.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.trail_seq.store(0, std::memory_order_relaxed);
+    // Issue #3113
+    g_typed_mutation_audit_counters.typed_trail_wrap_total.store(0, std::memory_order_relaxed);
+    // Issue #3242
+    g_typed_mutation_audit_counters.typed_summary_wal_persisted_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.macro_hygiene_events.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.macro_hygiene_blocked.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.macro_hygiene_allowed.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.invariant_audits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.provenance_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.provenance_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_invariant_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_invariant_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_exhaustiveness_sites_checked_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_non_exhaustive_sites_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_exhaustiveness_audit_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.adt_exhaustiveness_fail_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.invariant_violations_caught.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.invariant_all_pass.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.typed_mutation_audit_triggered_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.typed_mutation_violations_caught_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.provenance_blame_chain_hits_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_chain_complete_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_propagation_miss_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.full_strategy_force_rollback_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.contextual_force_audit_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_audits_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_force_rollback_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_strict_hold_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_sampled_skip_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.hard_gate_wired.store(1, std::memory_order_relaxed);
+    // Issue #2814 M7 enforcement-link counters.
+    g_typed_mutation_audit_counters.audit_enforcement_link_wired.store(1,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_enforcement_ran_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_enforcement_skipped_intentional_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_enforcement_gap_total.store(0, std::memory_order_relaxed);
+    g_tls_enforcement_link_mid = 0;
+    g_tls_enforcement_link = EnforcementLinkKind::None;
+    g_typed_mutation_audit_counters.boundary_solve_hard_gate_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_full_resync_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_force_rollback_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_truncated_seen_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.boundary_solve_hard_gate_wired.store(1,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_attempts.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_audits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_ok.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_fail.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.aot_hotupdate_invariant_fail_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.jit_hotpath_audits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mutation_id_gen.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_fallback_gen_total.store(0,
+                                                                       std::memory_order_relaxed);
+    // Issue #2836
+    g_typed_mutation_audit_counters.audit_mid_fallback_refused_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.audit_mid_fallback_refuse_se_seq.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_invariant_correlation_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_invariant_pass_with_evidence_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_invariant_fail_with_evidence_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.type_prop_evidence_lost_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.predicate_memo_evict_correlated_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_fixpoint_rounds.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_narrow_hits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_type_prop_extended_ops.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_dce_narrow_hits.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_predicate_memo_evictions.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.last_invariant_all_ok.store(1, std::memory_order_relaxed);
+    // Issue #2027 composite counters
+    g_typed_mutation_audit_counters.composite_invariant_audits_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_invariant_ok_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_invariant_fail_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_type_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_linear_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_success_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_full_rollback_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_nested_audit_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_batch_audit_total.store(0, std::memory_order_relaxed);
+    // Issue #2105 composite commit barrier
+    g_typed_mutation_audit_counters.composite_commit_revalidate_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_ok_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_reject_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_solve_fail_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_linear_fail_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2180
+    g_typed_mutation_audit_counters.composite_commit_solve_reuse_hit_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_solve_empty_cs_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2345
+    g_typed_mutation_audit_counters.composite_commit_empty_cs_hard_miss_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_empty_cs_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2509
+    g_typed_mutation_audit_counters.composite_commit_unexpected_cs_work_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_expected_has_work_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_sdo_entered_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2610
+    g_typed_mutation_audit_counters.composite_commit_auto_partial_from_cone_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_auto_partial_from_cone_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2851
+    g_typed_mutation_audit_counters.composite_commit_log_forces_partial_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_commit_log_forces_partial_observe_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2898
+    g_typed_mutation_audit_counters.composite_required_type_fail_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_observe_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_checked_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_auto_fill_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_auto_fill_capped_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_required_type_reject_over_infer_total.store(
+        0, std::memory_order_relaxed);
+    clear_composite_required_solved();
+    reset_composite_required_reject_over_infer_for_test();
+    // Issue #2458
+    g_typed_mutation_audit_counters.truncate_commit_observe_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.truncate_commit_reject_total.store(0,
+                                                                       std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.truncate_commit_full_solve_recover_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2221
+    g_typed_mutation_audit_counters.blame_commit_check_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_commit_reject_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.blame_commit_incomplete_observe_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_cross_batch_linear_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_escape_commit_blocked_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.composite_partial_recover_attempt_total.store(
+        0, std::memory_order_relaxed);
+    // Issue #2029 Full per-category partial recovery
+    g_typed_mutation_audit_counters.partial_recovery_attempt_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_success_total.store(0,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_fail_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_type_total.store(0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_linear_total.store(0,
+                                                                        std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_provenance_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.partial_recovery_adt_total.store(0, std::memory_order_relaxed);
+    // Issue #2514 / #2545
+    g_typed_mutation_audit_counters.linear_synth_boundary_force_rollback_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_synth_boundary_skip_recovery_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_synth_authority_unified.store(1,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_force_unified_2545.store(1, std::memory_order_relaxed);
+    // Issue #2563
+    g_typed_mutation_audit_counters.linear_cross_closure_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_force_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_observe_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_cap_trunc_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_wired.store(1, std::memory_order_relaxed);
+    // Issue #2612
+    g_typed_mutation_audit_counters.linear_cross_closure_depth2_entries_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_depth2_escape_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_depth_wired.store(
+        1, std::memory_order_relaxed);
+    // Issue #2623
+    g_typed_mutation_audit_counters.linear_cross_closure_trunc_force_total.store(
+        0, std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_depth_max.store(3,
+                                                                         std::memory_order_relaxed);
+    g_typed_mutation_audit_counters.linear_cross_closure_prod_depth_default.store(
+        2, std::memory_order_relaxed);
+    reset_linear_compact_root_consistency_for_test();
+    set_last_proof_linear_root_count_for_test(0);
+    apply_dev_audit_defaults(); // Sampled/4 + dev_audit_opt_in; clears production
+    std::lock_guard lock(g_trail().mu);
+    for (auto& e : g_trail().ring)
+        e = TypedMutationAuditEvent{};
+}
+
+// Issue #2703 / #2909: production hard-face when partial cone truncates
+// outside-If OccurrenceGoals. Under infer_flat_partial soft/hard cone
+// overflow (#2560), goals whose predicate If sits outside the truncated
+// cone are dropped. Issue #2703 surfaces force_reason
+// "cone_outside_goal_drop" (code 10). Issue #2909: production/Full +
+// truncate + outside drop MUST force full-solve recover (or hard reject)
+// before green commit — no silent half-green. Soft: counter-only.
+// Quiet (no truncate / empty outside set): zero cost.
+//
+// Soft vs production decision table (#2909 AC6 — code comments only):
+//   Soft + truncate + outside drop  → soft counter; allow (observe)
+//   production/Full + truncate + outside drop → force recover OR reject
+//   no truncate / empty outside set → zero cost (no counter / no solve)
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_total{0};
+inline std::atomic<std::uint64_t> g_cone_outside_goal_drop_soft_total{0};
+inline std::atomic<std::uint32_t> g_cone_outside_goal_drop_wired{1};
+inline constexpr int kConeOutsideGoalDropIssue = 2703;
+// Issue #2909: force-closure recover after cone truncate + outside drop.
+// Counters declared earlier (before commit_readiness); accessors here.
+inline constexpr int kConeTruncateForceClosureIssue = 2909;
+
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_soft_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_soft_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t cone_outside_goal_drop_wired_v_read() noexcept {
+    return g_cone_outside_goal_drop_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_truncate_force_closure_attempt_total_v_read() noexcept {
+    return g_cone_truncate_force_closure_attempt_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_truncate_force_closure_total_v_read() noexcept {
+    return g_cone_truncate_force_closure_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_truncate_force_closure_reject_total_v_read() noexcept {
+    return g_cone_truncate_force_closure_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t cone_truncate_force_closure_wired_v_read() noexcept {
+    return g_cone_truncate_force_closure_wired.load(std::memory_order_relaxed);
+}
+
+// Publish outside-If goal drop from infer_flat_partial (#2703 / #2909).
+// Soft → soft_total only; production/Full → face total (commit hard path).
+inline void publish_cone_outside_goal_drop(std::uint64_t n = 1) noexcept {
+    if (n == 0)
+        return;
+    const bool hard = production_defaults_active() || get_strategy() == AuditStrategy::Full;
+    if (hard)
+        g_cone_outside_goal_drop_total.fetch_add(n, std::memory_order_relaxed);
+    else
+        g_cone_outside_goal_drop_soft_total.fetch_add(n, std::memory_order_relaxed);
+}
+
+// Issue #2911: publish unified refined-consistency drift face.
+// Soft → observe only; production/Full → face latch for commit_readiness.
+// Counters declared earlier (before commit_readiness); accessors here.
+inline void note_refined_consistency_drift(bool production_hard) noexcept {
+    if (production_hard) {
+        g_refined_consistency_drift_face.store(1, std::memory_order_relaxed);
+    } else {
+        g_refined_consistency_observe_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+[[nodiscard]] inline bool refined_consistency_drift_face_hit() noexcept {
+    return g_refined_consistency_drift_face.load(std::memory_order_relaxed) != 0;
+}
+[[nodiscard]] inline std::uint64_t refined_consistency_observe_total_v_read() noexcept {
+    return g_refined_consistency_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t refined_consistency_reject_total_v_read() noexcept {
+    return g_refined_consistency_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t refined_consistency_recover_total_v_read() noexcept {
+    return g_refined_consistency_recover_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t refined_consistency_wired_v_read() noexcept {
+    return g_refined_consistency_wired.load(std::memory_order_relaxed);
+}
+inline void clear_refined_consistency_drift_for_test() noexcept {
+    g_refined_consistency_drift_face.store(0, std::memory_order_relaxed);
+    g_refined_consistency_observe_total.store(0, std::memory_order_relaxed);
+    g_refined_consistency_reject_total.store(0, std::memory_order_relaxed);
+    g_refined_consistency_recover_total.store(0, std::memory_order_relaxed);
+}
+
+// Test / recover reset.
+inline void clear_cone_outside_goal_drop_for_test() noexcept {
+    g_cone_outside_goal_drop_total.store(0, std::memory_order_relaxed);
+    g_cone_outside_goal_drop_soft_total.store(0, std::memory_order_relaxed);
+}
+inline void clear_cone_truncate_force_closure_for_test() noexcept {
+    g_cone_truncate_force_closure_attempt_total.store(0, std::memory_order_relaxed);
+    g_cone_truncate_force_closure_total.store(0, std::memory_order_relaxed);
+    g_cone_truncate_force_closure_reject_total.store(0, std::memory_order_relaxed);
+    // Issue #2962: Agent-facing residual counters (same test reset surface).
+    g_cone_outside_goal_drop_recover_ok_total.store(0, std::memory_order_relaxed);
+    g_cone_outside_goal_drop_reject_total.store(0, std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_recover_ok_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_recover_ok_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t cone_outside_goal_drop_reject_total_v_read() noexcept {
+    return g_cone_outside_goal_drop_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t cone_outside_goal_drop_recover_reject_wired_v_read() noexcept {
+    return g_cone_outside_goal_drop_recover_reject_wired.load(std::memory_order_relaxed);
+}
+
+// ── Issue #2847: region type/occurrence commit bind ────────────────────
+// Residual of #2724/#2760/#2761: region concurrent admit isolates AST
+// topology mutation but type/occurrence state is still per-Evaluator
+// shared (solve_delta_cs_ / occurrence_goals_ / type_dep). Two fibers on
+// "disjoint" regions can cross-talk via shared CS. This face rejects
+// commit when any touched OccurrenceGoal predicate node bit falls
+// outside the admitted cone/ImpactScope mask.
+//
+// Soft: metric only (region_type_cross_talk_observe_total).
+// production / Full: reject (region_type_cross_talk_reject_total) + face
+// for commit_readiness force_reason "region_type_cross_talk" (code 13).
+// mask==0 / GlobalExclusive: zero cost (region_type_commit_ok short-circuit).
+inline constexpr int kRegionTypeCrossTalkIssue = 2847;
+inline std::atomic<std::uint64_t> g_region_type_cross_talk_observe_total{0};
+inline std::atomic<std::uint64_t> g_region_type_cross_talk_reject_total{0};
+// Face latch for commit_readiness (1 = hit; cleared for tests / recover).
+inline std::atomic<std::uint8_t> g_region_type_cross_talk_face{0};
+inline std::atomic<std::uint32_t> g_region_type_cross_talk_wired{1};
+
+[[nodiscard]] inline std::uint64_t region_type_cross_talk_observe_total_v_read() noexcept {
+    return g_region_type_cross_talk_observe_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t region_type_cross_talk_reject_total_v_read() noexcept {
+    return g_region_type_cross_talk_reject_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t region_type_cross_talk_wired_v_read() noexcept {
+    return g_region_type_cross_talk_wired.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline bool region_type_cross_talk_face_hit() noexcept {
+    return g_region_type_cross_talk_face.load(std::memory_order_relaxed) != 0;
+}
+inline void clear_region_type_cross_talk_for_test() noexcept {
+    g_region_type_cross_talk_observe_total.store(0, std::memory_order_relaxed);
+    g_region_type_cross_talk_reject_total.store(0, std::memory_order_relaxed);
+    g_region_type_cross_talk_face.store(0, std::memory_order_relaxed);
+}
+
+// Map OccurrenceGoal predicate NodeId → one bit of a 64-bit cone mask
+// (same 63-bit packing as impact_block_to_region_mask_bit / region_key
+// — no tree walk). Hot path remains pure arithmetic.
+[[nodiscard]] inline std::uint64_t node_id_to_region_mask_bit(std::uint32_t node_id) noexcept {
+    if (node_id == 0)
+        return 0;
+    return 1ULL << (static_cast<std::uint64_t>(node_id) % 63ull);
+}
+
+// Pure gate: admitted_mask==0 → ok (global exclusive / quiet).
+// touched==0 → ok (no type/occurrence work this boundary).
+// Else: every touched bit must sit inside admitted_mask.
+[[nodiscard]] inline bool region_type_commit_ok(std::uint64_t admitted_mask,
+                                                std::uint64_t touched_type_mask) noexcept {
+    if (admitted_mask == 0)
+        return true;
+    if (touched_type_mask == 0)
+        return true;
+    return (touched_type_mask & ~admitted_mask) == 0;
+}
+
+// Note cross-talk. production_hard → reject counter + face latch;
+// Soft → observe counter only (commit may still succeed).
+inline void note_region_type_cross_talk(bool production_hard) noexcept {
+    if (production_hard) {
+        g_region_type_cross_talk_reject_total.fetch_add(1, std::memory_order_relaxed);
+        g_region_type_cross_talk_face.store(1, std::memory_order_release);
+    } else {
+        g_region_type_cross_talk_observe_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #2704: production hard-face on OccurrenceGoal rehydrate miss after
+// steal / densify fence. TypeChecker::note_steal_or_densify_epoch_fence
+// advances cache epoch + prunes stale OccurrenceGoals + attempts
+// rehydrate_occurrence_from_persist. When rehydrate returns 0 under
+// production (persist enabled but buffer empty / wrong mid / no prior
+// snapshot), the code only bumps occurrence_persist_rehydrate_miss_total
+// and continues. After steal / Moving densify, live occurrence priority
+// roots can be empty while Agents still see a green commit path.
+// This issue surfaces the distinct force_reason
+// "occurrence_empty_after_fence" (code 11) and bumps
+// g_occurrence_empty_after_fence_total. Soft path bumps counter only;
+// production path hard-rejects commit (no silent allow).
+inline std::atomic<std::uint64_t> g_occurrence_empty_after_fence_total{0};
+inline std::atomic<std::uint64_t> g_occurrence_empty_after_fence_soft_total{0};
+inline std::atomic<std::uint32_t> g_occurrence_empty_after_fence_wired{1};
+inline constexpr int kOccurrenceEmptyAfterFenceIssue = 2704;
+
+[[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_total_v_read() noexcept {
+    return g_occurrence_empty_after_fence_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint64_t occurrence_empty_after_fence_soft_total_v_read() noexcept {
+    return g_occurrence_empty_after_fence_soft_total.load(std::memory_order_relaxed);
+}
+[[nodiscard]] inline std::uint32_t occurrence_empty_after_fence_wired_v_read() noexcept {
+    return g_occurrence_empty_after_fence_wired.load(std::memory_order_relaxed);
+}
+
+// Test reset.
+inline void clear_occurrence_empty_after_fence_for_test() noexcept {
+    g_occurrence_empty_after_fence_total.store(0, std::memory_order_relaxed);
+    g_occurrence_empty_after_fence_soft_total.store(0, std::memory_order_relaxed);
+}
+
+// Issue #2896: fence rehydrate miss → latch #2704 face so
+// commit_readiness_live_policy hard-rejects under production/Full.
+// Soft (hard=false) bumps soft_total only (observe). Call from
+// TypeChecker::note_steal_or_densify_epoch_fence after rehydrate
+// returns 0 while persist is enabled.
+inline void note_occurrence_empty_after_fence(bool production_hard) noexcept {
+    if (production_hard) {
+        g_occurrence_empty_after_fence_total.fetch_add(1, std::memory_order_relaxed);
+    } else {
+        g_occurrence_empty_after_fence_soft_total.fetch_add(1, std::memory_order_relaxed);
+    }
+}
+
+// Issue #2716: counter for the occurrence hard-face active branch
+// (production / Full + face hit). Bumped when commit_readiness_live_policy
+// detects a face hit under prod/Full — surface for Agent dashboards
+// to attribute "active face wired in" vs "face fired but Soft path
+// observed only". Additive — no regression on #2703 / #2704 /
+// #2621 / #2458 / #2608 query keys. NOTE: the inline std::atomic
+// definition was hoisted to before commit_readiness_live_policy
+// (search #2728 ship co-traveler); the v_read accessor below references
+// it by name.
+[[nodiscard]] inline std::uint64_t occurrence_hard_face_full_solve_recover_total_v_read() noexcept {
+    return g_occurrence_hard_face_full_solve_recover_total.load(std::memory_order_relaxed);
+}
+inline void reset_occurrence_hard_face_full_solve_recover_total_for_test() noexcept {
+    g_occurrence_hard_face_full_solve_recover_total.store(0, std::memory_order_relaxed);
+}
+
+} // namespace aura::compiler::typed_audit
 
 #endif // AURA_COMPILER_TYPED_MUTATION_AUDIT_H

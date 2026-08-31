@@ -8,7 +8,10 @@ on Quiet / unbound last-proof.
 Contract:
   AC1 Production/Full + no live TC → not default SOLVED; deny via
       existing solve (TIMEOUT-class) unless Stamped + gen match + faces clear
-  AC2 Production IR/JIT depth==0 refuses Quiet / unbound (not only Reject)
+  AC2 (superseded by #3439): depth computed first; depth==0 short-circuits
+      unconditionally BEFORE any stale-atomic pre-checks (chaos test
+      cross-contamination, warm line 401 regression); Reject + stamper==TLS
+      + live-policy gate stay enforced at depth > 0
   AC3 Soft/Off early-return unchanged; no extra CS walk when quiet
   AC4 no new query key / reason code / g_3414_*; reuse
       g_linear_fast_path_elide_blocked_production_total
@@ -53,18 +56,26 @@ def main() -> int:
     must("else if (prod || full)", "AC1 Production/Full only", lp_win)
     must("g_tls_audit_commit_readiness_evaluator", "AC1 TLS", lp_win)
 
+    # AC2 (post-#3439): depth computed first; depth==0 short-circuits
+    # unconditionally BEFORE any stale-atomic pre-checks (chaos test
+    # cross-contamination regression, warm line 401). Reject/invalidate/
+    # stamper==TLS/live-policy stay enforced at depth > 0.
     pred = tma.find("ir_typed_entry_commit_readiness_ok() noexcept")
     pred_win = tma[pred : pred + 3800] if pred >= 0 else ""
-    must("kTypeLinearProofOutcomeStamped", "AC2 depth==0 Stamped", pred_win)
-    must("kTypeLinearProofOutcomeReject", "AC2 Reject still first", pred_win)
+    must("aura_evaluator_mutation_boundary_depth()", "AC2 depth ABI", pred_win)
     must("if (depth == 0)", "AC2 depth==0", pred_win)
-    reject_pos = pred_win.find("kTypeLinearProofOutcomeReject")
     depth_pos = pred_win.find("if (depth == 0)")
-    if reject_pos < 0 or depth_pos < 0 or reject_pos > depth_pos:
-        fails.append("AC2: Reject check must stay before depth==0")
-    stamped_in_depth = pred_win.find("kTypeLinearProofOutcomeStamped", depth_pos if depth_pos >= 0 else 0)
-    if depth_pos < 0 or stamped_in_depth < 0:
-        fails.append("AC2: depth==0 must consult kTypeLinearProofOutcomeStamped")
+    ret_pos = pred_win.find("return true", depth_pos if depth_pos >= 0 else 0)
+    if depth_pos < 0 or ret_pos < 0:
+        fails.append("AC2: depth==0 bypass missing")
+    else:
+        prefix = pred_win[:ret_pos]
+        for bad in ("kTypeLinearProofOutcomeReject", "abort_or_mid_abort_blocks_elision()"):
+            if bad in prefix:
+                fails.append(f"AC2: stale-atomic pre-check before depth==0 bypass: {bad}")
+    must("kTypeLinearProofOutcomeReject", "AC2 Reject kept (depth > 0)", pred_win)
+    must("last_proof_bound_to_current_eval()", "AC2 stamper==TLS kept (depth > 0)", pred_win)
+    must("commit_readiness(commit_readiness_live_policy())", "AC2 live-policy final gate", pred_win)
 
     must(
         "if (!(production_defaults_active() || get_strategy() == AuditStrategy::Full))",
